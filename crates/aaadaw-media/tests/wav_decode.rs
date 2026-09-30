@@ -1,4 +1,5 @@
-use aaadaw_engine::pcm_stream;
+use aaadaw_core::{DawAction, Project};
+use aaadaw_engine::{AudioRenderGraph, pcm_stream};
 use aaadaw_media::{AudioStreamDecoder, spawn_mono_stream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,24 +61,37 @@ fn decodes_wav_packets_as_interleaved_f32() {
 fn decoded_wav_is_resampled_and_fed_to_the_engine_stream() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[-32768, 32767], 24_000)).expect("test WAV should be written");
-    let (producer, mut consumer) = pcm_stream(1).expect("stream capacity should be positive");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("audio track should be created");
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
     let worker = spawn_mono_stream(&path, 48_000, producer)
         .expect("valid output sample rate should start a worker");
-
-    let mut output = [0.0; 4];
-    let mut received = 0;
-    while received < output.len() {
-        if consumer.read_into(&mut output[received..received + 1]) == 0 {
-            received += 1;
-        } else {
-            std::thread::yield_now();
-        }
-    }
     worker.join().expect("worker should decode through EOF");
-    assert!((output[0] + 1.0).abs() < 1.0e-6);
-    assert!(output[1].abs() < 1.0e-4);
-    assert!(output[2] > 0.999);
-    assert!(output[3] > 0.999);
+
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 4)
+        .expect("stream count should match the track count");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("decoded audio block should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected = [
+        -1.0,
+        -1.0 / 65_536.0,
+        32_767.0 / 32_768.0,
+        32_767.0 / 32_768.0,
+    ];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
+    }
     std::fs::remove_file(path).expect("test file should be removed");
 }
 

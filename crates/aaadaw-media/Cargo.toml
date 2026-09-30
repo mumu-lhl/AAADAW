@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 aaadaw-engine = { path = "../aaadaw-engine" }
 symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "mp3", "ogg", "pcm", "vorbis", "wav", "isomp4"] }
+
+[dev-dependencies]
+aaadaw-core = { path = "../aaadaw-core" }

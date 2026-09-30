@@ -19,6 +19,7 @@ dependencies = [
 name = "aaadaw-media"
 version = "0.1.0"
 dependencies = [
+ "aaadaw-core",
  "aaadaw-engine",
  "symphonia",
 ]
