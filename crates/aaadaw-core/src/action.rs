@@ -18,6 +18,10 @@ pub enum DawAction {
     SetTrackVolume { track_id: TrackId, volume_db: f32 },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.
     SetTrackPan { track_id: TrackId, pan: f32 },
+    /// Mute or unmute a track.
+    SetTrackMute { track_id: TrackId, muted: bool },
+    /// Solo or unsolo a track.
+    SetTrackSolo { track_id: TrackId, solo: bool },
     /// Rename a track.
     SetTrackName { track_id: TrackId, name: String },
     /// Move a track to a final position in the ordered track list.

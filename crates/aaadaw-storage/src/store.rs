@@ -26,7 +26,9 @@ CREATE TABLE tracks (
     position INTEGER NOT NULL UNIQUE CHECK (position >= 0),
     name TEXT NOT NULL,
     volume_db REAL NOT NULL,
-    pan REAL NOT NULL CHECK (pan >= -1 AND pan <= 1)
+    pan REAL NOT NULL CHECK (pan >= -1 AND pan <= 1),
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
+    solo INTEGER NOT NULL DEFAULT 0 CHECK (solo IN (0, 1))
 );
 
 CREATE TABLE items (
@@ -327,13 +329,16 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan) VALUES(?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
                 track.name,
                 f64::from(track.volume_db),
-                f64::from(track.pan)
+                f64::from(track.pan),
+                track.muted,
+                track.solo
             ],
         )?;
     }
@@ -391,8 +396,9 @@ fn write_snapshot(
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
-    let mut statement = connection
-        .prepare("SELECT id, position, name, volume_db, pan FROM tracks ORDER BY position")?;
+    let mut statement = connection.prepare(
+        "SELECT id, position, name, volume_db, pan, muted, solo FROM tracks ORDER BY position",
+    )?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -401,17 +407,21 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, String>(2)?,
                 row.get::<_, f64>(3)?,
                 row.get::<_, f64>(4)?,
+                row.get::<_, bool>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, position, name, volume_db, pan)| {
+        .map(|(id, position, name, volume_db, pan, muted, solo)| {
             let _ = from_sql_u64(position)?;
             Ok(TrackSnapshot {
                 id: from_sql_u64(id)?,
                 name,
                 volume_db: volume_db as f32,
                 pan: pan as f32,
+                muted,
+                solo,
             })
         })
         .collect()

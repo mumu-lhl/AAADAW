@@ -20,6 +20,8 @@ pub struct Track {
     pub(crate) name: String,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
+    pub(crate) muted: bool,
+    pub(crate) solo: bool,
 }
 
 impl Track {
@@ -41,5 +43,15 @@ impl Track {
     /// Returns this track's pan position in the inclusive range `-1.0..=1.0`.
     pub fn pan(&self) -> f32 {
         self.pan
+    }
+
+    /// Returns whether this track is muted.
+    pub fn is_muted(&self) -> bool {
+        self.muted
+    }
+
+    /// Returns whether this track is soloed.
+    pub fn is_solo(&self) -> bool {
+        self.solo
     }
 }

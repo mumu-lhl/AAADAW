@@ -17,6 +17,8 @@ pub struct TrackSnapshot {
     pub name: String,
     pub volume_db: f32,
     pub pan: f32,
+    pub muted: bool,
+    pub solo: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

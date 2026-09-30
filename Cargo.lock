@@ -7,6 +7,13 @@ name = "aaadaw-core"
 version = "0.1.0"
 
 [[package]]
+name = "aaadaw-engine"
+version = "0.1.0"
+dependencies = [
+ "aaadaw-core",
+]
+
+[[package]]
 name = "aaadaw-storage"
 version = "0.1.0"
 dependencies = [

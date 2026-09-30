@@ -35,6 +35,18 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("volume change should succeed");
     project
+        .apply(DawAction::SetTrackMute {
+            track_id,
+            muted: true,
+        })
+        .expect("mute change should succeed");
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id,
+            solo: true,
+        })
+        .expect("solo change should succeed");
+    project
         .apply(DawAction::InsertMidiItem {
             track_id,
             start_tick: 0,

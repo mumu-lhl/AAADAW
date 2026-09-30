@@ -60,6 +60,16 @@ enum ProjectEvent {
         before: f32,
         after: f32,
     },
+    TrackMuteChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
+    TrackSoloChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
     TrackRenamed {
         track_id: TrackId,
         before: String,
@@ -160,6 +170,24 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TrackPanChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackMuteChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackMuteChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackSoloChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackSoloChanged {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
@@ -361,6 +389,8 @@ impl Project {
                     name: track.name.clone(),
                     volume_db: track.volume_db,
                     pan: track.pan,
+                    muted: track.muted,
+                    solo: track.solo,
                 })
                 .collect(),
             midi_items: self
@@ -471,6 +501,8 @@ impl Project {
                 name: track.name,
                 volume_db: track.volume_db,
                 pan: track.pan,
+                muted: track.muted,
+                solo: track.solo,
             });
         }
 
@@ -567,6 +599,8 @@ impl Project {
                     name,
                     volume_db: 0.0,
                     pan: 0.0,
+                    muted: false,
+                    solo: false,
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -654,6 +688,30 @@ impl Project {
                     track_id,
                     before: track.pan,
                     after: pan,
+                }
+            }
+            DawAction::SetTrackMute { track_id, muted } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackMuteChanged {
+                    track_id,
+                    before: track.muted,
+                    after: muted,
+                }
+            }
+            DawAction::SetTrackSolo { track_id, solo } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackSoloChanged {
+                    track_id,
+                    before: track.solo,
+                    after: solo,
                 }
             }
             DawAction::SetTrackName { track_id, name } => {
@@ -989,6 +1047,36 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.pan = *after;
+            }
+            ProjectEvent::TrackMuteChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.muted != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.muted = *after;
+            }
+            ProjectEvent::TrackSoloChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.solo != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.solo = *after;
             }
             ProjectEvent::TrackRenamed {
                 track_id,
