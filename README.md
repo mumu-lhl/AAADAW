@@ -4,7 +4,7 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 
 ## Project status
 
-The core project model, versioned SQLite storage, MIDI editing actions, tempo mapping, and an initial allocation-free mixer, MIDI note-event scheduler, and block-based transport primitives are implemented. Device I/O, playback scheduling, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
+The core project model, versioned SQLite storage, MIDI editing actions, tempo mapping, and an initial allocation-free mixer, MIDI note-event scheduler, and block-based transport primitives, an in-memory PCM clip player, and packet-based Symphonia decoding are implemented. Device I/O, playback scheduling, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [Implementation roadmap](ROADMAP.md)
@@ -28,3 +28,4 @@ cargo xtest
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite persistence through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
 - `crates/aaadaw-engine`: realtime-oriented audio processing primitives; its initial mixer is independent of device backends.
+- `crates/aaadaw-media`: packet-based Symphonia decoding for background media import; decoded chunks are owned and must stay off the audio callback.

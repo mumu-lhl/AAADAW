@@ -5,9 +5,11 @@
 //! separate follow-up work.
 
 mod midi;
+mod pcm;
 mod transport;
 
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
+pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 
 use aaadaw_core::Track;
