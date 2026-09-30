@@ -1,8 +1,8 @@
 //! Realtime-oriented audio processing primitives.
 //!
 //! This crate provides a fixed-topology, allocation-free streaming mixer,
-//! transport, and MIDI scheduling primitives. Device backends and project
-//! AudioItem integration remain separate follow-up work.
+//! transport, MIDI scheduling primitives, and an optional Linux JACK backend.
+//! Project AudioItem integration remains a follow-up work item.
 
 #[cfg(feature = "jack-backend")]
 mod jack_output;

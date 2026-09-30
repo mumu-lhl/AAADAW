@@ -8,6 +8,9 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
+
+mod stream;
+pub use stream::{AudioFeedWorker, spawn_mono_stream};
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
@@ -61,6 +64,12 @@ pub enum MediaError {
     MissingCodecParameters,
     MissingAudioCodecParameters,
     InvalidDecodedAudioSpec,
+    InvalidOutputSampleRate,
+    ChangedAudioSampleRate,
+    ResampleRatioTooLarge { input: u32, output: u32 },
+    AudioTooLong,
+    ThreadSpawn(std::io::Error),
+    WorkerPanicked,
 }
 
 impl fmt::Display for MediaError {
@@ -78,6 +87,19 @@ impl fmt::Display for MediaError {
             Self::InvalidDecodedAudioSpec => {
                 formatter.write_str("decoder returned an invalid audio specification")
             }
+            Self::InvalidOutputSampleRate => {
+                formatter.write_str("output sample rate must be positive")
+            }
+            Self::ChangedAudioSampleRate => {
+                formatter.write_str("audio sample rate changed during decoding")
+            }
+            Self::ResampleRatioTooLarge { input, output } => write!(
+                formatter,
+                "resampling ratio from {input} Hz to {output} Hz exceeds the supported limit"
+            ),
+            Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
+            Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),
+            Self::WorkerPanicked => formatter.write_str("audio decoding worker panicked"),
         }
     }
 }
@@ -85,7 +107,7 @@ impl fmt::Display for MediaError {
 impl StdError for MediaError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            Self::Io(error) => Some(error),
+            Self::Io(error) | Self::ThreadSpawn(error) => Some(error),
             Self::Symphonia(error) => Some(error),
             _ => None,
         }

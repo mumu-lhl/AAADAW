@@ -1,4 +1,5 @@
-use aaadaw_media::AudioStreamDecoder;
+use aaadaw_engine::pcm_stream;
+use aaadaw_media::{AudioStreamDecoder, spawn_mono_stream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -53,4 +54,42 @@ fn decodes_wav_packets_as_interleaved_f32() {
     assert!((decoded_samples[2] - 0.5).abs() < 1.0e-6);
     assert!(decoded_samples[3] < 1.0 && decoded_samples[3] > 0.999);
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn decoded_wav_is_resampled_and_fed_to_the_engine_stream() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[-32768, 32767], 24_000)).expect("test WAV should be written");
+    let (producer, mut consumer) = pcm_stream(1).expect("stream capacity should be positive");
+    let worker = spawn_mono_stream(&path, 48_000, producer)
+        .expect("valid output sample rate should start a worker");
+
+    let mut output = [0.0; 4];
+    let mut received = 0;
+    while received < output.len() {
+        if consumer.read_into(&mut output[received..received + 1]) == 0 {
+            received += 1;
+        } else {
+            std::thread::yield_now();
+        }
+    }
+    worker.join().expect("worker should decode through EOF");
+    assert!((output[0] + 1.0).abs() < 1.0e-6);
+    assert!(output[1].abs() < 1.0e-4);
+    assert!(output[2] > 0.999);
+    assert!(output[3] > 0.999);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn mono_stream_rejects_a_zero_output_rate_before_spawning() {
+    let (producer, _) = pcm_stream(1).expect("stream capacity should be positive");
+    let error = match spawn_mono_stream("unused.wav", 0, producer) {
+        Ok(_) => panic!("zero output sample rate should be rejected"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        aaadaw_media::MediaError::InvalidOutputSampleRate
+    ));
 }
