@@ -1,15 +1,17 @@
 //! Realtime-oriented audio processing primitives.
 //!
-//! This crate currently provides a precompiled, allocation-free mono-track
-//! mixer. Device integration, playback scheduling, and audio asset decoding are
-//! separate follow-up work.
+//! This crate provides a fixed-topology, allocation-free streaming mixer,
+//! transport, and MIDI scheduling primitives. Device backends and project
+//! AudioItem integration remain separate follow-up work.
 
 mod midi;
 mod pcm;
+mod stream;
 mod transport;
 
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
+pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 
 use aaadaw_core::Track;
@@ -115,11 +117,18 @@ impl MixerPlan {
                     track_id: track.id().value(),
                 });
             }
-            let pan_angle = (f64::from(track.pan()) + 1.0) * FRAC_PI_4;
             let gain = linear_gain as f32;
+            let (left, right) = match track.pan() {
+                -1.0 => (gain, 0.0),
+                1.0 => (0.0, gain),
+                pan => {
+                    let angle = (f64::from(pan) + 1.0) * FRAC_PI_4;
+                    (angle.cos() as f32 * gain, angle.sin() as f32 * gain)
+                }
+            };
             compiled.push(TrackGains {
-                left: pan_angle.cos() as f32 * gain,
-                right: pan_angle.sin() as f32 * gain,
+                left,
+                right,
                 muted: track.is_muted(),
                 solo: track.is_solo(),
             });
@@ -163,15 +172,159 @@ impl MixerPlan {
         }
 
         output.fill([0.0, 0.0]);
-        for (track, input) in self.tracks.iter().zip(inputs) {
-            if track.muted || (self.has_solo && !track.solo) {
-                continue;
-            }
-            for (frame, sample) in output.iter_mut().zip(input.iter().copied()) {
-                frame[0] += sample * track.left;
-                frame[1] += sample * track.right;
-            }
+        for (track_index, input) in inputs.iter().enumerate() {
+            self.mix_track_unchecked(track_index, input, output);
         }
         Ok(())
+    }
+
+    fn mix_track_unchecked(&self, track_index: usize, input: &[f32], output: &mut [[f32; 2]]) {
+        let track = self.tracks[track_index];
+        if track.muted || (self.has_solo && !track.solo) {
+            return;
+        }
+        for (frame, sample) in output.iter_mut().zip(input.iter().copied()) {
+            frame[0] += sample * track.left;
+            frame[1] += sample * track.right;
+        }
+    }
+}
+
+/// Construction failure for a streaming graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AudioGraphBuildError {
+    MixerPlan(MixerPlanError),
+    TrackStreamCountMismatch { tracks: usize, streams: usize },
+}
+
+impl fmt::Display for AudioGraphBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MixerPlan(error) => write!(formatter, "invalid mixer plan: {error}"),
+            Self::TrackStreamCountMismatch { tracks, streams } => write!(
+                formatter,
+                "audio graph has {tracks} tracks but {streams} PCM streams"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AudioGraphBuildError {}
+
+/// A streaming render callback failed before it could render a block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioGraphError {
+    BlockTooLarge { requested: usize, maximum: usize },
+    TransportPositionOverflow,
+}
+
+impl fmt::Display for AudioGraphError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BlockTooLarge { requested, maximum } => {
+                write!(
+                    formatter,
+                    "audio block has {requested} frames; maximum is {maximum}"
+                )
+            }
+            Self::TransportPositionOverflow => {
+                formatter.write_str("transport position exceeds the supported sample range")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AudioGraphError {}
+
+/// Results for one rendered callback block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AudioRenderStats {
+    pub block: AudioBlock,
+    /// Sum of silence-filled samples across all tracks.
+    pub underrun_samples: usize,
+}
+
+/// A fixed-topology streaming mixer suitable for a device callback.
+///
+/// Construct this on a control thread. It owns preallocated per-track scratch
+/// buffers and one SPSC consumer per project track; the producer side should
+/// decode/resample on a worker and push samples at the device's active rate.
+pub struct AudioRenderGraph {
+    mixer: MixerPlan,
+    transport: Transport,
+    streams: Vec<PcmStreamConsumer>,
+    scratch: Vec<Vec<f32>>,
+}
+
+impl AudioRenderGraph {
+    /// Compiles track controls and allocates scratch storage before audio starts.
+    pub fn new(
+        project: &aaadaw_core::Project,
+        streams: Vec<PcmStreamConsumer>,
+        max_block_frames: usize,
+    ) -> Result<Self, AudioGraphBuildError> {
+        let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
+            .map_err(AudioGraphBuildError::MixerPlan)?;
+        if streams.len() != mixer.tracks.len() {
+            return Err(AudioGraphBuildError::TrackStreamCountMismatch {
+                tracks: mixer.tracks.len(),
+                streams: streams.len(),
+            });
+        }
+        let scratch = (0..streams.len())
+            .map(|_| vec![0.0; max_block_frames])
+            .collect();
+        Ok(Self {
+            mixer,
+            transport: Transport::new(),
+            streams,
+            scratch,
+        })
+    }
+
+    /// Returns the callback-owned transport for start/stop/seek control.
+    pub fn transport_mut(&mut self) -> &mut Transport {
+        &mut self.transport
+    }
+
+    /// Renders one block into caller-owned interleaved stereo memory.
+    ///
+    /// The callback path allocates no memory, takes no locks, and performs no
+    /// I/O. Stopped blocks are cleared without consuming PCM. Underrunning
+    /// streams are zero-filled and counted in the returned statistics.
+    pub fn render_into(
+        &mut self,
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        if output.len() > self.mixer.max_block_frames {
+            return Err(AudioGraphError::BlockTooLarge {
+                requested: output.len(),
+                maximum: self.mixer.max_block_frames,
+            });
+        }
+        let block = self
+            .transport
+            .advance_block(output.len())
+            .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+        if !block.is_playing {
+            output.fill([0.0, 0.0]);
+            return Ok(AudioRenderStats {
+                block,
+                underrun_samples: 0,
+            });
+        }
+
+        output.fill([0.0, 0.0]);
+        let mut underrun_samples = 0_usize;
+        for track_index in 0..self.streams.len() {
+            let input = &mut self.scratch[track_index][..output.len()];
+            underrun_samples =
+                underrun_samples.saturating_add(self.streams[track_index].read_into(input));
+            self.mixer.mix_track_unchecked(track_index, input, output);
+        }
+        Ok(AudioRenderStats {
+            block,
+            underrun_samples,
+        })
     }
 }
