@@ -194,6 +194,7 @@ impl MixerPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioGraphBuildError {
     MixerPlan(MixerPlanError),
+    MidiSchedule(MidiScheduleError),
     TrackStreamCountMismatch { tracks: usize, streams: usize },
 }
 
@@ -201,6 +202,7 @@ impl fmt::Display for AudioGraphBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MixerPlan(error) => write!(formatter, "invalid mixer plan: {error}"),
+            Self::MidiSchedule(error) => write!(formatter, "invalid MIDI event plan: {error}"),
             Self::TrackStreamCountMismatch { tracks, streams } => write!(
                 formatter,
                 "audio graph has {tracks} tracks but {streams} PCM streams"
@@ -209,12 +211,21 @@ impl fmt::Display for AudioGraphBuildError {
     }
 }
 
-impl std::error::Error for AudioGraphBuildError {}
+impl std::error::Error for AudioGraphBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MixerPlan(error) => Some(error),
+            Self::MidiSchedule(error) => Some(error),
+            Self::TrackStreamCountMismatch { .. } => None,
+        }
+    }
+}
 
 /// A streaming render callback failed before it could render a block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioGraphError {
     BlockTooLarge { requested: usize, maximum: usize },
+    MidiSchedule(MidiScheduleError),
     TransportPositionOverflow,
 }
 
@@ -227,6 +238,7 @@ impl fmt::Display for AudioGraphError {
                     "audio block has {requested} frames; maximum is {maximum}"
                 )
             }
+            Self::MidiSchedule(error) => write!(formatter, "MIDI scheduling failed: {error}"),
             Self::TransportPositionOverflow => {
                 formatter.write_str("transport position exceeds the supported sample range")
             }
@@ -234,7 +246,14 @@ impl fmt::Display for AudioGraphError {
     }
 }
 
-impl std::error::Error for AudioGraphError {}
+impl std::error::Error for AudioGraphError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MidiSchedule(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Results for one rendered callback block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +261,8 @@ pub struct AudioRenderStats {
     pub block: AudioBlock,
     /// Sum of silence-filled samples across all tracks.
     pub underrun_samples: usize,
+    /// MIDI note events written to the caller's event buffer.
+    pub midi_event_count: usize,
 }
 
 /// A fixed-topology streaming mixer suitable for a device callback.
@@ -251,6 +272,7 @@ pub struct AudioRenderStats {
 /// decode/resample on a worker and push samples at the device's active rate.
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
+    midi_plan: MidiEventPlan,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
     scratch: Vec<Vec<f32>>,
@@ -265,6 +287,8 @@ impl AudioRenderGraph {
     ) -> Result<Self, AudioGraphBuildError> {
         let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
             .map_err(AudioGraphBuildError::MixerPlan)?;
+        let midi_plan =
+            MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
         if streams.len() != mixer.tracks.len() {
             return Err(AudioGraphBuildError::TrackStreamCountMismatch {
                 tracks: mixer.tracks.len(),
@@ -276,6 +300,7 @@ impl AudioRenderGraph {
             .collect();
         Ok(Self {
             mixer,
+            midi_plan,
             transport: Transport::new(),
             streams,
             scratch,
@@ -296,12 +321,38 @@ impl AudioRenderGraph {
         &mut self,
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_block(false, &mut [], output)
+    }
+
+    /// Renders audio and writes note events for the same half-open callback
+    /// block. A too-small event buffer fails before transport or PCM is changed.
+    pub fn render_with_midi(
+        &mut self,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_block(true, midi_output, output)
+    }
+
+    fn render_block(
+        &mut self,
+        include_midi: bool,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
         if output.len() > self.mixer.max_block_frames {
             return Err(AudioGraphError::BlockTooLarge {
                 requested: output.len(),
                 maximum: self.mixer.max_block_frames,
             });
         }
+        let midi_event_count = if self.transport.is_playing() && include_midi {
+            self.midi_plan
+                .events_for_block(self.transport.position_samples(), output.len(), midi_output)
+                .map_err(AudioGraphError::MidiSchedule)?
+        } else {
+            0
+        };
         let block = self
             .transport
             .advance_block(output.len())
@@ -311,6 +362,7 @@ impl AudioRenderGraph {
             return Ok(AudioRenderStats {
                 block,
                 underrun_samples: 0,
+                midi_event_count,
             });
         }
 
@@ -325,6 +377,7 @@ impl AudioRenderGraph {
         Ok(AudioRenderStats {
             block,
             underrun_samples,
+            midi_event_count,
         })
     }
 }

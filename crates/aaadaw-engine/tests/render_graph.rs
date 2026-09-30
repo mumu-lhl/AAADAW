@@ -40,6 +40,7 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
                 is_playing: true,
             },
             underrun_samples: 1,
+            midi_event_count: 0,
         }
     );
     assert_eq!(output, [[0.25, 0.0], [0.5, 0.0], [0.0, 0.0]]);
@@ -85,4 +86,70 @@ fn graph_rejects_mismatched_topology_and_oversized_blocks() {
     let mismatch = AudioRenderGraph::new(&project, vec![consumer, extra_consumer], 2);
     assert!(mismatch.is_err());
     assert!(matches!(pcm_stream(0), Err(PcmStreamError::ZeroCapacity)));
+}
+
+#[test]
+fn render_graph_schedules_midi_atomically_with_the_audio_block() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Instrument".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item insertion should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![aaadaw_core::MidiNoteData {
+                pitch: 64,
+                tick: 0,
+                duration: 1,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note insertion should succeed");
+    let (_, consumer) = pcm_stream(26).expect("positive queue capacity is valid");
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 26)
+        .expect("stream count should match track count");
+    graph.transport_mut().start();
+    let mut output = [[8.0_f32, 8.0_f32]; 26];
+    let mut midi_output = [None; 1];
+
+    let short_buffer = graph.render_with_midi(&mut midi_output, &mut output);
+    assert!(matches!(
+        short_buffer,
+        Err(AudioGraphError::MidiSchedule(
+            aaadaw_engine::MidiScheduleError::OutputBufferTooSmall {
+                required: 2,
+                available: 1
+            }
+        ))
+    ));
+    assert_eq!(graph.transport_mut().position_samples(), 0);
+    assert_eq!(output, [[8.0, 8.0]; 26]);
+    assert_eq!(midi_output, [None]);
+
+    let mut midi_output = [None; 2];
+    let stats = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("sufficient event capacity should render");
+    assert_eq!(stats.midi_event_count, 2);
+    assert_eq!(
+        midi_output[0].expect("note-on should be written").kind,
+        aaadaw_engine::MidiEventKind::NoteOn
+    );
+    assert_eq!(
+        midi_output[1].expect("note-off should be written").kind,
+        aaadaw_engine::MidiEventKind::NoteOff
+    );
+    assert_eq!(graph.transport_mut().position_samples(), 26);
 }

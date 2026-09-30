@@ -36,7 +36,7 @@ pub struct MidiEventPlan {
 }
 
 /// The project could not be compiled into a MIDI event schedule.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MidiScheduleError {
     /// A MIDI item references a missing track.
     MissingTrack { track_id: u64 },
