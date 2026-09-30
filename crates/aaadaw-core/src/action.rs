@@ -33,6 +33,12 @@ pub enum DawAction {
         item_id: ItemId,
         notes: Vec<MidiNoteData>,
     },
+    /// Edit a MIDI note's pitch, relative tick, duration, or velocity.
+    EditMidiNote {
+        item_id: ItemId,
+        note_id: NoteId,
+        data: MidiNoteData,
+    },
     /// Delete notes from a MIDI item by identifier.
     DeleteMidiNotes {
         item_id: ItemId,

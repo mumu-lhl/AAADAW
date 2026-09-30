@@ -101,6 +101,11 @@ enum ProjectEvent {
         item_id: ItemId,
         notes: Vec<(usize, MidiNote)>,
     },
+    MidiNoteChanged {
+        item_id: ItemId,
+        before: MidiNote,
+        after: MidiNote,
+    },
     MidiNotesQuantized {
         item_id: ItemId,
         changes: Vec<(NoteId, u64, u64)>,
@@ -211,6 +216,15 @@ impl ProjectEvent {
             Self::MidiNotesRemoved { item_id, notes } => Self::MidiNotesAdded {
                 item_id: *item_id,
                 notes: notes.clone(),
+            },
+            Self::MidiNoteChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiNoteChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::MidiNotesQuantized { item_id, changes } => Self::MidiNotesQuantized {
                 item_id: *item_id,
@@ -731,6 +745,38 @@ impl Project {
                         .collect(),
                 }
             }
+            DawAction::EditMidiNote {
+                item_id,
+                note_id,
+                data,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if data.pitch > 127
+                    || data.velocity > 127
+                    || data.duration == 0
+                    || data
+                        .tick
+                        .checked_add(data.duration)
+                        .is_none_or(|end| end > item.length_ticks)
+                {
+                    return Err(ActionError::InvalidMidiNote);
+                }
+                let before = item
+                    .notes
+                    .iter()
+                    .find(|note| note.id == note_id)
+                    .cloned()
+                    .ok_or(ActionError::MidiNoteNotFound { item_id, note_id })?;
+                ProjectEvent::MidiNoteChanged {
+                    item_id,
+                    before,
+                    after: MidiNote { id: note_id, data },
+                }
+            }
             DawAction::DeleteMidiNotes { item_id, note_ids } => {
                 let item = state
                     .midi_items
@@ -1011,6 +1057,37 @@ impl Project {
                     }
                     current_notes.remove(*index);
                 }
+            }
+            ProjectEvent::MidiNoteChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if before.id != after.id
+                    || after.data.pitch > 127
+                    || after.data.velocity > 127
+                    || after.data.duration == 0
+                    || after
+                        .data
+                        .tick
+                        .checked_add(after.data.duration)
+                        .is_none_or(|end| end > item.length_ticks)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                let note = Arc::make_mut(&mut item.notes)
+                    .iter_mut()
+                    .find(|note| note.id == before.id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if *note != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                *note = after.clone();
             }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
                 let item = state

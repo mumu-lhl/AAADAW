@@ -1,4 +1,4 @@
-use crate::{ItemId, TrackId};
+use crate::{ItemId, NoteId, TrackId};
 use std::fmt;
 
 /// An action could not be applied to the project.
@@ -28,6 +28,8 @@ pub enum ActionError {
     MidiItemNotFound { item_id: ItemId },
     /// A MIDI note must have a valid pitch, velocity, and in-item duration.
     InvalidMidiNote,
+    /// The requested MIDI note does not exist in the given item.
+    MidiNoteNotFound { item_id: ItemId, note_id: NoteId },
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -76,6 +78,12 @@ impl fmt::Display for ActionError {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
             }
             Self::InvalidMidiNote => formatter.write_str("MIDI note data is invalid"),
+            Self::MidiNoteNotFound { item_id, note_id } => write!(
+                formatter,
+                "MIDI note {} does not exist in item {}",
+                note_id.value(),
+                item_id.value()
+            ),
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")
             }
