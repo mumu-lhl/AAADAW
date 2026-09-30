@@ -28,6 +28,12 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Move a MIDI item and/or change its length without discarding notes.
+    EditMidiItem {
+        item_id: ItemId,
+        start_tick: u64,
+        length_ticks: u64,
+    },
     /// Add notes to a MIDI item. Note ticks are relative to the item start.
     AddMidiNotes {
         item_id: ItemId,

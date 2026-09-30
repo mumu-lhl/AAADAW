@@ -24,6 +24,8 @@ pub enum ActionError {
     MeterMapOutOfRange,
     /// A MIDI item must have a positive length.
     InvalidMidiItemLength,
+    /// A MIDI item's start and length exceed the supported tick range.
+    InvalidMidiItemPosition,
     /// The requested MIDI item does not exist in the project.
     MidiItemNotFound { item_id: ItemId },
     /// A MIDI note must have a valid pitch, velocity, and in-item duration.
@@ -74,6 +76,9 @@ impl fmt::Display for ActionError {
                 formatter.write_str("meter map exceeds the measure number range")
             }
             Self::InvalidMidiItemLength => formatter.write_str("MIDI item length must be positive"),
+            Self::InvalidMidiItemPosition => {
+                formatter.write_str("MIDI item position exceeds the supported tick range")
+            }
             Self::MidiItemNotFound { item_id } => {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
             }

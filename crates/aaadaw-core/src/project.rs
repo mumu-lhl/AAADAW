@@ -93,6 +93,10 @@ enum ProjectEvent {
         index: usize,
         item: MidiItem,
     },
+    MidiItemChanged {
+        before: MidiItem,
+        after: MidiItem,
+    },
     MidiNotesAdded {
         item_id: ItemId,
         notes: Vec<(usize, MidiNote)>,
@@ -208,6 +212,10 @@ impl ProjectEvent {
             Self::MidiItemRemoved { index, item } => Self::MidiItemInserted {
                 index: *index,
                 item: item.clone(),
+            },
+            Self::MidiItemChanged { before, after } => Self::MidiItemChanged {
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::MidiNotesAdded { item_id, notes } => Self::MidiNotesRemoved {
                 item_id: *item_id,
@@ -686,8 +694,11 @@ impl Project {
                 if !state.tracks.iter().any(|track| track.id == track_id) {
                     return Err(ActionError::TrackNotFound { track_id });
                 }
-                if length_ticks == 0 || start_tick.checked_add(length_ticks).is_none() {
+                if length_ticks == 0 {
                     return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
                 }
                 let next_id = ids
                     .next_item_id
@@ -705,6 +716,38 @@ impl Project {
                     index: state.midi_items.len(),
                     item,
                 }
+            }
+            DawAction::EditMidiItem {
+                item_id,
+                start_tick,
+                length_ticks,
+            } => {
+                if length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if item.notes.iter().any(|note| {
+                    note.data
+                        .tick
+                        .checked_add(note.data.duration)
+                        .is_none_or(|end| end > length_ticks)
+                }) {
+                    return Err(ActionError::InvalidMidiNote);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick,
+                    length_ticks,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
             }
             DawAction::AddMidiNotes { item_id, notes } => {
                 let item = state
@@ -1027,6 +1070,29 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.midi_items.remove(*index);
+            }
+            ProjectEvent::MidiItemChanged { before, after } => {
+                let index = state
+                    .midi_items
+                    .iter()
+                    .position(|item| item.id == before.id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if state.midi_items[index] != *before
+                    || before.id != after.id
+                    || before.track_id != after.track_id
+                    || !state.tracks.iter().any(|track| track.id == after.track_id)
+                    || after.length_ticks == 0
+                    || after.start_tick.checked_add(after.length_ticks).is_none()
+                    || after.notes.iter().any(|note| {
+                        note.data
+                            .tick
+                            .checked_add(note.data.duration)
+                            .is_none_or(|end| end > after.length_ticks)
+                    })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.midi_items[index] = after.clone();
             }
             ProjectEvent::MidiNotesAdded { item_id, notes } => {
                 let item = state
