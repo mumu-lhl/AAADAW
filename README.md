@@ -4,7 +4,7 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 
 ## Project status
 
-The core project model, versioned SQLite storage, MIDI editing actions, tempo mapping, and an initial allocation-free mixer primitive are implemented. Device I/O, playback scheduling, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
+The core project model, versioned SQLite storage, MIDI editing actions, tempo mapping, and an initial allocation-free mixer, MIDI note-event scheduler, and block-based transport primitives are implemented. Device I/O, playback scheduling, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [Implementation roadmap](ROADMAP.md)

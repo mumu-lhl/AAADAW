@@ -4,6 +4,12 @@
 //! mixer. Device integration, playback scheduling, and audio asset decoding are
 //! separate follow-up work.
 
+mod midi;
+mod transport;
+
+pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
+pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
+
 use aaadaw_core::Track;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
@@ -124,8 +130,8 @@ impl MixerPlan {
         })
     }
 
-    /// Mixes one mono input buffer per project track into interleaved stereo
-    /// frames. Validation happens before output is modified. This method does
+    /// Mixes one mono input buffer per project track, in project order, into
+    /// interleaved stereo frames. Validation happens before output is modified. This method does
     /// not allocate, lock, or perform I/O.
     pub fn mix_mono_into(
         &self,
