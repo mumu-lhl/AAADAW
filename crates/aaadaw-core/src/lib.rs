@@ -8,10 +8,14 @@ mod action;
 mod error;
 mod midi;
 mod project;
+mod timebase;
 mod track;
 
 pub use action::DawAction;
 pub use error::ActionError;
 pub use midi::{ItemId, MidiItem, MidiNote, MidiNoteData, NoteId};
 pub use project::Project;
+pub use timebase::{
+    DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, ProjectSettings, TimebaseError,
+};
 pub use track::{Track, TrackId};

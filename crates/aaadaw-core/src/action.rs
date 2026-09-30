@@ -5,6 +5,8 @@ use crate::{ItemId, MidiNoteData, NoteId, TrackId};
 pub enum DawAction {
     /// Create a track at `index` in the project's ordered track list.
     CreateTrack { index: usize, name: String },
+    /// Set or insert a tempo point at the given project tick.
+    SetTempo { start_tick: u64, bpm: f64 },
     /// Set a track's volume in decibels.
     SetTrackVolume { track_id: TrackId, volume_db: f32 },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.

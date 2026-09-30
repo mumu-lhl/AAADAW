@@ -10,6 +10,10 @@ pub enum ActionError {
     TrackNotFound { track_id: TrackId },
     /// A track volume must be a finite decibel value.
     InvalidVolumeDb,
+    /// A tempo must be finite and greater than zero.
+    InvalidTempoBpm,
+    /// The resulting tempo map cannot be represented in sample positions.
+    TempoMapOutOfRange,
     /// A MIDI item must have a positive length.
     InvalidMidiItemLength,
     /// The requested MIDI item does not exist in the project.
@@ -39,6 +43,12 @@ impl fmt::Display for ActionError {
                 write!(formatter, "track {} does not exist", track_id.value())
             }
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
+            Self::InvalidTempoBpm => {
+                formatter.write_str("tempo must be finite and greater than zero")
+            }
+            Self::TempoMapOutOfRange => {
+                formatter.write_str("tempo map exceeds the sample position range")
+            }
             Self::InvalidMidiItemLength => formatter.write_str("MIDI item length must be positive"),
             Self::MidiItemNotFound { item_id } => {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())

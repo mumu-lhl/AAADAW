@@ -1,4 +1,8 @@
-use crate::{ActionError, DawAction, ItemId, MidiItem, MidiNote, NoteId, Track, TrackId};
+use crate::timebase::TempoMap;
+use crate::{
+    ActionError, DawAction, ItemId, MidiItem, MidiNote, NoteId, ProjectSettings, TimebaseError,
+    Track, TrackId,
+};
 use std::sync::Arc;
 
 /// Mutable project state. All changes are made through [`DawAction`]s.
@@ -14,6 +18,7 @@ pub struct Project {
 struct ProjectState {
     tracks: Vec<Track>,
     midi_items: Vec<MidiItem>,
+    tempo_map: TempoMap,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -58,6 +63,11 @@ enum ProjectEvent {
         track_id: TrackId,
         from: usize,
         to: usize,
+    },
+    TempoChanged {
+        start_tick: u64,
+        before: Option<f64>,
+        after: Option<f64>,
     },
     MidiItemInserted {
         index: usize,
@@ -139,6 +149,15 @@ impl ProjectEvent {
                 from: *to,
                 to: *from,
             },
+            Self::TempoChanged {
+                start_tick,
+                before,
+                after,
+            } => Self::TempoChanged {
+                start_tick: *start_tick,
+                before: *after,
+                after: *before,
+            },
             Self::MidiItemInserted { index, item } => Self::MidiItemRemoved {
                 index: *index,
                 item: item.clone(),
@@ -164,9 +183,40 @@ impl ProjectEvent {
 }
 
 impl Project {
-    /// Creates an empty project.
+    /// Creates an empty project with 48 kHz, 960 PPQ and 120 BPM defaults.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_settings(ProjectSettings::default())
+    }
+
+    /// Creates an empty project with explicit timebase settings.
+    pub fn with_settings(settings: ProjectSettings) -> Self {
+        Self {
+            state: ProjectState {
+                tempo_map: TempoMap::new(settings),
+                ..ProjectState::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Returns the project's immutable sample-rate and PPQ settings.
+    pub fn settings(&self) -> ProjectSettings {
+        self.state.tempo_map.settings()
+    }
+
+    /// Converts a PPQ tick position to the nearest sample index.
+    pub fn sample_at_tick(&self, tick: u64) -> Result<u64, TimebaseError> {
+        self.state.tempo_map.sample_at_tick(tick)
+    }
+
+    /// Converts a sample index to the nearest PPQ tick position.
+    pub fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
+        self.state.tempo_map.tick_at_sample(sample)
+    }
+
+    /// Returns the tempo active at a PPQ tick position.
+    pub fn tempo_at_tick(&self, tick: u64) -> f64 {
+        self.state.tempo_map.tempo_at_tick(tick)
     }
 
     /// Applies an action atomically and records it as one undoable history entry.
@@ -261,6 +311,23 @@ impl Project {
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
+            }
+            DawAction::SetTempo { start_tick, bpm } => {
+                if !bpm.is_finite() || bpm <= 0.0 {
+                    return Err(ActionError::InvalidTempoBpm);
+                }
+                let mut candidate_map = state.tempo_map.clone();
+                candidate_map
+                    .set_point(start_tick, Some(bpm))
+                    .map_err(|error| match error {
+                        TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
+                        _ => ActionError::TempoMapOutOfRange,
+                    })?;
+                ProjectEvent::TempoChanged {
+                    start_tick,
+                    before: state.tempo_map.point_at(start_tick),
+                    after: Some(bpm),
+                }
             }
             DawAction::SetTrackVolume {
                 track_id,
@@ -538,6 +605,19 @@ impl Project {
                 }
                 let track = state.tracks.remove(*from);
                 state.tracks.insert(*to, track);
+            }
+            ProjectEvent::TempoChanged {
+                start_tick,
+                before,
+                after,
+            } => {
+                if state.tempo_map.point_at(*start_tick) != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_point(*start_tick, *after)
+                    .map_err(|_| ActionError::HistoryInvariantViolation)?;
             }
             ProjectEvent::MidiItemInserted { index, item } => {
                 if *index > state.midi_items.len()
