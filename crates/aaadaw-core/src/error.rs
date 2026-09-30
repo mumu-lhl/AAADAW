@@ -14,6 +14,12 @@ pub enum ActionError {
     InvalidTempoBpm,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
+    /// The time signature is invalid or cannot be represented at this PPQ.
+    InvalidTimeSignature,
+    /// A time-signature change must occur on a bar line.
+    MeterChangeNotOnBarBoundary,
+    /// The resulting measure numbering exceeds its supported range.
+    MeterMapOutOfRange,
     /// A MIDI item must have a positive length.
     InvalidMidiItemLength,
     /// The requested MIDI item does not exist in the project.
@@ -48,6 +54,13 @@ impl fmt::Display for ActionError {
             }
             Self::TempoMapOutOfRange => {
                 formatter.write_str("tempo map exceeds the sample position range")
+            }
+            Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
+            Self::MeterChangeNotOnBarBoundary => {
+                formatter.write_str("meter changes must occur on a bar line")
+            }
+            Self::MeterMapOutOfRange => {
+                formatter.write_str("meter map exceeds the measure number range")
             }
             Self::InvalidMidiItemLength => formatter.write_str("MIDI item length must be positive"),
             Self::MidiItemNotFound { item_id } => {

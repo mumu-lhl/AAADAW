@@ -1,4 +1,4 @@
-use crate::{ItemId, MidiNoteData, NoteId, TrackId};
+use crate::{ItemId, MidiNoteData, NoteId, TimeSignature, TrackId};
 
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
@@ -7,6 +7,11 @@ pub enum DawAction {
     CreateTrack { index: usize, name: String },
     /// Set or insert a tempo point at the given project tick.
     SetTempo { start_tick: u64, bpm: f64 },
+    /// Set or insert a time signature at the given project tick.
+    SetTimeSignature {
+        start_tick: u64,
+        signature: TimeSignature,
+    },
     /// Set a track's volume in decibels.
     SetTrackVolume { track_id: TrackId, volume_db: f32 },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.

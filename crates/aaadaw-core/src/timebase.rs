@@ -75,6 +75,16 @@ pub enum TimebaseError {
     CannotRemoveInitialTempo,
     /// A tempo point expected to exist is missing.
     TempoPointNotFound,
+    /// Time signature numerator/denominator is invalid or unrepresentable.
+    InvalidTimeSignature,
+    /// A meter change is not aligned to the prior meter's bar line.
+    MeterChangeNotOnBarBoundary,
+    /// The initial meter point at tick zero cannot be removed.
+    CannotRemoveInitialMeter,
+    /// A meter point expected to exist is missing.
+    MeterPointNotFound,
+    /// The measure number cannot be represented.
+    MusicalPositionOutOfRange,
 }
 
 impl fmt::Display for TimebaseError {
@@ -88,11 +98,210 @@ impl fmt::Display for TimebaseError {
                 formatter.write_str("the initial tempo point cannot be removed")
             }
             Self::TempoPointNotFound => formatter.write_str("tempo point does not exist"),
+            Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
+            Self::MeterChangeNotOnBarBoundary => {
+                formatter.write_str("meter changes must align with a bar line")
+            }
+            Self::CannotRemoveInitialMeter => {
+                formatter.write_str("the initial meter point cannot be removed")
+            }
+            Self::MeterPointNotFound => formatter.write_str("meter point does not exist"),
+            Self::MusicalPositionOutOfRange => {
+                formatter.write_str("musical measure position is out of range")
+            }
         }
     }
 }
 
 impl std::error::Error for TimebaseError {}
+
+/// A musical meter such as 4/4 or 7/8.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimeSignature {
+    numerator: u32,
+    denominator: u32,
+}
+
+impl TimeSignature {
+    /// Creates a meter with a positive numerator and power-of-two denominator.
+    pub fn new(numerator: u32, denominator: u32) -> Result<Self, TimebaseError> {
+        if numerator == 0 || !denominator.is_power_of_two() {
+            return Err(TimebaseError::InvalidTimeSignature);
+        }
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+
+    /// Returns the number of beats in each measure.
+    pub fn numerator(self) -> u32 {
+        self.numerator
+    }
+
+    /// Returns the note value that receives one beat.
+    pub fn denominator(self) -> u32 {
+        self.denominator
+    }
+
+    fn ticks_per_beat(self, ppq: u32) -> Result<u64, TimebaseError> {
+        let quarter_note_ticks = u64::from(ppq) * 4;
+        let denominator = u64::from(self.denominator);
+        if quarter_note_ticks % denominator != 0 {
+            return Err(TimebaseError::InvalidTimeSignature);
+        }
+        Ok(quarter_note_ticks / denominator)
+    }
+
+    fn ticks_per_measure(self, ppq: u32) -> Result<u64, TimebaseError> {
+        self.ticks_per_beat(ppq)?
+            .checked_mul(u64::from(self.numerator))
+            .ok_or(TimebaseError::MusicalPositionOutOfRange)
+    }
+}
+
+/// A one-based bar/beat position and zero-based tick offset within the beat.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicalPosition {
+    measure: u64,
+    beat: u32,
+    tick_in_beat: u64,
+}
+
+impl MusicalPosition {
+    /// Returns the one-based measure number.
+    pub fn measure(self) -> u64 {
+        self.measure
+    }
+
+    /// Returns the one-based beat number within the measure.
+    pub fn beat(self) -> u32 {
+        self.beat
+    }
+
+    /// Returns the tick offset within the beat.
+    pub fn tick_in_beat(self) -> u64 {
+        self.tick_in_beat
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MeterPoint {
+    start_tick: u64,
+    signature: TimeSignature,
+    start_measure: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MeterMap {
+    ppq: u32,
+    points: Vec<MeterPoint>,
+}
+
+impl Default for MeterMap {
+    fn default() -> Self {
+        Self::new(DEFAULT_PPQ)
+    }
+}
+
+impl MeterMap {
+    pub(crate) fn new(ppq: u32) -> Self {
+        Self {
+            ppq,
+            points: vec![MeterPoint {
+                start_tick: 0,
+                signature: TimeSignature {
+                    numerator: 4,
+                    denominator: 4,
+                },
+                start_measure: 0,
+            }],
+        }
+    }
+
+    pub(crate) fn point_at(&self, start_tick: u64) -> Option<TimeSignature> {
+        self.points
+            .binary_search_by_key(&start_tick, |point| point.start_tick)
+            .ok()
+            .map(|index| self.points[index].signature)
+    }
+
+    pub(crate) fn set_point(
+        &mut self,
+        start_tick: u64,
+        signature: Option<TimeSignature>,
+    ) -> Result<(), TimebaseError> {
+        if let Some(signature) = signature {
+            signature.ticks_per_measure(self.ppq)?;
+        }
+        if start_tick == 0 && signature.is_none() {
+            return Err(TimebaseError::CannotRemoveInitialMeter);
+        }
+
+        let mut points = self.points.clone();
+        match (
+            points.binary_search_by_key(&start_tick, |point| point.start_tick),
+            signature,
+        ) {
+            (Ok(index), Some(signature)) => points[index].signature = signature,
+            (Ok(index), None) => {
+                points.remove(index);
+            }
+            (Err(index), Some(signature)) => points.insert(
+                index,
+                MeterPoint {
+                    start_tick,
+                    signature,
+                    start_measure: 0,
+                },
+            ),
+            (Err(_), None) => return Err(TimebaseError::MeterPointNotFound),
+        }
+        Self::recalculate_measures(&mut points, self.ppq)?;
+        self.points = points;
+        Ok(())
+    }
+
+    pub(crate) fn position_at_tick(&self, tick: u64) -> Result<MusicalPosition, TimebaseError> {
+        let index = self
+            .points
+            .partition_point(|point| point.start_tick <= tick)
+            - 1;
+        let point = self.points[index];
+        let ticks_per_beat = point.signature.ticks_per_beat(self.ppq)?;
+        let ticks_per_measure = point.signature.ticks_per_measure(self.ppq)?;
+        let offset = tick - point.start_tick;
+        let measure_offset = offset / ticks_per_measure;
+        let measure = point
+            .start_measure
+            .checked_add(measure_offset)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(TimebaseError::MusicalPositionOutOfRange)?;
+        let within_measure = offset % ticks_per_measure;
+        Ok(MusicalPosition {
+            measure,
+            beat: (within_measure / ticks_per_beat + 1) as u32,
+            tick_in_beat: within_measure % ticks_per_beat,
+        })
+    }
+
+    fn recalculate_measures(points: &mut [MeterPoint], ppq: u32) -> Result<(), TimebaseError> {
+        points[0].start_measure = 0;
+        for index in 1..points.len() {
+            let previous = points[index - 1];
+            let ticks_per_measure = previous.signature.ticks_per_measure(ppq)?;
+            let offset = points[index].start_tick - previous.start_tick;
+            if offset % ticks_per_measure != 0 {
+                return Err(TimebaseError::MeterChangeNotOnBarBoundary);
+            }
+            points[index].start_measure = previous
+                .start_measure
+                .checked_add(offset / ticks_per_measure)
+                .ok_or(TimebaseError::MusicalPositionOutOfRange)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TempoPoint {

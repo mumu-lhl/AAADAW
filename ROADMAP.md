@@ -47,7 +47,8 @@
 - [ ] 实现音频 Item、自动化和路由引用领域模型。
 - [x] 实现类型化 `DawAction`、现有操作的输入验证、原子批量事务、撤销/重做和 Action 历史；失败事务不得留下部分状态。
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
-- [ ] 增加拍号变更、BPM 渐变曲线、长时间轴精度验证与时基属性测试。
+- [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
+- [ ] 增加 BPM 渐变曲线、长时间轴精度验证与时基属性测试。
 - [ ] 实现 SQLite schema 与版本迁移，按设计逐步加入 `project_meta`、`tracks`、`items`、`midi_notes`、`automation_envelopes`、`plugins` 和 `audio_assets`。
 - [ ] 实现新建、保存、关闭、重新打开和异常恢复；验证 WAL、ACID 事务、检查点和工程拷贝流程。
 

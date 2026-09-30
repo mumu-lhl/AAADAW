@@ -1,7 +1,7 @@
-use crate::timebase::TempoMap;
+use crate::timebase::{MeterMap, TempoMap};
 use crate::{
-    ActionError, DawAction, ItemId, MidiItem, MidiNote, NoteId, ProjectSettings, TimebaseError,
-    Track, TrackId,
+    ActionError, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId, ProjectSettings,
+    TimeSignature, TimebaseError, Track, TrackId,
 };
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ struct ProjectState {
     tracks: Vec<Track>,
     midi_items: Vec<MidiItem>,
     tempo_map: TempoMap,
+    meter_map: MeterMap,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -68,6 +69,11 @@ enum ProjectEvent {
         start_tick: u64,
         before: Option<f64>,
         after: Option<f64>,
+    },
+    MeterChanged {
+        start_tick: u64,
+        before: Option<TimeSignature>,
+        after: Option<TimeSignature>,
     },
     MidiItemInserted {
         index: usize,
@@ -158,6 +164,15 @@ impl ProjectEvent {
                 before: *after,
                 after: *before,
             },
+            Self::MeterChanged {
+                start_tick,
+                before,
+                after,
+            } => Self::MeterChanged {
+                start_tick: *start_tick,
+                before: *after,
+                after: *before,
+            },
             Self::MidiItemInserted { index, item } => Self::MidiItemRemoved {
                 index: *index,
                 item: item.clone(),
@@ -193,6 +208,7 @@ impl Project {
         Self {
             state: ProjectState {
                 tempo_map: TempoMap::new(settings),
+                meter_map: MeterMap::new(settings.ppq()),
                 ..ProjectState::default()
             },
             ..Self::default()
@@ -217,6 +233,11 @@ impl Project {
     /// Returns the tempo active at a PPQ tick position.
     pub fn tempo_at_tick(&self, tick: u64) -> f64 {
         self.state.tempo_map.tempo_at_tick(tick)
+    }
+
+    /// Converts a tick to a one-based measure/beat and an in-beat tick offset.
+    pub fn musical_position_at_tick(&self, tick: u64) -> Result<MusicalPosition, TimebaseError> {
+        self.state.meter_map.position_at_tick(tick)
     }
 
     /// Applies an action atomically and records it as one undoable history entry.
@@ -327,6 +348,26 @@ impl Project {
                     start_tick,
                     before: state.tempo_map.point_at(start_tick),
                     after: Some(bpm),
+                }
+            }
+            DawAction::SetTimeSignature {
+                start_tick,
+                signature,
+            } => {
+                let mut candidate_map = state.meter_map.clone();
+                candidate_map
+                    .set_point(start_tick, Some(signature))
+                    .map_err(|error| match error {
+                        TimebaseError::InvalidTimeSignature => ActionError::InvalidTimeSignature,
+                        TimebaseError::MeterChangeNotOnBarBoundary => {
+                            ActionError::MeterChangeNotOnBarBoundary
+                        }
+                        _ => ActionError::MeterMapOutOfRange,
+                    })?;
+                ProjectEvent::MeterChanged {
+                    start_tick,
+                    before: state.meter_map.point_at(start_tick),
+                    after: Some(signature),
                 }
             }
             DawAction::SetTrackVolume {
@@ -616,6 +657,19 @@ impl Project {
                 }
                 state
                     .tempo_map
+                    .set_point(*start_tick, *after)
+                    .map_err(|_| ActionError::HistoryInvariantViolation)?;
+            }
+            ProjectEvent::MeterChanged {
+                start_tick,
+                before,
+                after,
+            } => {
+                if state.meter_map.point_at(*start_tick) != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .meter_map
                     .set_point(*start_tick, *after)
                     .map_err(|_| ActionError::HistoryInvariantViolation)?;
             }
