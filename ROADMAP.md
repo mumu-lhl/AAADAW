@@ -49,8 +49,10 @@
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [ ] 增加 BPM 渐变曲线、长时间轴精度验证与时基属性测试。
-- [ ] 实现 SQLite schema 与版本迁移，按设计逐步加入 `project_meta`、`tracks`、`items`、`midi_notes`、`automation_envelopes`、`plugins` 和 `audio_assets`。
-- [ ] 实现新建、保存、关闭、重新打开和异常恢复；验证 WAL、ACID 事务、检查点和工程拷贝流程。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` 初始 schema、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [ ] 扩展 schema 支持自动化、插件状态和音频资产，并按工程规模优化全量快照写入。
+- [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
+- [ ] 验收异常退出、磁盘空间不足、WAL 恢复和关闭后单文件复制/迁移场景。
 
 **退出标准**：领域层可在无 UI/音频设备环境下测试；Action、批量回滚、撤销/重做、时基换算和数据库迁移均有自动化测试；测试工程可保存并重开且语义一致。
 

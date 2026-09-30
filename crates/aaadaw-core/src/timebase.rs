@@ -219,6 +219,12 @@ impl MeterMap {
         }
     }
 
+    pub(crate) fn points(&self) -> impl Iterator<Item = (u64, TimeSignature)> + '_ {
+        self.points
+            .iter()
+            .map(|point| (point.start_tick, point.signature))
+    }
+
     pub(crate) fn point_at(&self, start_tick: u64) -> Option<TimeSignature> {
         self.points
             .binary_search_by_key(&start_tick, |point| point.start_tick)
@@ -336,6 +342,12 @@ impl TempoMap {
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
         }
+    }
+
+    pub(crate) fn points(&self) -> impl Iterator<Item = (u64, f64)> + '_ {
+        self.points
+            .iter()
+            .map(|point| (point.start_tick, point.bpm))
     }
 
     pub(crate) fn point_at(&self, start_tick: u64) -> Option<f64> {

@@ -1,8 +1,13 @@
+use crate::snapshot::{
+    MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot, SnapshotError,
+    TempoPointSnapshot, TrackSnapshot,
+};
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId, ProjectSettings,
     TimeSignature, TimebaseError, Track, TrackId,
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Mutable project state. All changes are made through [`DawAction`]s.
@@ -294,6 +299,183 @@ impl Project {
     /// Returns all MIDI items in project insertion order.
     pub fn midi_items(&self) -> &[MidiItem] {
         &self.state.midi_items
+    }
+
+    /// Creates a serialization-friendly copy of the current project state.
+    pub fn snapshot(&self) -> ProjectSnapshot {
+        ProjectSnapshot {
+            settings: self.state.tempo_map.settings(),
+            tracks: self
+                .state
+                .tracks
+                .iter()
+                .map(|track| TrackSnapshot {
+                    id: track.id.value(),
+                    name: track.name.clone(),
+                    volume_db: track.volume_db,
+                    pan: track.pan,
+                })
+                .collect(),
+            midi_items: self
+                .state
+                .midi_items
+                .iter()
+                .map(|item| MidiItemSnapshot {
+                    id: item.id.value(),
+                    track_id: item.track_id.value(),
+                    start_tick: item.start_tick,
+                    length_ticks: item.length_ticks,
+                    notes: item
+                        .notes
+                        .iter()
+                        .map(|note| MidiNoteSnapshot {
+                            id: note.id.value(),
+                            data: note.data,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            tempo_points: self
+                .state
+                .tempo_map
+                .points()
+                .map(|(start_tick, bpm)| TempoPointSnapshot { start_tick, bpm })
+                .collect(),
+            meter_points: self
+                .state
+                .meter_map
+                .points()
+                .map(|(start_tick, signature)| MeterPointSnapshot {
+                    start_tick,
+                    numerator: signature.numerator(),
+                    denominator: signature.denominator(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Restores project state from a validated snapshot with a fresh undo history.
+    pub fn from_snapshot(snapshot: ProjectSnapshot) -> Result<Self, SnapshotError> {
+        let settings = snapshot.settings;
+        let mut tempo_map = TempoMap::new(settings);
+        let first_tempo = snapshot
+            .tempo_points
+            .first()
+            .ok_or(SnapshotError::InvalidProjectData)?;
+        if first_tempo.start_tick != 0 || first_tempo.bpm != settings.initial_tempo_bpm() {
+            return Err(SnapshotError::InvalidProjectData);
+        }
+        let mut previous_tick = 0;
+        for point in snapshot.tempo_points.iter().skip(1) {
+            if point.start_tick <= previous_tick {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            tempo_map
+                .set_point(point.start_tick, Some(point.bpm))
+                .map_err(SnapshotError::InvalidTimebase)?;
+            previous_tick = point.start_tick;
+        }
+
+        let mut meter_map = MeterMap::new(settings.ppq());
+        let first_meter = snapshot
+            .meter_points
+            .first()
+            .ok_or(SnapshotError::InvalidProjectData)?;
+        if first_meter.start_tick != 0 || first_meter.numerator != 4 || first_meter.denominator != 4
+        {
+            return Err(SnapshotError::InvalidProjectData);
+        }
+        previous_tick = 0;
+        for point in snapshot.meter_points.iter().skip(1) {
+            if point.start_tick <= previous_tick {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            let signature = TimeSignature::new(point.numerator, point.denominator)
+                .map_err(SnapshotError::InvalidTimebase)?;
+            meter_map
+                .set_point(point.start_tick, Some(signature))
+                .map_err(SnapshotError::InvalidTimebase)?;
+            previous_tick = point.start_tick;
+        }
+
+        let mut track_ids = HashSet::with_capacity(snapshot.tracks.len());
+        let mut tracks = Vec::with_capacity(snapshot.tracks.len());
+        let mut max_track_id = None;
+        for track in snapshot.tracks {
+            if !track_ids.insert(track.id)
+                || !track.volume_db.is_finite()
+                || !track.pan.is_finite()
+                || !(-1.0..=1.0).contains(&track.pan)
+            {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_track_id = Some(max_track_id.map_or(track.id, |max: u64| max.max(track.id)));
+            tracks.push(Track {
+                id: TrackId::from_raw(track.id),
+                name: track.name,
+                volume_db: track.volume_db,
+                pan: track.pan,
+            });
+        }
+
+        let mut item_ids = HashSet::with_capacity(snapshot.midi_items.len());
+        let mut note_ids = HashSet::new();
+        let mut midi_items = Vec::with_capacity(snapshot.midi_items.len());
+        let mut max_item_id = None;
+        let mut max_note_id = None;
+        for item in snapshot.midi_items {
+            if !item_ids.insert(item.id)
+                || !track_ids.contains(&item.track_id)
+                || item.length_ticks == 0
+                || item.start_tick.checked_add(item.length_ticks).is_none()
+            {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_item_id = Some(max_item_id.map_or(item.id, |max: u64| max.max(item.id)));
+            let mut notes = Vec::with_capacity(item.notes.len());
+            for note in item.notes {
+                let data = note.data;
+                if !note_ids.insert(note.id)
+                    || data.pitch > 127
+                    || data.velocity > 127
+                    || data.duration == 0
+                    || data
+                        .tick
+                        .checked_add(data.duration)
+                        .is_none_or(|end| end > item.length_ticks)
+                {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                max_note_id = Some(max_note_id.map_or(note.id, |max: u64| max.max(note.id)));
+                notes.push(MidiNote {
+                    id: NoteId::from_raw(note.id),
+                    data,
+                });
+            }
+            midi_items.push(MidiItem {
+                id: ItemId::from_raw(item.id),
+                track_id: TrackId::from_raw(item.track_id),
+                start_tick: item.start_tick,
+                length_ticks: item.length_ticks,
+                notes: Arc::new(notes),
+            });
+        }
+
+        Ok(Self {
+            state: ProjectState {
+                tracks,
+                midi_items,
+                tempo_map,
+                meter_map,
+            },
+            ids: IdAllocator {
+                next_track_id: next_id(max_track_id)?,
+                next_item_id: next_id(max_item_id)?,
+                next_note_id: next_id(max_note_id)?,
+            },
+            history: Vec::new(),
+            history_cursor: 0,
+        })
     }
 
     fn apply_action(
@@ -742,4 +924,10 @@ impl Project {
         }
         Ok(())
     }
+}
+
+fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {
+    max_id.map_or(Ok(0), |id| {
+        id.checked_add(1).ok_or(SnapshotError::IdentifierExhausted)
+    })
 }

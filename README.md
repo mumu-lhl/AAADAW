@@ -26,3 +26,4 @@ cargo xtest
 ## Workspace
 
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
+- `crates/aaadaw-storage`: `.aaadaw` SQLite persistence through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.

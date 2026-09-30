@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/aaadaw-core"]
+members = ["crates/aaadaw-core", "crates/aaadaw-storage"]
 resolver = "3"
 
 [workspace.package]
