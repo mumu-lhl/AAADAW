@@ -4,11 +4,15 @@
 //! transport, and MIDI scheduling primitives. Device backends and project
 //! AudioItem integration remain separate follow-up work.
 
+#[cfg(feature = "jack-backend")]
+mod jack_output;
 mod midi;
 mod pcm;
 mod stream;
 mod transport;
 
+#[cfg(feature = "jack-backend")]
+pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
@@ -273,6 +277,7 @@ pub struct AudioRenderStats {
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
     midi_plan: MidiEventPlan,
+    sample_rate: u32,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
     scratch: Vec<Vec<f32>>,
@@ -301,10 +306,21 @@ impl AudioRenderGraph {
         Ok(Self {
             mixer,
             midi_plan,
+            sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
             streams,
             scratch,
         })
+    }
+
+    /// Returns the project sample rate used by its tempo map.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Returns the maximum frames accepted by the preallocated callback buffers.
+    pub fn max_block_frames(&self) -> usize {
+        self.mixer.max_block_frames
     }
 
     /// Returns the callback-owned transport for start/stop/seek control.

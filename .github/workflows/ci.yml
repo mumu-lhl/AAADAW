@@ -17,9 +17,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: taiki-e/install-action@nextest
+      - name: Install JACK development headers
+        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check Linux JACK backend
+        run: cargo check --workspace --all-targets --features aaadaw-engine/jack-backend
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests with nextest

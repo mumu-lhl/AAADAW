@@ -4,7 +4,7 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 
 ## Project status
 
-The core project model, SQLite storage, MIDI editing actions, tempo mapping, an allocation-free streaming mixer, transport and MIDI event scheduling primitives, in-memory PCM playback, and packet-based Symphonia decoding are implemented. Device I/O, audio-item integration, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
+The core project model, SQLite storage, MIDI editing actions, tempo mapping, an allocation-free streaming mixer, transport and MIDI event scheduling primitives, in-memory PCM playback, and packet-based Symphonia decoding are implemented. An optional Linux JACK stereo-output backend is available; audio-item integration, native PipeWire/WASAPI output, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [Implementation roadmap](ROADMAP.md)
@@ -27,5 +27,7 @@ cargo xtest
 
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite persistence through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
-- `crates/aaadaw-engine`: fixed-topology streaming mixer, transport, MIDI event scheduler, PCM playback, and SPSC queue; device integration is not yet implemented.
+- `crates/aaadaw-engine`: fixed-topology streaming mixer, transport, MIDI event scheduler, PCM playback, and SPSC queue; optional `jack-backend` feature adds Linux JACK output.
+
+To build the JACK backend on Debian/Ubuntu, install `libjack-jackd2-dev` and run `cargo check --workspace --all-targets --features aaadaw-engine/jack-backend`. Opening a live client also requires a running JACK server; route its stereo output ports to hardware with a JACK patchbay. The current backend provides audio output and queued play/stop controls, not MIDI-device output or seeking.
 - `crates/aaadaw-media`: packet-based Symphonia decoding for background media import; decoded chunks are owned and must stay off the audio callback.

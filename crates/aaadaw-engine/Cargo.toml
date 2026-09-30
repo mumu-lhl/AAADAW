@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+jack-backend = ["dep:jack"]
+
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
+jack = { version = "0.13.5", optional = true }
 rtrb = "0.4.0"
