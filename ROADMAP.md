@@ -1,6 +1,6 @@
 # AAADAW 实现路线图
 
-> 本路线图以 [`docs/design/AAADAW_System_Architecture_Design.md`](docs/design/AAADAW_System_Architecture_Design.md) 为依据，将目标架构拆解为可逐步交付、可验证的里程碑。当前仓库尚无实现代码，因此所有事项均从未开始；本路线图不承诺日历日期，按依赖关系与退出标准推进。
+> 本路线图以 [`docs/design/AAADAW_System_Architecture_Design.md`](docs/design/AAADAW_System_Architecture_Design.md) 为依据，将目标架构拆解为可逐步交付、可验证的里程碑。事项状态以勾选项为准；本路线图不承诺日历日期，按依赖关系与退出标准推进。
 
 ## 推进原则
 
@@ -48,8 +48,9 @@
 - [x] 实现类型化 `DawAction`、现有操作的输入验证、原子批量事务、撤销/重做和 Action 历史；失败事务不得留下部分状态。
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
-- [ ] 增加 BPM 渐变曲线、长时间轴精度验证与时基属性测试。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` 初始 schema、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
+- [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1/v2、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [ ] 扩展 schema 支持自动化、插件状态和音频资产，并按工程规模优化全量快照写入。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [ ] 验收异常退出、磁盘空间不足、WAL 恢复和关闭后单文件复制/迁移场景。

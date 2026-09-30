@@ -14,6 +14,8 @@ pub enum ActionError {
     InvalidTempoBpm,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
+    /// The requested tempo point does not exist.
+    TempoPointNotFound { start_tick: u64 },
     /// The time signature is invalid or cannot be represented at this PPQ.
     InvalidTimeSignature,
     /// A time-signature change must occur on a bar line.
@@ -58,6 +60,9 @@ impl fmt::Display for ActionError {
             }
             Self::TempoMapOutOfRange => {
                 formatter.write_str("tempo map exceeds the sample position range")
+            }
+            Self::TempoPointNotFound { start_tick } => {
+                write!(formatter, "tempo point at tick {start_tick} does not exist")
             }
             Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
             Self::MeterChangeNotOnBarBoundary => {

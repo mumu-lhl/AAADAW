@@ -22,6 +22,6 @@ pub use snapshot::{
 };
 pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,
-    ProjectSettings, TimeSignature, TimebaseError,
+    ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
 pub use track::{Track, TrackId};

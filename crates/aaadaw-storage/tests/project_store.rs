@@ -60,6 +60,12 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("tempo change should succeed");
     project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .expect("tempo curve change should succeed");
+    project
         .apply(DawAction::SetTimeSignature {
             start_tick: 3840,
             signature: TimeSignature::new(7, 8).expect("7/8 is valid"),

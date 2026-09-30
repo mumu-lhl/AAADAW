@@ -5,7 +5,7 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId, ProjectSettings,
-    TimeSignature, TimebaseError, Track, TrackId,
+    TempoCurve, TimeSignature, TimebaseError, Track, TrackId,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -74,6 +74,11 @@ enum ProjectEvent {
         start_tick: u64,
         before: Option<f64>,
         after: Option<f64>,
+    },
+    TempoCurveChanged {
+        start_tick: u64,
+        before: TempoCurve,
+        after: TempoCurve,
     },
     MeterChanged {
         start_tick: u64,
@@ -169,6 +174,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TempoChanged {
+                start_tick: *start_tick,
+                before: *after,
+                after: *before,
+            },
+            Self::TempoCurveChanged {
+                start_tick,
+                before,
+                after,
+            } => Self::TempoCurveChanged {
                 start_tick: *start_tick,
                 before: *after,
                 after: *before,
@@ -350,7 +364,11 @@ impl Project {
                 .state
                 .tempo_map
                 .points()
-                .map(|(start_tick, bpm)| TempoPointSnapshot { start_tick, bpm })
+                .map(|(start_tick, bpm, curve_to_next)| TempoPointSnapshot {
+                    start_tick,
+                    bpm,
+                    curve_to_next,
+                })
                 .collect(),
             meter_points: self
                 .state
@@ -385,6 +403,11 @@ impl Project {
                 .set_point(point.start_tick, Some(point.bpm))
                 .map_err(SnapshotError::InvalidTimebase)?;
             previous_tick = point.start_tick;
+        }
+        for point in &snapshot.tempo_points {
+            tempo_map
+                .set_curve(point.start_tick, point.curve_to_next)
+                .map_err(SnapshotError::InvalidTimebase)?;
         }
 
         let mut meter_map = MeterMap::new(settings.ppq());
@@ -541,6 +564,21 @@ impl Project {
                     start_tick,
                     before: state.tempo_map.point_at(start_tick),
                     after: Some(bpm),
+                }
+            }
+            DawAction::SetTempoCurve { start_tick, curve } => {
+                let before = state
+                    .tempo_map
+                    .curve_at(start_tick)
+                    .ok_or(ActionError::TempoPointNotFound { start_tick })?;
+                let mut candidate_map = state.tempo_map.clone();
+                candidate_map
+                    .set_curve(start_tick, curve)
+                    .map_err(|_| ActionError::TempoMapOutOfRange)?;
+                ProjectEvent::TempoCurveChanged {
+                    start_tick,
+                    before,
+                    after: curve,
                 }
             }
             DawAction::SetTimeSignature {
@@ -898,6 +936,19 @@ impl Project {
                 state
                     .tempo_map
                     .set_point(*start_tick, *after)
+                    .map_err(|_| ActionError::HistoryInvariantViolation)?;
+            }
+            ProjectEvent::TempoCurveChanged {
+                start_tick,
+                before,
+                after,
+            } => {
+                if state.tempo_map.curve_at(*start_tick) != Some(*before) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_curve(*start_tick, *after)
                     .map_err(|_| ActionError::HistoryInvariantViolation)?;
             }
             ProjectEvent::MeterChanged {

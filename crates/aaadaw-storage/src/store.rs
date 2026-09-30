@@ -1,6 +1,6 @@
 use aaadaw_core::{
     MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot, Project, ProjectSettings,
-    ProjectSnapshot, SnapshotError, TempoPointSnapshot, TrackSnapshot,
+    ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot, TrackSnapshot,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -63,6 +63,11 @@ CREATE TABLE meter_points (
     numerator INTEGER NOT NULL CHECK (numerator > 0),
     denominator INTEGER NOT NULL CHECK (denominator > 0)
 );
+"#;
+
+const MIGRATION_2: &str = r#"
+ALTER TABLE tempo_points
+ADD COLUMN curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 1));
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -288,6 +293,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
         match next_version {
             1 => transaction.execute_batch(MIGRATION_1)?,
+            2 => transaction.execute_batch(MIGRATION_2)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -363,8 +369,12 @@ fn write_snapshot(
 
     for point in &snapshot.tempo_points {
         transaction.execute(
-            "INSERT INTO tempo_points(start_tick, bpm) VALUES(?1, ?2)",
-            params![to_sql_integer(point.start_tick)?, point.bpm],
+            "INSERT INTO tempo_points(start_tick, bpm, curve_to_next) VALUES(?1, ?2, ?3)",
+            params![
+                to_sql_integer(point.start_tick)?,
+                point.bpm,
+                tempo_curve_to_sql(point.curve_to_next)
+            ],
         )?;
     }
     for point in &snapshot.meter_points {
@@ -476,16 +486,23 @@ fn read_items_and_notes(
 }
 
 fn read_tempo_points(connection: &Connection) -> Result<Vec<TempoPointSnapshot>, StorageError> {
-    let mut statement =
-        connection.prepare("SELECT start_tick, bpm FROM tempo_points ORDER BY start_tick")?;
+    let mut statement = connection
+        .prepare("SELECT start_tick, bpm, curve_to_next FROM tempo_points ORDER BY start_tick")?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)))?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(start_tick, bpm)| {
+        .map(|(start_tick, bpm, curve)| {
             Ok(TempoPointSnapshot {
                 start_tick: from_sql_u64(start_tick)?,
                 bpm,
+                curve_to_next: tempo_curve_from_sql(curve)?,
             })
         })
         .collect()
@@ -513,6 +530,21 @@ fn read_meter_points(connection: &Connection) -> Result<Vec<MeterPointSnapshot>,
             })
         })
         .collect()
+}
+
+fn tempo_curve_to_sql(curve: TempoCurve) -> i64 {
+    match curve {
+        TempoCurve::Step => 0,
+        TempoCurve::Linear => 1,
+    }
+}
+
+fn tempo_curve_from_sql(value: i64) -> Result<TempoCurve, StorageError> {
+    match value {
+        0 => Ok(TempoCurve::Step),
+        1 => Ok(TempoCurve::Linear),
+        _ => Err(StorageError::InvalidStoredData("unknown tempo curve")),
+    }
 }
 
 fn to_sql_integer(value: u64) -> Result<i64, StorageError> {

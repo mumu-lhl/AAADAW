@@ -344,10 +344,21 @@ impl MeterMap {
     }
 }
 
+/// The interpolation mode from one tempo point to the next.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TempoCurve {
+    /// Hold the tempo until the next point.
+    #[default]
+    Step,
+    /// Change BPM linearly over the interval to the next point.
+    Linear,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TempoPoint {
     start_tick: u64,
     bpm: f64,
+    curve_to_next: TempoCurve,
     start_sample: f64,
 }
 
@@ -366,6 +377,7 @@ impl TempoMap {
             points: vec![TempoPoint {
                 start_tick: 0,
                 bpm: settings.initial_tempo_bpm,
+                curve_to_next: TempoCurve::Step,
                 start_sample: 0.0,
             }],
         }
@@ -379,10 +391,10 @@ impl TempoMap {
         }
     }
 
-    pub(crate) fn points(&self) -> impl Iterator<Item = (u64, f64)> + '_ {
+    pub(crate) fn points(&self) -> impl Iterator<Item = (u64, f64, TempoCurve)> + '_ {
         self.points
             .iter()
-            .map(|point| (point.start_tick, point.bpm))
+            .map(|point| (point.start_tick, point.bpm, point.curve_to_next))
     }
 
     pub(crate) fn point_at(&self, start_tick: u64) -> Option<f64> {
@@ -390,6 +402,13 @@ impl TempoMap {
             .binary_search_by_key(&start_tick, |point| point.start_tick)
             .ok()
             .map(|index| self.points[index].bpm)
+    }
+
+    pub(crate) fn curve_at(&self, start_tick: u64) -> Option<TempoCurve> {
+        self.points
+            .binary_search_by_key(&start_tick, |point| point.start_tick)
+            .ok()
+            .map(|index| self.points[index].curve_to_next)
     }
 
     pub(crate) fn set_point(
@@ -418,6 +437,7 @@ impl TempoMap {
                 TempoPoint {
                     start_tick,
                     bpm,
+                    curve_to_next: TempoCurve::Step,
                     start_sample: 0.0,
                 },
             ),
@@ -428,12 +448,36 @@ impl TempoMap {
         Ok(())
     }
 
+    pub(crate) fn set_curve(
+        &mut self,
+        start_tick: u64,
+        curve: TempoCurve,
+    ) -> Result<(), TimebaseError> {
+        let mut points = self.points.clone();
+        let index = points
+            .binary_search_by_key(&start_tick, |point| point.start_tick)
+            .map_err(|_| TimebaseError::TempoPointNotFound)?;
+        points[index].curve_to_next = curve;
+        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq)?;
+        self.points = points;
+        Ok(())
+    }
+
     pub(crate) fn tempo_at_tick(&self, tick: u64) -> f64 {
         let index = self
             .points
             .partition_point(|point| point.start_tick <= tick)
             - 1;
-        self.points[index].bpm
+        let point = self.points[index];
+        let Some(next) = self.points.get(index + 1) else {
+            return point.bpm;
+        };
+        if point.curve_to_next == TempoCurve::Step {
+            return point.bpm;
+        }
+        let progress =
+            (tick - point.start_tick) as f64 / (next.start_tick - point.start_tick) as f64;
+        point.bpm + (next.bpm - point.bpm) * progress
     }
 
     pub(crate) fn sample_at_tick(&self, tick: u64) -> Result<u64, TimebaseError> {
@@ -442,9 +486,24 @@ impl TempoMap {
             .partition_point(|point| point.start_tick <= tick)
             - 1;
         let point = self.points[index];
-        let samples = point.start_sample
-            + (tick - point.start_tick) as f64 * self.samples_per_tick(point.bpm);
-        rounded_position(samples)
+        let (end_tick, end_bpm, curve) = self
+            .points
+            .get(index + 1)
+            .map_or((tick, point.bpm, TempoCurve::Step), |next| {
+                (next.start_tick, next.bpm, point.curve_to_next)
+            });
+        let offset = tick - point.start_tick;
+        let segment_length = end_tick - point.start_tick;
+        let elapsed = segment_sample_offset(
+            self.sample_rate,
+            self.ppq,
+            point.bpm,
+            end_bpm,
+            curve,
+            segment_length,
+            offset,
+        )?;
+        rounded_position(point.start_sample + elapsed)
     }
 
     pub(crate) fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
@@ -454,17 +513,33 @@ impl TempoMap {
             .partition_point(|point| point.start_sample <= sample)
             - 1;
         let point = self.points[index];
-        let ticks = point.start_tick as f64
-            + (sample - point.start_sample) / self.samples_per_tick(point.bpm);
-        let mut tick = rounded_position(ticks)?;
-        if let Some(next_point) = self.points.get(index + 1) {
-            tick = tick.min(next_point.start_tick);
-        }
-        Ok(tick)
-    }
-
-    fn samples_per_tick(&self, bpm: f64) -> f64 {
-        f64::from(self.sample_rate) * 60.0 / (bpm * f64::from(self.ppq))
+        let next = self.points.get(index + 1);
+        let offset = if let Some(next) = next {
+            let segment_length = next.start_tick - point.start_tick;
+            ticks_from_sample_offset(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                next.bpm,
+                point.curve_to_next,
+                segment_length,
+                sample - point.start_sample,
+            )?
+            .min(segment_length as f64)
+        } else {
+            sample_offset_to_ticks(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                sample - point.start_sample,
+            )?
+        };
+        let offset = rounded_position(offset)?;
+        let tick = point
+            .start_tick
+            .checked_add(offset)
+            .ok_or(TimebaseError::PositionOutOfRange)?;
+        Ok(next.map_or(tick, |next| tick.min(next.start_tick)))
     }
 
     fn recalculate_sample_anchors(
@@ -475,9 +550,18 @@ impl TempoMap {
         points[0].start_sample = 0.0;
         for index in 1..points.len() {
             let previous = points[index - 1];
-            let samples_per_tick = f64::from(sample_rate) * 60.0 / (previous.bpm * f64::from(ppq));
-            let start_sample = previous.start_sample
-                + (points[index].start_tick - previous.start_tick) as f64 * samples_per_tick;
+            let next = points[index];
+            let length = next.start_tick - previous.start_tick;
+            let duration = segment_sample_offset(
+                sample_rate,
+                ppq,
+                previous.bpm,
+                next.bpm,
+                previous.curve_to_next,
+                length,
+                length,
+            )?;
+            let start_sample = previous.start_sample + duration;
             if !start_sample.is_finite()
                 || start_sample <= previous.start_sample
                 || start_sample >= u64::MAX as f64
@@ -488,6 +572,72 @@ impl TempoMap {
         }
         Ok(())
     }
+}
+
+fn segment_sample_offset(
+    sample_rate: u32,
+    ppq: u32,
+    start_bpm: f64,
+    end_bpm: f64,
+    curve: TempoCurve,
+    segment_length: u64,
+    offset_ticks: u64,
+) -> Result<f64, TimebaseError> {
+    if offset_ticks > segment_length {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
+    let delta_bpm = end_bpm - start_bpm;
+    let samples = if curve == TempoCurve::Linear && segment_length > 0 && delta_bpm != 0.0 {
+        let progress = offset_ticks as f64 / segment_length as f64;
+        let log_argument = delta_bpm * progress / start_bpm;
+        if log_argument <= -1.0 {
+            return Err(TimebaseError::InvalidTempo);
+        }
+        scale * segment_length as f64 / delta_bpm * log_argument.ln_1p()
+    } else {
+        scale * offset_ticks as f64 / start_bpm
+    };
+    if !samples.is_finite() || samples < 0.0 {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(samples)
+}
+
+fn sample_offset_to_ticks(
+    sample_rate: u32,
+    ppq: u32,
+    bpm: f64,
+    sample_offset: f64,
+) -> Result<f64, TimebaseError> {
+    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
+    let ticks = sample_offset * bpm / scale;
+    if !ticks.is_finite() || ticks < 0.0 {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(ticks)
+}
+
+fn ticks_from_sample_offset(
+    sample_rate: u32,
+    ppq: u32,
+    start_bpm: f64,
+    end_bpm: f64,
+    curve: TempoCurve,
+    segment_length: u64,
+    sample_offset: f64,
+) -> Result<f64, TimebaseError> {
+    if curve == TempoCurve::Step || segment_length == 0 || start_bpm == end_bpm {
+        return sample_offset_to_ticks(sample_rate, ppq, start_bpm, sample_offset);
+    }
+    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
+    let slope = (end_bpm - start_bpm) / segment_length as f64;
+    let exponent = slope * sample_offset / scale;
+    let ticks = start_bpm * exponent.exp_m1() / slope;
+    if !ticks.is_finite() || ticks < 0.0 {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(ticks)
 }
 
 impl Default for TempoMap {

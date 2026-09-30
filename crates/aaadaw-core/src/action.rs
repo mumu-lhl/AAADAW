@@ -1,4 +1,4 @@
-use crate::{GridFraction, ItemId, MidiNoteData, NoteId, TimeSignature, TrackId};
+use crate::{GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackId};
 
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
@@ -7,6 +7,8 @@ pub enum DawAction {
     CreateTrack { index: usize, name: String },
     /// Set or insert a tempo point at the given project tick.
     SetTempo { start_tick: u64, bpm: f64 },
+    /// Set the interpolation curve from one tempo point to the next.
+    SetTempoCurve { start_tick: u64, curve: TempoCurve },
     /// Set or insert a time signature at the given project tick.
     SetTimeSignature {
         start_tick: u64,
