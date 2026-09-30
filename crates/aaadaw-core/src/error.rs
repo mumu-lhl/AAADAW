@@ -26,6 +26,10 @@ pub enum ActionError {
     MidiItemNotFound { item_id: ItemId },
     /// A MIDI note must have a valid pitch, velocity, and in-item duration.
     InvalidMidiNote,
+    /// Quantize strength must be finite and in `0.0..=1.0`.
+    InvalidQuantizeStrength,
+    /// The quantization grid cannot be represented at the project's PPQ.
+    InvalidQuantizeGrid,
     /// The project has exhausted its available MIDI item identifiers.
     ItemIdExhausted,
     /// The project has exhausted its available MIDI note identifiers.
@@ -67,6 +71,12 @@ impl fmt::Display for ActionError {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
             }
             Self::InvalidMidiNote => formatter.write_str("MIDI note data is invalid"),
+            Self::InvalidQuantizeStrength => {
+                formatter.write_str("quantize strength must be finite and in 0..=1")
+            }
+            Self::InvalidQuantizeGrid => {
+                formatter.write_str("quantization grid is invalid at the project PPQ")
+            }
             Self::ItemIdExhausted => formatter.write_str("MIDI item identifiers are exhausted"),
             Self::NoteIdExhausted => formatter.write_str("MIDI note identifiers are exhausted"),
             Self::InvalidPan => formatter.write_str("track pan must be finite and in -1..=1"),

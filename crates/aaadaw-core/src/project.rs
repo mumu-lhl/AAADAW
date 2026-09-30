@@ -96,6 +96,10 @@ enum ProjectEvent {
         item_id: ItemId,
         notes: Vec<(usize, MidiNote)>,
     },
+    MidiNotesQuantized {
+        item_id: ItemId,
+        changes: Vec<(NoteId, u64, u64)>,
+    },
     Transaction {
         tx_id: u64,
         events: Vec<ProjectEvent>,
@@ -193,6 +197,13 @@ impl ProjectEvent {
             Self::MidiNotesRemoved { item_id, notes } => Self::MidiNotesAdded {
                 item_id: *item_id,
                 notes: notes.clone(),
+            },
+            Self::MidiNotesQuantized { item_id, changes } => Self::MidiNotesQuantized {
+                item_id: *item_id,
+                changes: changes
+                    .iter()
+                    .map(|(note_id, before, after)| (*note_id, *after, *before))
+                    .collect(),
             },
             Self::Transaction { tx_id, events } => Self::Transaction {
                 tx_id: *tx_id,
@@ -623,7 +634,7 @@ impl Project {
                 if !state.tracks.iter().any(|track| track.id == track_id) {
                     return Err(ActionError::TrackNotFound { track_id });
                 }
-                if length_ticks == 0 {
+                if length_ticks == 0 || start_tick.checked_add(length_ticks).is_none() {
                     return Err(ActionError::InvalidMidiItemLength);
                 }
                 let next_id = ids
@@ -707,6 +718,53 @@ impl Project {
                     item_id,
                     notes: selected,
                 }
+            }
+            DawAction::QuantizeItem {
+                item_id,
+                grid,
+                strength,
+            } => {
+                if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
+                    return Err(ActionError::InvalidQuantizeStrength);
+                }
+                let grid_ticks = grid
+                    .ticks(state.tempo_map.settings().ppq())
+                    .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let mut changes = Vec::new();
+                for note in item.notes.iter() {
+                    let absolute_tick = item
+                        .start_tick
+                        .checked_add(note.data.tick)
+                        .ok_or(ActionError::InvalidMidiNote)?;
+                    let lower = absolute_tick / grid_ticks * grid_ticks;
+                    let remainder = absolute_tick - lower;
+                    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
+                    let nearest = if remainder >= round_up_threshold {
+                        lower.checked_add(grid_ticks).unwrap_or(lower)
+                    } else {
+                        lower
+                    };
+                    let distance = nearest as i128 - absolute_tick as i128;
+                    let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
+                    let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
+                        .map_err(|_| ActionError::InvalidMidiNote)?;
+                    let tick = quantized_absolute.saturating_sub(item.start_tick);
+                    if tick
+                        .checked_add(note.data.duration)
+                        .is_none_or(|end| end > item.length_ticks)
+                    {
+                        return Err(ActionError::InvalidMidiNote);
+                    }
+                    if tick != note.data.tick {
+                        changes.push((note.id, note.data.tick, tick));
+                    }
+                }
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
             DawAction::DeleteTrack { track_id } => {
                 let index = state
@@ -901,6 +959,29 @@ impl Project {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
                     current_notes.remove(*index);
+                }
+            }
+            ProjectEvent::MidiNotesQuantized { item_id, changes } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let length_ticks = item.length_ticks;
+                let current_notes = Arc::make_mut(&mut item.notes);
+                for (note_id, before, after) in changes {
+                    let note = current_notes
+                        .iter_mut()
+                        .find(|note| note.id == *note_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if note.data.tick != *before
+                        || after
+                            .checked_add(note.data.duration)
+                            .is_none_or(|end| end > length_ticks)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    note.data.tick = *after;
                 }
             }
             ProjectEvent::Transaction { events, .. } => {

@@ -77,6 +77,8 @@ pub enum TimebaseError {
     TempoPointNotFound,
     /// Time signature numerator/denominator is invalid or unrepresentable.
     InvalidTimeSignature,
+    /// A musical grid does not map to a positive integral number of ticks.
+    InvalidGrid,
     /// A meter change is not aligned to the prior meter's bar line.
     MeterChangeNotOnBarBoundary,
     /// The initial meter point at tick zero cannot be removed.
@@ -99,6 +101,7 @@ impl fmt::Display for TimebaseError {
             }
             Self::TempoPointNotFound => formatter.write_str("tempo point does not exist"),
             Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
+            Self::InvalidGrid => formatter.write_str("grid does not map to a positive tick count"),
             Self::MeterChangeNotOnBarBoundary => {
                 formatter.write_str("meter changes must align with a bar line")
             }
@@ -114,6 +117,38 @@ impl fmt::Display for TimebaseError {
 }
 
 impl std::error::Error for TimebaseError {}
+
+/// A musical quantization grid expressed as a fraction of a whole note.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GridFraction {
+    numerator: u32,
+    denominator: u32,
+}
+
+impl GridFraction {
+    /// Creates a positive musical grid fraction, such as `1/16`.
+    pub fn new(numerator: u32, denominator: u32) -> Result<Self, TimebaseError> {
+        if numerator == 0 || denominator == 0 {
+            return Err(TimebaseError::InvalidGrid);
+        }
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+
+    pub(crate) fn ticks(self, ppq: u32) -> Result<u64, TimebaseError> {
+        let numerator = u64::from(ppq)
+            .checked_mul(4)
+            .and_then(|ticks| ticks.checked_mul(u64::from(self.numerator)))
+            .ok_or(TimebaseError::InvalidGrid)?;
+        let denominator = u64::from(self.denominator);
+        if numerator == 0 || numerator % denominator != 0 {
+            return Err(TimebaseError::InvalidGrid);
+        }
+        Ok(numerator / denominator)
+    }
+}
 
 /// A musical meter such as 4/4 or 7/8.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

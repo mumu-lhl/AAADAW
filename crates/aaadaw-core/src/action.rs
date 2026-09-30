@@ -1,4 +1,4 @@
-use crate::{ItemId, MidiNoteData, NoteId, TimeSignature, TrackId};
+use crate::{GridFraction, ItemId, MidiNoteData, NoteId, TimeSignature, TrackId};
 
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +35,12 @@ pub enum DawAction {
     DeleteMidiNotes {
         item_id: ItemId,
         note_ids: Vec<NoteId>,
+    },
+    /// Move note starts toward the nearest musical grid position.
+    QuantizeItem {
+        item_id: ItemId,
+        grid: GridFraction,
+        strength: f32,
     },
     /// Delete a track from the project.
     DeleteTrack { track_id: TrackId },
