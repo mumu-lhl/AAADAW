@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
 use aaadaw_media::{
-    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
+    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_from_reader_at,
     spawn_mono_stream,
 };
 use aaadaw_storage::ProjectStore;
@@ -153,8 +153,9 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
         .expect("item should reference the embedded asset");
     let item = project.audio_items()[0].clone();
     let (producer, consumer) = pcm_stream(4).expect("stream capacity should be positive");
-    spawn_audio_item_stream_from_reader(
+    spawn_audio_item_stream_from_reader_at(
         &item,
+        2,
         reader,
         Some(wav.len() as u64),
         Some("wav"),
@@ -167,10 +168,11 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
 
     let mut graph = AudioRenderGraph::new_for_audio_items(
         &project,
-        vec![AudioItemStream::new(item.id(), consumer)],
+        vec![AudioItemStream::new_at_sample(item.id(), 2, consumer)],
         4,
     )
-    .expect("render graph should bind the stream to the item");
+    .expect("render graph should bind the refilled stream to the item");
+    graph.transport_mut().seek_sample(2);
     graph.transport_mut().start();
     let mut output = [[0.0; 2]; 4];
     let stats = graph
@@ -178,10 +180,10 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
         .expect("embedded item should render");
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
     assert_eq!(stats.underrun_samples, 0);
-    assert_eq!(output[0], [0.0, 0.0]);
+    assert!((output[0][0] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert!((output[0][1] - 0.5 * center_gain).abs() < 1.0e-6);
     assert_eq!(output[1], [0.0, 0.0]);
-    assert!((output[2][0] - 0.5 * center_gain).abs() < 1.0e-6);
-    assert!((output[2][1] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert_eq!(output[2], [0.0, 0.0]);
     assert_eq!(output[3], [0.0, 0.0]);
 
     store.close().expect("project database should close");

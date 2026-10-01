@@ -143,6 +143,45 @@ fn seeking_inside_an_audio_item_requires_a_refilled_source_stream() {
 }
 
 #[test]
+fn refilled_audio_item_stream_can_start_at_a_seek_position() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://clip".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4,
+        })
+        .expect("audio item insertion should succeed");
+    let item_id = project.audio_items()[0].id();
+    let (mut producer, consumer) = pcm_stream(4).expect("positive queue capacity is valid");
+    assert_eq!(producer.push_samples(&[0.25, 0.5]), 2);
+    let stream = AudioItemStream::new_at_sample(item_id, 1, consumer);
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 2)
+        .expect("refilled stream should match its audio item");
+    graph.transport_mut().seek_sample(1);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 2];
+
+    graph
+        .render_into(&mut output)
+        .expect("render should start at the refilled sample");
+
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((output[0][0] - 0.25 * center_gain).abs() < 1.0e-6);
+    assert!((output[1][0] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert_eq!(producer.available_capacity(), 4);
+}
+
+#[test]
 fn graph_rejects_mismatched_topology_and_oversized_blocks() {
     let mut project = Project::new();
     project

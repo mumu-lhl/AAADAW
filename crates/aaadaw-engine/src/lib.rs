@@ -202,6 +202,7 @@ pub enum AudioGraphBuildError {
     TrackStreamCountMismatch { tracks: usize, streams: usize },
     AudioItemStreamCountMismatch { items: usize, streams: usize },
     AudioItemStreamOrderMismatch { expected: ItemId, found: ItemId },
+    AudioItemStreamStartOutOfRange { item_id: ItemId, start_sample: u64 },
 }
 
 impl fmt::Display for AudioGraphBuildError {
@@ -223,6 +224,14 @@ impl fmt::Display for AudioGraphBuildError {
                 expected.value(),
                 found.value()
             ),
+            Self::AudioItemStreamStartOutOfRange {
+                item_id,
+                start_sample,
+            } => write!(
+                formatter,
+                "audio stream for item {} starts at sample {start_sample}, outside its timeline range",
+                item_id.value()
+            ),
         }
     }
 }
@@ -234,7 +243,8 @@ impl std::error::Error for AudioGraphBuildError {
             Self::MidiSchedule(error) => Some(error),
             Self::TrackStreamCountMismatch { .. }
             | Self::AudioItemStreamCountMismatch { .. }
-            | Self::AudioItemStreamOrderMismatch { .. } => None,
+            | Self::AudioItemStreamOrderMismatch { .. }
+            | Self::AudioItemStreamStartOutOfRange { .. } => None,
         }
     }
 }
@@ -293,12 +303,31 @@ pub struct AudioRenderStats {
 pub struct AudioItemStream {
     item_id: ItemId,
     consumer: PcmStreamConsumer,
+    source_start_sample: Option<u64>,
 }
 
 impl AudioItemStream {
     /// Associates a worker-fed PCM consumer with its timeline item.
     pub fn new(item_id: ItemId, consumer: PcmStreamConsumer) -> Self {
-        Self { item_id, consumer }
+        Self {
+            item_id,
+            consumer,
+            source_start_sample: None,
+        }
+    }
+
+    /// Associates a refilled stream whose first PCM sample corresponds to the given timeline sample.
+    /// Position the graph transport at this sample before playback; the stream contains no earlier PCM.
+    pub fn new_at_sample(
+        item_id: ItemId,
+        source_start_sample: u64,
+        consumer: PcmStreamConsumer,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer,
+            source_start_sample: Some(source_start_sample),
+        }
     }
 }
 
@@ -373,6 +402,15 @@ impl AudioRenderGraph {
                     found: stream.item_id,
                 });
             }
+            let source_start_sample = stream
+                .source_start_sample
+                .unwrap_or_else(|| item.start_sample());
+            if !(item.start_sample()..=item.end_sample()).contains(&source_start_sample) {
+                return Err(AudioGraphBuildError::AudioItemStreamStartOutOfRange {
+                    item_id: item.id(),
+                    start_sample: source_start_sample,
+                });
+            }
             let track_index = project
                 .tracks()
                 .iter()
@@ -381,7 +419,7 @@ impl AudioRenderGraph {
             streams.push(stream.consumer);
             stream_track_indices.push(track_index);
             source_ranges.push(Some((item.start_sample(), item.end_sample())));
-            source_cursors.push(Some(item.start_sample()));
+            source_cursors.push(Some(source_start_sample));
             source_item_ids.push(Some(item.id()));
         }
 

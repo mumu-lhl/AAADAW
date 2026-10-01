@@ -32,6 +32,7 @@ pub fn spawn_mono_stream(
         output_sample_rate,
         0,
         None,
+        0,
         producer,
     )
 }
@@ -52,6 +53,7 @@ pub fn spawn_audio_item_stream(
         output_sample_rate,
         item.source_offset_samples(),
         Some(item.length_samples()),
+        0,
         producer,
     )
 }
@@ -83,6 +85,49 @@ where
         output_sample_rate,
         item.source_offset_samples(),
         Some(item.length_samples()),
+        0,
+        producer,
+    )
+}
+
+/// Re-decodes an item and discards PCM before the requested timeline sample.
+pub fn spawn_audio_item_stream_from_reader_at<R>(
+    item: &AudioItem,
+    timeline_sample: u64,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: PcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    let samples_to_skip = timeline_sample.checked_sub(item.start_sample()).ok_or(
+        MediaError::InvalidAudioItemSeek {
+            requested: timeline_sample,
+            start_sample: item.start_sample(),
+            end_sample: item.end_sample(),
+        },
+    )?;
+    if samples_to_skip >= item.length_samples() {
+        return Err(MediaError::InvalidAudioItemSeek {
+            requested: timeline_sample,
+            start_sample: item.start_sample(),
+            end_sample: item.end_sample(),
+        });
+    }
+    let remaining_samples = item.length_samples() - samples_to_skip;
+    spawn_stream(
+        DecoderInput::Reader {
+            reader: Box::new(reader),
+            byte_len,
+            extension: extension_hint.map(str::to_owned),
+        },
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(remaining_samples),
+        samples_to_skip,
         producer,
     )
 }
@@ -92,6 +137,7 @@ fn spawn_stream(
     output_sample_rate: u32,
     source_offset_samples: u64,
     output_length_samples: Option<u64>,
+    output_samples_to_skip: u64,
     producer: PcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
@@ -107,6 +153,7 @@ fn spawn_stream(
                 output_sample_rate,
                 source_offset_samples,
                 output_length_samples,
+                output_samples_to_skip,
                 producer,
                 worker_cancelled,
             )
@@ -165,6 +212,7 @@ fn run_worker(
     output_sample_rate: u32,
     mut source_offset_remaining: u64,
     mut output_samples_remaining: Option<u64>,
+    mut output_samples_to_skip: u64,
     mut producer: PcmStreamProducer,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), MediaError> {
@@ -202,6 +250,7 @@ fn run_worker(
                 let skipped = source_offset_remaining.min(mono_input.len() as u64) as usize;
                 source_offset_remaining -= skipped as u64;
                 let mut output = current.push(&mono_input[skipped..])?;
+                skip_output(&mut output, &mut output_samples_to_skip);
                 limit_output(&mut output, &mut output_samples_remaining);
                 push_with_backpressure(&mut producer, &output, &cancelled);
                 if output_samples_remaining == Some(0) {
@@ -211,12 +260,25 @@ fn run_worker(
             None => {
                 if let Some(resampler) = &mut resampler {
                     let mut output = resampler.finish();
+                    skip_output(&mut output, &mut output_samples_to_skip);
                     limit_output(&mut output, &mut output_samples_remaining);
                     push_with_backpressure(&mut producer, &output, &cancelled);
                 }
                 return Ok(());
             }
         }
+    }
+}
+
+fn skip_output(samples: &mut Vec<f32>, remaining: &mut u64) {
+    let skipped = usize::try_from(*remaining)
+        .unwrap_or(usize::MAX)
+        .min(samples.len());
+    if skipped > 0 {
+        let retained = samples.len() - skipped;
+        samples.copy_within(skipped.., 0);
+        samples.truncate(retained);
+        *remaining -= skipped as u64;
     }
 }
 

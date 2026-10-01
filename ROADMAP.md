@@ -68,7 +68,8 @@
 - [x] 增加内存中单声道 PCM 片段的线性重采样播放原语；立体声/多声道和高质量 SRC 仍待实现。
 - [x] 使用 `rtrb` 建立固定容量 SPSC PCM 队列；音频线程读取不阻塞，欠载补零并报告欠载帧数。
 - [x] 实现固定拓扑 PCM 流混音回调：预分配轨道 scratch、停播静音、运行时统计欠载；AudioItem 按 sample-clock 起止位置调度独立 PCM 流，多 Item 可混入同轨。
-- [x] Seek 进入已开始消费的 AudioItem 时，在不推进 Transport/消费 PCM 的情况下拒绝渲染并要求控制侧重填该 Item 的流；自动重定位仍待实现。
+- [x] Seek 进入已开始消费的 AudioItem 时，在不推进 Transport/消费 PCM 的情况下拒绝渲染并要求控制侧重填该 Item 的流；refilled feeder 可从 Item 开始重解码并丢弃至目标 sample，渲染图可绑定从指定 sample 起始的队列。
+- [ ] 将控制侧 Seek、素材解析/后台 refill 与渲染图队列替换打通，并优化长素材随机定位成本。
 - [x] 可选 JACK 输出后端接入播放/停止与设备采样率检查。
 - [x] 将后台 packet 解码、单声道下混、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；音频回调仍不执行解码、锁或 I/O。
 - [ ] 扩展 JACK 输入/录音、原生 PipeWire 与 Windows WASAPI；明确每个平台的设备枚举、热插拔和延迟语义。

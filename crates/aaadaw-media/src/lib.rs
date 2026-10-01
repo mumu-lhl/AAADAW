@@ -13,7 +13,7 @@ use std::path::Path;
 mod stream;
 pub use stream::{
     AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
-    spawn_mono_stream,
+    spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
 };
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
@@ -70,8 +70,16 @@ pub enum MediaError {
     InvalidDecodedAudioSpec,
     InvalidOutputSampleRate,
     InvalidAudioItemLength,
+    InvalidAudioItemSeek {
+        requested: u64,
+        start_sample: u64,
+        end_sample: u64,
+    },
     ChangedAudioSampleRate,
-    ResampleRatioTooLarge { input: u32, output: u32 },
+    ResampleRatioTooLarge {
+        input: u32,
+        output: u32,
+    },
     AudioTooLong,
     ThreadSpawn(std::io::Error),
     WorkerPanicked,
@@ -80,7 +88,7 @@ pub enum MediaError {
 impl fmt::Display for MediaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(error) => write!(formatter, "failed to open audio file: {error}"),
+            Self::Io(error) => write!(formatter, "media source I/O failed: {error}"),
             Self::Symphonia(error) => write!(formatter, "audio decode failed: {error}"),
             Self::NoAudioTrack => formatter.write_str("file contains no decodable audio track"),
             Self::MissingCodecParameters => {
@@ -98,6 +106,14 @@ impl fmt::Display for MediaError {
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item output length must be positive")
             }
+            Self::InvalidAudioItemSeek {
+                requested,
+                start_sample,
+                end_sample,
+            } => write!(
+                formatter,
+                "timeline sample {requested} is outside audio item range {start_sample}..{end_sample}"
+            ),
             Self::ChangedAudioSampleRate => {
                 formatter.write_str("audio sample rate changed during decoding")
             }
