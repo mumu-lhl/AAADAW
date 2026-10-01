@@ -6,6 +6,7 @@ use std::fmt;
 pub struct ProjectSnapshot {
     pub settings: ProjectSettings,
     pub tracks: Vec<TrackSnapshot>,
+    pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,
     pub tempo_points: Vec<TempoPointSnapshot>,
     pub meter_points: Vec<MeterPointSnapshot>,
@@ -19,6 +20,16 @@ pub struct TrackSnapshot {
     pub pan: f32,
     pub muted: bool,
     pub solo: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioItemSnapshot {
+    pub id: u64,
+    pub track_id: u64,
+    pub media_ref: String,
+    pub start_sample: u64,
+    pub source_offset_samples: u64,
+    pub length_samples: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

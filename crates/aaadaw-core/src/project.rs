@@ -1,11 +1,11 @@
 use crate::snapshot::{
-    MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot, SnapshotError,
-    TempoPointSnapshot, TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackSnapshot,
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
-    ActionError, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId, ProjectSettings,
-    TempoCurve, TimeSignature, TimebaseError, Track, TrackId,
+    ActionError, AudioItem, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId,
+    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackId,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ pub struct Project {
 #[derive(Clone, Debug, Default)]
 struct ProjectState {
     tracks: Vec<Track>,
+    audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
@@ -43,11 +44,13 @@ enum ProjectEvent {
     TrackDeleted {
         index: usize,
         track: Track,
+        audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
     },
     TrackRestored {
         index: usize,
         track: Track,
+        audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
     },
     TrackVolumeChanged {
@@ -95,6 +98,18 @@ enum ProjectEvent {
         before: Option<TimeSignature>,
         after: Option<TimeSignature>,
     },
+    AudioItemInserted {
+        index: usize,
+        item: AudioItem,
+    },
+    AudioItemRemoved {
+        index: usize,
+        item: AudioItem,
+    },
+    AudioItemChanged {
+        before: AudioItem,
+        after: AudioItem,
+    },
     MidiItemInserted {
         index: usize,
         item: MidiItem,
@@ -136,24 +151,29 @@ impl ProjectEvent {
             Self::TrackCreated { index, track } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
+                audio_items: Vec::new(),
                 midi_items: Vec::new(),
             },
             Self::TrackDeleted {
                 index,
                 track,
+                audio_items,
                 midi_items,
             } => Self::TrackRestored {
                 index: *index,
                 track: track.clone(),
+                audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
             },
             Self::TrackRestored {
                 index,
                 track,
+                audio_items,
                 midi_items,
             } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
+                audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
             },
             Self::TrackVolumeChanged {
@@ -232,6 +252,18 @@ impl ProjectEvent {
                 start_tick: *start_tick,
                 before: *after,
                 after: *before,
+            },
+            Self::AudioItemInserted { index, item } => Self::AudioItemRemoved {
+                index: *index,
+                item: item.clone(),
+            },
+            Self::AudioItemRemoved { index, item } => Self::AudioItemInserted {
+                index: *index,
+                item: item.clone(),
+            },
+            Self::AudioItemChanged { before, after } => Self::AudioItemChanged {
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::MidiItemInserted { index, item } => Self::MidiItemRemoved {
                 index: *index,
@@ -371,6 +403,11 @@ impl Project {
         &self.state.tracks
     }
 
+    /// Returns all audio items in project insertion order.
+    pub fn audio_items(&self) -> &[AudioItem] {
+        &self.state.audio_items
+    }
+
     /// Returns all MIDI items in project insertion order.
     pub fn midi_items(&self) -> &[MidiItem] {
         &self.state.midi_items
@@ -391,6 +428,19 @@ impl Project {
                     pan: track.pan,
                     muted: track.muted,
                     solo: track.solo,
+                })
+                .collect(),
+            audio_items: self
+                .state
+                .audio_items
+                .iter()
+                .map(|item| AudioItemSnapshot {
+                    id: item.id.value(),
+                    track_id: item.track_id.value(),
+                    media_ref: item.media_ref.clone(),
+                    start_sample: item.start_sample,
+                    source_offset_samples: item.source_offset_samples,
+                    length_samples: item.length_samples,
                 })
                 .collect(),
             midi_items: self
@@ -506,10 +556,35 @@ impl Project {
             });
         }
 
-        let mut item_ids = HashSet::with_capacity(snapshot.midi_items.len());
-        let mut note_ids = HashSet::new();
+        let mut item_ids = HashSet::with_capacity(
+            snapshot
+                .audio_items
+                .len()
+                .saturating_add(snapshot.midi_items.len()),
+        );
+        let mut audio_items = Vec::with_capacity(snapshot.audio_items.len());
         let mut midi_items = Vec::with_capacity(snapshot.midi_items.len());
         let mut max_item_id = None;
+        for item in snapshot.audio_items {
+            if !item_ids.insert(item.id)
+                || !track_ids.contains(&item.track_id)
+                || item.media_ref.trim().is_empty()
+                || item.length_samples == 0
+                || item.start_sample.checked_add(item.length_samples).is_none()
+            {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_item_id = Some(max_item_id.map_or(item.id, |max: u64| max.max(item.id)));
+            audio_items.push(AudioItem {
+                id: ItemId::from_raw(item.id),
+                track_id: TrackId::from_raw(item.track_id),
+                media_ref: item.media_ref,
+                start_sample: item.start_sample,
+                source_offset_samples: item.source_offset_samples,
+                length_samples: item.length_samples,
+            });
+        }
+        let mut note_ids = HashSet::new();
         let mut max_note_id = None;
         for item in snapshot.midi_items {
             if !item_ids.insert(item.id)
@@ -552,6 +627,7 @@ impl Project {
         Ok(Self {
             state: ProjectState {
                 tracks,
+                audio_items,
                 midi_items,
                 tempo_map,
                 meter_map,
@@ -742,6 +818,85 @@ impl Project {
                     track_id,
                     from,
                     to: index,
+                }
+            }
+            DawAction::InsertAudioItem {
+                track_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            } => {
+                if !state.tracks.iter().any(|track| track.id == track_id) {
+                    return Err(ActionError::TrackNotFound { track_id });
+                }
+                if media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if length_samples == 0 {
+                    return Err(ActionError::InvalidAudioItemLength);
+                }
+                if start_sample.checked_add(length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    media_ref,
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::AudioItemInserted {
+                    index: state.audio_items.len(),
+                    item,
+                }
+            }
+            DawAction::EditAudioItem {
+                item_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            } => {
+                if media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if length_samples == 0 {
+                    return Err(ActionError::InvalidAudioItemLength);
+                }
+                if start_sample.checked_add(length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                let before = item.clone();
+                let after = AudioItem {
+                    media_ref,
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::DeleteAudioItem { item_id } => {
+                let index = state
+                    .audio_items
+                    .iter()
+                    .position(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                ProjectEvent::AudioItemRemoved {
+                    index,
+                    item: state.audio_items[index].clone(),
                 }
             }
             DawAction::InsertMidiItem {
@@ -957,6 +1112,13 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
+                let audio_items = state
+                    .audio_items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.track_id == track_id)
+                    .map(|(index, item)| (index, item.clone()))
+                    .collect();
                 let midi_items = state
                     .midi_items
                     .iter()
@@ -967,6 +1129,7 @@ impl Project {
                 ProjectEvent::TrackDeleted {
                     index,
                     track: state.tracks[index].clone(),
+                    audio_items,
                     midi_items,
                 }
             }
@@ -992,17 +1155,20 @@ impl Project {
             ProjectEvent::TrackDeleted {
                 index,
                 track,
+                audio_items,
                 midi_items,
             } => {
                 if state.tracks.get(*index).map(|item| item.id) != Some(track.id) {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                Self::remove_audio_items(state, audio_items)?;
                 Self::remove_midi_items(state, midi_items)?;
                 state.tracks.remove(*index);
             }
             ProjectEvent::TrackRestored {
                 index,
                 track,
+                audio_items,
                 midi_items,
             } => {
                 if *index > state.tracks.len()
@@ -1011,8 +1177,35 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.tracks.insert(*index, track.clone());
+                for (item_index, item) in audio_items {
+                    if item.track_id != track.id
+                        || *item_index > state.audio_items.len()
+                        || state
+                            .audio_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                        || state
+                            .midi_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                        || !valid_audio_item(item)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    state.audio_items.insert(*item_index, item.clone());
+                }
                 for (item_index, item) in midi_items {
-                    if item.track_id != track.id || *item_index > state.midi_items.len() {
+                    if item.track_id != track.id
+                        || *item_index > state.midi_items.len()
+                        || state
+                            .audio_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                        || state
+                            .midi_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                    {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
                     state.midi_items.insert(*item_index, item.clone());
@@ -1141,11 +1334,54 @@ impl Project {
                     .set_point(*start_tick, *after)
                     .map_err(|_| ActionError::HistoryInvariantViolation)?;
             }
+            ProjectEvent::AudioItemInserted { index, item } => {
+                if *index > state.audio_items.len()
+                    || !state.tracks.iter().any(|track| track.id == item.track_id)
+                    || state
+                        .audio_items
+                        .iter()
+                        .any(|existing| existing.id == item.id)
+                    || state
+                        .midi_items
+                        .iter()
+                        .any(|existing| existing.id == item.id)
+                    || !valid_audio_item(item)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.audio_items.insert(*index, item.clone());
+            }
+            ProjectEvent::AudioItemRemoved { index, item } => {
+                if state.audio_items.get(*index).map(|existing| existing.id) != Some(item.id) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.audio_items.remove(*index);
+            }
+            ProjectEvent::AudioItemChanged { before, after } => {
+                let index = state
+                    .audio_items
+                    .iter()
+                    .position(|item| item.id == before.id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if state.audio_items[index] != *before
+                    || before.id != after.id
+                    || before.track_id != after.track_id
+                    || !state.tracks.iter().any(|track| track.id == after.track_id)
+                    || !valid_audio_item(after)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.audio_items[index] = after.clone();
+            }
             ProjectEvent::MidiItemInserted { index, item } => {
                 if *index > state.midi_items.len()
                     || !state.tracks.iter().any(|track| track.id == item.track_id)
                     || state
                         .midi_items
+                        .iter()
+                        .any(|existing| existing.id == item.id)
+                    || state
+                        .audio_items
                         .iter()
                         .any(|existing| existing.id == item.id)
                 {
@@ -1168,6 +1404,7 @@ impl Project {
                 if state.midi_items[index] != *before
                     || before.id != after.id
                     || before.track_id != after.track_id
+                    || state.audio_items.iter().any(|item| item.id == after.id)
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || after.length_ticks == 0
                     || after.start_tick.checked_add(after.length_ticks).is_none()
@@ -1275,6 +1512,19 @@ impl Project {
         Ok(())
     }
 
+    fn remove_audio_items(
+        state: &mut ProjectState,
+        audio_items: &[(usize, AudioItem)],
+    ) -> Result<(), ActionError> {
+        for (index, item) in audio_items.iter().rev() {
+            if state.audio_items.get(*index).map(|existing| existing.id) != Some(item.id) {
+                return Err(ActionError::HistoryInvariantViolation);
+            }
+            state.audio_items.remove(*index);
+        }
+        Ok(())
+    }
+
     fn remove_midi_items(
         state: &mut ProjectState,
         midi_items: &[(usize, MidiItem)],
@@ -1287,6 +1537,12 @@ impl Project {
         }
         Ok(())
     }
+}
+
+fn valid_audio_item(item: &AudioItem) -> bool {
+    !item.media_ref.trim().is_empty()
+        && item.length_samples > 0
+        && item.start_sample.checked_add(item.length_samples).is_some()
 }
 
 fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {

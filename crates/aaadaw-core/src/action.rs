@@ -26,6 +26,24 @@ pub enum DawAction {
     SetTrackName { track_id: TrackId, name: String },
     /// Move a track to a final position in the ordered track list.
     MoveTrack { track_id: TrackId, index: usize },
+    /// Insert an audio item referencing an opaque media source.
+    InsertAudioItem {
+        track_id: TrackId,
+        media_ref: String,
+        start_sample: u64,
+        source_offset_samples: u64,
+        length_samples: u64,
+    },
+    /// Move, trim, or extend an audio item.
+    EditAudioItem {
+        item_id: ItemId,
+        media_ref: String,
+        start_sample: u64,
+        source_offset_samples: u64,
+        length_samples: u64,
+    },
+    /// Delete an audio item from the project.
+    DeleteAudioItem { item_id: ItemId },
     /// Insert an empty MIDI item on a track.
     InsertMidiItem {
         track_id: TrackId,

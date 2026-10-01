@@ -5,6 +5,7 @@
 //! observing project state.
 
 mod action;
+mod audio;
 mod error;
 mod midi;
 mod project;
@@ -13,12 +14,13 @@ mod timebase;
 mod track;
 
 pub use action::DawAction;
+pub use audio::AudioItem;
 pub use error::ActionError;
 pub use midi::{ItemId, MidiItem, MidiNote, MidiNoteData, NoteId};
 pub use project::Project;
 pub use snapshot::{
-    MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot, SnapshotError,
-    TempoPointSnapshot, TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackSnapshot,
 };
 pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,

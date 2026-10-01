@@ -47,6 +47,15 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("solo change should succeed");
     project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://room-tone".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 2_400,
+            length_samples: 96_000,
+        })
+        .expect("audio item insertion should succeed");
+    project
         .apply(DawAction::InsertMidiItem {
             track_id,
             start_tick: 0,
@@ -103,6 +112,51 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
     store
         .close()
         .expect("the reopened project should close cleanly");
+    remove_database(&path);
+}
+
+#[test]
+fn existing_schema_two_files_get_the_additive_audio_item_table_without_version_bump() {
+    let path = project_path();
+    let store = ProjectStore::open(&path).expect("database should open");
+    store.close().expect("database should close");
+
+    let connection = Connection::open(&path).expect("database should be SQLite");
+    connection
+        .execute_batch("DROP TABLE audio_items")
+        .expect("simulate a pre-AudioItem schema-two file");
+    drop(connection);
+
+    let mut store = ProjectStore::open(&path).expect("missing additive table should be ensured");
+    assert_eq!(
+        store
+            .schema_version()
+            .expect("schema version should be readable"),
+        CURRENT_SCHEMA_VERSION
+    );
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://legacy-database".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("audio item insertion should succeed");
+    store.save(&project).expect("audio item should save");
+    assert_eq!(
+        store.load().expect("audio item should load").snapshot(),
+        project.snapshot()
+    );
+    store.close().expect("database should close");
     remove_database(&path);
 }
 

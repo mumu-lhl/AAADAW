@@ -18,7 +18,7 @@ pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 
-use aaadaw_core::Track;
+use aaadaw_core::{ItemId, Track};
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 
@@ -200,6 +200,8 @@ pub enum AudioGraphBuildError {
     MixerPlan(MixerPlanError),
     MidiSchedule(MidiScheduleError),
     TrackStreamCountMismatch { tracks: usize, streams: usize },
+    AudioItemStreamCountMismatch { items: usize, streams: usize },
+    AudioItemStreamOrderMismatch { expected: ItemId, found: ItemId },
 }
 
 impl fmt::Display for AudioGraphBuildError {
@@ -211,6 +213,16 @@ impl fmt::Display for AudioGraphBuildError {
                 formatter,
                 "audio graph has {tracks} tracks but {streams} PCM streams"
             ),
+            Self::AudioItemStreamCountMismatch { items, streams } => write!(
+                formatter,
+                "audio graph has {items} audio items but {streams} PCM streams"
+            ),
+            Self::AudioItemStreamOrderMismatch { expected, found } => write!(
+                formatter,
+                "audio stream for item {} was expected, but item {} was supplied",
+                expected.value(),
+                found.value()
+            ),
         }
     }
 }
@@ -220,7 +232,9 @@ impl std::error::Error for AudioGraphBuildError {
         match self {
             Self::MixerPlan(error) => Some(error),
             Self::MidiSchedule(error) => Some(error),
-            Self::TrackStreamCountMismatch { .. } => None,
+            Self::TrackStreamCountMismatch { .. }
+            | Self::AudioItemStreamCountMismatch { .. }
+            | Self::AudioItemStreamOrderMismatch { .. } => None,
         }
     }
 }
@@ -230,6 +244,7 @@ impl std::error::Error for AudioGraphBuildError {
 pub enum AudioGraphError {
     BlockTooLarge { requested: usize, maximum: usize },
     MidiSchedule(MidiScheduleError),
+    AudioItemSeekRequiresRefill { item_id: ItemId },
     TransportPositionOverflow,
 }
 
@@ -243,6 +258,11 @@ impl fmt::Display for AudioGraphError {
                 )
             }
             Self::MidiSchedule(error) => write!(formatter, "MIDI scheduling failed: {error}"),
+            Self::AudioItemSeekRequiresRefill { item_id } => write!(
+                formatter,
+                "seeking into audio item {} requires refilling its PCM stream",
+                item_id.value()
+            ),
             Self::TransportPositionOverflow => {
                 formatter.write_str("transport position exceeds the supported sample range")
             }
@@ -263,43 +283,132 @@ impl std::error::Error for AudioGraphError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioRenderStats {
     pub block: AudioBlock,
-    /// Sum of silence-filled samples across all tracks.
+    /// Sum of silence-filled samples across all active PCM sources.
     pub underrun_samples: usize,
     /// MIDI note events written to the caller's event buffer.
     pub midi_event_count: usize,
 }
 
+/// One SPSC consumer associated with a project AudioItem.
+pub struct AudioItemStream {
+    item_id: ItemId,
+    consumer: PcmStreamConsumer,
+}
+
+impl AudioItemStream {
+    /// Associates a worker-fed PCM consumer with its timeline item.
+    pub fn new(item_id: ItemId, consumer: PcmStreamConsumer) -> Self {
+        Self { item_id, consumer }
+    }
+}
+
 /// A fixed-topology streaming mixer suitable for a device callback.
 ///
-/// Construct this on a control thread. It owns preallocated per-track scratch
-/// buffers and one SPSC consumer per project track; the producer side should
-/// decode/resample on a worker and push samples at the device's active rate.
+/// Construct this on a control thread. Scratch buffers, source-to-track routes,
+/// and sample-clock item ranges are compiled before audio starts. Worker threads
+/// decode/resample PCM and feed one SPSC consumer per source.
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
     midi_plan: MidiEventPlan,
     sample_rate: u32,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
+    stream_track_indices: Vec<usize>,
+    source_ranges: Vec<Option<(u64, u64)>>,
+    source_cursors: Vec<Option<u64>>,
+    source_item_ids: Vec<Option<ItemId>>,
     scratch: Vec<Vec<f32>>,
 }
 
 impl AudioRenderGraph {
-    /// Compiles track controls and allocates scratch storage before audio starts.
+    /// Compiles one continuously streamed PCM source per project track.
     pub fn new(
         project: &aaadaw_core::Project,
         streams: Vec<PcmStreamConsumer>,
+        max_block_frames: usize,
+    ) -> Result<Self, AudioGraphBuildError> {
+        if streams.len() != project.tracks().len() {
+            return Err(AudioGraphBuildError::TrackStreamCountMismatch {
+                tracks: project.tracks().len(),
+                streams: streams.len(),
+            });
+        }
+        let stream_track_indices = (0..streams.len()).collect();
+        let source_ranges = vec![None; streams.len()];
+        let source_cursors = vec![None; streams.len()];
+        let source_item_ids = vec![None; streams.len()];
+        Self::build(
+            project,
+            streams,
+            stream_track_indices,
+            source_ranges,
+            source_cursors,
+            source_item_ids,
+            max_block_frames,
+        )
+    }
+
+    /// Compiles one PCM consumer per AudioItem, preserving and validating project item order.
+    pub fn new_for_audio_items(
+        project: &aaadaw_core::Project,
+        item_streams: Vec<AudioItemStream>,
+        max_block_frames: usize,
+    ) -> Result<Self, AudioGraphBuildError> {
+        if item_streams.len() != project.audio_items().len() {
+            return Err(AudioGraphBuildError::AudioItemStreamCountMismatch {
+                items: project.audio_items().len(),
+                streams: item_streams.len(),
+            });
+        }
+
+        let mut streams = Vec::with_capacity(item_streams.len());
+        let mut stream_track_indices = Vec::with_capacity(item_streams.len());
+        let mut source_ranges = Vec::with_capacity(item_streams.len());
+        let mut source_cursors = Vec::with_capacity(item_streams.len());
+        let mut source_item_ids = Vec::with_capacity(item_streams.len());
+        for (item, stream) in project.audio_items().iter().zip(item_streams) {
+            if item.id() != stream.item_id {
+                return Err(AudioGraphBuildError::AudioItemStreamOrderMismatch {
+                    expected: item.id(),
+                    found: stream.item_id,
+                });
+            }
+            let track_index = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == item.track_id())
+                .expect("Project guarantees every AudioItem has an existing track");
+            streams.push(stream.consumer);
+            stream_track_indices.push(track_index);
+            source_ranges.push(Some((item.start_sample(), item.end_sample())));
+            source_cursors.push(Some(item.start_sample()));
+            source_item_ids.push(Some(item.id()));
+        }
+
+        Self::build(
+            project,
+            streams,
+            stream_track_indices,
+            source_ranges,
+            source_cursors,
+            source_item_ids,
+            max_block_frames,
+        )
+    }
+
+    fn build(
+        project: &aaadaw_core::Project,
+        streams: Vec<PcmStreamConsumer>,
+        stream_track_indices: Vec<usize>,
+        source_ranges: Vec<Option<(u64, u64)>>,
+        source_cursors: Vec<Option<u64>>,
+        source_item_ids: Vec<Option<ItemId>>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
         let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
             .map_err(AudioGraphBuildError::MixerPlan)?;
         let midi_plan =
             MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
-        if streams.len() != mixer.tracks.len() {
-            return Err(AudioGraphBuildError::TrackStreamCountMismatch {
-                tracks: mixer.tracks.len(),
-                streams: streams.len(),
-            });
-        }
         let scratch = (0..streams.len())
             .map(|_| vec![0.0; max_block_frames])
             .collect();
@@ -309,6 +418,10 @@ impl AudioRenderGraph {
             sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
             streams,
+            stream_track_indices,
+            source_ranges,
+            source_cursors,
+            source_item_ids,
             scratch,
         })
     }
@@ -362,9 +475,32 @@ impl AudioRenderGraph {
                 maximum: self.mixer.max_block_frames,
             });
         }
+        let block_start_sample = self.transport.position_samples();
+        if self.transport.is_playing() {
+            let frame_count = u64::try_from(output.len())
+                .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+            let block_end_sample = block_start_sample
+                .checked_add(frame_count)
+                .ok_or(AudioGraphError::TransportPositionOverflow)?;
+            for (index, source_range) in self.source_ranges.iter().enumerate() {
+                let Some((item_start, item_end)) = source_range else {
+                    continue;
+                };
+                let overlap_start = block_start_sample.max(*item_start);
+                let overlap_end = block_end_sample.min(*item_end);
+                if overlap_start < overlap_end && self.source_cursors[index] != Some(overlap_start)
+                {
+                    return Err(AudioGraphError::AudioItemSeekRequiresRefill {
+                        item_id: self.source_item_ids[index]
+                            .expect("timeline ranges belong to audio items"),
+                    });
+                }
+            }
+        }
+
         let midi_event_count = if self.transport.is_playing() && include_midi {
             self.midi_plan
-                .events_for_block(self.transport.position_samples(), output.len(), midi_output)
+                .events_for_block(block_start_sample, output.len(), midi_output)
                 .map_err(AudioGraphError::MidiSchedule)?
         } else {
             0
@@ -383,12 +519,33 @@ impl AudioRenderGraph {
         }
 
         output.fill([0.0, 0.0]);
+        let block_frame_count = u64::try_from(block.frame_count)
+            .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+        let block_end_sample = block
+            .start_sample
+            .checked_add(block_frame_count)
+            .ok_or(AudioGraphError::TransportPositionOverflow)?;
         let mut underrun_samples = 0_usize;
-        for track_index in 0..self.streams.len() {
-            let input = &mut self.scratch[track_index][..output.len()];
-            underrun_samples =
-                underrun_samples.saturating_add(self.streams[track_index].read_into(input));
-            self.mixer.mix_track_unchecked(track_index, input, output);
+        for stream_index in 0..self.streams.len() {
+            let input = &mut self.scratch[stream_index][..output.len()];
+            input.fill(0.0);
+            if let Some((item_start, item_end)) = self.source_ranges[stream_index] {
+                let overlap_start = block.start_sample.max(item_start);
+                let overlap_end = block_end_sample.min(item_end);
+                if overlap_start < overlap_end {
+                    let offset = (overlap_start - block.start_sample) as usize;
+                    let length = (overlap_end - overlap_start) as usize;
+                    let underruns =
+                        self.streams[stream_index].read_into(&mut input[offset..offset + length]);
+                    underrun_samples = underrun_samples.saturating_add(underruns);
+                    self.source_cursors[stream_index] = Some(overlap_end);
+                }
+            } else {
+                underrun_samples =
+                    underrun_samples.saturating_add(self.streams[stream_index].read_into(input));
+            }
+            self.mixer
+                .mix_track_unchecked(self.stream_track_indices[stream_index], input, output);
         }
         Ok(AudioRenderStats {
             block,

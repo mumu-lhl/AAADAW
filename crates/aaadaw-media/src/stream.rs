@@ -1,4 +1,5 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, MediaError};
+use aaadaw_core::AudioItem;
 use aaadaw_engine::PcmStreamProducer;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +26,36 @@ pub fn spawn_mono_stream(
     output_sample_rate: u32,
     producer: PcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
+    spawn_stream(path, output_sample_rate, 0, None, producer)
+}
+
+/// Feeds a timeline item from a resolved media file, applying its source trim
+/// and limiting output to its project-sample duration.
+pub fn spawn_audio_item_stream(
+    item: &AudioItem,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: PcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    if item.length_samples() == 0 {
+        return Err(MediaError::InvalidAudioItemLength);
+    }
+    spawn_stream(
+        resolved_path,
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples()),
+        producer,
+    )
+}
+
+fn spawn_stream(
+    path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    source_offset_samples: u64,
+    output_length_samples: Option<u64>,
+    producer: PcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
         return Err(MediaError::InvalidOutputSampleRate);
     }
@@ -34,7 +65,16 @@ pub fn spawn_mono_stream(
     let worker_cancelled = Arc::clone(&cancelled);
     let thread = thread::Builder::new()
         .name("aaadaw-media-decode".to_owned())
-        .spawn(move || run_worker(path, output_sample_rate, producer, worker_cancelled))
+        .spawn(move || {
+            run_worker(
+                path,
+                output_sample_rate,
+                source_offset_samples,
+                output_length_samples,
+                producer,
+                worker_cancelled,
+            )
+        })
         .map_err(MediaError::ThreadSpawn)?;
 
     Ok(AudioFeedWorker {
@@ -74,6 +114,8 @@ impl Drop for AudioFeedWorker {
 fn run_worker(
     path: PathBuf,
     output_sample_rate: u32,
+    mut source_offset_remaining: u64,
+    mut output_samples_remaining: Option<u64>,
     mut producer: PcmStreamProducer,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), MediaError> {
@@ -101,17 +143,34 @@ fn run_worker(
                     }
                 };
                 chunk.copy_mono_downmix(&mut mono_input);
-                let output = current.push(&mono_input)?;
+                let skipped = source_offset_remaining.min(mono_input.len() as u64) as usize;
+                source_offset_remaining -= skipped as u64;
+                let mut output = current.push(&mono_input[skipped..])?;
+                limit_output(&mut output, &mut output_samples_remaining);
                 push_with_backpressure(&mut producer, &output, &cancelled);
+                if output_samples_remaining == Some(0) {
+                    return Ok(());
+                }
             }
             None => {
                 if let Some(resampler) = &mut resampler {
-                    let output = resampler.finish();
+                    let mut output = resampler.finish();
+                    limit_output(&mut output, &mut output_samples_remaining);
                     push_with_backpressure(&mut producer, &output, &cancelled);
                 }
                 return Ok(());
             }
         }
+    }
+}
+
+fn limit_output(samples: &mut Vec<f32>, remaining: &mut Option<u64>) {
+    if let Some(remaining) = remaining {
+        let allowed = usize::try_from(*remaining)
+            .unwrap_or(usize::MAX)
+            .min(samples.len());
+        samples.truncate(allowed);
+        *remaining -= allowed as u64;
     }
 }
 

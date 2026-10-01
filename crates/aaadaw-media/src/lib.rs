@@ -10,7 +10,7 @@ use std::fs::File;
 use std::path::Path;
 
 mod stream;
-pub use stream::{AudioFeedWorker, spawn_mono_stream};
+pub use stream::{AudioFeedWorker, spawn_audio_item_stream, spawn_mono_stream};
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
@@ -65,6 +65,7 @@ pub enum MediaError {
     MissingAudioCodecParameters,
     InvalidDecodedAudioSpec,
     InvalidOutputSampleRate,
+    InvalidAudioItemLength,
     ChangedAudioSampleRate,
     ResampleRatioTooLarge { input: u32, output: u32 },
     AudioTooLong,
@@ -89,6 +90,9 @@ impl fmt::Display for MediaError {
             }
             Self::InvalidOutputSampleRate => {
                 formatter.write_str("output sample rate must be positive")
+            }
+            Self::InvalidAudioItemLength => {
+                formatter.write_str("audio item output length must be positive")
             }
             Self::ChangedAudioSampleRate => {
                 formatter.write_str("audio sample rate changed during decoding")

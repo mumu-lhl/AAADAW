@@ -22,6 +22,14 @@ pub enum ActionError {
     MeterChangeNotOnBarBoundary,
     /// The resulting measure numbering exceeds its supported range.
     MeterMapOutOfRange,
+    /// An audio item's media reference must not be blank.
+    InvalidAudioMediaRef,
+    /// An audio item must have a positive length.
+    InvalidAudioItemLength,
+    /// An audio item's project start and duration exceed the sample range.
+    InvalidAudioItemPosition,
+    /// The requested audio item does not exist in the project.
+    AudioItemNotFound { item_id: ItemId },
     /// A MIDI item must have a positive length.
     InvalidMidiItemLength,
     /// A MIDI item's start and length exceed the supported tick range.
@@ -75,6 +83,18 @@ impl fmt::Display for ActionError {
             Self::MeterMapOutOfRange => {
                 formatter.write_str("meter map exceeds the measure number range")
             }
+            Self::InvalidAudioMediaRef => {
+                formatter.write_str("audio media reference must not be blank")
+            }
+            Self::InvalidAudioItemLength => {
+                formatter.write_str("audio item length must be positive")
+            }
+            Self::InvalidAudioItemPosition => {
+                formatter.write_str("audio item position exceeds the supported sample range")
+            }
+            Self::AudioItemNotFound { item_id } => {
+                write!(formatter, "audio item {} does not exist", item_id.value())
+            }
             Self::InvalidMidiItemLength => formatter.write_str("MIDI item length must be positive"),
             Self::InvalidMidiItemPosition => {
                 formatter.write_str("MIDI item position exceeds the supported tick range")
@@ -95,7 +115,7 @@ impl fmt::Display for ActionError {
             Self::InvalidQuantizeGrid => {
                 formatter.write_str("quantization grid is invalid at the project PPQ")
             }
-            Self::ItemIdExhausted => formatter.write_str("MIDI item identifiers are exhausted"),
+            Self::ItemIdExhausted => formatter.write_str("item identifiers are exhausted"),
             Self::NoteIdExhausted => formatter.write_str("MIDI note identifiers are exhausted"),
             Self::InvalidPan => formatter.write_str("track pan must be finite and in -1..=1"),
             Self::TrackIdExhausted => formatter.write_str("track identifiers are exhausted"),

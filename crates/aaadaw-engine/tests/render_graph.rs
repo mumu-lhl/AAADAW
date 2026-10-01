@@ -1,6 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
-    AudioBlock, AudioGraphError, AudioRenderGraph, AudioRenderStats, PcmStreamError, pcm_stream,
+    AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
+    PcmStreamError, pcm_stream,
 };
 
 #[test]
@@ -54,6 +55,91 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
     assert_eq!(stopped.underrun_samples, 0);
     assert_eq!(output[..2], [[0.0, 0.0]; 2]);
     assert_eq!(graph.transport_mut().position_samples(), 3);
+}
+
+#[test]
+fn audio_item_streams_respect_sample_clock_start_and_end_positions() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://clip".to_owned(),
+            start_sample: 2,
+            source_offset_samples: 0,
+            length_samples: 2,
+        })
+        .expect("audio item insertion should succeed");
+    let item_id = project.audio_items()[0].id();
+    let (mut producer, consumer) = pcm_stream(4).expect("positive queue capacity is valid");
+    assert_eq!(producer.push_samples(&[0.25, 0.5, 0.75]), 3);
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item_id, consumer)],
+        5,
+    )
+    .expect("item stream should match the project item");
+    graph.transport_mut().start();
+    let mut output = [[9.0_f32, 9.0_f32]; 5];
+
+    let stats = graph
+        .render_into(&mut output)
+        .expect("timeline item should render");
+
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    assert_eq!(output[..2], [[0.0, 0.0]; 2]);
+    assert!((output[2][0] - 0.25 * center_gain).abs() < 1.0e-6);
+    assert!((output[3][0] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert_eq!(output[4], [0.0, 0.0]);
+    assert_eq!(graph.transport_mut().position_samples(), 5);
+}
+
+#[test]
+fn seeking_inside_an_audio_item_requires_a_refilled_source_stream() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://clip".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4,
+        })
+        .expect("audio item insertion should succeed");
+    let item_id = project.audio_items()[0].id();
+    let (mut producer, consumer) = pcm_stream(4).expect("positive queue capacity is valid");
+    assert_eq!(producer.push_samples(&[0.25, 0.5]), 2);
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item_id, consumer)],
+        4,
+    )
+    .expect("item stream should match the project item");
+    graph.transport_mut().seek_sample(1);
+    graph.transport_mut().start();
+    let mut output = [[3.0_f32, 3.0_f32]; 2];
+
+    assert!(matches!(
+        graph.render_into(&mut output),
+        Err(AudioGraphError::AudioItemSeekRequiresRefill { item_id: found }) if found == item_id
+    ));
+    assert_eq!(graph.transport_mut().position_samples(), 1);
+    assert_eq!(output, [[3.0, 3.0]; 2]);
+    assert_eq!(producer.available_capacity(), 2);
 }
 
 #[test]

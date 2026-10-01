@@ -1,6 +1,7 @@
 use aaadaw_core::{
-    MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot, Project, ProjectSettings,
-    ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot, TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
+    Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
+    TrackSnapshot,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::HashMap;
@@ -70,6 +71,20 @@ CREATE TABLE meter_points (
 const MIGRATION_2: &str = r#"
 ALTER TABLE tempo_points
 ADD COLUMN curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 1));
+"#;
+
+const AUDIO_ITEMS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS audio_items (
+    id INTEGER PRIMARY KEY CHECK (id >= 0),
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    media_ref TEXT NOT NULL CHECK (length(trim(media_ref)) > 0),
+    start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
+    source_offset_samples INTEGER NOT NULL CHECK (source_offset_samples >= 0),
+    length_samples INTEGER NOT NULL CHECK (length_samples > 0),
+    UNIQUE (track_id, position)
+);
+CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -220,8 +235,8 @@ impl ProjectStore {
         let Some((sample_rate, ppq, initial_tempo_bpm)) = metadata else {
             let rows: i64 = self.connection.query_row(
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
-                 (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM tempo_points) + \
-                 (SELECT COUNT(*) FROM meter_points)",
+                 (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
+                 (SELECT COUNT(*) FROM tempo_points) + (SELECT COUNT(*) FROM meter_points)",
                 [],
                 |row| row.get(0),
             )?;
@@ -242,6 +257,7 @@ impl ProjectStore {
         .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?;
 
         let tracks = read_tracks(&self.connection)?;
+        let audio_items = read_audio_items(&self.connection)?;
         let (midi_items, orphan_notes) = read_items_and_notes(&self.connection)?;
         if orphan_notes {
             return Err(StorageError::InvalidStoredData(
@@ -254,6 +270,7 @@ impl ProjectStore {
         Project::from_snapshot(ProjectSnapshot {
             settings,
             tracks,
+            audio_items,
             midi_items,
             tempo_points,
             meter_points,
@@ -302,6 +319,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         transaction.commit()?;
         version = next_version;
     }
+    connection.execute_batch(AUDIO_ITEMS_TABLE)?;
     Ok(())
 }
 
@@ -311,6 +329,7 @@ fn write_snapshot(
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM items", [])?;
+    transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
     transaction.execute("DELETE FROM meter_points", [])?;
@@ -339,6 +358,22 @@ fn write_snapshot(
                 f64::from(track.pan),
                 track.muted,
                 track.solo
+            ],
+        )?;
+    }
+
+    for (position, item) in snapshot.audio_items.iter().enumerate() {
+        transaction.execute(
+            "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
+             source_offset_samples, length_samples) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                to_sql_integer(item.id)?,
+                to_sql_integer(item.track_id)?,
+                usize_to_sql(position)?,
+                item.media_ref,
+                to_sql_integer(item.start_sample)?,
+                to_sql_integer(item.source_offset_samples)?,
+                to_sql_integer(item.length_samples)?
             ],
         )?;
     }
@@ -424,6 +459,41 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 solo,
             })
         })
+        .collect()
+}
+
+fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
+         length_samples FROM audio_items ORDER BY position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(
+            |(id, track_id, position, media_ref, start_sample, source_offset, length)| {
+                let _ = from_sql_u64(position)?;
+                Ok(AudioItemSnapshot {
+                    id: from_sql_u64(id)?,
+                    track_id: from_sql_u64(track_id)?,
+                    media_ref,
+                    start_sample: from_sql_u64(start_sample)?,
+                    source_offset_samples: from_sql_u64(source_offset)?,
+                    length_samples: from_sql_u64(length)?,
+                })
+            },
+        )
         .collect()
 }
 

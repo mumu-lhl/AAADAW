@@ -1,6 +1,6 @@
 use aaadaw_core::{DawAction, Project};
-use aaadaw_engine::{AudioRenderGraph, pcm_stream};
-use aaadaw_media::{AudioStreamDecoder, spawn_mono_stream};
+use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
+use aaadaw_media::{AudioStreamDecoder, spawn_audio_item_stream, spawn_mono_stream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -58,9 +58,10 @@ fn decodes_wav_packets_as_interleaved_f32() {
 }
 
 #[test]
-fn decoded_wav_is_resampled_and_fed_to_the_engine_stream() {
+fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
     let path = wav_path();
-    std::fs::write(&path, pcm_wav(&[-32768, 32767], 24_000)).expect("test WAV should be written");
+    std::fs::write(&path, pcm_wav(&[-32768, 0, 16384, 32767], 24_000))
+        .expect("test WAV should be written");
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -68,28 +69,44 @@ fn decoded_wav_is_resampled_and_fed_to_the_engine_stream() {
             name: "Audio".to_owned(),
         })
         .expect("audio track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://test-wav".to_owned(),
+            start_sample: 2,
+            source_offset_samples: 1,
+            length_samples: 4,
+        })
+        .expect("audio item should be inserted");
+    let item = project.audio_items()[0].clone();
     let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
-    let worker = spawn_mono_stream(&path, 48_000, producer)
-        .expect("valid output sample rate should start a worker");
-    worker.join().expect("worker should decode through EOF");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("valid audio item should start a worker");
+    worker
+        .join()
+        .expect("worker should decode through the item range");
 
-    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 4)
-        .expect("stream count should match the track count");
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        6,
+    )
+    .expect("item stream should match project audio item");
     graph.transport_mut().start();
-    let mut output = [[0.0; 2]; 4];
+    let mut output = [[0.0; 2]; 6];
     let stats = graph
         .render_into(&mut output)
-        .expect("decoded audio block should render");
+        .expect("decoded audio item should render");
     assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[..2], [[0.0, 0.0]; 2]);
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
-    let expected = [
-        -1.0,
-        -1.0 / 65_536.0,
-        32_767.0 / 32_768.0,
-        32_767.0 / 32_768.0,
-    ];
-    for (frame, expected_sample) in output.iter().zip(expected) {
-        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+    let expected = [0.0, 0.25, 0.5, 49_151.0 / 65_536.0];
+    for (frame, expected_sample) in output[2..].iter().zip(expected) {
+        assert!(
+            (frame[0] - expected_sample * center_gain).abs() < 1.0e-5,
+            "output: {output:?}"
+        );
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
     }
     std::fs::remove_file(path).expect("test file should be removed");
