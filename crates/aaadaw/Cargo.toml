@@ -1,0 +1,10 @@
+[package]
+name = "aaadaw"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aaadaw-core = { path = "../aaadaw-core" }
+iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "thread-pool", "linux-theme-detection"] }

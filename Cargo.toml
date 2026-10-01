@@ -5,6 +5,7 @@ members = [
     "crates/aaadaw-engine",
     "crates/aaadaw-media",
     "crates/aaadaw-app",
+    "crates/aaadaw",
 ]
 resolver = "3"
 
