@@ -88,7 +88,7 @@
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
 - [ ] 建立可停靠面板骨架；扩展 transport 至其他设备后端。
-- [x] 建立 Audio/MIDI Item 基础概览；AudioItem 显示秒位置，支持撤销的秒级移动和删除，JACK 模式可定位到 Item 起点。
+- [x] 建立 Audio/MIDI Item 基础概览；AudioItem 显示秒位置，支持撤销的 10 ms/100 ms/1 s sample-clock 微调和删除，JACK 模式可定位到 Item 起点。
 - [ ] 实现嵌入 Iced 的 wgpu 时间线视口；支持平移/缩放、标尺和空间化轨道/Item 显示。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [ ] 增加时间选区和精确 Item 选择/移动/复制/切分及网格吸附。

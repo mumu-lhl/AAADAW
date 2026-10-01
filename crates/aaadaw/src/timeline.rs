@@ -21,8 +21,12 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
                 item.media_ref()
             ))
             .width(Length::Fill),
-            button("−1s").on_press(Message::NudgeAudioItem(item.id(), -1)),
-            button("+1s").on_press(Message::NudgeAudioItem(item.id(), 1)),
+            button("−1s").on_press(Message::NudgeAudioItem(item.id(), -1, 1_000)),
+            button("−100ms").on_press(Message::NudgeAudioItem(item.id(), -1, 100)),
+            button("−10ms").on_press(Message::NudgeAudioItem(item.id(), -1, 10)),
+            button("+10ms").on_press(Message::NudgeAudioItem(item.id(), 1, 10)),
+            button("+100ms").on_press(Message::NudgeAudioItem(item.id(), 1, 100)),
+            button("+1s").on_press(Message::NudgeAudioItem(item.id(), 1, 1_000)),
             button("Delete").on_press(Message::DeleteAudioItem(item.id())),
         ]
         .spacing(8);

@@ -77,7 +77,7 @@ enum Message {
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
     AdjustPan(TrackId, f32),
-    NudgeAudioItem(ItemId, i8),
+    NudgeAudioItem(ItemId, i8, u32),
     DeleteAudioItem(ItemId),
     Undo,
     Redo,
@@ -286,8 +286,8 @@ impl App {
                     );
                 }
             }
-            Message::NudgeAudioItem(item_id, direction) => {
-                self.nudge_audio_item(item_id, direction)
+            Message::NudgeAudioItem(item_id, direction, milliseconds) => {
+                self.nudge_audio_item(item_id, direction, milliseconds)
             }
             Message::DeleteAudioItem(item_id) => {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted")
@@ -968,7 +968,7 @@ impl App {
         );
     }
 
-    fn nudge_audio_item(&mut self, item_id: ItemId, direction: i8) {
+    fn nudge_audio_item(&mut self, item_id: ItemId, direction: i8, milliseconds: u32) {
         let Some((media_ref, source_offset_samples, length_samples, start_sample)) = self
             .project
             .audio_items()
@@ -986,7 +986,9 @@ impl App {
             self.status = "Audio item no longer exists".to_owned();
             return;
         };
-        let delta = u64::from(self.project.settings().sample_rate());
+        let delta = (u64::from(self.project.settings().sample_rate()) * u64::from(milliseconds)
+            / 1_000)
+            .max(1);
         let moved_sample = match direction {
             -1 => start_sample.checked_sub(delta),
             1 => start_sample.checked_add(delta),
@@ -1321,11 +1323,15 @@ mod tests {
             .expect("test item should be inserted");
         let item_id = app.project.audio_items()[0].id();
 
-        let _ = app.update(Message::NudgeAudioItem(item_id, 1));
+        let _ = app.update(Message::NudgeAudioItem(item_id, 1, 1_000));
         assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
         let _ = app.update(Message::Undo);
         assert_eq!(app.project.audio_items()[0].start_sample(), 0);
-        let _ = app.update(Message::NudgeAudioItem(item_id, -1));
+        let _ = app.update(Message::NudgeAudioItem(item_id, 1, 10));
+        assert_eq!(app.project.audio_items()[0].start_sample(), 480);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+        let _ = app.update(Message::NudgeAudioItem(item_id, -1, 10));
         assert_eq!(app.project.audio_items()[0].start_sample(), 0);
     }
 
