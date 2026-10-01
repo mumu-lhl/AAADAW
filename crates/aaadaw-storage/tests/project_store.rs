@@ -180,6 +180,44 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
 }
 
 #[test]
+fn importing_an_external_file_embeds_it_and_returns_a_media_reference() {
+    let database_path = project_path();
+    let source_path = database_path.with_extension("wav");
+    let source_bytes = (0..32_000_u32)
+        .map(|sample| (sample % 251) as u8)
+        .collect::<Vec<_>>();
+    std::fs::write(&source_path, &source_bytes).expect("source fixture should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+
+    let media_ref = store
+        .import_audio_file(&source_path)
+        .expect("external file should be embedded");
+
+    assert!(media_ref.starts_with("asset://"));
+    let mut reader = store
+        .audio_asset_reader(&media_ref)
+        .expect("returned reference should resolve");
+    assert_eq!(
+        reader.original_name(),
+        source_path.file_name().unwrap().to_string_lossy()
+    );
+    let mut embedded_bytes = Vec::new();
+    reader
+        .read_to_end(&mut embedded_bytes)
+        .expect("embedded bytes should be readable");
+    assert_eq!(embedded_bytes, source_bytes);
+    assert_eq!(
+        std::fs::read(&source_path).expect("source should remain"),
+        source_bytes
+    );
+    drop(reader);
+
+    store.close().expect("project database should close");
+    remove_database(&database_path);
+    std::fs::remove_file(source_path).expect("source fixture should be removed");
+}
+
+#[test]
 fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
     let path = project_path();
     let bytes = (0_usize..700_123)

@@ -95,7 +95,7 @@
 
 - [x] 新建 `aaadaw-media`，以 Symphonia 实现 packet-based 文件解码；输出带采样率/声道的 interleaved f32 chunks，并可由后台 feeder 下混/重采样后送入引擎 SPSC PCM 队列。
 - [x] 通过当前 schema 的附加表，以固定大小 SQLite BLOB chunks 内嵌音频内容；支持不可变媒体引用查询、独立 seekable reader 和媒体 worker 流式解码，不提升 schema 版本。
-- [ ] 增加采样率/声道/时长等媒体元数据探测与持久化、外部文件导入管理及更多格式 fixture。
+- [ ] 增加外链模式、缺失素材重定位和“打包工程”流程；补充采样率/声道/时长等媒体元数据探测与持久化及更多格式 fixture。
 - [ ] 实现实时录音链路：设备回调经预分配 SPSC 队列传递 PCM，后台线程写入 RF64（或经 ADR 选定的等效格式），保存可恢复的录音元数据。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
 - [x] 实现 MIDI Item、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。

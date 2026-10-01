@@ -8,6 +8,7 @@ use rusqlite::{
 };
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -371,6 +372,25 @@ impl ProjectStore {
             connection,
             database_path,
         })
+    }
+
+    /// Imports an external file into the project and returns its opaque `asset://` reference.
+    ///
+    /// The source file is left untouched. Run this synchronous operation on a
+    /// background thread; project assets are read incrementally into bounded chunks.
+    pub fn import_audio_file(&mut self, path: impl AsRef<Path>) -> Result<String, StorageError> {
+        let path = path.as_ref();
+        let source = File::open(path)?;
+        let original_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "audio".to_owned());
+        let token: String =
+            self.connection
+                .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+        let media_ref = format!("asset://{token}");
+        self.import_audio_asset(&media_ref, &original_name, source)?;
+        Ok(media_ref)
     }
 
     /// Imports an audio asset as bounded SQLite BLOB chunks under an immutable reference.
