@@ -69,10 +69,10 @@
 - [x] 使用 `rtrb` 建立固定容量 SPSC PCM 队列；音频线程读取不阻塞，欠载补零并报告欠载帧数。
 - [x] 实现固定拓扑 PCM 流混音回调：预分配轨道 scratch、停播静音、运行时统计欠载；AudioItem 按 sample-clock 起止位置调度独立 PCM 流，多 Item 可混入同轨。
 - [x] Seek 进入已开始消费的 AudioItem 时，在不推进 Transport/消费 PCM 的情况下拒绝渲染并要求控制侧重填该 Item 的流；refilled feeder 可从 Item 开始重解码并丢弃至目标 sample，渲染图可绑定从指定 sample 起始的队列。
-- [ ] 将控制侧 Seek、素材解析/后台 refill 与渲染图队列替换打通，并优化长素材随机定位成本。
+- [x] 将控制侧 Seek、素材解析/后台 refill 与渲染图替换打通；JACK 回调通过 SPSC 队列换图，旧图与 feeder 在控制线程安全回收。长素材随机定位成本仍待优化。
 - [x] 可选 JACK 输出后端接入播放/停止与设备采样率检查。
 - [x] 将后台 packet 解码、单声道下混、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；音频回调仍不执行解码、锁或 I/O。
-- [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；可选 JACK 接入同一图，覆盖实际 PCM 渲染与缺失外链报错。
+- [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；支持 sample seek refill、JACK 图替换、实际 PCM 渲染与缺失外链报错。
 - [ ] 扩展 JACK 输入/录音、原生 PipeWire 与 Windows WASAPI；明确每个平台的设备枚举、热插拔和延迟语义。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。

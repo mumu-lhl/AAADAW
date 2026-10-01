@@ -12,8 +12,8 @@ use std::path::Path;
 
 mod stream;
 pub use stream::{
-    AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
-    spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
+    AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
 };
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;

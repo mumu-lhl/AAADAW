@@ -11,7 +11,8 @@ use aaadaw_engine::{
 #[cfg(feature = "jack-backend")]
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 use aaadaw_media::{
-    AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
+    AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
 use std::error::Error as StdError;
@@ -104,7 +105,9 @@ impl PreparedAudioPlayback {
         let output = JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?;
         Ok(RunningJackPlayback {
             output,
-            _feeders: feeders,
+            feeders,
+            retired_feeders: None,
+            is_playing: false,
         })
     }
 }
@@ -113,19 +116,83 @@ impl PreparedAudioPlayback {
 #[cfg(feature = "jack-backend")]
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
-    _feeders: Vec<AudioFeedWorker>,
+    feeders: Vec<AudioFeedWorker>,
+    retired_feeders: Option<Vec<AudioFeedWorker>>,
+    is_playing: bool,
 }
 
 #[cfg(feature = "jack-backend")]
 impl RunningJackPlayback {
     /// Queues playback for the next JACK callback.
     pub fn play(&mut self) -> Result<(), JackOutputError> {
-        self.output.play()
+        self.output.play()?;
+        self.is_playing = true;
+        Ok(())
     }
 
     /// Queues a stop for the next JACK callback.
     pub fn stop(&mut self) -> Result<(), JackOutputError> {
-        self.output.stop()
+        self.output.stop()?;
+        self.is_playing = false;
+        Ok(())
+    }
+
+    /// Prepares and queues a seek without interrupting the active graph during media refill.
+    ///
+    /// Call from a control worker: asset resolution and decoder startup can block. If preparation
+    /// fails, current graph and playback position remain unchanged.
+    pub fn seek_to_sample(
+        &mut self,
+        project: &Project,
+        store: &ProjectStore,
+        timeline_sample: u64,
+        queue_capacity_samples: usize,
+        max_block_frames: usize,
+    ) -> Result<(), PlaybackBuildError> {
+        self.collect_retired_graphs();
+        if self.retired_feeders.is_some() {
+            return Err(PlaybackBuildError::Jack(
+                JackOutputError::GraphReplacementInFlight,
+            ));
+        }
+        let prepared = prepare_audio_playback_at(
+            project,
+            store,
+            timeline_sample,
+            queue_capacity_samples,
+            max_block_frames,
+        )?;
+        self.replace_graph(prepared)
+    }
+
+    /// Replaces active graph and retains old feeders until callback retires old graph.
+    pub fn replace_graph(
+        &mut self,
+        prepared: PreparedAudioPlayback,
+    ) -> Result<(), PlaybackBuildError> {
+        self.collect_retired_graphs();
+        if self.retired_feeders.is_some() {
+            return Err(PlaybackBuildError::Jack(
+                JackOutputError::GraphReplacementInFlight,
+            ));
+        }
+        let (graph, feeders) = prepared.into_parts();
+        self.output
+            .replace_graph(graph, self.is_playing)
+            .map_err(PlaybackBuildError::Jack)?;
+        self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
+        Ok(())
+    }
+
+    /// Reclaims replaced graphs and stops their feeder workers after the callback swap.
+    pub fn collect_retired_graphs(&mut self) -> bool {
+        let collected = self.output.collect_retired_graphs();
+        if collected > 0 {
+            drop(self.retired_feeders.take());
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns lock-free callback counters.
@@ -146,17 +213,41 @@ pub fn prepare_audio_playback(
     queue_capacity_samples: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at(project, store, 0, queue_capacity_samples, max_block_frames)
+}
+
+/// Prepares playback with the graph transport positioned at an arbitrary project sample.
+///
+/// Items containing the seek sample are re-decoded off-thread and their earlier output is discarded;
+/// items already behind the playhead receive empty queues until a later graph replacement.
+pub fn prepare_audio_playback_at(
+    project: &Project,
+    store: &ProjectStore,
+    timeline_sample: u64,
+    queue_capacity_samples: usize,
+    max_block_frames: usize,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     let output_sample_rate = project.settings().sample_rate();
     let mut feeders = Vec::with_capacity(project.audio_items().len());
     let mut item_streams = Vec::with_capacity(project.audio_items().len());
 
     for item in project.audio_items() {
+        let (producer, consumer) =
+            pcm_stream(queue_capacity_samples).map_err(PlaybackBuildError::PcmStream)?;
+        if timeline_sample >= item.end_sample() {
+            drop(producer);
+            item_streams.push(AudioItemStream::new_at_sample(
+                item.id(),
+                item.end_sample(),
+                consumer,
+            ));
+            continue;
+        }
+        let needs_refill = timeline_sample > item.start_sample();
         let resolved = store
             .resolve_audio_asset(item.media_ref())
             .map_err(PlaybackBuildError::Storage)?;
         let is_linked = matches!(&resolved, ResolvedAudioAsset::LinkedFile { .. });
-        let (producer, consumer) =
-            pcm_stream(queue_capacity_samples).map_err(PlaybackBuildError::PcmStream)?;
         let mut feeder = match resolved {
             ResolvedAudioAsset::Embedded(reader) => {
                 let byte_len = reader.byte_len();
@@ -164,20 +255,40 @@ pub fn prepare_audio_playback(
                     .extension()
                     .and_then(|value| value.to_str())
                     .map(str::to_owned);
-                spawn_audio_item_stream_from_reader(
+                if needs_refill {
+                    spawn_audio_item_stream_from_reader_at(
+                        item,
+                        timeline_sample,
+                        reader,
+                        Some(byte_len),
+                        extension.as_deref(),
+                        output_sample_rate,
+                        producer,
+                    )
+                } else {
+                    spawn_audio_item_stream_from_reader(
+                        item,
+                        reader,
+                        Some(byte_len),
+                        extension.as_deref(),
+                        output_sample_rate,
+                        producer,
+                    )
+                }
+                .map_err(PlaybackBuildError::Media)?
+            }
+            ResolvedAudioAsset::LinkedFile { path, .. } => if needs_refill {
+                spawn_audio_item_stream_at(
                     item,
-                    reader,
-                    Some(byte_len),
-                    extension.as_deref(),
+                    timeline_sample,
+                    path,
                     output_sample_rate,
                     producer,
                 )
-                .map_err(PlaybackBuildError::Media)?
-            }
-            ResolvedAudioAsset::LinkedFile { path, .. } => {
+            } else {
                 spawn_audio_item_stream(item, path, output_sample_rate, producer)
-                    .map_err(PlaybackBuildError::Media)?
             }
+            .map_err(PlaybackBuildError::Media)?,
         };
         if let Err(error) = feeder.wait_ready() {
             if is_linked
@@ -196,10 +307,19 @@ pub fn prepare_audio_playback(
             return Err(PlaybackBuildError::Media(error));
         }
         feeders.push(feeder);
-        item_streams.push(AudioItemStream::new(item.id(), consumer));
+        if needs_refill {
+            item_streams.push(AudioItemStream::new_at_sample(
+                item.id(),
+                timeline_sample,
+                consumer,
+            ));
+        } else {
+            item_streams.push(AudioItemStream::new(item.id(), consumer));
+        }
     }
 
-    let graph = AudioRenderGraph::new_for_audio_items(project, item_streams, max_block_frames)
+    let mut graph = AudioRenderGraph::new_for_audio_items(project, item_streams, max_block_frames)
         .map_err(PlaybackBuildError::AudioGraph)?;
+    graph.transport_mut().seek_sample(timeline_sample);
     Ok(PreparedAudioPlayback { graph, feeders })
 }

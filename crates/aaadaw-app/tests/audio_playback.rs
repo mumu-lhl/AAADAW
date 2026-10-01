@@ -1,4 +1,4 @@
-use aaadaw_app::{PlaybackBuildError, prepare_audio_playback};
+use aaadaw_app::{PlaybackBuildError, prepare_audio_playback, prepare_audio_playback_at};
 use aaadaw_core::{DawAction, Project};
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
@@ -37,6 +37,14 @@ fn pcm_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
 }
 
 fn project_with_audio_item(media_ref: String, length_samples: u64) -> Project {
+    project_with_audio_item_at(media_ref, 0, length_samples)
+}
+
+fn project_with_audio_item_at(
+    media_ref: String,
+    start_sample: u64,
+    length_samples: u64,
+) -> Project {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -48,7 +56,7 @@ fn project_with_audio_item(media_ref: String, length_samples: u64) -> Project {
         .apply(DawAction::InsertAudioItem {
             track_id: project.tracks()[0].id(),
             media_ref,
-            start_sample: 0,
+            start_sample,
             source_offset_samples: 0,
             length_samples,
         })
@@ -90,6 +98,63 @@ fn prepares_and_renders_an_embedded_audio_item() {
     assert!((output[0][0] + center_gain).abs() < 1.0e-5);
     assert!((output[1][0]).abs() < 1.0e-5);
     assert!((output[2][0] - center_gain * 0.5).abs() < 1.0e-5);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn prepares_audio_refill_at_seek_sample_and_starts_transport_there() {
+    let database_path = unique_path("aaadaw");
+    let wav = pcm_wav(&[0, 8192, 16384, 24576], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://seekable", "seek.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let project = project_with_audio_item_at("asset://seekable".to_owned(), 10, 4);
+
+    let mut prepared = prepare_audio_playback_at(&project, &store, 12, 64, 8)
+        .expect("seek position should prepare a refilled stream");
+    assert_eq!(prepared.graph_mut().transport_mut().position_samples(), 12);
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("refilled audio should decode");
+    }
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 3];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("seek-position graph should render");
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    assert_eq!(stats.underrun_samples, 0);
+    assert!((output[0][0] - center_gain * 0.5).abs() < 1.0e-6);
+    assert!((output[1][0] - center_gain * 0.75).abs() < 1.0e-6);
+    assert_eq!(output[2], [0.0, 0.0]);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn seek_past_an_item_does_not_resolve_its_missing_source() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let project = project_with_audio_item("asset://missing-before-playhead".to_owned(), 4);
+
+    let prepared = prepare_audio_playback_at(&project, &store, 8, 64, 8)
+        .expect("item before the seek position does not need media resolution");
+    assert_eq!(prepared.feeder_count(), 0);
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("no feeders should need to run");
+    }
+    graph.transport_mut().start();
+    let mut output = [[1.0; 2]; 2];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("past item should not be scheduled at this position");
+    assert_eq!(output, [[0.0; 2]; 2]);
+    assert_eq!(stats.underrun_samples, 0);
 
     store.close().expect("project should close");
     remove_database(&database_path);

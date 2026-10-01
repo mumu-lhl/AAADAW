@@ -1,8 +1,8 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
 use aaadaw_media::{
-    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_from_reader_at,
-    spawn_mono_stream,
+    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
 };
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
@@ -231,6 +231,47 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}-wal", path.display()));
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+}
+
+#[test]
+fn file_backed_audio_item_stream_can_refill_at_a_timeline_seek() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[0, 8192, 16384, 24576], 48_000))
+        .expect("test WAV should be written");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let item = {
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://file-seek".to_owned(),
+                start_sample: 10,
+                source_offset_samples: 0,
+                length_samples: 4,
+            })
+            .expect("item should be inserted");
+        project.audio_items()[0].clone()
+    };
+    let (producer, mut consumer) = pcm_stream(8).expect("queue should have capacity");
+    let mut worker = spawn_audio_item_stream_at(&item, 12, &path, 48_000, producer)
+        .expect("file-backed item should start at the requested sample");
+    worker
+        .wait_ready()
+        .expect("source should open on the worker");
+    worker
+        .join()
+        .expect("worker should decode the remaining item samples");
+    let mut samples = [0.0; 2];
+    assert_eq!(consumer.read_into(&mut samples), 0);
+    assert!((samples[0] - 0.5).abs() < 1.0e-6);
+    assert!((samples[1] - 0.75).abs() < 1.0e-6);
+    std::fs::remove_file(path).expect("test file should be removed");
 }
 
 #[test]

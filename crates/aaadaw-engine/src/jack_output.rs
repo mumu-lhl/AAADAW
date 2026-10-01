@@ -8,10 +8,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const TRANSPORT_COMMAND_CAPACITY: usize = 16;
 
-#[derive(Clone, Copy)]
 enum TransportCommand {
     Play,
     Stop,
+    ReplaceGraph {
+        graph: Box<AudioRenderGraph>,
+        start_playing: bool,
+    },
 }
 
 struct CallbackCounters {
@@ -21,21 +24,50 @@ struct CallbackCounters {
 }
 
 struct JackProcessHandler {
-    graph: AudioRenderGraph,
+    graph: Box<AudioRenderGraph>,
     left: Port<AudioOut>,
     right: Port<AudioOut>,
     scratch: Vec<[f32; 2]>,
     commands: Consumer<TransportCommand>,
+    retired_graphs: Producer<Box<AudioRenderGraph>>,
+    pending_retired_graph: Option<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
 }
 
 impl JackProcessHandler {
     fn apply_transport_commands(&mut self) {
+        self.flush_retired_graph();
         while let Ok(command) = self.commands.pop() {
             match command {
                 TransportCommand::Play => self.graph.transport_mut().start(),
                 TransportCommand::Stop => self.graph.transport_mut().stop(),
+                TransportCommand::ReplaceGraph {
+                    mut graph,
+                    start_playing,
+                } => {
+                    if start_playing {
+                        graph.transport_mut().start();
+                    } else {
+                        graph.transport_mut().stop();
+                    }
+                    let retired = std::mem::replace(&mut self.graph, graph);
+                    match self.retired_graphs.push(retired) {
+                        Ok(()) => {}
+                        Err(PushError::Full(retired)) => {
+                            self.pending_retired_graph = Some(retired);
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    fn flush_retired_graph(&mut self) {
+        let Some(retired) = self.pending_retired_graph.take() else {
+            return;
+        };
+        if let Err(PushError::Full(retired)) = self.retired_graphs.push(retired) {
+            self.pending_retired_graph = Some(retired);
         }
     }
 }
@@ -92,6 +124,7 @@ pub enum JackOutputError {
     SampleRateMismatch { project: u32, device: u32 },
     DeviceBlockTooLarge { device: usize, maximum: usize },
     ControlQueueFull,
+    GraphReplacementInFlight,
 }
 
 impl fmt::Display for JackOutputError {
@@ -107,6 +140,9 @@ impl fmt::Display for JackOutputError {
                 "JACK block size {device} exceeds render capacity {maximum}"
             ),
             Self::ControlQueueFull => formatter.write_str("JACK transport command queue is full"),
+            Self::GraphReplacementInFlight => {
+                formatter.write_str("previous JACK render graph replacement is not collected")
+            }
         }
     }
 }
@@ -129,13 +165,16 @@ impl From<jack::Error> for JackOutputError {
 /// A running JACK stereo-output client.
 ///
 /// The process callback only touches preallocated buffers, lock-free queues,
-/// atomics, and the render graph. Transport control is sent from the caller via
-/// the internal SPSC queue; seeking is intentionally withheld until audio
-/// streams can be repositioned together with the transport.
+/// atomics, and the render graph. Replaced graphs return through a second SPSC
+/// queue and are reclaimed by the control thread.
 pub struct JackAudioOutput {
     _active: jack::AsyncClient<(), JackProcessHandler>,
     commands: Producer<TransportCommand>,
+    retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    device_sample_rate: u32,
+    device_block_size: usize,
+    replacement_pending: bool,
 }
 
 /// Callback counters that can be read safely from a non-realtime thread.
@@ -168,24 +207,31 @@ impl JackAudioOutput {
         let left = client.register_port("out_l", AudioOut::default())?;
         let right = client.register_port("out_r", AudioOut::default())?;
         let (commands, command_consumer) = RingBuffer::new(TRANSPORT_COMMAND_CAPACITY);
+        let (retired_graphs, retired_graph_consumer) = RingBuffer::new(1);
         let counters = Arc::new(CallbackCounters {
             rendered_blocks: AtomicU64::new(0),
             underrun_samples: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
         });
         let process_handler = JackProcessHandler {
-            graph,
+            graph: Box::new(graph),
             left,
             right,
             scratch: vec![[0.0; 2]; device_block_size],
             commands: command_consumer,
+            retired_graphs,
+            pending_retired_graph: None,
             counters: Arc::clone(&counters),
         };
         let active = client.activate_async((), process_handler)?;
         Ok(Self {
             _active: active,
             commands,
+            retired_graphs: retired_graph_consumer,
             counters,
+            device_sample_rate,
+            device_block_size,
+            replacement_pending: false,
         })
     }
 
@@ -197,6 +243,51 @@ impl JackAudioOutput {
     /// Queues a stop request for the next audio callback.
     pub fn stop(&mut self) -> Result<(), JackOutputError> {
         self.enqueue(TransportCommand::Stop)
+    }
+
+    /// Queues a new render graph and preserves playback state.
+    ///
+    /// Call [`collect_retired_graphs`](Self::collect_retired_graphs) before the next replacement.
+    /// The old graph is reclaimed only on this control thread.
+    pub fn replace_graph(
+        &mut self,
+        graph: AudioRenderGraph,
+        start_playing: bool,
+    ) -> Result<(), JackOutputError> {
+        if self.replacement_pending {
+            return Err(JackOutputError::GraphReplacementInFlight);
+        }
+        if graph.sample_rate() != self.device_sample_rate {
+            return Err(JackOutputError::SampleRateMismatch {
+                project: graph.sample_rate(),
+                device: self.device_sample_rate,
+            });
+        }
+        if graph.max_block_frames() < self.device_block_size {
+            return Err(JackOutputError::DeviceBlockTooLarge {
+                device: self.device_block_size,
+                maximum: graph.max_block_frames(),
+            });
+        }
+        self.enqueue(TransportCommand::ReplaceGraph {
+            graph: Box::new(graph),
+            start_playing,
+        })?;
+        self.replacement_pending = true;
+        Ok(())
+    }
+
+    /// Reclaims graphs retired by the callback. Call only from a non-realtime thread.
+    pub fn collect_retired_graphs(&mut self) -> usize {
+        let mut collected = 0;
+        while let Ok(graph) = self.retired_graphs.pop() {
+            drop(graph);
+            collected += 1;
+        }
+        if collected > 0 {
+            self.replacement_pending = false;
+        }
+        collected
     }
 
     /// Reads callback counters without blocking the audio thread.

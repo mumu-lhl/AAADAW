@@ -61,6 +61,25 @@ pub fn spawn_audio_item_stream(
     )
 }
 
+/// Re-decodes a file-backed item and discards output before the requested timeline sample.
+pub fn spawn_audio_item_stream_at(
+    item: &AudioItem,
+    timeline_sample: u64,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: PcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    let samples_to_skip = checked_item_seek(item, timeline_sample)?;
+    spawn_stream(
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples() - samples_to_skip),
+        samples_to_skip,
+        producer,
+    )
+}
+
 /// Decodes an embedded or otherwise seekable media source into an AudioItem stream.
 ///
 /// The reader is moved to the background worker; `byte_len` and `extension_hint`
@@ -106,20 +125,7 @@ pub fn spawn_audio_item_stream_from_reader_at<R>(
 where
     R: Read + Seek + Send + Sync + 'static,
 {
-    let samples_to_skip = timeline_sample.checked_sub(item.start_sample()).ok_or(
-        MediaError::InvalidAudioItemSeek {
-            requested: timeline_sample,
-            start_sample: item.start_sample(),
-            end_sample: item.end_sample(),
-        },
-    )?;
-    if samples_to_skip >= item.length_samples() {
-        return Err(MediaError::InvalidAudioItemSeek {
-            requested: timeline_sample,
-            start_sample: item.start_sample(),
-            end_sample: item.end_sample(),
-        });
-    }
+    let samples_to_skip = checked_item_seek(item, timeline_sample)?;
     let remaining_samples = item.length_samples() - samples_to_skip;
     spawn_stream(
         DecoderInput::Reader {
@@ -210,6 +216,24 @@ impl Drop for AudioFeedWorker {
             let _ = worker.join();
         }
     }
+}
+
+fn checked_item_seek(item: &AudioItem, timeline_sample: u64) -> Result<u64, MediaError> {
+    let samples_to_skip = timeline_sample.checked_sub(item.start_sample()).ok_or(
+        MediaError::InvalidAudioItemSeek {
+            requested: timeline_sample,
+            start_sample: item.start_sample(),
+            end_sample: item.end_sample(),
+        },
+    )?;
+    if samples_to_skip >= item.length_samples() {
+        return Err(MediaError::InvalidAudioItemSeek {
+            requested: timeline_sample,
+            start_sample: item.start_sample(),
+            end_sample: item.end_sample(),
+        });
+    }
+    Ok(samples_to_skip)
 }
 
 trait ReadSeek: Read + Seek {}
