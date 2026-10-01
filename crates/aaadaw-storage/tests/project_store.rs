@@ -343,6 +343,83 @@ fn background_asset_import_reports_progress_and_cancellation_rolls_back() {
 }
 
 #[test]
+fn changed_source_reimport_creates_a_new_snapshot_and_action_updates_placements() {
+    let database_path = project_path();
+    let source_path = database_path.with_extension("wav");
+    std::fs::write(&source_path, [1, 2, 3, 4]).expect("original source should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let old_ref = store
+        .import_audio_file(&source_path)
+        .expect("original source should embed");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("audio track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: old_ref.clone(),
+            start_sample: 123,
+            source_offset_samples: 4,
+            length_samples: 8,
+        })
+        .expect("item should reference the original snapshot");
+    let item = project.audio_items()[0].clone();
+
+    std::fs::write(&source_path, [9, 8, 7, 6, 5]).expect("original source should be changed");
+    assert_eq!(
+        store
+            .audio_asset_source_status(&old_ref)
+            .expect("source change should be detected"),
+        aaadaw_storage::AudioAssetSourceStatus::Changed
+    );
+    let new_ref = store
+        .import_audio_file(&source_path)
+        .expect("changed file should create a new immutable snapshot");
+    assert_ne!(new_ref, old_ref);
+
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id: item.id(),
+            media_ref: new_ref.clone(),
+            start_sample: item.start_sample(),
+            source_offset_samples: item.source_offset_samples(),
+            length_samples: item.length_samples(),
+        })
+        .expect("existing edit action should retarget the placement");
+    assert_eq!(project.audio_items()[0].media_ref(), new_ref);
+    assert!(project.undo().expect("retargeting should be undoable"));
+    assert_eq!(project.audio_items()[0].media_ref(), old_ref);
+    assert!(project.redo().expect("retargeting should be redoable"));
+    assert_eq!(project.audio_items()[0].media_ref(), new_ref);
+
+    store
+        .save(&project)
+        .expect("retargeted project should save");
+    store.close().expect("project should close");
+    let reopened = ProjectStore::open(&database_path).expect("project should reopen");
+    let restored = reopened.load().expect("project snapshot should load");
+    assert_eq!(restored.audio_items()[0].media_ref(), new_ref);
+    let mut old_asset = reopened
+        .audio_asset_reader(&old_ref)
+        .expect("original immutable asset should remain available");
+    let mut old_bytes = Vec::new();
+    old_asset
+        .read_to_end(&mut old_bytes)
+        .expect("original snapshot should remain readable");
+    assert_eq!(old_bytes, [1, 2, 3, 4]);
+
+    drop(old_asset);
+    reopened.close().expect("reopened project should close");
+    remove_database(&database_path);
+    std::fs::remove_file(source_path).expect("source file should be removed");
+}
+
+#[test]
 fn background_source_scan_reports_embedded_changes_and_live_links() {
     let database_path = project_path();
     let imported_path = database_path.with_extension("imported.wav");
