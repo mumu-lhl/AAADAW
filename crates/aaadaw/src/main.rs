@@ -1,3 +1,4 @@
+use aaadaw_app::{AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import};
 #[cfg(feature = "jack-backend")]
 use aaadaw_app::{
     PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
@@ -9,14 +10,12 @@ use iced::{Alignment, Element, Length, Task};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-#[cfg(feature = "jack-backend")]
 use std::time::Duration;
 
 fn main() -> iced::Result {
     let application = iced::application(App::new, App::update, App::view)
         .title("AAADAW")
         .window_size(iced::Size::new(1280.0, 800.0));
-    #[cfg(feature = "jack-backend")]
     let application = application.subscription(App::subscription);
     application.run()
 }
@@ -30,6 +29,13 @@ struct App {
     revision: u64,
     saved_revision: u64,
     io_busy: bool,
+    audio_file_path_query: String,
+    import_busy: bool,
+    import_finalizing: bool,
+    import_cancel_requested: bool,
+    import_worker: Option<PendingAudioImport>,
+    import_bytes: u64,
+    import_total_bytes: Option<u64>,
     status: String,
     #[cfg(feature = "jack-backend")]
     playback: Option<RunningJackPlayback>,
@@ -41,6 +47,19 @@ struct App {
     playhead_sample: u64,
     #[cfg(feature = "jack-backend")]
     seek_sample_query: String,
+}
+
+struct PendingAudioImport {
+    worker: AudioItemImportWorker,
+}
+
+#[derive(Clone)]
+struct SharedAudioImportWorker(Arc<Mutex<Option<Result<AudioItemImportWorker, String>>>>);
+
+impl std::fmt::Debug for SharedAudioImportWorker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedAudioImportWorker(..)")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +75,12 @@ enum Message {
     ProjectPathChanged(String),
     OpenProject,
     SaveProject,
+    AudioFilePathChanged(String),
+    ImportAudio,
+    CancelAudioImport,
+    AudioImportStarted(SharedAudioImportWorker),
+    AudioImportFinished(Result<DawAction, String>),
+    BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
     #[cfg(feature = "jack-backend")]
@@ -76,8 +101,6 @@ enum Message {
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     },
-    #[cfg(feature = "jack-backend")]
-    PlaybackTick,
 }
 
 #[cfg(feature = "jack-backend")]
@@ -108,10 +131,14 @@ impl App {
         (app, task)
     }
 
-    #[cfg(feature = "jack-backend")]
     fn subscription(&self) -> iced::Subscription<Message> {
-        if self.playback.is_some() {
-            iced::time::every(Duration::from_millis(100)).map(|_| Message::PlaybackTick)
+        #[cfg(feature = "jack-backend")]
+        let playback_active = self.playback.is_some();
+        #[cfg(not(feature = "jack-backend"))]
+        let playback_active = false;
+
+        if self.import_busy || playback_active {
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
         }
@@ -120,16 +147,27 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         let allowed_during_io = matches!(
             &message,
-            Message::ProjectLoaded(..) | Message::ProjectSaved(..)
+            Message::ProjectLoaded(..) | Message::ProjectSaved(..) | Message::BackgroundTick
         );
-        #[cfg(feature = "jack-backend")]
-        let allowed_during_io = allowed_during_io || matches!(&message, Message::PlaybackTick);
+        if self.import_busy
+            && !matches!(
+                &message,
+                Message::AudioFilePathChanged(_)
+                    | Message::CancelAudioImport
+                    | Message::AudioImportStarted(_)
+                    | Message::AudioImportFinished(_)
+                    | Message::BackgroundTick
+            )
+        {
+            self.status = "Wait for audio import to finish or cancel it".to_owned();
+            return Task::none();
+        }
         #[cfg(feature = "jack-backend")]
         {
             if self.playback_busy
                 && !matches!(
                     &message,
-                    Message::PlaybackPrepared { .. } | Message::PlaybackTick
+                    Message::PlaybackPrepared { .. } | Message::BackgroundTick
                 )
             {
                 self.status = "Wait for playback preparation to finish".to_owned();
@@ -145,6 +183,7 @@ impl App {
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
+                        | Message::ImportAudio
                 )
             {
                 self.status = "Close JACK output before editing the project".to_owned();
@@ -220,6 +259,16 @@ impl App {
             }
             Message::OpenProject => task = self.open_project(),
             Message::SaveProject => task = self.save_project(),
+            Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
+            Message::ImportAudio => task = self.start_audio_import(),
+            Message::CancelAudioImport => self.cancel_audio_import(),
+            Message::AudioImportStarted(worker) => self.audio_import_started(worker),
+            Message::AudioImportFinished(result) => self.finish_audio_import(result),
+            Message::BackgroundTick => {
+                #[cfg(feature = "jack-backend")]
+                self.update_playback_stats();
+                task = self.update_audio_import();
+            }
             Message::ProjectLoaded(path, result) => {
                 self.io_busy = false;
                 let result = result.lock().ok().and_then(|mut result| result.take());
@@ -270,8 +319,6 @@ impl App {
                 start_when_ready,
                 result,
             } => self.finish_playback_preparation(target_sample, start_when_ready, result),
-            #[cfg(feature = "jack-backend")]
-            Message::PlaybackTick => self.update_playback_stats(),
         }
         task
     }
@@ -347,6 +394,32 @@ impl App {
         ]
         .spacing(8);
 
+        let import_progress = if !self.import_busy {
+            "Import audio to the first track after existing items; the source is embedded."
+                .to_owned()
+        } else if self.import_finalizing {
+            "Audio embedded; placing the timeline item…".to_owned()
+        } else if let Some(total_bytes) = self.import_total_bytes {
+            format!("Importing: {} / {total_bytes} bytes", self.import_bytes)
+        } else {
+            "Starting audio import…".to_owned()
+        };
+        let import_controls = row![
+            text_input("Audio file to import", &self.audio_file_path_query)
+                .on_input(Message::AudioFilePathChanged)
+                .width(Length::Fill),
+            button(if self.import_busy {
+                "Importing…"
+            } else {
+                "Import audio"
+            })
+            .on_press(Message::ImportAudio),
+            button("Cancel import").on_press(Message::CancelAudioImport),
+            text(import_progress),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
         let action_search = row![
             text_input("Search actions: add track, undo, redo", &self.action_query)
                 .on_input(Message::ActionQueryChanged)
@@ -392,6 +465,7 @@ impl App {
             column![
                 toolbar,
                 project_controls,
+                import_controls,
                 action_search,
                 workspace,
                 text(if self.status.is_empty() {
@@ -411,6 +485,150 @@ impl App {
 
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+
+    fn start_audio_import(&mut self) -> Task<Message> {
+        if self.import_busy || self.io_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        #[cfg(feature = "jack-backend")]
+        if self.playback.is_some() {
+            self.status = "Close JACK output before importing audio".to_owned();
+            return Task::none();
+        }
+        let Some(project_path) = self.project_path.clone() else {
+            self.status = "Save the project before importing audio".to_owned();
+            return Task::none();
+        };
+        let Some(track_id) = self.project.tracks().first().map(Track::id) else {
+            self.status = "Add a track before importing audio".to_owned();
+            return Task::none();
+        };
+        let Some(source_path) = project_path_from_query(&self.audio_file_path_query) else {
+            self.status = "Enter an audio file path first".to_owned();
+            return Task::none();
+        };
+        let start_sample = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| item.track_id() == track_id)
+            .filter_map(|item| item.start_sample().checked_add(item.length_samples()))
+            .max()
+            .unwrap_or(0);
+        let project_sample_rate = self.project.settings().sample_rate();
+
+        self.import_busy = true;
+        self.import_finalizing = false;
+        self.import_cancel_requested = false;
+        self.import_bytes = 0;
+        self.import_total_bytes = None;
+        self.status = format!("Starting import of {}…", source_path.display());
+        Task::perform(
+            run_blocking("aaadaw-audio-import-start", move || {
+                start_audio_item_import(
+                    project_path,
+                    source_path,
+                    track_id,
+                    start_sample,
+                    project_sample_rate,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            move |result| {
+                Message::AudioImportStarted(SharedAudioImportWorker(Arc::new(Mutex::new(Some(
+                    result,
+                )))))
+            },
+        )
+    }
+
+    fn audio_import_started(&mut self, worker: SharedAudioImportWorker) {
+        let worker = worker.0.lock().ok().and_then(|mut result| result.take());
+        match worker {
+            Some(Ok(worker)) => {
+                if self.import_cancel_requested {
+                    worker.cancel();
+                    self.status = "Cancelling audio import…".to_owned();
+                } else {
+                    self.status = "Importing audio into the project…".to_owned();
+                }
+                self.import_worker = Some(PendingAudioImport { worker });
+            }
+            Some(Err(error)) => {
+                self.import_busy = false;
+                self.import_finalizing = false;
+                self.import_cancel_requested = false;
+                self.status = format!("Audio import could not start: {error}");
+            }
+            None => {
+                self.import_busy = false;
+                self.import_finalizing = false;
+                self.import_cancel_requested = false;
+                self.status = "Audio import worker result was unavailable".to_owned();
+            }
+        }
+    }
+
+    fn cancel_audio_import(&mut self) {
+        if !self.import_busy {
+            self.status = "No audio import is active".to_owned();
+            return;
+        }
+        if self.import_finalizing {
+            self.status = "Audio bytes are committed; finishing item placement".to_owned();
+            return;
+        }
+        self.import_cancel_requested = true;
+        if let Some(import) = self.import_worker.as_ref() {
+            import.worker.cancel();
+        }
+        self.status = "Cancelling audio import…".to_owned();
+    }
+
+    fn update_audio_import(&mut self) -> Task<Message> {
+        let Some(import) = self.import_worker.as_mut() else {
+            return Task::none();
+        };
+        let progress = import.worker.progress().try_iter().collect::<Vec<_>>();
+        let finished = import.worker.is_finished();
+        for AudioItemImportProgress {
+            bytes_imported,
+            total_bytes,
+        } in progress
+        {
+            self.import_bytes = bytes_imported;
+            self.import_total_bytes = Some(total_bytes);
+        }
+        if !finished {
+            return Task::none();
+        }
+
+        let import = self
+            .import_worker
+            .take()
+            .expect("finished import is present");
+        self.import_finalizing = true;
+        self.status = "Finalizing audio metadata and placement…".to_owned();
+        Task::perform(
+            run_blocking("aaadaw-audio-import-finish", move || {
+                import.worker.finish().map_err(|error| error.to_string())
+            }),
+            Message::AudioImportFinished,
+        )
+    }
+
+    fn finish_audio_import(&mut self, result: Result<DawAction, String>) {
+        self.import_busy = false;
+        self.import_finalizing = false;
+        self.import_cancel_requested = false;
+        match result {
+            Ok(action) => {
+                self.apply_action(action, "Audio imported and appended to the first track")
+            }
+            Err(error) => self.status = format!("Audio import could not be finalized: {error}"),
+        }
     }
 
     fn open_project(&mut self) -> Task<Message> {
@@ -839,6 +1057,30 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn completed_audio_import_places_item_through_project_action() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.import_busy = true;
+
+        let _ = app.update(Message::AudioImportFinished(Ok(
+            DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://test-audio".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 128,
+            },
+        )));
+
+        assert_eq!(app.project.audio_items().len(), 1);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+        assert_eq!(app.project.audio_items()[0].length_samples(), 128);
+        assert_eq!(app.revision, 2);
+        assert!(!app.import_busy);
     }
 
     #[test]

@@ -1,8 +1,14 @@
 //! Application-layer orchestration for preparing project audio playback.
 //!
 //! This crate resolves opaque media references through storage and connects background media
-//! feeders to the realtime render graph. Call its APIs from a control thread, never an audio
-//! callback.
+//! feeders to the realtime render graph. It also coordinates cancellable asset imports and turns
+//! them into project actions. Call its APIs from a control thread, never an audio callback.
+
+mod audio_import;
+
+pub use audio_import::{
+    AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import,
+};
 
 use aaadaw_core::Project;
 use aaadaw_engine::{
