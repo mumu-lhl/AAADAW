@@ -343,6 +343,149 @@ fn background_asset_import_reports_progress_and_cancellation_rolls_back() {
 }
 
 #[test]
+fn background_source_scan_reports_embedded_changes_and_live_links() {
+    let database_path = project_path();
+    let imported_path = database_path.with_extension("imported.wav");
+    let linked_path = database_path.with_extension("linked.wav");
+    let original_bytes = vec![0x21; 128_000];
+    std::fs::write(&imported_path, &original_bytes).expect("import source should be written");
+    std::fs::write(&linked_path, [1, 2, 3]).expect("linked source should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let embedded_ref = store
+        .import_audio_file(&imported_path)
+        .expect("file should be imported");
+    let linked_ref = store
+        .link_external_audio_file(&linked_path)
+        .expect("second source should be linked");
+    std::fs::write(&imported_path, vec![0x22; original_bytes.len()])
+        .expect("original source should be modified");
+
+    let worker = store
+        .start_audio_asset_source_scan()
+        .expect("source scan should start");
+    let mut progress = Vec::new();
+    while let Ok(update) = worker.progress().recv() {
+        progress.push(update);
+    }
+    let results = worker.join().expect("source scan should complete");
+    assert!(results.contains(&(
+        embedded_ref.clone(),
+        aaadaw_storage::AudioAssetSourceStatus::Changed
+    )));
+    assert!(results.contains(&(
+        linked_ref.clone(),
+        aaadaw_storage::AudioAssetSourceStatus::Linked
+    )));
+    assert_eq!(progress.len(), 2);
+    assert!(progress.iter().all(|update| update.total_assets == 2));
+    assert_eq!(progress.last().unwrap().scanned_assets, 2);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    std::fs::remove_file(imported_path).expect("import source should be removed");
+    std::fs::remove_file(linked_path).expect("linked source should be removed");
+}
+
+#[test]
+fn background_pack_worker_reports_asset_progress_and_packs_linked_files() {
+    let database_path = project_path();
+    let source_path = database_path.with_extension("wav");
+    let source_bytes = (0_usize..700_123)
+        .map(|index| (index.wrapping_mul(23) % 251) as u8)
+        .collect::<Vec<_>>();
+    std::fs::write(&source_path, &source_bytes).expect("source fixture should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let media_ref = store
+        .link_external_audio_file(&source_path)
+        .expect("source should link");
+
+    let worker = store
+        .start_audio_asset_pack_all()
+        .expect("background pack should start");
+    let mut progress = Vec::new();
+    while let Ok(update) = worker.progress().recv() {
+        progress.push(update);
+    }
+    assert_eq!(
+        worker.join().expect("pack worker should finish"),
+        vec![media_ref.clone()]
+    );
+    assert!(progress.iter().any(|update| {
+        update.media_ref == media_ref
+            && !update.asset_complete
+            && update.bytes_imported == 0
+            && update.total_bytes == source_bytes.len() as u64
+            && update.completed_assets == 0
+            && update.total_assets == 1
+    }));
+    assert!(progress.last().is_some_and(|update| {
+        update.media_ref == media_ref
+            && update.asset_complete
+            && update.bytes_imported == source_bytes.len() as u64
+            && update.completed_assets == 1
+            && update.total_assets == 1
+    }));
+
+    let mut resolved = store
+        .resolve_audio_asset(&media_ref)
+        .expect("completed asset should resolve");
+    let aaadaw_storage::ResolvedAudioAsset::Embedded(reader) = &mut resolved else {
+        panic!("completed pack should resolve as embedded");
+    };
+    let mut embedded = Vec::new();
+    reader
+        .read_to_end(&mut embedded)
+        .expect("packed bytes should be readable");
+    assert_eq!(embedded, source_bytes);
+
+    drop(resolved);
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    std::fs::remove_file(source_path).expect("external fixture should be removed");
+}
+
+#[test]
+fn cancelled_external_pack_keeps_its_link_and_can_be_retried() {
+    let database_path = project_path();
+    let source_path = database_path.with_extension("wav");
+    std::fs::write(&source_path, vec![0x5a; 700_123]).expect("source fixture should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let media_ref = store
+        .link_external_audio_file(&source_path)
+        .expect("source should link");
+
+    let cancelled = store.pack_all_external_audio_assets_with_progress(|update| {
+        if !update.asset_complete && update.bytes_imported > 0 {
+            Err(StorageError::AudioAssetPackCancelled)
+        } else {
+            Ok(())
+        }
+    });
+    assert!(matches!(
+        cancelled,
+        Err(StorageError::AudioAssetPackCancelled)
+    ));
+    assert!(matches!(
+        store.resolve_audio_asset(&media_ref),
+        Ok(aaadaw_storage::ResolvedAudioAsset::LinkedFile { .. })
+    ));
+    assert!(matches!(
+        store.audio_asset_reader(&media_ref),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+    assert_eq!(
+        store
+            .pack_all_external_audio_assets()
+            .expect("cancelled pack should be retryable"),
+        vec![media_ref]
+    );
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    std::fs::remove_file(source_path).expect("external fixture should be removed");
+}
+
+#[test]
 fn importing_an_external_file_embeds_it_and_returns_a_media_reference() {
     let database_path = project_path();
     let source_path = database_path.with_extension("wav");

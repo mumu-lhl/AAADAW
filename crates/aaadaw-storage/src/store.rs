@@ -149,8 +149,13 @@ pub enum StorageError {
     ExternalPathNotUtf8,
     EmptyAudioAsset,
     MemoryDatabaseHasNoIndependentAssetReader,
+    MemoryDatabaseHasNoBackgroundAssetWorkers,
     AudioAssetImportCancelled,
     AudioAssetImportWorkerPanicked,
+    AudioAssetPackCancelled,
+    AudioAssetPackWorkerPanicked,
+    AudioAssetSourceScanCancelled,
+    AudioAssetSourceScanWorkerPanicked,
     Io(io::Error),
 }
 
@@ -210,9 +215,21 @@ impl fmt::Display for StorageError {
             Self::MemoryDatabaseHasNoIndependentAssetReader => formatter.write_str(
                 "an independent audio asset reader is unavailable for in-memory databases",
             ),
+            Self::MemoryDatabaseHasNoBackgroundAssetWorkers => formatter
+                .write_str("background audio asset workers require a file-backed project database"),
             Self::AudioAssetImportCancelled => formatter.write_str("audio asset import cancelled"),
             Self::AudioAssetImportWorkerPanicked => {
                 formatter.write_str("audio asset import worker panicked")
+            }
+            Self::AudioAssetPackCancelled => formatter.write_str("audio asset pack cancelled"),
+            Self::AudioAssetPackWorkerPanicked => {
+                formatter.write_str("audio asset pack worker panicked")
+            }
+            Self::AudioAssetSourceScanCancelled => {
+                formatter.write_str("audio asset source scan cancelled")
+            }
+            Self::AudioAssetSourceScanWorkerPanicked => {
+                formatter.write_str("audio asset source scan worker panicked")
             }
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
         }
@@ -274,6 +291,26 @@ pub struct AudioAssetImportProgress {
     pub total_bytes: u64,
 }
 
+/// Progress while packing external assets into the project.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioAssetPackProgress {
+    pub media_ref: String,
+    pub bytes_imported: u64,
+    pub total_bytes: u64,
+    pub completed_assets: usize,
+    pub total_assets: usize,
+    pub asset_complete: bool,
+}
+
+/// Progress after inspecting one asset's original source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioAssetSourceScanProgress {
+    pub media_ref: String,
+    pub status: AudioAssetSourceStatus,
+    pub scanned_assets: usize,
+    pub total_assets: usize,
+}
+
 /// A cancellable background import which embeds one external audio file.
 pub struct AudioAssetImportWorker {
     cancelled: Arc<AtomicBool>,
@@ -303,6 +340,83 @@ impl AudioAssetImportWorker {
 }
 
 impl Drop for AudioAssetImportWorker {
+    fn drop(&mut self) {
+        self.cancel();
+        if let Some(worker) = self.thread.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// A cancellable background operation that packs all linked external assets.
+pub struct AudioAssetPackWorker {
+    cancelled: Arc<AtomicBool>,
+    progress: Receiver<AudioAssetPackProgress>,
+    thread: Option<JoinHandle<Result<Vec<String>, StorageError>>>,
+}
+
+impl AudioAssetPackWorker {
+    /// Requests cancellation at the next chunk-batch boundary.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Receives per-asset progress until the worker closes the channel.
+    pub fn progress(&self) -> &Receiver<AudioAssetPackProgress> {
+        &self.progress
+    }
+
+    /// Waits for the operation and returns references packed before completion.
+    pub fn join(mut self) -> Result<Vec<String>, StorageError> {
+        self.thread
+            .take()
+            .expect("worker thread is joined once")
+            .join()
+            .map_err(|_| StorageError::AudioAssetPackWorkerPanicked)?
+    }
+}
+
+impl Drop for AudioAssetPackWorker {
+    fn drop(&mut self) {
+        self.cancel();
+        if let Some(worker) = self.thread.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+type AudioAssetSourceScanResult = Vec<(String, AudioAssetSourceStatus)>;
+type AudioAssetSourceScanThread = JoinHandle<Result<AudioAssetSourceScanResult, StorageError>>;
+
+/// A cancellable background scan of imported and linked source files.
+pub struct AudioAssetSourceScanWorker {
+    cancelled: Arc<AtomicBool>,
+    progress: Receiver<AudioAssetSourceScanProgress>,
+    thread: Option<AudioAssetSourceScanThread>,
+}
+
+impl AudioAssetSourceScanWorker {
+    /// Requests cancellation; hashing stops at the next 64 KiB read boundary.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Receives one result for each scanned asset until the worker closes the channel.
+    pub fn progress(&self) -> &Receiver<AudioAssetSourceScanProgress> {
+        &self.progress
+    }
+
+    /// Waits for the scan and returns all source statuses collected before completion.
+    pub fn join(mut self) -> Result<Vec<(String, AudioAssetSourceStatus)>, StorageError> {
+        self.thread
+            .take()
+            .expect("worker thread is joined once")
+            .join()
+            .map_err(|_| StorageError::AudioAssetSourceScanWorkerPanicked)?
+    }
+}
+
+impl Drop for AudioAssetSourceScanWorker {
     fn drop(&mut self) {
         self.cancel();
         if let Some(worker) = self.thread.take() {
@@ -522,6 +636,9 @@ impl ProjectStore {
         &self,
         source_path: impl AsRef<Path>,
     ) -> Result<AudioAssetImportWorker, StorageError> {
+        if self.database_path == Path::new(":memory:") {
+            return Err(StorageError::MemoryDatabaseHasNoBackgroundAssetWorkers);
+        }
         let project_path = self.database_path.clone();
         let source_path = source_path.as_ref().to_owned();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -546,6 +663,88 @@ impl ProjectStore {
             })
             .map_err(StorageError::Io)?;
         Ok(AudioAssetImportWorker {
+            cancelled,
+            progress,
+            thread: Some(thread),
+        })
+    }
+
+    /// Starts packing every linked external asset into the project on a background thread.
+    ///
+    /// Each asset publishes independently; cancellation leaves completed assets packed and keeps
+    /// the current/remaining external links available for retry.
+    pub fn start_audio_asset_pack_all(&self) -> Result<AudioAssetPackWorker, StorageError> {
+        if self.database_path == Path::new(":memory:") {
+            return Err(StorageError::MemoryDatabaseHasNoBackgroundAssetWorkers);
+        }
+        let project_path = self.database_path.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (progress_sender, progress) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("aaadaw-asset-pack".to_owned())
+            .spawn(move || {
+                let mut store = ProjectStore::open(project_path)?;
+                store.pack_all_external_audio_assets_with_progress(|update| {
+                    if !update.asset_complete && worker_cancelled.load(Ordering::Acquire) {
+                        return Err(StorageError::AudioAssetPackCancelled);
+                    }
+                    progress_sender
+                        .send(update)
+                        .map_err(|_| StorageError::AudioAssetPackCancelled)
+                })
+            })
+            .map_err(StorageError::Io)?;
+        Ok(AudioAssetPackWorker {
+            cancelled,
+            progress,
+            thread: Some(thread),
+        })
+    }
+
+    /// Starts a background SHA-256 check of every embedded asset's original source.
+    ///
+    /// The worker also reports whether linked external files still exist. Hashing checks
+    /// cancellation between 64 KiB reads.
+    pub fn start_audio_asset_source_scan(
+        &self,
+    ) -> Result<AudioAssetSourceScanWorker, StorageError> {
+        if self.database_path == Path::new(":memory:") {
+            return Err(StorageError::MemoryDatabaseHasNoBackgroundAssetWorkers);
+        }
+        let project_path = self.database_path.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (progress_sender, progress) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("aaadaw-asset-source-scan".to_owned())
+            .spawn(move || {
+                let store = ProjectStore::open(project_path)?;
+                let media_refs = store.audio_asset_references()?;
+                let total_assets = media_refs.len();
+                let mut results = Vec::with_capacity(total_assets);
+                for (index, media_ref) in media_refs.into_iter().enumerate() {
+                    if worker_cancelled.load(Ordering::Acquire) {
+                        return Err(StorageError::AudioAssetSourceScanCancelled);
+                    }
+                    let status = store.audio_asset_source_status_with_cancel(&media_ref, || {
+                        worker_cancelled.load(Ordering::Acquire)
+                    })?;
+                    let update = AudioAssetSourceScanProgress {
+                        media_ref: media_ref.clone(),
+                        status,
+                        scanned_assets: index + 1,
+                        total_assets,
+                    };
+                    progress_sender
+                        .send(update)
+                        .map_err(|_| StorageError::AudioAssetSourceScanCancelled)?;
+                    results.push((media_ref, status));
+                }
+                Ok(results)
+            })
+            .map_err(StorageError::Io)?;
+        Ok(AudioAssetSourceScanWorker {
             cancelled,
             progress,
             thread: Some(thread),
@@ -676,6 +875,15 @@ impl ProjectStore {
 
     /// Embeds the current contents of an external link while keeping its media reference stable.
     pub fn pack_external_audio_asset(&mut self, media_ref: &str) -> Result<(), StorageError> {
+        self.pack_external_audio_asset_with_progress(media_ref, |_, _| Ok(()))
+    }
+
+    /// Packs one external asset and reports staged bytes after each committed chunk batch.
+    pub fn pack_external_audio_asset_with_progress(
+        &mut self,
+        media_ref: &str,
+        mut on_progress: impl FnMut(u64, u64) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         let linked = self
             .connection
             .query_row(
@@ -703,12 +911,13 @@ impl ProjectStore {
         )?;
         if !already_embedded {
             let source = File::open(&external_path)?;
+            let total_bytes = source.metadata()?.len();
             self.import_audio_asset_with_source_path(
                 media_ref,
                 &original_name,
                 Some(&external_path),
                 source,
-                |_| Ok(()),
+                |bytes_imported| on_progress(bytes_imported, total_bytes),
             )?;
         }
         self.connection.execute(
@@ -723,6 +932,14 @@ impl ProjectStore {
     /// Each asset is packed independently. If one file is missing or unreadable,
     /// earlier assets remain embedded and the remaining links are safe to retry.
     pub fn pack_all_external_audio_assets(&mut self) -> Result<Vec<String>, StorageError> {
+        self.pack_all_external_audio_assets_with_progress(|_| Ok(()))
+    }
+
+    /// Packs all linked assets, reporting per-asset progress and completed asset count.
+    pub fn pack_all_external_audio_assets_with_progress(
+        &mut self,
+        mut on_progress: impl FnMut(AudioAssetPackProgress) -> Result<(), StorageError>,
+    ) -> Result<Vec<String>, StorageError> {
         let mut statement = self
             .connection
             .prepare("SELECT media_ref FROM audio_asset_links ORDER BY media_ref")?;
@@ -731,10 +948,30 @@ impl ProjectStore {
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
 
-        let mut packed = Vec::with_capacity(media_refs.len());
+        let total_assets = media_refs.len();
+        let mut packed = Vec::with_capacity(total_assets);
         for media_ref in media_refs {
-            self.pack_external_audio_asset(&media_ref)?;
-            packed.push(media_ref);
+            let mut total_bytes = 0;
+            self.pack_external_audio_asset_with_progress(&media_ref, |bytes_imported, total| {
+                total_bytes = total;
+                on_progress(AudioAssetPackProgress {
+                    media_ref: media_ref.clone(),
+                    bytes_imported,
+                    total_bytes: total,
+                    completed_assets: packed.len(),
+                    total_assets,
+                    asset_complete: false,
+                })
+            })?;
+            packed.push(media_ref.clone());
+            on_progress(AudioAssetPackProgress {
+                media_ref,
+                bytes_imported: total_bytes,
+                total_bytes,
+                completed_assets: packed.len(),
+                total_assets,
+                asset_complete: true,
+            })?;
         }
         Ok(packed)
     }
@@ -992,6 +1229,24 @@ impl ProjectStore {
         &self,
         media_ref: &str,
     ) -> Result<AudioAssetSourceStatus, StorageError> {
+        self.audio_asset_source_status_with_cancel(media_ref, || false)
+    }
+
+    fn audio_asset_references(&self) -> Result<Vec<String>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT media_ref FROM audio_assets WHERE import_state = 1 \
+             UNION SELECT media_ref FROM audio_asset_links ORDER BY media_ref",
+        )?;
+        Ok(statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn audio_asset_source_status_with_cancel(
+        &self,
+        media_ref: &str,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<AudioAssetSourceStatus, StorageError> {
         let metadata = self
             .connection
             .query_row(
@@ -1042,7 +1297,8 @@ impl ProjectStore {
             }
             Err(error) => return Err(StorageError::Io(error)),
         };
-        let actual_hash = sha256_reader(&mut source)?;
+        let actual_hash = sha256_reader_with_cancel(&mut source, &mut is_cancelled)?
+            .ok_or(StorageError::AudioAssetSourceScanCancelled)?;
         if actual_hash == expected_hash {
             Ok(AudioAssetSourceStatus::Unchanged)
         } else {
@@ -1183,17 +1439,27 @@ fn ensure_audio_asset_metadata_columns(connection: &Connection) -> Result<(), St
     Ok(())
 }
 
-fn sha256_reader(reader: &mut impl Read) -> Result<[u8; 32], io::Error> {
+fn sha256_reader_with_cancel(
+    reader: &mut impl Read,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<Option<[u8; 32]>, io::Error> {
     let mut hasher = Sha256::new();
     let mut buffer = [0; 64 * 1024];
     loop {
+        if is_cancelled() {
+            return Ok(None);
+        }
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(hasher.finalize().into())
+    if is_cancelled() {
+        Ok(None)
+    } else {
+        Ok(Some(hasher.finalize().into()))
+    }
 }
 
 fn write_audio_asset_chunk_batch(
