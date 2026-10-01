@@ -42,6 +42,8 @@ pub enum DawAction {
         source_offset_samples: u64,
         length_samples: u64,
     },
+    /// Move an audio or MIDI item to another track without changing its content or position.
+    MoveItemToTrack { item_id: ItemId, track_id: TrackId },
     /// Delete an audio item from the project.
     DeleteAudioItem { item_id: ItemId },
     /// Insert an empty MIDI item on a track.

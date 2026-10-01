@@ -7,7 +7,7 @@ use iced::widget::canvas::Text;
 use iced::widget::pane_grid::{self, Axis, Split};
 use iced::widget::shader;
 use iced::{Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Theme, keyboard, mouse};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 64.0;
@@ -27,18 +27,43 @@ pub(crate) enum ArrangementPane {
 #[derive(Debug, Clone)]
 pub(crate) enum TimelineEvent {
     PanByPixels(f32),
-    ZoomAt { factor: f32, anchor_x: f32 },
-    SetEditCursor(u64),
-    SelectItem(Option<ItemId>),
+    ZoomAt {
+        factor: f32,
+        anchor_x: f32,
+    },
+    SelectItem {
+        item_id: Option<ItemId>,
+        additive: bool,
+        range: bool,
+    },
+    SelectEmpty(u64),
+    ToggleSnapToSixteenth,
+    BeginItemDrag {
+        item_id: ItemId,
+        pointer_delta_ticks: i128,
+        target_track_index: Option<usize>,
+        range: bool,
+        ignore_snap: bool,
+    },
+    UpdateItemDrag {
+        pointer_delta_ticks: i128,
+        target_track_index: Option<usize>,
+        ignore_snap: bool,
+    },
+    EndItemDrag,
+    CancelItemDrag,
     SelectTrack(TrackId),
     OpenTrackContextMenu(TrackId),
     ToggleTrackContextMenu(TrackId),
     CloseTrackContextMenu,
-    ResizeSplit { split: Split, ratio: f32 },
+    ResizeSplit {
+        split: Split,
+        ratio: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ItemKind {
+pub(crate) enum ItemKind {
     Audio,
     Midi,
 }
@@ -58,7 +83,9 @@ struct TimelineItem {
 struct TimelineCache {
     generation: u64,
     items: Arc<[TimelineItem]>,
+    item_indices: HashMap<ItemId, usize>,
     track_ids: Arc<[TrackId]>,
+    sixteenth_ticks: Option<u64>,
 }
 
 impl TimelineCache {
@@ -114,8 +141,16 @@ impl TimelineCache {
 
         items.sort_by_key(|item| (item.track_index, item.start_tick, item.id.value()));
         self.generation = self.generation.wrapping_add(1);
+        self.item_indices = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| (item.id, index))
+            .collect();
         self.items = items.into();
         self.track_ids = track_ids.into();
+        let sixteenth_numerator = u64::from(project.settings().ppq()).checked_mul(4);
+        self.sixteenth_ticks = sixteenth_numerator
+            .and_then(|numerator| (numerator % 16 == 0).then_some(numerator / 16));
     }
 
     fn item_at(&self, track_index: usize, tick: u64) -> Option<&TimelineItem> {
@@ -133,12 +168,35 @@ pub(crate) struct TimelineState {
     pub(crate) viewport_height: f32,
     pub(crate) selected_track: Option<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
+    pub(crate) selected_items: HashSet<ItemId>,
     pub(crate) context_track: Option<TrackId>,
+    pub(crate) snap_to_sixteenth: bool,
     pub(crate) edit_cursor_tick: u64,
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
     cache: TimelineCache,
     pan_fractional_tick: f64,
+    selection_anchor: Option<ItemId>,
+    drag_preview: Option<ItemDragPreview>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ItemDragPreview {
+    pub(crate) anchor_item_id: ItemId,
+    pub(crate) delta_ticks: i128,
+    pub(crate) track_delta: i32,
+    pub(crate) target_track_index: Option<usize>,
+    pub(crate) valid: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SelectedItemGeometry {
+    pub(crate) cache_index: usize,
+    pub(crate) item_id: ItemId,
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+    pub(crate) track_index: usize,
+    pub(crate) kind: ItemKind,
 }
 
 impl Default for TimelineState {
@@ -155,12 +213,16 @@ impl Default for TimelineState {
             viewport_height: 480.0,
             selected_track: None,
             selected_item: None,
+            selected_items: HashSet::new(),
             context_track: None,
+            snap_to_sixteenth: true,
             edit_cursor_tick: 0,
             origin_tick: 0,
             pixels_per_tick: 0.065,
             cache: TimelineCache::default(),
             pan_fractional_tick: 0.0,
+            selection_anchor: None,
+            drag_preview: None,
         }
     }
 }
@@ -168,17 +230,28 @@ impl Default for TimelineState {
 impl TimelineState {
     pub(crate) fn rebuild(&mut self, project: &Project) {
         self.cache.rebuild(project);
+        if self.cache.sixteenth_ticks.is_none() {
+            self.snap_to_sixteenth = false;
+        }
         if self
             .selected_track
             .is_some_and(|track_id| !self.cache.track_ids.contains(&track_id))
         {
             self.selected_track = None;
         }
-        if self
+        self.selected_items
+            .retain(|item_id| self.cache.item_indices.contains_key(item_id));
+        if !self
             .selected_item
-            .is_some_and(|item_id| !self.cache.items.iter().any(|item| item.id == item_id))
+            .is_some_and(|item_id| self.selected_items.contains(&item_id))
         {
-            self.selected_item = None;
+            self.selected_item = self.selected_items.iter().copied().next();
+        }
+        if self
+            .selection_anchor
+            .is_some_and(|item_id| !self.cache.item_indices.contains_key(&item_id))
+        {
+            self.selection_anchor = self.selected_item;
         }
         if self
             .context_track
@@ -211,18 +284,51 @@ impl TimelineState {
                 self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
                 self.pan_fractional_tick = 0.0;
             }
-            TimelineEvent::SetEditCursor(tick) => self.edit_cursor_tick = tick,
-            TimelineEvent::SelectItem(item_id) => {
-                self.selected_item = item_id;
-                if let Some(item_id) = item_id {
-                    self.selected_track = self
-                        .cache
-                        .items
-                        .iter()
-                        .find(|item| item.id == item_id)
-                        .map(|item| item.track_id);
+            TimelineEvent::SelectItem {
+                item_id,
+                additive,
+                range,
+            } => self.select_item(item_id, additive, range, false),
+            TimelineEvent::SelectEmpty(tick) => {
+                self.edit_cursor_tick = tick;
+                self.select_item(None, false, false, false);
+            }
+            TimelineEvent::ToggleSnapToSixteenth => {
+                if self.cache.sixteenth_ticks.is_some() {
+                    self.snap_to_sixteenth = !self.snap_to_sixteenth;
                 }
             }
+            TimelineEvent::BeginItemDrag {
+                item_id,
+                pointer_delta_ticks,
+                target_track_index,
+                range,
+                ignore_snap,
+            } => {
+                self.select_item(Some(item_id), false, range, true);
+                self.update_item_drag(
+                    item_id,
+                    pointer_delta_ticks,
+                    target_track_index,
+                    ignore_snap,
+                );
+            }
+            TimelineEvent::UpdateItemDrag {
+                pointer_delta_ticks,
+                target_track_index,
+                ignore_snap,
+            } => {
+                if let Some(preview) = self.drag_preview {
+                    self.update_item_drag(
+                        preview.anchor_item_id,
+                        pointer_delta_ticks,
+                        target_track_index,
+                        ignore_snap,
+                    );
+                }
+            }
+            TimelineEvent::EndItemDrag => self.drag_preview = None,
+            TimelineEvent::CancelItemDrag => self.drag_preview = None,
             TimelineEvent::SelectTrack(track_id) => self.selected_track = Some(track_id),
             TimelineEvent::OpenTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
@@ -248,6 +354,147 @@ impl TimelineState {
         }
     }
 
+    fn select_item(
+        &mut self,
+        item_id: Option<ItemId>,
+        additive: bool,
+        range: bool,
+        preserve_existing_for_drag: bool,
+    ) {
+        let Some(item_id) = item_id else {
+            self.selected_items.clear();
+            self.selected_item = None;
+            self.selection_anchor = None;
+            return;
+        };
+        let Some(&item_index) = self.cache.item_indices.get(&item_id) else {
+            return;
+        };
+        let clicked = &self.cache.items[item_index];
+
+        if range {
+            let anchor_index = self
+                .selection_anchor
+                .and_then(|anchor| self.cache.item_indices.get(&anchor).copied())
+                .or_else(|| {
+                    self.selected_item
+                        .and_then(|anchor| self.cache.item_indices.get(&anchor).copied())
+                })
+                .unwrap_or(item_index);
+            if !additive {
+                self.selected_items.clear();
+            }
+            for item in
+                &self.cache.items[anchor_index.min(item_index)..=anchor_index.max(item_index)]
+            {
+                self.selected_items.insert(item.id);
+            }
+            self.selected_item = Some(item_id);
+        } else if additive && !preserve_existing_for_drag {
+            if !self.selected_items.remove(&item_id) {
+                self.selected_items.insert(item_id);
+                self.selected_item = Some(item_id);
+            } else if self.selected_item == Some(item_id) {
+                self.selected_item = self.selected_items.iter().copied().next();
+            }
+            self.selection_anchor = Some(item_id);
+        } else if additive {
+            self.selected_items.insert(item_id);
+            self.selected_item = Some(item_id);
+            self.selection_anchor = Some(item_id);
+        } else {
+            let already_selected = self.selected_items.contains(&item_id);
+            if !already_selected || !preserve_existing_for_drag {
+                self.selected_items.clear();
+                self.selected_items.insert(item_id);
+            }
+            self.selected_item = Some(item_id);
+            self.selection_anchor = Some(item_id);
+        }
+        self.selected_track = Some(clicked.track_id);
+    }
+
+    fn update_item_drag(
+        &mut self,
+        anchor_item_id: ItemId,
+        pointer_delta_ticks: i128,
+        target_track_index: Option<usize>,
+        ignore_snap: bool,
+    ) {
+        let Some(&anchor_index) = self.cache.item_indices.get(&anchor_item_id) else {
+            self.drag_preview = None;
+            return;
+        };
+        let anchor = &self.cache.items[anchor_index];
+        let target_start = i128::from(anchor.start_tick) + pointer_delta_ticks;
+        let snapped_delta = if self.snap_to_sixteenth && !ignore_snap {
+            self.cache.sixteenth_ticks.map(|grid| {
+                let grid = i128::from(grid);
+                if target_start >= 0 {
+                    let snapped_start = ((target_start + grid / 2) / grid) * grid;
+                    snapped_start - i128::from(anchor.start_tick)
+                } else {
+                    pointer_delta_ticks
+                }
+            })
+        } else {
+            Some(pointer_delta_ticks)
+        };
+        let track_delta =
+            target_track_index.map_or(0, |target| target as i32 - anchor.track_index as i32);
+        let delta_ticks = snapped_delta.unwrap_or(pointer_delta_ticks);
+        let mut valid = snapped_delta.is_some() && target_track_index.is_some();
+        for item_id in &self.selected_items {
+            let Some(&index) = self.cache.item_indices.get(item_id) else {
+                valid = false;
+                continue;
+            };
+            let item = &self.cache.items[index];
+            let new_start = i128::from(item.start_tick) + delta_ticks;
+            let new_end = i128::from(item.end_tick) + delta_ticks;
+            let new_track = item.track_index as i32 + track_delta;
+            valid &= new_start >= 0
+                && new_end <= i128::from(u64::MAX)
+                && (0..self.cache.track_ids.len() as i32).contains(&new_track);
+        }
+        self.drag_preview = Some(ItemDragPreview {
+            anchor_item_id,
+            delta_ticks,
+            track_delta,
+            target_track_index,
+            valid,
+        });
+    }
+
+    pub(crate) fn drag_preview(&self) -> Option<ItemDragPreview> {
+        self.drag_preview
+    }
+
+    pub(crate) fn has_sixteenth_grid(&self) -> bool {
+        self.cache.sixteenth_ticks.is_some()
+    }
+
+    pub(crate) fn selected_item_geometries(&self) -> Vec<SelectedItemGeometry> {
+        let mut selected = self
+            .selected_items
+            .iter()
+            .filter_map(|item_id| {
+                let index = *self.cache.item_indices.get(item_id)?;
+                let item = &self.cache.items[index];
+                Some(SelectedItemGeometry {
+                    cache_index: index,
+                    item_id: item.id,
+                    start_tick: item.start_tick,
+                    end_tick: item.end_tick,
+                    track_index: item.track_index,
+                    kind: item.kind,
+                })
+            })
+            .collect::<Vec<_>>();
+        selected.sort_unstable_by_key(|item| item.cache_index);
+        selected
+    }
+
     fn program<'a>(
         &'a self,
         project: &'a Project,
@@ -261,8 +508,9 @@ impl TimelineState {
             pixels_per_tick: self.pixels_per_tick,
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick,
-            selected_item: self.selected_item,
+            selected_items: self.selected_item_geometries(),
             selected_track: self.selected_track,
+            drag_preview: self.drag_preview,
         }
     }
 
@@ -287,14 +535,26 @@ struct TimelineProgram<'a> {
     pixels_per_tick: f32,
     edit_cursor_tick: u64,
     playhead_tick: Option<u64>,
-    selected_item: Option<ItemId>,
+    selected_items: Vec<SelectedItemGeometry>,
     selected_track: Option<TrackId>,
+    drag_preview: Option<ItemDragPreview>,
 }
 
 #[derive(Default)]
 struct TimelineInteractionState {
     modifiers: keyboard::Modifiers,
     pan_last_x: Option<f32>,
+    pending_item_drag: Option<PendingItemDrag>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingItemDrag {
+    item_id: ItemId,
+    pointer_start_tick: u64,
+    pointer_start_x: f32,
+    pointer_start_y: f32,
+    modifiers: keyboard::Modifiers,
+    is_dragging: bool,
 }
 
 impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
@@ -311,6 +571,20 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             return None;
+        }
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
+            && *key == keyboard::Key::Named(keyboard::key::Named::Escape)
+        {
+            let cancel_drag = state
+                .pending_item_drag
+                .take()
+                .is_some_and(|drag| drag.is_dragging);
+            return cancel_drag.then(|| {
+                shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::CancelItemDrag,
+                ))
+                .and_capture()
+            });
         }
 
         match event {
@@ -370,6 +644,47 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
+                } else if let Some(mut drag) = state.pending_item_drag {
+                    let local_x = position.x - bounds.x;
+                    let local_y = position.y - bounds.y;
+                    let distance =
+                        (local_x - drag.pointer_start_x).hypot(local_y - drag.pointer_start_y);
+                    let was_dragging = drag.is_dragging;
+                    if !was_dragging && distance < 3.0 {
+                        None
+                    } else {
+                        drag.is_dragging = true;
+                        state.pending_item_drag = Some(drag);
+                        let current_tick =
+                            tick_at_x(self.origin_tick, self.pixels_per_tick, local_x);
+                        let event = if was_dragging {
+                            TimelineEvent::UpdateItemDrag {
+                                pointer_delta_ticks: i128::from(current_tick)
+                                    - i128::from(drag.pointer_start_tick),
+                                target_track_index: track_index_at_y(
+                                    local_y,
+                                    self.cache.track_ids.len(),
+                                ),
+                                ignore_snap: state.modifiers.shift(),
+                            }
+                        } else {
+                            TimelineEvent::BeginItemDrag {
+                                item_id: drag.item_id,
+                                pointer_delta_ticks: i128::from(current_tick)
+                                    - i128::from(drag.pointer_start_tick),
+                                target_track_index: track_index_at_y(
+                                    local_y,
+                                    self.cache.track_ids.len(),
+                                ),
+                                range: drag.modifiers.shift(),
+                                ignore_snap: state.modifiers.shift(),
+                            }
+                        };
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(event))
+                                .and_capture(),
+                        )
+                    }
                 } else {
                     None
                 }
@@ -381,10 +696,38 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
                 let hit = self.cache.item_at(track_index, tick);
-                let event = if let Some(item) = hit {
-                    TimelineEvent::SelectItem(Some(item.id))
+                if let Some(item) = hit {
+                    state.pending_item_drag = Some(PendingItemDrag {
+                        item_id: item.id,
+                        pointer_start_tick: tick,
+                        pointer_start_x: position.x,
+                        pointer_start_y: position.y,
+                        modifiers: state.modifiers,
+                        is_dragging: false,
+                    });
+                    Some(shader::Action::capture())
                 } else {
-                    TimelineEvent::SetEditCursor(tick)
+                    state.pending_item_drag = None;
+                    Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectEmpty(tick),
+                        ))
+                        .and_capture(),
+                    )
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let Some(drag) = state.pending_item_drag.take() else {
+                    return None;
+                };
+                let event = if drag.is_dragging {
+                    TimelineEvent::EndItemDrag
+                } else {
+                    TimelineEvent::SelectItem {
+                        item_id: Some(drag.item_id),
+                        additive: drag.modifiers.command(),
+                        range: drag.modifiers.shift(),
+                    }
                 };
                 Some(shader::Action::publish(crate::app::Message::Timeline(event)).and_capture())
             }
@@ -411,7 +754,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             pixels_per_tick: self.pixels_per_tick,
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick: self.playhead_tick,
-            selected_item: self.selected_item,
+            selected_items: self.selected_items.clone(),
+            drag_preview: self.drag_preview,
             selected_track_index: track_index,
             width: bounds.width,
             height: bounds.height,
@@ -443,6 +787,14 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         }
         mouse::Interaction::default()
     }
+}
+
+fn track_index_at_y(y: f32, track_count: usize) -> Option<usize> {
+    if !y.is_finite() || y < 0.0 {
+        return None;
+    }
+    let index = (y / TIMELINE_ROW_HEIGHT).floor() as usize;
+    (index < track_count).then_some(index)
 }
 
 fn ruler_lines(
@@ -610,12 +962,34 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             .ceil() as usize
             + 1;
         for item in self.state.cache.items.iter() {
-            if item.track_index < first_visible_track || item.track_index >= end_visible_track {
+            let preview = self
+                .state
+                .drag_preview
+                .filter(|_| self.state.selected_items.contains(&item.id));
+            let (start_tick, end_tick, track_index) = preview.map_or(
+                (
+                    item.start_tick,
+                    item.end_tick,
+                    i128::try_from(item.track_index).unwrap_or(i128::MAX),
+                ),
+                |preview| {
+                    let start_tick =
+                        u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
+                            .unwrap_or(item.start_tick);
+                    let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
+                        .unwrap_or(item.end_tick);
+                    let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
+                        + i128::from(preview.track_delta);
+                    (start_tick, end_tick, track_index)
+                },
+            );
+            if track_index < first_visible_track as i128 || track_index >= end_visible_track as i128
+            {
                 continue;
             }
-            let left = (i128::from(item.start_tick) - i128::from(self.state.origin_tick)) as f64
+            let left = (i128::from(start_tick) - i128::from(self.state.origin_tick)) as f64
                 * f64::from(self.state.pixels_per_tick);
-            let right = (i128::from(item.end_tick) - i128::from(self.state.origin_tick)) as f64
+            let right = (i128::from(end_tick) - i128::from(self.state.origin_tick)) as f64
                 * f64::from(self.state.pixels_per_tick);
             let width = right - left;
             if right < 0.0 || left > f64::from(bounds.width) || width < 54.0 {
@@ -625,7 +999,7 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 content: item.label.clone(),
                 position: Point::new(
                     (left.max(0.0) + 5.0) as f32,
-                    item.track_index as f32 * TIMELINE_ROW_HEIGHT + TIMELINE_ROW_HEIGHT / 2.0,
+                    track_index as f32 * TIMELINE_ROW_HEIGHT + TIMELINE_ROW_HEIGHT / 2.0,
                 ),
                 max_width: (width - 10.0).min(220.0) as f32,
                 color: Color::from_rgb8(229, 233, 235),
@@ -657,7 +1031,39 @@ fn media_label(media_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ItemKind, TimelineCache, TimelineEvent, TimelineState, tick_at_x};
-    use aaadaw_core::{DawAction, Project, TimeSignature};
+    use aaadaw_core::{DawAction, Project, ProjectSettings, TimeSignature};
+
+    fn project_with_items() -> (Project, [aaadaw_core::TrackId; 3], [aaadaw_core::ItemId; 3]) {
+        let mut project = Project::new();
+        for (index, name) in ["One", "Two", "Three"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+        let tracks = [
+            project.tracks()[0].id(),
+            project.tracks()[1].id(),
+            project.tracks()[2].id(),
+        ];
+        for (track_id, start_tick) in [(tracks[0], 250), (tracks[0], 1_000), (tracks[1], 250)] {
+            project
+                .apply(DawAction::InsertMidiItem {
+                    track_id,
+                    start_tick,
+                    length_ticks: 240,
+                })
+                .unwrap();
+        }
+        let items = [
+            project.midi_items()[0].id(),
+            project.midi_items()[1].id(),
+            project.midi_items()[2].id(),
+        ];
+        (project, tracks, items)
+    }
 
     #[test]
     fn cache_maps_audio_and_midi_to_shared_track_rows_and_musical_ticks() {
@@ -746,5 +1152,113 @@ mod tests {
         });
         let after = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
         assert!(before.abs_diff(after) <= 1);
+    }
+
+    #[test]
+    fn item_selection_supports_additive_and_shift_range_selection() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[0]),
+            additive: false,
+            range: false,
+        });
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[1]),
+            additive: true,
+            range: false,
+        });
+        assert_eq!(timeline.selected_items.len(), 2);
+        assert_eq!(timeline.selected_item, Some(items[1]));
+
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[2]),
+            additive: false,
+            range: true,
+        });
+        assert_eq!(timeline.selected_items.len(), 2);
+        assert!(timeline.selected_items.contains(&items[1]));
+        assert!(timeline.selected_items.contains(&items[2]));
+        assert!(!timeline.selected_items.contains(&items[0]));
+    }
+
+    #[test]
+    fn item_drag_preview_snaps_to_sixteenths_and_translates_selected_tracks() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[1]),
+            additive: false,
+            range: false,
+        });
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[2]),
+            additive: true,
+            range: false,
+        });
+
+        timeline.handle(TimelineEvent::BeginItemDrag {
+            item_id: items[1],
+            pointer_delta_ticks: 100,
+            target_track_index: Some(1),
+            range: false,
+            ignore_snap: false,
+        });
+        let preview = timeline.drag_preview().unwrap();
+        assert_eq!(preview.delta_ticks, 200);
+        assert_eq!(preview.track_delta, 1);
+        assert_eq!(preview.target_track_index, Some(1));
+        assert!(preview.valid);
+
+        timeline.handle(TimelineEvent::UpdateItemDrag {
+            pointer_delta_ticks: -2_000,
+            target_track_index: Some(0),
+            ignore_snap: false,
+        });
+        assert!(!timeline.drag_preview().unwrap().valid);
+        timeline.handle(TimelineEvent::EndItemDrag);
+        assert!(timeline.drag_preview().is_none());
+    }
+
+    #[test]
+    fn item_drag_without_snap_keeps_pointer_delta_and_unavailable_grid_is_disabled() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::ToggleSnapToSixteenth);
+        timeline.handle(TimelineEvent::BeginItemDrag {
+            item_id: items[0],
+            pointer_delta_ticks: 101,
+            target_track_index: Some(0),
+            range: false,
+            ignore_snap: false,
+        });
+        assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
+
+        let settings = ProjectSettings::new(48_000, 961, 120.0).unwrap();
+        let project = Project::with_settings(settings);
+        let mut unavailable = TimelineState::default();
+        unavailable.rebuild(&project);
+        assert!(!unavailable.snap_to_sixteenth);
+        unavailable.handle(TimelineEvent::ToggleSnapToSixteenth);
+        assert!(!unavailable.snap_to_sixteenth);
+    }
+
+    #[test]
+    fn shift_drag_temporarily_ignores_the_snap_toggle() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::BeginItemDrag {
+            item_id: items[0],
+            pointer_delta_ticks: 101,
+            target_track_index: Some(0),
+            range: false,
+            ignore_snap: true,
+        });
+        assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
     }
 }

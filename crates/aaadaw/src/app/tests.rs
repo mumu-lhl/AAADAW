@@ -205,6 +205,45 @@ fn track_controls_and_undo_change_project_only_through_actions() {
 }
 
 #[test]
+fn item_drag_obeys_project_busy_and_jack_edit_guards() {
+    assert_eq!(
+        super::item_drag_edit_guard_status(false, false, false, false, true, false),
+        Some("Close JACK output before editing the project")
+    );
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.import_busy = true;
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemDrag {
+            item_id,
+            pointer_delta_ticks: 240,
+            target_track_index: Some(0),
+            range: false,
+            ignore_snap: false,
+        });
+    assert!(app.timeline.drag_preview().is_some());
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::EndItemDrag,
+    ));
+
+    assert!(app.timeline.drag_preview().is_none());
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(app.status, "Wait for audio import to finish or cancel it");
+}
+
+#[test]
 fn action_search_dispatches_supported_commands() {
     let mut app = App::default();
     let _ = app.update(Message::ActionQueryChanged("add track".to_owned()));
@@ -461,6 +500,154 @@ fn audio_timeline_exact_position_edit_preserves_source_and_is_undoable() {
     assert_eq!(item.length_samples(), 960);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items()[0].start_sample(), 240);
+}
+
+#[test]
+fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
+    let mut app = App::default();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://drag-audio".to_owned(),
+            start_sample: app.project.sample_at_tick(480).unwrap(),
+            source_offset_samples: 173,
+            length_samples: 12_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 67,
+                tick: 480,
+                duration: 720,
+                velocity: 94,
+            }],
+        })
+        .unwrap();
+    let audio_before = app.project.audio_items()[0].clone();
+    let midi_notes_before = app.project.midi_items()[0].notes().to_vec();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(audio_id),
+            additive: false,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(midi_id),
+            additive: true,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemDrag {
+            item_id: audio_id,
+            pointer_delta_ticks: 150,
+            target_track_index: Some(1),
+            range: false,
+            ignore_snap: false,
+        });
+
+    app.finish_item_drag();
+
+    let audio_after = &app.project.audio_items()[0];
+    let midi_after = &app.project.midi_items()[0];
+    assert_eq!(audio_after.track_id(), tracks[1]);
+    assert_eq!(
+        audio_after.start_sample(),
+        app.project.sample_at_tick(720).unwrap()
+    );
+    assert_eq!(audio_after.media_ref(), audio_before.media_ref());
+    assert_eq!(audio_after.source_offset_samples(), 173);
+    assert_eq!(audio_after.length_samples(), 12_000);
+    assert_eq!(midi_after.track_id(), tracks[2]);
+    assert_eq!(midi_after.start_tick(), 1_200);
+    assert_eq!(midi_after.length_ticks(), 3_840);
+    assert_eq!(midi_after.notes(), midi_notes_before);
+    assert_eq!(app.revision, 4);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0], audio_before);
+    assert_eq!(app.project.midi_items()[0].track_id(), tracks[1]);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 960);
+    assert_eq!(app.project.midi_items()[0].notes(), midi_notes_before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].track_id(), tracks[1]);
+    assert_eq!(
+        app.project.audio_items()[0].start_sample(),
+        app.project.sample_at_tick(720).unwrap()
+    );
+    assert_eq!(app.project.midi_items()[0].track_id(), tracks[2]);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 1_200);
+    assert_eq!(app.project.midi_items()[0].notes(), midi_notes_before);
+}
+
+#[test]
+fn invalid_item_drop_does_not_change_project_or_create_history() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: source_track,
+            media_ref: "asset://edge-item".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 20,
+            length_samples: 1_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(item_id),
+            additive: false,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemDrag {
+            item_id,
+            pointer_delta_ticks: -10,
+            target_track_index: Some(1),
+            range: false,
+            ignore_snap: false,
+        });
+    let revision_before_drop = app.revision;
+
+    app.finish_item_drag();
+
+    let item_after = &app.project.audio_items()[0];
+    assert_eq!(item_after.track_id(), source_track);
+    assert_eq!(item_after.start_sample(), 0);
+    assert_eq!(item_after.source_offset_samples(), 20);
+    assert_eq!(item_after.length_samples(), 1_000);
+    assert_eq!(app.revision, revision_before_drop);
+    assert_eq!(
+        app.status,
+        "Drop rejected: item would leave the project bounds"
+    );
+    assert!(app.project.undo().unwrap());
+    assert!(app.project.audio_items().is_empty());
 }
 
 #[test]

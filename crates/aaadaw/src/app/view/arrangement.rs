@@ -17,6 +17,23 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         button("+ MIDI item")
             .style(iced::widget::button::secondary)
             .on_press(Message::AddMidiItem),
+        button(if !app.timeline.has_sixteenth_grid() {
+            "Snap unavailable"
+        } else if app.timeline.snap_to_sixteenth {
+            "Snap 1/16"
+        } else {
+            "Snap Off"
+        })
+        .style(if app.timeline.snap_to_sixteenth {
+            iced::widget::button::warning
+        } else {
+            iced::widget::button::secondary
+        })
+        .on_press_maybe(
+            app.timeline
+                .has_sixteenth_grid()
+                .then_some(Message::Timeline(TimelineEvent::ToggleSnapToSixteenth,))
+        ),
         text("Zoom").size(12),
         button("−")
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {

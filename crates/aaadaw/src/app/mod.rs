@@ -179,6 +179,26 @@ impl App {
                 | Message::AudioItemRelinked(..)
                 | Message::BackgroundTick
         );
+        if matches!(
+            &message,
+            Message::Timeline(
+                timeline::TimelineEvent::BeginItemDrag { .. }
+                    | timeline::TimelineEvent::UpdateItemDrag { .. }
+                    | timeline::TimelineEvent::EndItemDrag
+            )
+        ) && let Some(status) = item_drag_edit_guard_status(
+            self.path_picker_busy,
+            self.import_busy,
+            self.audio_asset_management_busy,
+            self.playback_busy(),
+            self.playback_active(),
+            self.io_busy,
+        ) {
+            self.timeline
+                .handle(timeline::TimelineEvent::CancelItemDrag);
+            self.status = status.to_owned();
+            return Task::none();
+        }
         if self.path_picker_busy
             && !matches!(
                 &message,
@@ -294,6 +314,12 @@ impl App {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
             Message::SelectWorkspace(page) => self.active_workspace = page,
+            Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
+            Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
+                self.timeline
+                    .handle(timeline::TimelineEvent::CancelItemDrag);
+                self.status = "Item drag cancelled".to_owned();
+            }
             Message::Timeline(event) => self.timeline.handle(event),
             Message::BeginTrackNameEdit(track_id) => {
                 if let Some(track) = self
@@ -792,6 +818,147 @@ impl App {
         };
     }
 
+    fn finish_item_drag(&mut self) {
+        let preview = self.timeline.drag_preview();
+        self.timeline.handle(timeline::TimelineEvent::EndItemDrag);
+        let Some(preview) = preview else {
+            return;
+        };
+        if !preview.valid {
+            self.status = "Drop rejected: item would leave the project bounds".to_owned();
+            return;
+        }
+        match self.item_drag_action(preview) {
+            Ok(Some(action)) => self.apply_action(action, "Items moved"),
+            Ok(None) => {}
+            Err(error) => self.status = format!("Drop rejected: {error}"),
+        }
+    }
+
+    fn playback_busy(&self) -> bool {
+        #[cfg(feature = "jack-backend")]
+        {
+            self.playback_busy
+        }
+        #[cfg(not(feature = "jack-backend"))]
+        {
+            false
+        }
+    }
+
+    fn playback_active(&self) -> bool {
+        #[cfg(feature = "jack-backend")]
+        {
+            self.playback.is_some()
+        }
+        #[cfg(not(feature = "jack-backend"))]
+        {
+            false
+        }
+    }
+
+    fn item_drag_action(
+        &self,
+        preview: timeline::ItemDragPreview,
+    ) -> Result<Option<DawAction>, String> {
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        let mut actions = Vec::with_capacity(item_ids.len() * 2);
+        for item_id in item_ids {
+            let (source_track_id, start_tick) = if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                (
+                    item.track_id(),
+                    self.project
+                        .tick_at_sample(item.start_sample())
+                        .map_err(|error| error.to_string())?,
+                )
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                (item.track_id(), item.start_tick())
+            } else {
+                return Err(format!("item {} no longer exists", item_id.value()));
+            };
+            let source_track_index = self
+                .project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == source_track_id)
+                .ok_or_else(|| "source track no longer exists".to_owned())?;
+            let target_track_index =
+                usize::try_from(source_track_index as i128 + i128::from(preview.track_delta))
+                    .map_err(|_| "target track is outside the project".to_owned())?;
+            let target_track_id = self
+                .project
+                .tracks()
+                .get(target_track_index)
+                .map(|track| track.id())
+                .ok_or_else(|| "target track is outside the project".to_owned())?;
+            let target_start_tick = u64::try_from(i128::from(start_tick) + preview.delta_ticks)
+                .map_err(|_| "target position is outside the project".to_owned())?;
+
+            if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                let target_sample = self
+                    .project
+                    .sample_at_tick(target_start_tick)
+                    .map_err(|error| error.to_string())?;
+                if target_sample != item.start_sample() {
+                    actions.push(DawAction::EditAudioItem {
+                        item_id,
+                        media_ref: item.media_ref().to_owned(),
+                        start_sample: target_sample,
+                        source_offset_samples: item.source_offset_samples(),
+                        length_samples: item.length_samples(),
+                    });
+                }
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                && target_start_tick != item.start_tick()
+            {
+                actions.push(DawAction::EditMidiItem {
+                    item_id,
+                    start_tick: target_start_tick,
+                    length_ticks: item.length_ticks(),
+                });
+            }
+
+            if target_track_id != source_track_id {
+                actions.push(DawAction::MoveItemToTrack {
+                    item_id,
+                    track_id: target_track_id,
+                });
+            }
+        }
+        if actions.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DawAction::BatchTransaction {
+            tx_id: self.revision,
+            actions,
+        }))
+    }
+
     fn delete_track(&mut self, track_id: TrackId) {
         self.track_name_edits.remove(&track_id);
         self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
@@ -956,6 +1123,31 @@ impl App {
             "redo" => self.redo(),
             _ => self.status = "Unknown action. Try add track, undo, or redo.".to_owned(),
         }
+    }
+}
+
+fn item_drag_edit_guard_status(
+    path_picker_busy: bool,
+    import_busy: bool,
+    asset_management_busy: bool,
+    playback_busy: bool,
+    playback_active: bool,
+    io_busy: bool,
+) -> Option<&'static str> {
+    if path_picker_busy {
+        Some("Wait for the file dialog to finish")
+    } else if import_busy {
+        Some("Wait for audio import to finish or cancel it")
+    } else if asset_management_busy {
+        Some("Wait for audio asset maintenance to finish or cancel it")
+    } else if playback_busy {
+        Some("Wait for playback preparation to finish")
+    } else if playback_active {
+        Some("Close JACK output before editing the project")
+    } else if io_busy {
+        Some("Wait for current project operation to finish")
+    } else {
+        None
     }
 }
 

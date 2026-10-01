@@ -1,5 +1,4 @@
-use super::{ItemKind, TimelineItem};
-use aaadaw_core::ItemId;
+use super::{ItemDragPreview, ItemKind, SelectedItemGeometry, TimelineItem};
 use bytemuck::{Pod, Zeroable, cast_slice};
 use iced::Rectangle;
 use iced::wgpu;
@@ -14,6 +13,8 @@ const BAR_LINE: u32 = 3;
 const BEAT_LINE: u32 = 4;
 const EDIT_CURSOR: u32 = 5;
 const PLAYHEAD: u32 = 6;
+const SELECTED_ITEM: u32 = 7;
+const DROP_TARGET: u32 = 8;
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
@@ -25,7 +26,8 @@ pub(super) struct TimelinePrimitive {
     pub(super) pixels_per_tick: f32,
     pub(super) edit_cursor_tick: u64,
     pub(super) playhead_tick: Option<u64>,
-    pub(super) selected_item: Option<ItemId>,
+    pub(super) selected_items: Vec<SelectedItemGeometry>,
+    pub(super) drag_preview: Option<ItemDragPreview>,
     pub(super) selected_track_index: u32,
     pub(super) width: f32,
     pub(super) height: f32,
@@ -94,6 +96,7 @@ pub(super) struct TimelinePipeline {
     static_capacity: usize,
     static_count: u32,
     static_generation: Option<u64>,
+    previewed_indices: Vec<usize>,
     dynamic_buffer: wgpu::Buffer,
     dynamic_capacity: usize,
     dynamic_count: u32,
@@ -194,6 +197,7 @@ impl Pipeline for TimelinePipeline {
             static_capacity: 1,
             static_count: 0,
             static_generation: None,
+            previewed_indices: Vec::new(),
             dynamic_buffer: empty_buffer(),
             dynamic_capacity: 1,
             dynamic_count: 0,
@@ -213,6 +217,7 @@ impl Primitive for TimelinePrimitive {
         viewport: &Viewport,
     ) {
         if pipeline.static_generation != Some(self.generation) {
+            pipeline.previewed_indices.clear();
             let mut instances = Vec::with_capacity(self.track_count as usize + self.items.len());
             for track_index in 0..self.track_count {
                 let color = if track_index % 2 == 0 {
@@ -261,7 +266,98 @@ impl Primitive for TimelinePrimitive {
             pipeline.static_generation = Some(self.generation);
         }
 
-        let mut dynamic = Vec::with_capacity(self.grid_lines.len() + 2);
+        let previewed_indices = if self.drag_preview.is_some() {
+            self.selected_items
+                .iter()
+                .map(|item| item.cache_index)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        for cache_index in pipeline.previewed_indices.iter().copied() {
+            if previewed_indices.binary_search(&cache_index).is_ok() {
+                continue;
+            }
+            if let Some(item) = self.items.get(cache_index) {
+                let rect = item_rect(item, self.row_height);
+                write_item_rect(
+                    queue,
+                    &pipeline.static_buffer,
+                    self.track_count,
+                    cache_index,
+                    &rect,
+                );
+            }
+        }
+        if let Some(preview) = self.drag_preview {
+            for selected in &self.selected_items {
+                let start_tick = shift_tick(selected.start_tick, preview.delta_ticks)
+                    .unwrap_or(selected.start_tick);
+                let end_tick =
+                    shift_tick(selected.end_tick, preview.delta_ticks).unwrap_or(selected.end_tick);
+                let row = i128::try_from(selected.track_index).unwrap_or(i128::MAX)
+                    + i128::from(preview.track_delta);
+                let track_index = u32::try_from(row).unwrap_or(u32::MAX);
+                let rect = selected_item_rect(
+                    start_tick,
+                    end_tick,
+                    track_index,
+                    selected.item_id.value(),
+                    selected.kind,
+                    self.row_height,
+                );
+                write_item_rect(
+                    queue,
+                    &pipeline.static_buffer,
+                    self.track_count,
+                    selected.cache_index,
+                    &rect,
+                );
+            }
+        }
+        pipeline.previewed_indices = previewed_indices;
+
+        let mut dynamic = Vec::with_capacity(self.grid_lines.len() + 3 + self.selected_items.len());
+        if let Some(preview) = self.drag_preview
+            && let Some(target_track_index) = preview.target_track_index
+        {
+            dynamic.push(GpuRect::new(
+                0,
+                0,
+                target_track_index as f32 * self.row_height,
+                self.row_height,
+                if preview.valid {
+                    [79, 111, 87, 110]
+                } else {
+                    [139, 67, 57, 110]
+                },
+                0,
+                target_track_index as u32,
+                DROP_TARGET,
+            ));
+        }
+        for selected in &self.selected_items {
+            let preview = self.drag_preview;
+            let start_tick = preview
+                .and_then(|preview| shift_tick(selected.start_tick, preview.delta_ticks))
+                .unwrap_or(selected.start_tick);
+            let end_tick = preview
+                .and_then(|preview| shift_tick(selected.end_tick, preview.delta_ticks))
+                .unwrap_or(selected.end_tick);
+            let row = i128::try_from(selected.track_index).unwrap_or(i128::MAX)
+                + preview.map_or(0, |preview| i128::from(preview.track_delta));
+            let track_index = u32::try_from(row).unwrap_or(u32::MAX);
+            dynamic.push(GpuRect::new(
+                start_tick,
+                end_tick,
+                track_index as f32 * self.row_height + 7.0,
+                self.row_height - 14.0,
+                [245, 185, 92, 255],
+                selected.item_id.value(),
+                track_index,
+                SELECTED_ITEM,
+            ));
+        }
         for (tick, is_measure) in &self.grid_lines {
             dynamic.push(GpuRect::new(
                 *tick,
@@ -312,9 +408,6 @@ impl Primitive for TimelinePrimitive {
         }
         pipeline.dynamic_count = dynamic.len() as u32;
 
-        let selected_item = self
-            .selected_item
-            .map_or([u32::MAX, u32::MAX], |item_id| split_tick(item_id.value()));
         let playhead = self.playhead_tick.map_or([u32::MAX, u32::MAX], split_tick);
         let uniforms = Uniforms {
             view: [
@@ -329,7 +422,7 @@ impl Primitive for TimelinePrimitive {
                 (self.edit_cursor_tick >> 32) as u32,
                 self.edit_cursor_tick as u32,
             ],
-            playhead_selection: [playhead[0], playhead[1], selected_item[0], selected_item[1]],
+            playhead_selection: [playhead[0], playhead[1], u32::MAX, u32::MAX],
             state: [self.selected_track_index, 0, 0, 0],
         };
         queue.write_buffer(&pipeline.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -352,6 +445,64 @@ impl Primitive for TimelinePrimitive {
 
 fn split_tick(value: u64) -> [u32; 2] {
     [(value >> 32) as u32, value as u32]
+}
+
+fn shift_tick(tick: u64, delta: i128) -> Option<u64> {
+    u64::try_from(i128::from(tick) + delta).ok()
+}
+
+fn item_appearance(kind: ItemKind) -> ([u8; 4], u32) {
+    match kind {
+        ItemKind::Audio => ([74, 99, 122, 255], AUDIO_ITEM),
+        ItemKind::Midi => ([89, 112, 74, 255], MIDI_ITEM),
+    }
+}
+
+fn item_rect(item: &TimelineItem, row_height: f32) -> GpuRect {
+    let (color, kind) = item_appearance(item.kind);
+    GpuRect::new(
+        item.start_tick,
+        item.end_tick,
+        item.track_index as f32 * row_height + 7.0,
+        row_height - 14.0,
+        color,
+        item.id.value(),
+        item.track_index as u32,
+        kind,
+    )
+}
+
+fn selected_item_rect(
+    start_tick: u64,
+    end_tick: u64,
+    track_index: u32,
+    item_id: u64,
+    kind: ItemKind,
+    row_height: f32,
+) -> GpuRect {
+    let (color, item_kind) = item_appearance(kind);
+    GpuRect::new(
+        start_tick,
+        end_tick,
+        track_index as f32 * row_height + 7.0,
+        row_height - 14.0,
+        color,
+        item_id,
+        track_index,
+        item_kind,
+    )
+}
+
+fn write_item_rect(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    track_count: u32,
+    cache_index: usize,
+    rect: &GpuRect,
+) {
+    let instance_index = track_count as usize + cache_index;
+    let byte_offset = (instance_index * std::mem::size_of::<GpuRect>()) as u64;
+    queue.write_buffer(buffer, byte_offset, bytemuck::bytes_of(rect));
 }
 
 fn ensure_capacity(

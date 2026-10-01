@@ -36,6 +36,8 @@ pub enum ActionError {
     InvalidMidiItemPosition,
     /// The requested MIDI item does not exist in the project.
     MidiItemNotFound { item_id: ItemId },
+    /// The requested audio or MIDI item does not exist in the project.
+    ItemNotFound { item_id: ItemId },
     /// A MIDI note must have a valid pitch, velocity, and in-item duration.
     InvalidMidiNote,
     /// The requested MIDI note does not exist in the given item.
@@ -101,6 +103,9 @@ impl fmt::Display for ActionError {
             }
             Self::MidiItemNotFound { item_id } => {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
+            }
+            Self::ItemNotFound { item_id } => {
+                write!(formatter, "item {} does not exist", item_id.value())
             }
             Self::InvalidMidiNote => formatter.write_str("MIDI note data is invalid"),
             Self::MidiNoteNotFound { item_id, note_id } => write!(

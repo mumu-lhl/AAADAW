@@ -898,6 +898,28 @@ impl Project {
                 };
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::MoveItemToTrack { item_id, track_id } => {
+                if !state.tracks.iter().any(|track| track.id == track_id) {
+                    return Err(ActionError::TrackNotFound { track_id });
+                }
+                if let Some(item) = state.audio_items.iter().find(|item| item.id == item_id) {
+                    let before = item.clone();
+                    let after = AudioItem {
+                        track_id,
+                        ..before.clone()
+                    };
+                    ProjectEvent::AudioItemChanged { before, after }
+                } else if let Some(item) = state.midi_items.iter().find(|item| item.id == item_id) {
+                    let before = item.clone();
+                    let after = MidiItem {
+                        track_id,
+                        ..before.clone()
+                    };
+                    ProjectEvent::MidiItemChanged { before, after }
+                } else {
+                    return Err(ActionError::ItemNotFound { item_id });
+                }
+            }
             DawAction::DeleteAudioItem { item_id } => {
                 let index = state
                     .audio_items
@@ -1386,7 +1408,6 @@ impl Project {
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 if state.audio_items[index] != *before
                     || before.id != after.id
-                    || before.track_id != after.track_id
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || !valid_audio_item(after)
                 {
@@ -1424,7 +1445,6 @@ impl Project {
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 if state.midi_items[index] != *before
                     || before.id != after.id
-                    || before.track_id != after.track_id
                     || state.audio_items.iter().any(|item| item.id == after.id)
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || after.length_ticks == 0

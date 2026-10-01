@@ -20,7 +20,7 @@ Scope: continue Phase 1.3 from the current code, following the UI audit in `DESI
 - **Dependencies:** A1.
 - **Acceptance:** Audio Items retain source offsets and durations; MIDI Items retain notes and lengths; invalid drops do not change project state; undo/redo restores exact positions and tracks; JACK playback edit guard still applies.
 - **Verification:** Focused Project/app tests and `cargo xtest -p aaadaw`; visually inspect drag preview, snapping, selection and narrow layout.
-- **Status:** Planned.
+- **Status:** Complete. Automated checks pass; isolated Xvfb review confirmed drag preview, cross-track drop, snapping controls, and the 900×620 layout without activating a host window.
 
 ## A3 — Time selection and split at the edit cursor
 

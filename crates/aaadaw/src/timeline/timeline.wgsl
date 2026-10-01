@@ -67,7 +67,10 @@ fn vs_main(
     if kind == 0u {
         x = corner.x * uniforms.view.x;
         width = uniforms.view.x;
-    } else if kind >= 3u {
+    } else if kind == 8u {
+        x = 0.0;
+        width = uniforms.view.x;
+    } else if kind >= 3u && kind <= 6u {
         width = uniforms.view.w;
         if corner.x > 0.5 {
             x += select(1.0, 2.0, kind == 5u || kind == 6u);
@@ -100,12 +103,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if input.kind == 0u && input.track_index == uniforms.state.x {
         color = vec4<f32>(linearize_srgb_color(vec3<f32>(0.19, 0.23, 0.26)), 1.0);
     }
-    var selected = false;
-    if input.kind == 1u || input.kind == 2u {
-        selected = all(input.item_id == uniforms.playhead_selection.zw);
+    if input.kind == 7u {
+        if input.uv.x >= 0.06 && input.uv.x <= 0.94 && input.uv.y >= 0.08 && input.uv.y <= 0.92 {
+            discard;
+        }
+        return color;
     }
-    if selected && (input.uv.x < 0.06 || input.uv.x > 0.94 || input.uv.y < 0.08 || input.uv.y > 0.92) {
-        color = vec4<f32>(linearize_srgb_color(vec3<f32>(0.96, 0.72, 0.36)), 1.0);
+    if input.kind == 8u {
+        color.a = 0.22;
     }
     return color;
 }
