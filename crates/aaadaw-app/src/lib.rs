@@ -8,6 +8,8 @@ use aaadaw_core::Project;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
 };
+#[cfg(feature = "jack-backend")]
+use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
 };
@@ -24,7 +26,11 @@ pub enum PlaybackBuildError {
     Media(MediaError),
     PcmStream(PcmStreamError),
     AudioGraph(AudioGraphBuildError),
-    ExternalSourceUnavailable { media_ref: String },
+    #[cfg(feature = "jack-backend")]
+    Jack(JackOutputError),
+    ExternalSourceUnavailable {
+        media_ref: String,
+    },
 }
 
 impl fmt::Display for PlaybackBuildError {
@@ -34,6 +40,8 @@ impl fmt::Display for PlaybackBuildError {
             Self::Media(error) => write!(formatter, "audio feeder could not start: {error}"),
             Self::PcmStream(error) => write!(formatter, "PCM stream setup failed: {error}"),
             Self::AudioGraph(error) => write!(formatter, "render graph setup failed: {error}"),
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(error) => write!(formatter, "JACK output setup failed: {error}"),
             Self::ExternalSourceUnavailable { media_ref } => {
                 write!(
                     formatter,
@@ -51,6 +59,8 @@ impl StdError for PlaybackBuildError {
             Self::Media(error) => Some(error),
             Self::PcmStream(error) => Some(error),
             Self::AudioGraph(error) => Some(error),
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(error) => Some(error),
             Self::ExternalSourceUnavailable { .. } => None,
         }
     }
@@ -85,6 +95,42 @@ impl PreparedAudioPlayback {
     /// The caller must keep the workers alive for as long as the graph consumes their queues.
     pub fn into_parts(self) -> (AudioRenderGraph, Vec<AudioFeedWorker>) {
         (self.graph, self.feeders)
+    }
+
+    /// Opens JACK output and retains feeder workers for the lifetime of playback.
+    #[cfg(feature = "jack-backend")]
+    pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
+        let (graph, feeders) = self.into_parts();
+        let output = JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?;
+        Ok(RunningJackPlayback {
+            output,
+            _feeders: feeders,
+        })
+    }
+}
+
+/// A JACK client and the background feeders that supply its render graph.
+#[cfg(feature = "jack-backend")]
+pub struct RunningJackPlayback {
+    output: JackAudioOutput,
+    _feeders: Vec<AudioFeedWorker>,
+}
+
+#[cfg(feature = "jack-backend")]
+impl RunningJackPlayback {
+    /// Queues playback for the next JACK callback.
+    pub fn play(&mut self) -> Result<(), JackOutputError> {
+        self.output.play()
+    }
+
+    /// Queues a stop for the next JACK callback.
+    pub fn stop(&mut self) -> Result<(), JackOutputError> {
+        self.output.stop()
+    }
+
+    /// Returns lock-free callback counters.
+    pub fn stats(&self) -> JackOutputStats {
+        self.output.stats()
     }
 }
 

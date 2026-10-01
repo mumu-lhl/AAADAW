@@ -26,7 +26,7 @@ cargo xtest
 ## Workspace
 
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic, including MIDI and sample-clock audio items. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
-- `crates/aaadaw-app`: control-layer orchestration that resolves project media and prepares render graphs with background feeders.
+- `crates/aaadaw-app`: control-layer orchestration that resolves project media and prepares render graphs with background feeders; optional `jack-backend` transfers the graph to the JACK output client.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite project persistence and chunked embedded audio assets through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
 - `crates/aaadaw-engine`: fixed-topology streaming mixer, transport, MIDI event scheduler, PCM playback, and SPSC queue; optional `jack-backend` feature adds Linux JACK output.
 - `crates/aaadaw-media`: packet-based Symphonia decoding plus background workers that accept files or seekable embedded-asset readers, then downmix/resample into the engine's PCM queue; decoder work stays off the audio callback.

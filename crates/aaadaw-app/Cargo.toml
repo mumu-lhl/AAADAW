@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+jack-backend = ["aaadaw-engine/jack-backend"]
+
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
 aaadaw-engine = { path = "../aaadaw-engine" }
