@@ -71,6 +71,7 @@ enum Message {
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
     NudgeAudioItem(ItemId, i8),
+    DeleteAudioItem(ItemId),
     Undo,
     Redo,
     ActionQueryChanged(String),
@@ -186,6 +187,7 @@ impl App {
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
                         | Message::NudgeAudioItem(..)
+                        | Message::DeleteAudioItem(_)
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
@@ -254,6 +256,9 @@ impl App {
             }
             Message::NudgeAudioItem(item_id, direction) => {
                 self.nudge_audio_item(item_id, direction)
+            }
+            Message::DeleteAudioItem(item_id) => {
+                self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted")
             }
             Message::Undo => self.undo(),
             Message::Redo => self.redo(),
@@ -1095,6 +1100,33 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn audio_timeline_delete_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://delete-test".to_owned(),
+                start_sample: 32,
+                source_offset_samples: 4,
+                length_samples: 256,
+            })
+            .expect("test item should be inserted");
+        let item_id = app.project.audio_items()[0].id();
+
+        let _ = app.update(Message::DeleteAudioItem(item_id));
+        assert!(app.project.audio_items().is_empty());
+        let _ = app.update(Message::Undo);
+        let item = &app.project.audio_items()[0];
+        assert_eq!(item.id(), item_id);
+        assert_eq!(item.media_ref(), "asset://delete-test");
+        assert_eq!(item.start_sample(), 32);
+        assert_eq!(item.source_offset_samples(), 4);
+        assert_eq!(item.length_samples(), 256);
     }
 
     #[test]

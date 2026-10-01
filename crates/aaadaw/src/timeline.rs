@@ -23,6 +23,7 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
             .width(Length::Fill),
             button("−1s").on_press(Message::NudgeAudioItem(item.id(), -1)),
             button("+1s").on_press(Message::NudgeAudioItem(item.id(), 1)),
+            button("Delete").on_press(Message::DeleteAudioItem(item.id())),
         ]
         .spacing(8);
         #[cfg(feature = "jack-backend")]
