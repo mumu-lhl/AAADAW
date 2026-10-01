@@ -6,6 +6,7 @@ version = 4
 name = "aaadaw"
 version = "0.1.0"
 dependencies = [
+ "aaadaw-app",
  "aaadaw-core",
  "aaadaw-storage",
  "iced",
@@ -1109,6 +1110,7 @@ dependencies = [
  "iced_core",
  "log",
  "rustc-hash 2.1.3",
+ "tokio",
  "wasm-bindgen-futures",
  "wasmtimer",
 ]

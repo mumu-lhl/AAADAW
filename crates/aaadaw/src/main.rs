@@ -1,3 +1,7 @@
+#[cfg(feature = "jack-backend")]
+use aaadaw_app::{
+    PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
+};
 use aaadaw_core::{DawAction, Project, ProjectSnapshot, Track, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
@@ -5,12 +9,16 @@ use iced::{Alignment, Element, Length, Task};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
+#[cfg(feature = "jack-backend")]
+use std::time::Duration;
 
 fn main() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    let application = iced::application(App::new, App::update, App::view)
         .title("AAADAW")
-        .window_size(iced::Size::new(1280.0, 800.0))
-        .run()
+        .window_size(iced::Size::new(1280.0, 800.0));
+    #[cfg(feature = "jack-backend")]
+    let application = application.subscription(App::subscription);
+    application.run()
 }
 
 #[derive(Default)]
@@ -23,6 +31,16 @@ struct App {
     saved_revision: u64,
     io_busy: bool,
     status: String,
+    #[cfg(feature = "jack-backend")]
+    playback: Option<RunningJackPlayback>,
+    #[cfg(feature = "jack-backend")]
+    playback_busy: bool,
+    #[cfg(feature = "jack-backend")]
+    playback_playing: bool,
+    #[cfg(feature = "jack-backend")]
+    playhead_sample: u64,
+    #[cfg(feature = "jack-backend")]
+    seek_sample_query: String,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +58,37 @@ enum Message {
     SaveProject,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
+    #[cfg(feature = "jack-backend")]
+    StartPlayback,
+    #[cfg(feature = "jack-backend")]
+    StopPlayback,
+    #[cfg(feature = "jack-backend")]
+    RestartPlayback,
+    #[cfg(feature = "jack-backend")]
+    SeekSampleChanged(String),
+    #[cfg(feature = "jack-backend")]
+    SeekToSample,
+    #[cfg(feature = "jack-backend")]
+    ClosePlayback,
+    #[cfg(feature = "jack-backend")]
+    PlaybackPrepared {
+        target_sample: u64,
+        start_when_ready: bool,
+        result: SharedPreparedPlayback,
+    },
+    #[cfg(feature = "jack-backend")]
+    PlaybackTick,
+}
+
+#[cfg(feature = "jack-backend")]
+#[derive(Clone)]
+struct SharedPreparedPlayback(Arc<Mutex<Option<Result<PreparedAudioPlayback, String>>>>);
+
+#[cfg(feature = "jack-backend")]
+impl std::fmt::Debug for SharedPreparedPlayback {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedPreparedPlayback(..)")
+    }
 }
 
 impl App {
@@ -59,13 +108,50 @@ impl App {
         (app, task)
     }
 
+    #[cfg(feature = "jack-backend")]
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if self.playback.is_some() {
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::PlaybackTick)
+        } else {
+            iced::Subscription::none()
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
-        if self.io_busy
-            && !matches!(
-                &message,
-                Message::ProjectLoaded(..) | Message::ProjectSaved(..)
-            )
+        let allowed_during_io = matches!(
+            &message,
+            Message::ProjectLoaded(..) | Message::ProjectSaved(..)
+        );
+        #[cfg(feature = "jack-backend")]
+        let allowed_during_io = allowed_during_io || matches!(&message, Message::PlaybackTick);
+        #[cfg(feature = "jack-backend")]
         {
+            if self.playback_busy
+                && !matches!(
+                    &message,
+                    Message::PlaybackPrepared { .. } | Message::PlaybackTick
+                )
+            {
+                self.status = "Wait for playback preparation to finish".to_owned();
+                return Task::none();
+            }
+            if self.playback.is_some()
+                && matches!(
+                    &message,
+                    Message::AddTrack
+                        | Message::ToggleMute(_)
+                        | Message::ToggleSolo(_)
+                        | Message::AdjustVolume(..)
+                        | Message::Undo
+                        | Message::Redo
+                        | Message::RunActionQuery
+                )
+            {
+                self.status = "Close JACK output before editing the project".to_owned();
+                return Task::none();
+            }
+        }
+        if self.io_busy && !allowed_during_io {
             self.status = "Wait for current project operation to finish".to_owned();
             return Task::none();
         }
@@ -166,8 +252,67 @@ impl App {
                     Err(error) => self.status = format!("Save failed: {error}"),
                 }
             }
+            #[cfg(feature = "jack-backend")]
+            Message::StartPlayback => task = self.start_playback(),
+            #[cfg(feature = "jack-backend")]
+            Message::StopPlayback => self.stop_playback(),
+            #[cfg(feature = "jack-backend")]
+            Message::RestartPlayback => task = self.restart_playback(),
+            #[cfg(feature = "jack-backend")]
+            Message::SeekSampleChanged(sample) => self.seek_sample_query = sample,
+            #[cfg(feature = "jack-backend")]
+            Message::SeekToSample => task = self.seek_to_sample(),
+            #[cfg(feature = "jack-backend")]
+            Message::ClosePlayback => self.close_playback(),
+            #[cfg(feature = "jack-backend")]
+            Message::PlaybackPrepared {
+                target_sample,
+                start_when_ready,
+                result,
+            } => self.finish_playback_preparation(target_sample, start_when_ready, result),
+            #[cfg(feature = "jack-backend")]
+            Message::PlaybackTick => self.update_playback_stats(),
         }
         task
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn playback_controls(&self) -> Element<'_, Message> {
+        let playback_state = if self.playback_busy {
+            "Preparing JACK…".to_owned()
+        } else if self.playback.is_none() {
+            "JACK closed".to_owned()
+        } else {
+            let seconds =
+                self.playhead_sample as f64 / self.project.settings().sample_rate() as f64;
+            format!(
+                "{} · {seconds:.2}s",
+                if self.playback_playing {
+                    "Playing"
+                } else {
+                    "Stopped"
+                }
+            )
+        };
+        row![
+            button("Play").on_press(Message::StartPlayback),
+            button("Stop").on_press(Message::StopPlayback),
+            button("Restart").on_press(Message::RestartPlayback),
+            text_input("Sample", &self.seek_sample_query)
+                .on_input(Message::SeekSampleChanged)
+                .width(100),
+            button("Seek").on_press(Message::SeekToSample),
+            button("Close JACK").on_press(Message::ClosePlayback),
+            text(playback_state),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    #[cfg(not(feature = "jack-backend"))]
+    fn playback_controls(&self) -> Element<'_, Message> {
+        text("Playback: build with jack-backend").into()
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -176,13 +321,18 @@ impl App {
             button("Add Track").on_press(Message::AddTrack),
             button("Undo").on_press(Message::Undo),
             button("Redo").on_press(Message::Redo),
-            text("Playback: not connected"),
+            self.playback_controls(),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
 
+        let current_project_path = self.project_path.as_ref().map_or_else(
+            || "New project".to_owned(),
+            |path| path.display().to_string(),
+        );
         let project_controls = row![
-            text_input("Path to .aaadaw project", &self.project_path_query)
+            text(format!("Current: {current_project_path}")),
+            text_input("Path to open / first save", &self.project_path_query)
                 .on_input(Message::ProjectPathChanged)
                 .width(Length::Fill),
             button("Open").on_press(Message::OpenProject),
@@ -264,6 +414,11 @@ impl App {
     }
 
     fn open_project(&mut self) -> Task<Message> {
+        #[cfg(feature = "jack-backend")]
+        if self.playback.is_some() {
+            self.status = "Close JACK output before opening another project".to_owned();
+            return Task::none();
+        }
         if self.io_busy {
             self.status = "Wait for current project operation to finish".to_owned();
             return Task::none();
@@ -310,6 +465,162 @@ impl App {
             }),
             move |result| Message::ProjectSaved(message_path, revision, result),
         )
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn start_playback(&mut self) -> Task<Message> {
+        if let Some(playback) = self.playback.as_mut() {
+            return match playback.play() {
+                Ok(()) => {
+                    self.playback_playing = true;
+                    self.status = "Playback started".to_owned();
+                    Task::none()
+                }
+                Err(error) => {
+                    self.status = format!("JACK play failed: {error}");
+                    Task::none()
+                }
+            };
+        }
+        self.prepare_playback(self.playhead_sample, true)
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn stop_playback(&mut self) {
+        let Some(playback) = self.playback.as_mut() else {
+            self.status = "JACK output is not open".to_owned();
+            return;
+        };
+        match playback.stop() {
+            Ok(()) => {
+                self.playback_playing = false;
+                self.status = "Playback stopped".to_owned();
+            }
+            Err(error) => self.status = format!("JACK stop failed: {error}"),
+        }
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn restart_playback(&mut self) -> Task<Message> {
+        let start_when_ready = self.playback.is_none() || self.playback_playing;
+        self.prepare_playback(0, start_when_ready)
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn seek_to_sample(&mut self) -> Task<Message> {
+        match self.seek_sample_query.trim().parse::<u64>() {
+            Ok(target_sample) => self.prepare_playback(target_sample, self.playback_playing),
+            Err(error) => {
+                self.status = format!("Invalid seek sample: {error}");
+                Task::none()
+            }
+        }
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn close_playback(&mut self) {
+        self.playback.take();
+        self.playback_playing = false;
+        self.playhead_sample = 0;
+        self.seek_sample_query = "0".to_owned();
+        self.status = "JACK output closed".to_owned();
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn prepare_playback(&mut self, target_sample: u64, start_when_ready: bool) -> Task<Message> {
+        if self.playback_busy || self.io_busy {
+            self.status = "Wait for current operation to finish".to_owned();
+            return Task::none();
+        }
+        let Some(path) = self.project_path.clone() else {
+            self.status = "Save or open project before playback".to_owned();
+            return Task::none();
+        };
+        let snapshot = self.project.snapshot();
+        self.playback_busy = true;
+        self.status = format!("Preparing playback at sample {target_sample}…");
+        let result = Arc::new(Mutex::new(None));
+        let message_result = Arc::clone(&result);
+        Task::perform(
+            run_blocking("aaadaw-playback-prepare", move || {
+                prepare_project_playback_file(path, snapshot, target_sample)
+            }),
+            move |prepared| {
+                *message_result
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared);
+                Message::PlaybackPrepared {
+                    target_sample,
+                    start_when_ready,
+                    result: SharedPreparedPlayback(result),
+                }
+            },
+        )
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn finish_playback_preparation(
+        &mut self,
+        target_sample: u64,
+        start_when_ready: bool,
+        result: SharedPreparedPlayback,
+    ) {
+        self.playback_busy = false;
+        let result = result.0.lock().ok().and_then(|mut result| result.take());
+        let prepared = match result {
+            Some(Ok(prepared)) => prepared,
+            Some(Err(error)) => {
+                self.status = format!("Playback preparation failed: {error}");
+                return;
+            }
+            None => {
+                self.status = "Playback preparation result was unavailable".to_owned();
+                return;
+            }
+        };
+
+        if let Some(playback) = self.playback.as_mut() {
+            match playback.replace_graph(prepared) {
+                Ok(()) => {
+                    self.playhead_sample = target_sample;
+                    self.seek_sample_query = target_sample.to_string();
+                    self.status = format!("Queued seek to sample {target_sample}");
+                }
+                Err(error) => self.status = format!("JACK graph replacement failed: {error}"),
+            }
+            return;
+        }
+
+        let mut playback = match prepared.into_jack_output() {
+            Ok(playback) => playback,
+            Err(error) => {
+                self.status = format!("JACK output setup failed: {error}");
+                return;
+            }
+        };
+        if start_when_ready {
+            if let Err(error) = playback.play() {
+                self.status = format!("JACK play failed: {error}");
+                return;
+            }
+        }
+        self.playback = Some(playback);
+        self.playback_playing = start_when_ready;
+        self.playhead_sample = target_sample;
+        self.seek_sample_query = target_sample.to_string();
+        self.status = if start_when_ready {
+            "Playback started".to_owned()
+        } else {
+            "JACK output ready".to_owned()
+        };
+    }
+
+    #[cfg(feature = "jack-backend")]
+    fn update_playback_stats(&mut self) {
+        if let Some(playback) = self.playback.as_mut() {
+            self.playhead_sample = playback.stats().playhead_sample;
+            playback.collect_retired_graphs();
+        }
     }
 
     fn add_track(&mut self) {
@@ -416,6 +727,25 @@ fn save_project_file(
     Ok(())
 }
 
+#[cfg(feature = "jack-backend")]
+fn prepare_project_playback_file(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    target_sample: u64,
+) -> Result<PreparedAudioPlayback, String> {
+    if !path.is_file() {
+        return Err(format!("project file {} does not exist", path.display()));
+    }
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    let store = ProjectStore::open(path).map_err(|error| error.to_string())?;
+    let prepared = prepare_audio_playback_at(&project, &store, target_sample, 16_384, 8_192)
+        .map_err(|error: PlaybackBuildError| error.to_string());
+    let close = store.close().map_err(|error| error.to_string());
+    let prepared = prepared?;
+    close?;
+    Ok(prepared)
+}
+
 fn track_row(track: &Track) -> Element<'_, Message> {
     let track_id = track.id();
     row![
@@ -434,8 +764,12 @@ fn track_row(track: &Track) -> Element<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "jack-backend")]
+    use super::prepare_project_playback_file;
     use super::{App, Message, load_project_file, save_project_file};
     use aaadaw_core::{DawAction, Project};
+    #[cfg(feature = "jack-backend")]
+    use aaadaw_storage::ProjectStore;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
@@ -479,7 +813,32 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert!(load_project_file(path.clone()).is_err());
+        #[cfg(feature = "jack-backend")]
+        assert!(prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0).is_err());
         assert!(!path.exists());
+    }
+
+    #[cfg(feature = "jack-backend")]
+    #[test]
+    fn jack_feature_prepares_offline_graph_without_opening_device() {
+        let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "aaadaw-ui-playback-{}-{file_id}.aaadaw",
+            std::process::id()
+        ));
+        let store = ProjectStore::open(&path).expect("empty project store should open");
+        store.close().expect("empty project store should close");
+
+        let prepared = prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0)
+            .expect("empty project should prepare without a JACK device");
+        assert_eq!(prepared.feeder_count(), 0);
+        drop(prepared);
+
+        let _ = std::fs::remove_file(&path);
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = format!("{}{suffix}", path.display());
+            let _ = std::fs::remove_file(sidecar);
+        }
     }
 
     #[test]

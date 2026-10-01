@@ -21,6 +21,7 @@ struct CallbackCounters {
     rendered_blocks: AtomicU64,
     underrun_samples: AtomicU64,
     callback_errors: AtomicU64,
+    playhead_sample: AtomicU64,
 }
 
 struct JackProcessHandler {
@@ -104,6 +105,10 @@ impl ProcessHandler for JackProcessHandler {
                 self.counters
                     .rendered_blocks
                     .fetch_add(1, Ordering::Relaxed);
+                self.counters.playhead_sample.store(
+                    self.graph.transport_mut().position_samples(),
+                    Ordering::Relaxed,
+                );
             }
             Err(_) => {
                 left.fill(0.0);
@@ -183,6 +188,8 @@ pub struct JackOutputStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
     pub callback_errors: u64,
+    /// Project sample position after the most recent successful render callback.
+    pub playhead_sample: u64,
 }
 
 impl JackAudioOutput {
@@ -212,6 +219,7 @@ impl JackAudioOutput {
             rendered_blocks: AtomicU64::new(0),
             underrun_samples: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
+            playhead_sample: AtomicU64::new(0),
         });
         let process_handler = JackProcessHandler {
             graph: Box::new(graph),
@@ -296,6 +304,7 @@ impl JackAudioOutput {
             rendered_blocks: self.counters.rendered_blocks.load(Ordering::Relaxed),
             underrun_samples: self.counters.underrun_samples.load(Ordering::Relaxed),
             callback_errors: self.counters.callback_errors.load(Ordering::Relaxed),
+            playhead_sample: self.counters.playhead_sample.load(Ordering::Relaxed),
         }
     }
 
