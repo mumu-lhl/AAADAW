@@ -12,4 +12,5 @@ jack-backend = ["aaadaw-app/jack-backend"]
 aaadaw-core = { path = "../aaadaw-core" }
 aaadaw-app = { path = "../aaadaw-app" }
 aaadaw-storage = { path = "../aaadaw-storage" }
+rfd = "0.15.4"
 iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "tokio", "linux-theme-detection"] }

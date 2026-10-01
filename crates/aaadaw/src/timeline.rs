@@ -1,24 +1,35 @@
 use crate::Message;
-use aaadaw_core::{Project, TrackId};
-use iced::widget::{button, column, container, row, scrollable, text};
+use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
+use aaadaw_core::{ItemId, Project, TrackId};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
 const MAX_VISIBLE_ITEMS: usize = 200;
 
-pub(super) fn view(project: &Project) -> Element<'static, Message> {
+pub(super) fn view<'a>(
+    project: &Project,
+    source_statuses: &std::collections::HashMap<String, AudioAssetSourceStatusEntry>,
+    audio_item_start_edits: &'a std::collections::HashMap<ItemId, String>,
+) -> Element<'a, Message> {
     let sample_rate = f64::from(project.settings().sample_rate());
     let mut audio_items = column![text("Audio items")].spacing(6);
     for item in project.audio_items().iter().take(MAX_VISIBLE_ITEMS) {
+        let item_id = item.id();
         let track_name = track_name(project, item.track_id());
         let start_seconds = item.start_sample() as f64 / sample_rate;
         let duration_seconds = item.length_samples() as f64 / sample_rate;
-        let item_row = row![
+        let source_status = source_statuses.get(item.media_ref());
+        let status_label = source_status.map_or_else(String::new, |entry| {
+            format!(" · source: {}", source_status_label(entry.status))
+        });
+        let mut item_row = row![
             text(format!(
-                "{} · {:.2}s · {:.2}s · {}",
+                "{} · {:.2}s · {:.2}s · {}{}",
                 track_name,
                 start_seconds,
                 duration_seconds,
-                item.media_ref()
+                item.media_ref(),
+                status_label
             ))
             .width(Length::Fill),
             button("−1s").on_press(Message::NudgeAudioItem(item.id(), -1, 1_000)),
@@ -31,10 +42,35 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
             button("Delete").on_press(Message::DeleteAudioItem(item.id())),
         ]
         .spacing(8);
+        if source_status.is_some_and(can_relink_source) {
+            item_row =
+                item_row.push(button("Relink").on_press(Message::RelinkAudioItem(item.id())));
+        }
         #[cfg(feature = "jack-backend")]
         let item_row =
             item_row.push(button("Seek").on_press(Message::SeekToItem(item.start_sample())));
-        audio_items = audio_items.push(item_row);
+        let position_controls: Element<'_, Message> = if let Some(query) =
+            audio_item_start_edits.get(&item.id())
+        {
+            row![
+                text_input("Start sample", query)
+                    .on_input(move |query| Message::AudioItemStartSampleChanged(item_id, query))
+                    .on_submit(Message::CommitAudioItemStartSample(item_id))
+                    .width(Length::Fill),
+                button("Set").on_press(Message::CommitAudioItemStartSample(item.id())),
+                button("Cancel").on_press(Message::CancelAudioItemStartSampleEdit(item.id())),
+            ]
+            .spacing(8)
+            .into()
+        } else {
+            row![
+                text(format!("Start sample: {}", item.start_sample())).width(Length::Fill),
+                button("Edit position").on_press(Message::BeginAudioItemStartSampleEdit(item.id())),
+            ]
+            .spacing(8)
+            .into()
+        };
+        audio_items = audio_items.push(column![item_row, position_controls]);
     }
     if project.audio_items().len() > MAX_VISIBLE_ITEMS {
         audio_items = audio_items.push(text(format!(
@@ -145,6 +181,21 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
         .into()
 }
 
+fn can_relink_source(entry: &AudioAssetSourceStatusEntry) -> bool {
+    entry.is_external_link && entry.status == AudioAssetSourceStatus::Missing
+}
+
+fn source_status_label(status: AudioAssetSourceStatus) -> &'static str {
+    match status {
+        AudioAssetSourceStatus::Linked => "linked",
+        AudioAssetSourceStatus::Untracked => "untracked",
+        AudioAssetSourceStatus::Unchanged => "unchanged",
+        AudioAssetSourceStatus::Changed => "changed",
+        AudioAssetSourceStatus::Missing => "missing",
+        AudioAssetSourceStatus::Unverified => "unverified",
+    }
+}
+
 fn midi_pitch_name(pitch: u8) -> String {
     const PITCH_CLASSES: [&str; 12] = [
         "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
@@ -161,4 +212,26 @@ fn track_name(project: &Project, track_id: TrackId) -> String {
         .find(|track| track.id() == track_id)
         .map(|track| track.name().to_owned())
         .unwrap_or_else(|| format!("Track {}", track_id.value()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::can_relink_source;
+    use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
+
+    #[test]
+    fn only_missing_live_links_offer_relink_controls() {
+        let missing_link = AudioAssetSourceStatusEntry {
+            media_ref: "asset://linked".to_owned(),
+            status: AudioAssetSourceStatus::Missing,
+            is_external_link: true,
+        };
+        let missing_embedded_original = AudioAssetSourceStatusEntry {
+            media_ref: "asset://embedded".to_owned(),
+            status: AudioAssetSourceStatus::Missing,
+            is_external_link: false,
+        };
+        assert!(can_relink_source(&missing_link));
+        assert!(!can_relink_source(&missing_embedded_original));
+    }
 }

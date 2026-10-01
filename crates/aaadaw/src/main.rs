@@ -1,7 +1,10 @@
 use aaadaw_app::{
+    AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
+    AudioAssetManagementWorker, AudioAssetSourceStatus, AudioAssetSourceStatusEntry,
     AudioItemImportProgress, AudioItemImportWorker, add_quarter_note, adjust_midi_note_pitch,
     adjust_midi_note_velocity, create_four_beat_midi_item, delete_midi_note, duplicate_audio_item,
     move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
+    relink_external_audio_source, set_audio_item_start_sample, start_audio_asset_management,
     start_audio_item_import,
 };
 #[cfg(feature = "jack-backend")]
@@ -35,6 +38,18 @@ struct App {
     project_path_query: String,
     project_path: Option<PathBuf>,
     track_name_edits: HashMap<TrackId, String>,
+    audio_item_start_edits: HashMap<ItemId, String>,
+    active_workspace: WorkspacePage,
+    active_menu: Option<MainMenu>,
+    path_picker_busy: bool,
+    audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,
+    audio_asset_management_worker: Option<AudioAssetManagementWorker>,
+    audio_asset_management_busy: bool,
+    audio_asset_management_finalizing: bool,
+    audio_asset_management_cancel_requested: bool,
+    audio_asset_management_operation: Option<AudioAssetManagementOperation>,
+    audio_asset_management_status: String,
+    relink_source_path_query: String,
     revision: u64,
     saved_revision: u64,
     io_busy: bool,
@@ -58,6 +73,29 @@ struct App {
     seek_sample_query: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum WorkspacePage {
+    #[default]
+    Arrangement,
+    Media,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainMenu {
+    File,
+    Edit,
+    Track,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PathPickerTarget {
+    OpenProject,
+    SaveProject,
+    ImportAudio,
+    RelinkAudio,
+}
+
 struct PendingAudioImport {
     worker: AudioItemImportWorker,
 }
@@ -71,8 +109,23 @@ impl std::fmt::Debug for SharedAudioImportWorker {
     }
 }
 
+#[derive(Clone)]
+struct SharedAudioAssetManagementWorker(
+    Arc<Mutex<Option<Result<AudioAssetManagementWorker, String>>>>,
+);
+
+impl std::fmt::Debug for SharedAudioAssetManagementWorker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedAudioAssetManagementWorker(..)")
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Message {
+    ToggleMainMenu(MainMenu),
+    SelectWorkspace(WorkspacePage),
+    PickPath(PathPickerTarget),
+    PathPicked(PathPickerTarget, Result<Option<PathBuf>, String>),
     AddTrack,
     AddMidiItem,
     AddMidiNote(ItemId),
@@ -92,6 +145,10 @@ enum Message {
     AdjustVolume(TrackId, f32),
     AdjustPan(TrackId, f32),
     NudgeAudioItem(ItemId, i8, u32),
+    BeginAudioItemStartSampleEdit(ItemId),
+    AudioItemStartSampleChanged(ItemId, String),
+    CommitAudioItemStartSample(ItemId),
+    CancelAudioItemStartSampleEdit(ItemId),
     DeleteAudioItem(ItemId),
     DuplicateAudioItem(ItemId),
     Undo,
@@ -106,6 +163,13 @@ enum Message {
     CancelAudioImport,
     AudioImportStarted(SharedAudioImportWorker),
     AudioImportFinished(Result<DawAction, String>),
+    RunAudioAssetManagement(AudioAssetManagementOperation),
+    CancelAudioAssetManagement,
+    AudioAssetManagementStarted(SharedAudioAssetManagementWorker),
+    AudioAssetManagementFinished(Result<AudioAssetManagementResult, String>),
+    RelinkSourcePathChanged(String),
+    RelinkAudioItem(ItemId),
+    AudioItemRelinked(ItemId, Result<(), String>),
     BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
@@ -167,11 +231,12 @@ impl App {
         #[cfg(not(feature = "jack-backend"))]
         let playback_active = false;
 
-        let background_ticks = if self.import_busy || playback_active {
-            iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
-        } else {
-            iced::Subscription::none()
-        };
+        let background_ticks =
+            if self.import_busy || playback_active || self.audio_asset_management_busy {
+                iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
+            } else {
+                iced::Subscription::none()
+            };
         iced::Subscription::batch([
             iced::event::listen_with(keyboard_shortcut_event),
             background_ticks,
@@ -181,12 +246,32 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         let allowed_during_io = matches!(
             &message,
-            Message::ProjectLoaded(..) | Message::ProjectSaved(..) | Message::BackgroundTick
+            Message::ProjectLoaded(..)
+                | Message::ProjectSaved(..)
+                | Message::ToggleMainMenu(_)
+                | Message::SelectWorkspace(_)
+                | Message::PathPicked(..)
+                | Message::AudioItemRelinked(..)
+                | Message::BackgroundTick
         );
+        if self.path_picker_busy
+            && !matches!(
+                &message,
+                Message::PathPicked(..)
+                    | Message::ToggleMainMenu(_)
+                    | Message::SelectWorkspace(_)
+                    | Message::BackgroundTick
+            )
+        {
+            self.status = "Wait for the file dialog to finish".to_owned();
+            return Task::none();
+        }
         if self.import_busy
             && !matches!(
                 &message,
                 Message::AudioFilePathChanged(_)
+                    | Message::ToggleMainMenu(_)
+                    | Message::SelectWorkspace(_)
                     | Message::CancelAudioImport
                     | Message::AudioImportStarted(_)
                     | Message::AudioImportFinished(_)
@@ -196,12 +281,29 @@ impl App {
             self.status = "Wait for audio import to finish or cancel it".to_owned();
             return Task::none();
         }
+        if self.audio_asset_management_busy
+            && !matches!(
+                &message,
+                Message::ToggleMainMenu(_)
+                    | Message::SelectWorkspace(_)
+                    | Message::AudioAssetManagementStarted(_)
+                    | Message::AudioAssetManagementFinished(_)
+                    | Message::CancelAudioAssetManagement
+                    | Message::BackgroundTick
+            )
+        {
+            self.status = "Wait for audio asset maintenance to finish or cancel it".to_owned();
+            return Task::none();
+        }
         #[cfg(feature = "jack-backend")]
         {
             if self.playback_busy
                 && !matches!(
                     &message,
-                    Message::PlaybackPrepared { .. } | Message::BackgroundTick
+                    Message::PlaybackPrepared { .. }
+                        | Message::ToggleMainMenu(_)
+                        | Message::SelectWorkspace(_)
+                        | Message::BackgroundTick
                 )
             {
                 self.status = "Wait for playback preparation to finish".to_owned();
@@ -229,12 +331,19 @@ impl App {
                         | Message::AdjustVolume(..)
                         | Message::AdjustPan(..)
                         | Message::NudgeAudioItem(..)
+                        | Message::BeginAudioItemStartSampleEdit(_)
+                        | Message::AudioItemStartSampleChanged(..)
+                        | Message::CommitAudioItemStartSample(_)
+                        | Message::CancelAudioItemStartSampleEdit(_)
                         | Message::DeleteAudioItem(_)
                         | Message::DuplicateAudioItem(_)
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
                         | Message::ImportAudio
+                        | Message::RunAudioAssetManagement(_)
+                        | Message::CancelAudioAssetManagement
+                        | Message::RelinkAudioItem(_)
                 )
             {
                 self.status = "Close JACK output before editing the project".to_owned();
@@ -247,6 +356,10 @@ impl App {
         }
         let mut task = Task::none();
         match message {
+            Message::ToggleMainMenu(menu) => {
+                self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
+            }
+            Message::SelectWorkspace(page) => self.active_workspace = page,
             #[cfg(feature = "jack-backend")]
             Message::TogglePlayback => {
                 if self.playback_playing {
@@ -255,7 +368,10 @@ impl App {
                     task = self.start_playback();
                 }
             }
-            Message::AddTrack => self.add_track(),
+            Message::AddTrack => {
+                self.active_menu = None;
+                self.add_track();
+            }
             Message::AddMidiItem => {
                 let action = create_four_beat_midi_item(&self.project);
                 self.apply_edit(action, "Four-beat MIDI item created");
@@ -363,15 +479,43 @@ impl App {
             Message::NudgeAudioItem(item_id, direction, milliseconds) => {
                 self.nudge_audio_item(item_id, direction, milliseconds)
             }
+            Message::BeginAudioItemStartSampleEdit(item_id) => {
+                if let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                {
+                    self.audio_item_start_edits
+                        .entry(item_id)
+                        .or_insert_with(|| item.start_sample().to_string());
+                }
+            }
+            Message::AudioItemStartSampleChanged(item_id, query) => {
+                self.audio_item_start_edits.insert(item_id, query);
+            }
+            Message::CommitAudioItemStartSample(item_id) => {
+                self.commit_audio_item_start_sample(item_id);
+            }
+            Message::CancelAudioItemStartSampleEdit(item_id) => {
+                self.audio_item_start_edits.remove(&item_id);
+            }
             Message::DeleteAudioItem(item_id) => {
-                self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted")
+                self.audio_item_start_edits.remove(&item_id);
+                self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
             }
-            Message::Undo => self.undo(),
-            Message::Redo => self.redo(),
+            Message::Undo => {
+                self.active_menu = None;
+                self.undo();
+            }
+            Message::Redo => {
+                self.active_menu = None;
+                self.redo();
+            }
             Message::ActionQueryChanged(query) => self.action_query = query,
             Message::RunActionQuery => self.run_action_query(),
             Message::ProjectPathChanged(path) => {
@@ -381,17 +525,43 @@ impl App {
                     self.project_path_query = path;
                 }
             }
-            Message::OpenProject => task = self.open_project(),
-            Message::SaveProject => task = self.save_project(),
+            Message::PickPath(target) => task = self.pick_path(target),
+            Message::PathPicked(target, result) => task = self.path_picked(target, result),
+            Message::OpenProject => {
+                self.active_menu = None;
+                task = self.open_project();
+            }
+            Message::SaveProject => {
+                self.active_menu = None;
+                task = self.save_project();
+            }
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ImportAudio => task = self.start_audio_import(),
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
             Message::AudioImportFinished(result) => self.finish_audio_import(result),
+            Message::RunAudioAssetManagement(operation) => {
+                task = self.start_audio_asset_management(operation);
+            }
+            Message::CancelAudioAssetManagement => self.cancel_audio_asset_management(),
+            Message::AudioAssetManagementStarted(worker) => {
+                self.audio_asset_management_started(worker);
+            }
+            Message::AudioAssetManagementFinished(result) => {
+                self.finish_audio_asset_management(result);
+            }
+            Message::RelinkSourcePathChanged(path) => self.relink_source_path_query = path,
+            Message::RelinkAudioItem(item_id) => task = self.relink_audio_item(item_id),
+            Message::AudioItemRelinked(item_id, result) => {
+                self.finish_audio_item_relink(item_id, result);
+            }
             Message::BackgroundTick => {
                 #[cfg(feature = "jack-backend")]
                 self.update_playback_stats();
-                task = self.update_audio_import();
+                task = Task::batch([
+                    self.update_audio_import(),
+                    self.update_audio_asset_management(),
+                ]);
             }
             Message::ProjectLoaded(path, result) => {
                 self.io_busy = false;
@@ -400,6 +570,8 @@ impl App {
                     Some(Ok(project)) => {
                         self.project = project;
                         self.track_name_edits.clear();
+                        self.audio_item_start_edits.clear();
+                        self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.revision = 0;
@@ -493,40 +665,109 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let project_name = self
+            .project_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map_or_else(
+                || "New project".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+        let file_label = if self.active_menu == Some(MainMenu::File) {
+            "File ▴"
+        } else {
+            "File ▾"
+        };
+        let edit_label = if self.active_menu == Some(MainMenu::Edit) {
+            "Edit ▴"
+        } else {
+            "Edit ▾"
+        };
+        let track_label = if self.active_menu == Some(MainMenu::Track) {
+            "Track ▴"
+        } else {
+            "Track ▾"
+        };
         let toolbar = row![
             text("AAADAW").size(24),
-            button("Add Track").on_press(Message::AddTrack),
-            button("Undo").on_press(Message::Undo),
-            button("Redo").on_press(Message::Redo),
+            button(file_label).on_press(Message::ToggleMainMenu(MainMenu::File)),
+            button(edit_label).on_press(Message::ToggleMainMenu(MainMenu::Edit)),
+            button(track_label).on_press(Message::ToggleMainMenu(MainMenu::Track)),
+            text(project_name.clone()).width(Length::Fill),
             self.playback_controls(),
         ]
-        .spacing(12)
+        .spacing(10)
         .align_y(Alignment::Center);
 
-        let current_project_path = self.project_path.as_ref().map_or_else(
-            || "New project".to_owned(),
-            |path| path.display().to_string(),
-        );
-        let project_controls = row![
-            text(format!("Current: {current_project_path}")),
-            text_input("Path to open / first save", &self.project_path_query)
-                .on_input(Message::ProjectPathChanged)
-                .width(Length::Fill),
-            button("Open").on_press(Message::OpenProject),
-            button(if self.io_busy { "Working…" } else { "Save" }).on_press(Message::SaveProject),
-            text(if self.is_dirty() {
-                "Unsaved"
-            } else if self.project_path.is_some() {
-                "Saved"
+        let menu_panel: Option<Element<'_, Message>> = match self.active_menu {
+            Some(MainMenu::File) => Some(
+                column![
+                    text("Project files").size(16),
+                    row![
+                        text_input("Project file path", &self.project_path_query)
+                            .on_input(Message::ProjectPathChanged)
+                            .width(Length::Fill),
+                        button("Open path").on_press(Message::OpenProject),
+                        button("Save path").on_press(Message::SaveProject),
+                    ]
+                    .spacing(8),
+                    row![
+                        button("Open…").on_press(Message::PickPath(PathPickerTarget::OpenProject)),
+                        button("Save as…")
+                            .on_press(Message::PickPath(PathPickerTarget::SaveProject)),
+                        text(if self.is_dirty() {
+                            "Unsaved changes"
+                        } else if self.project_path.is_some() {
+                            "Saved"
+                        } else {
+                            "New project"
+                        }),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .into(),
+            ),
+            Some(MainMenu::Edit) => Some(
+                row![
+                    button("Undo").on_press(Message::Undo),
+                    button("Redo").on_press(Message::Redo),
+                ]
+                .spacing(8)
+                .into(),
+            ),
+            Some(MainMenu::Track) => Some(
+                row![button("Add track").on_press(Message::AddTrack)]
+                    .spacing(8)
+                    .into(),
+            ),
+            None => None,
+        };
+
+        let workspace_tabs = row![
+            button(if self.active_workspace == WorkspacePage::Arrangement {
+                "● Arrangement"
             } else {
-                "New"
-            }),
+                "Arrangement"
+            })
+            .on_press(Message::SelectWorkspace(WorkspacePage::Arrangement)),
+            button(if self.active_workspace == WorkspacePage::Media {
+                "● Media"
+            } else {
+                "Media"
+            })
+            .on_press(Message::SelectWorkspace(WorkspacePage::Media)),
+            button(if self.active_workspace == WorkspacePage::Project {
+                "● Project"
+            } else {
+                "Project"
+            })
+            .on_press(Message::SelectWorkspace(WorkspacePage::Project)),
         ]
         .spacing(8);
 
         let import_progress = if !self.import_busy {
-            "Import audio to the first track after existing items; the source is embedded."
-                .to_owned()
+            "The source is embedded in the project after import.".to_owned()
         } else if self.import_finalizing {
             "Audio embedded; placing the timeline item…".to_owned()
         } else if let Some(total_bytes) = self.import_total_bytes {
@@ -534,21 +775,100 @@ impl App {
         } else {
             "Starting audio import…".to_owned()
         };
-        let import_controls = row![
-            text_input("Audio file to import", &self.audio_file_path_query)
+        let mut import_row = row![
+            text_input("Audio file path", &self.audio_file_path_query)
                 .on_input(Message::AudioFilePathChanged)
                 .width(Length::Fill),
+            button("Choose…").on_press(Message::PickPath(PathPickerTarget::ImportAudio)),
             button(if self.import_busy {
                 "Importing…"
             } else {
                 "Import audio"
             })
             .on_press(Message::ImportAudio),
-            button("Cancel import").on_press(Message::CancelAudioImport),
-            text(import_progress),
+        ]
+        .spacing(8);
+        if self.import_busy {
+            import_row = import_row.push(button("Cancel").on_press(Message::CancelAudioImport));
+        }
+        let import_controls = column![import_row, text(import_progress)].spacing(8);
+
+        let mut asset_row = row![
+            button(if self.audio_asset_management_busy {
+                "Working…"
+            } else {
+                "Scan sources"
+            })
+            .on_press(Message::RunAudioAssetManagement(
+                AudioAssetManagementOperation::ScanSources,
+            )),
+            button("Pack external audio").on_press(Message::RunAudioAssetManagement(
+                AudioAssetManagementOperation::PackExternalAssets,
+            )),
+        ]
+        .spacing(8);
+        if self.audio_asset_management_busy {
+            asset_row =
+                asset_row.push(button("Cancel").on_press(Message::CancelAudioAssetManagement));
+        }
+        let asset_status = if self.audio_asset_management_status.is_empty() {
+            "Scan source state or pack external links into the project".to_owned()
+        } else {
+            self.audio_asset_management_status.clone()
+        };
+        let asset_controls = column![asset_row, text(asset_status)].spacing(8);
+
+        let relink_controls = row![
+            text_input(
+                "Replacement path for missing external audio",
+                &self.relink_source_path_query
+            )
+            .on_input(Message::RelinkSourcePathChanged)
+            .width(Length::Fill),
+            button("Choose replacement…")
+                .on_press(Message::PickPath(PathPickerTarget::RelinkAudio)),
+            text("Choose a file, then relink a missing item below"),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
+
+        let mut source_status_list = column![text("Scanned sources").size(16)].spacing(6);
+        if self.audio_asset_source_statuses.is_empty() {
+            source_status_list = source_status_list.push(text("No scan results yet."));
+        } else {
+            let mut entries: Vec<_> = self.audio_asset_source_statuses.values().collect();
+            entries.sort_by(|left, right| left.media_ref.cmp(&right.media_ref));
+            for entry in entries {
+                let mut status_row = row![
+                    text(format!("{} · {:?}", entry.media_ref, entry.status)).width(Length::Fill),
+                ];
+                if entry.is_external_link && entry.status == AudioAssetSourceStatus::Missing {
+                    if let Some(item) = self
+                        .project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.media_ref() == entry.media_ref)
+                    {
+                        status_row = status_row
+                            .push(button("Relink").on_press(Message::RelinkAudioItem(item.id())));
+                    }
+                }
+                source_status_list = source_status_list.push(status_row.spacing(8));
+            }
+        }
+
+        let media_workspace = column![
+            text("Media library").size(24),
+            text("Import and repair audio sources, or package external files into this project."),
+            text("Import audio").size(18),
+            import_controls,
+            text("Source management").size(18),
+            asset_controls,
+            text("Repair a missing external link").size(18),
+            relink_controls,
+            source_status_list,
+        ]
+        .spacing(14);
 
         let action_search = row![
             text_input("Search actions: add track, undo, redo", &self.action_query)
@@ -558,62 +878,177 @@ impl App {
             button("Run").on_press(Message::RunActionQuery),
         ]
         .spacing(8);
-
         #[cfg(feature = "jack-backend")]
         let shortcut_help = text(
-            "Shortcuts: Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open · Space play/stop",
+            "Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open · Space play/stop",
         );
         #[cfg(not(feature = "jack-backend"))]
-        let shortcut_help = text(
-            "Shortcuts: Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open",
-        );
+        let shortcut_help =
+            text("Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open");
+        let project_workspace = column![
+            text("Project tools").size(24),
+            text("Run supported commands or use the keyboard shortcuts."),
+            action_search,
+            text("Keyboard shortcuts").size(18),
+            shortcut_help,
+        ]
+        .spacing(14);
 
-        let mut track_list = column![text("Tracks").size(18)].spacing(10);
-        for track in self.project.tracks() {
-            let track_id = track.id();
-            let edited_name = self
-                .track_name_edits
-                .get(&track_id)
-                .map_or(track.name(), String::as_str);
-            track_list = track_list.push(track_row(
-                track,
-                edited_name,
-                self.track_name_edits.contains_key(&track_id),
-            ));
-        }
-        if self.project.tracks().is_empty() {
-            track_list = track_list.push(text("No tracks. Add one to start editing."));
-        }
+        let workspace: Element<'_, Message> = match self.active_workspace {
+            WorkspacePage::Arrangement => {
+                let mut track_list = column![
+                    row![
+                        text("Tracks").size(18).width(Length::Fill),
+                        button("Add track").on_press(Message::AddTrack),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(10);
+                for track in self.project.tracks() {
+                    let track_id = track.id();
+                    let edited_name = self
+                        .track_name_edits
+                        .get(&track_id)
+                        .map_or(track.name(), String::as_str);
+                    track_list = track_list.push(track_row(
+                        track,
+                        edited_name,
+                        self.track_name_edits.contains_key(&track_id),
+                    ));
+                }
+                if self.project.tracks().is_empty() {
+                    track_list = track_list.push(text("No tracks yet. Add one to start."));
+                }
+                let tracks = container(scrollable(track_list))
+                    .width(300)
+                    .height(Length::Fill)
+                    .padding(14);
+                let editor = timeline::view(
+                    &self.project,
+                    &self.audio_asset_source_statuses,
+                    &self.audio_item_start_edits,
+                );
+                row![tracks, editor].spacing(12).height(Length::Fill).into()
+            }
+            WorkspacePage::Media => container(scrollable(media_workspace))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(14)
+                .into(),
+            WorkspacePage::Project => container(scrollable(project_workspace))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(14)
+                .into(),
+        };
 
-        let tracks = container(scrollable(track_list))
-            .width(300)
-            .height(Length::Fill)
-            .padding(14);
-        let editor = timeline::view(&self.project);
-
-        let workspace = row![tracks, editor].spacing(12).height(Length::Fill);
-
-        container(
-            column![
-                toolbar,
-                project_controls,
-                import_controls,
-                action_search,
-                shortcut_help,
-                workspace,
-                text(if self.status.is_empty() {
-                    "New project. Enter a path to save or open a project."
-                } else {
-                    &self.status
-                }),
-            ]
+        let project_state = if self.is_dirty() {
+            format!("{project_name} · Unsaved changes")
+        } else {
+            project_name
+        };
+        let mut content = column![toolbar]
             .spacing(12)
             .padding(14)
-            .height(Length::Fill),
+            .height(Length::Fill);
+        if let Some(menu_panel) = menu_panel {
+            content = content.push(
+                container(menu_panel)
+                    .padding(10)
+                    .style(iced::widget::container::rounded_box),
+            );
+        }
+        let status_text = if self.status.is_empty() {
+            project_state
+        } else {
+            self.status.clone()
+        };
+        content = content
+            .push(workspace_tabs)
+            .push(workspace)
+            .push(text(status_text));
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
+        if self.path_picker_busy {
+            self.status = "A file dialog is already open".to_owned();
+            return Task::none();
+        }
+        self.path_picker_busy = true;
+        self.active_menu = None;
+        Task::perform(
+            run_blocking("aaadaw-native-file-dialog", move || {
+                let path = match target {
+                    PathPickerTarget::OpenProject => rfd::FileDialog::new()
+                        .set_title("Open AAADAW project")
+                        .add_filter("AAADAW project", &["aaadaw"])
+                        .pick_file(),
+                    PathPickerTarget::SaveProject => rfd::FileDialog::new()
+                        .set_title("Save AAADAW project")
+                        .set_file_name("project.aaadaw")
+                        .add_filter("AAADAW project", &["aaadaw"])
+                        .save_file(),
+                    PathPickerTarget::ImportAudio => rfd::FileDialog::new()
+                        .set_title("Choose audio to import")
+                        .add_filter(
+                            "Audio files",
+                            &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
+                        )
+                        .pick_file(),
+                    PathPickerTarget::RelinkAudio => rfd::FileDialog::new()
+                        .set_title("Choose replacement audio")
+                        .add_filter(
+                            "Audio files",
+                            &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
+                        )
+                        .pick_file(),
+                };
+                Ok(path)
+            }),
+            move |result| Message::PathPicked(target, result),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    }
+
+    fn path_picked(
+        &mut self,
+        target: PathPickerTarget,
+        result: Result<Option<PathBuf>, String>,
+    ) -> Task<Message> {
+        self.path_picker_busy = false;
+        match result {
+            Ok(Some(path)) => {
+                let path = path.to_string_lossy().into_owned();
+                match target {
+                    PathPickerTarget::OpenProject => {
+                        self.project_path_query = path;
+                        self.active_menu = None;
+                        self.open_project()
+                    }
+                    PathPickerTarget::SaveProject => {
+                        self.project_path_query = path;
+                        self.active_menu = None;
+                        self.save_project()
+                    }
+                    PathPickerTarget::ImportAudio => {
+                        self.audio_file_path_query = path;
+                        Task::none()
+                    }
+                    PathPickerTarget::RelinkAudio => {
+                        self.relink_source_path_query = path;
+                        Task::none()
+                    }
+                }
+            }
+            Ok(None) => Task::none(),
+            Err(error) => {
+                self.status = format!("File dialog failed: {error}");
+                Task::none()
+            }
+        }
     }
 
     fn is_dirty(&self) -> bool {
@@ -718,6 +1153,254 @@ impl App {
             import.worker.cancel();
         }
         self.status = "Cancelling audio import…".to_owned();
+    }
+
+    fn start_audio_asset_management(
+        &mut self,
+        operation: AudioAssetManagementOperation,
+    ) -> Task<Message> {
+        if self.io_busy || self.import_busy || self.audio_asset_management_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        #[cfg(feature = "jack-backend")]
+        if self.playback.is_some() {
+            self.status = "Close JACK output before maintaining audio assets".to_owned();
+            return Task::none();
+        }
+        if self.is_dirty() {
+            self.status = "Save the project before scanning or packing audio assets".to_owned();
+            return Task::none();
+        }
+        let Some(project_path) = self.project_path.clone() else {
+            self.status = "Save the project before scanning or packing audio assets".to_owned();
+            return Task::none();
+        };
+        self.audio_asset_management_busy = true;
+        self.audio_asset_management_finalizing = false;
+        self.audio_asset_management_cancel_requested = false;
+        self.audio_asset_management_operation = Some(operation);
+        if operation == AudioAssetManagementOperation::ScanSources {
+            self.audio_asset_source_statuses.clear();
+        }
+        self.audio_asset_management_status = match operation {
+            AudioAssetManagementOperation::ScanSources => "Starting source scan…".to_owned(),
+            AudioAssetManagementOperation::PackExternalAssets => {
+                "Starting asset packing…".to_owned()
+            }
+        };
+        Task::perform(
+            run_blocking("aaadaw-audio-asset-operation-start", move || {
+                start_audio_asset_management(project_path, operation)
+            }),
+            move |result| {
+                Message::AudioAssetManagementStarted(SharedAudioAssetManagementWorker(Arc::new(
+                    Mutex::new(Some(result)),
+                )))
+            },
+        )
+    }
+
+    fn audio_asset_management_started(&mut self, result: SharedAudioAssetManagementWorker) {
+        let worker = result.0.lock().ok().and_then(|mut result| result.take());
+        match worker {
+            Some(Ok(worker)) => {
+                if self.audio_asset_management_cancel_requested {
+                    worker.cancel();
+                    self.audio_asset_management_status = "Cancelling asset operation…".to_owned();
+                }
+                self.audio_asset_management_worker = Some(worker);
+            }
+            Some(Err(error)) => {
+                self.audio_asset_management_busy = false;
+                self.audio_asset_management_finalizing = false;
+                self.audio_asset_management_cancel_requested = false;
+                self.audio_asset_management_operation = None;
+                self.audio_asset_management_status =
+                    format!("Could not start asset operation: {error}");
+                self.status = self.audio_asset_management_status.clone();
+            }
+            None => {
+                self.audio_asset_management_busy = false;
+                self.audio_asset_management_finalizing = false;
+                self.audio_asset_management_cancel_requested = false;
+                self.audio_asset_management_operation = None;
+                self.audio_asset_management_status =
+                    "Asset worker result was unavailable".to_owned();
+                self.status = self.audio_asset_management_status.clone();
+            }
+        }
+    }
+
+    fn cancel_audio_asset_management(&mut self) {
+        if !self.audio_asset_management_busy {
+            self.status = "No audio asset operation is active".to_owned();
+            return;
+        }
+        if self.audio_asset_management_finalizing {
+            self.status = "Asset operation is finishing and can no longer be cancelled".to_owned();
+            return;
+        }
+        self.audio_asset_management_cancel_requested = true;
+        if let Some(worker) = self.audio_asset_management_worker.as_ref() {
+            worker.cancel();
+        }
+        self.audio_asset_management_status = "Cancelling asset operation…".to_owned();
+        self.status = self.audio_asset_management_status.clone();
+    }
+
+    fn update_audio_asset_management(&mut self) -> Task<Message> {
+        let Some(worker) = self.audio_asset_management_worker.as_ref() else {
+            return Task::none();
+        };
+        for progress in worker.progress() {
+            match progress {
+                AudioAssetManagementProgress::SourceScan(update) => {
+                    self.audio_asset_source_statuses.insert(
+                        update.media_ref.clone(),
+                        AudioAssetSourceStatusEntry {
+                            media_ref: update.media_ref.clone(),
+                            status: update.status,
+                            is_external_link: false,
+                        },
+                    );
+                    self.audio_asset_management_status = format!(
+                        "Scanned {}/{} · {}: {:?}",
+                        update.scanned_assets, update.total_assets, update.media_ref, update.status
+                    );
+                }
+                AudioAssetManagementProgress::Pack(update) => {
+                    self.audio_asset_management_status = format!(
+                        "Packing {}/{} · {} · {} / {} bytes",
+                        update.completed_assets,
+                        update.total_assets,
+                        update.media_ref,
+                        update.bytes_imported,
+                        update.total_bytes
+                    );
+                }
+            }
+        }
+        if !worker.is_finished() {
+            return Task::none();
+        }
+        let Some(worker) = self.audio_asset_management_worker.take() else {
+            return Task::none();
+        };
+        self.audio_asset_management_finalizing = true;
+        self.audio_asset_management_status = "Finishing asset operation…".to_owned();
+        Task::perform(
+            run_blocking("aaadaw-audio-asset-operation-finish", move || worker.join()),
+            Message::AudioAssetManagementFinished,
+        )
+    }
+
+    fn finish_audio_asset_management(
+        &mut self,
+        result: Result<AudioAssetManagementResult, String>,
+    ) {
+        let was_cancelled = self.audio_asset_management_cancel_requested;
+        let operation = self.audio_asset_management_operation.take();
+        self.audio_asset_management_busy = false;
+        self.audio_asset_management_finalizing = false;
+        self.audio_asset_management_cancel_requested = false;
+        match result {
+            Ok(AudioAssetManagementResult::SourceScan(results)) => {
+                self.audio_asset_source_statuses = results
+                    .into_iter()
+                    .map(|entry| (entry.media_ref.clone(), entry))
+                    .collect();
+                self.audio_asset_management_status = format!(
+                    "Scanned {} audio assets",
+                    self.audio_asset_source_statuses.len()
+                );
+            }
+            Ok(AudioAssetManagementResult::Packed(media_refs)) => {
+                self.audio_asset_source_statuses.clear();
+                self.audio_asset_management_status =
+                    format!("Packed {} external audio assets", media_refs.len());
+            }
+            Err(error) if was_cancelled => {
+                self.audio_asset_management_status = match operation {
+                    Some(AudioAssetManagementOperation::PackExternalAssets) => {
+                        format!("Packing cancelled; completed assets remain embedded: {error}")
+                    }
+                    _ => format!("Source scan cancelled: {error}"),
+                };
+            }
+            Err(error) => {
+                self.audio_asset_management_status = format!("Asset operation failed: {error}");
+            }
+        }
+        self.status = self.audio_asset_management_status.clone();
+    }
+
+    fn relink_audio_item(&mut self, item_id: ItemId) -> Task<Message> {
+        if self.io_busy || self.import_busy || self.audio_asset_management_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        #[cfg(feature = "jack-backend")]
+        if self.playback.is_some() {
+            self.status = "Close JACK output before relinking audio".to_owned();
+            return Task::none();
+        }
+        if self.is_dirty() {
+            self.status = "Save the project before relinking audio".to_owned();
+            return Task::none();
+        }
+        let Some(project_path) = self.project_path.clone() else {
+            self.status = "Save the project before relinking audio".to_owned();
+            return Task::none();
+        };
+        let Some(source_path) = project_path_from_query(&self.relink_source_path_query) else {
+            self.status = "Enter the replacement source path first".to_owned();
+            return Task::none();
+        };
+        let Some(media_ref) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .map(|item| item.media_ref().to_owned())
+        else {
+            self.status = "Audio item no longer exists".to_owned();
+            return Task::none();
+        };
+        self.io_busy = true;
+        self.status = format!("Relinking {media_ref}…");
+        Task::perform(
+            run_blocking("aaadaw-audio-relink", move || {
+                relink_external_audio_source(project_path, media_ref, source_path)
+            }),
+            move |result| Message::AudioItemRelinked(item_id, result),
+        )
+    }
+
+    fn finish_audio_item_relink(&mut self, item_id: ItemId, result: Result<(), String>) {
+        self.io_busy = false;
+        match result {
+            Ok(()) => {
+                if let Some(media_ref) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.media_ref().to_owned())
+                {
+                    self.audio_asset_source_statuses.insert(
+                        media_ref.clone(),
+                        AudioAssetSourceStatusEntry {
+                            media_ref,
+                            status: AudioAssetSourceStatus::Linked,
+                            is_external_link: true,
+                        },
+                    );
+                }
+                self.status = "External audio source relinked".to_owned();
+            }
+            Err(error) => self.status = format!("Audio relink failed: {error}"),
+        }
     }
 
     fn update_audio_import(&mut self) -> Task<Message> {
@@ -1064,6 +1747,7 @@ impl App {
     }
 
     fn nudge_audio_item(&mut self, item_id: ItemId, direction: i8, milliseconds: u32) {
+        self.audio_item_start_edits.remove(&item_id);
         let Some((media_ref, source_offset_samples, length_samples, start_sample)) = self
             .project
             .audio_items()
@@ -1101,11 +1785,39 @@ impl App {
                 source_offset_samples,
                 length_samples,
             },
-            "Audio item moved by one second",
+            &format!("Audio item moved by {milliseconds} ms"),
         );
     }
 
+    fn commit_audio_item_start_sample(&mut self, item_id: ItemId) {
+        let Some(query) = self.audio_item_start_edits.get(&item_id).cloned() else {
+            return;
+        };
+        let start_sample = match query.trim().parse::<u64>() {
+            Ok(sample) => sample,
+            Err(_) => {
+                self.status = "Enter a non-negative sample position".to_owned();
+                return;
+            }
+        };
+        if self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .is_some_and(|item| item.start_sample() == start_sample)
+        {
+            self.audio_item_start_edits.remove(&item_id);
+            self.status = "Audio item position is unchanged".to_owned();
+            return;
+        }
+        self.audio_item_start_edits.remove(&item_id);
+        let action = set_audio_item_start_sample(&self.project, item_id, start_sample);
+        self.apply_edit(action, "Audio item moved to exact sample position");
+    }
+
     fn undo(&mut self) {
+        self.audio_item_start_edits.clear();
         self.status = match self.project.undo() {
             Ok(true) => {
                 self.revision = self.revision.wrapping_add(1);
@@ -1117,6 +1829,7 @@ impl App {
     }
 
     fn redo(&mut self) {
+        self.audio_item_start_edits.clear();
         self.status = match self.project.redo() {
             Ok(true) => {
                 self.revision = self.revision.wrapping_add(1);
@@ -1301,8 +2014,8 @@ mod tests {
     #[cfg(feature = "jack-backend")]
     use super::prepare_project_playback_file;
     use super::{
-        App, Message, keyboard_shortcut_event, load_project_file, save_project_file,
-        shortcut_message,
+        App, MainMenu, Message, PathPickerTarget, WorkspacePage, keyboard_shortcut_event,
+        load_project_file, save_project_file, shortcut_message,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project};
     #[cfg(feature = "jack-backend")]
@@ -1311,6 +2024,62 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn audio_asset_maintenance_requires_a_saved_project_snapshot() {
+        let mut app = App {
+            project_path: Some(std::path::PathBuf::from("project.aaadaw")),
+            revision: 1,
+            ..App::default()
+        };
+
+        let _ = app.update(Message::RunAudioAssetManagement(
+            aaadaw_app::AudioAssetManagementOperation::ScanSources,
+        ));
+        assert!(!app.audio_asset_management_busy);
+        assert_eq!(
+            app.status,
+            "Save the project before scanning or packing audio assets"
+        );
+    }
+
+    #[test]
+    fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
+        let mut app = App {
+            audio_asset_management_busy: true,
+            ..App::default()
+        };
+        let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+        assert_eq!(app.active_menu, Some(MainMenu::File));
+        let _ = app.update(Message::SelectWorkspace(WorkspacePage::Media));
+        assert_eq!(app.active_workspace, WorkspacePage::Media);
+        let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+        assert_eq!(app.active_menu, None);
+    }
+
+    #[test]
+    fn native_picker_results_fill_the_requested_path_fields() {
+        let mut app = App {
+            path_picker_busy: true,
+            ..App::default()
+        };
+        let audio_path = std::path::PathBuf::from("/tmp/example.wav");
+        let _ = app.path_picked(PathPickerTarget::ImportAudio, Ok(Some(audio_path.clone())));
+        assert_eq!(app.audio_file_path_query, audio_path.to_string_lossy());
+        assert!(!app.path_picker_busy);
+
+        app.path_picker_busy = true;
+        let replacement_path = std::path::PathBuf::from("/tmp/replacement.wav");
+        let _ = app.path_picked(
+            PathPickerTarget::RelinkAudio,
+            Ok(Some(replacement_path.clone())),
+        );
+        assert_eq!(
+            app.relink_source_path_query,
+            replacement_path.to_string_lossy()
+        );
+        assert!(!app.path_picker_busy);
+    }
 
     #[test]
     fn keyboard_shortcuts_route_to_existing_app_messages() {
@@ -1591,6 +2360,35 @@ mod tests {
         let _ = app.update(Message::Undo);
         assert_eq!(app.project.tracks().len(), 1);
         assert_eq!(app.project.tracks()[0].id(), track_id);
+    }
+
+    #[test]
+    fn audio_timeline_exact_position_edit_preserves_source_and_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://exact-position".to_owned(),
+                start_sample: 240,
+                source_offset_samples: 120,
+                length_samples: 960,
+            })
+            .expect("source item should be inserted");
+        let item_id = app.project.audio_items()[0].id();
+
+        let _ = app.update(Message::AudioItemStartSampleChanged(
+            item_id,
+            "12345".to_owned(),
+        ));
+        let _ = app.update(Message::CommitAudioItemStartSample(item_id));
+        let item = &app.project.audio_items()[0];
+        assert_eq!(item.start_sample(), 12_345);
+        assert_eq!(item.source_offset_samples(), 120);
+        assert_eq!(item.length_samples(), 960);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 240);
     }
 
     #[test]

@@ -395,6 +395,11 @@ impl AudioAssetPackWorker {
         &self.progress
     }
 
+    /// Returns whether the worker has exited without blocking the caller.
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
     /// Waits for the operation and returns references packed before completion.
     pub fn join(mut self) -> Result<Vec<String>, StorageError> {
         self.thread
@@ -433,6 +438,11 @@ impl AudioAssetSourceScanWorker {
     /// Receives one result for each scanned asset until the worker closes the channel.
     pub fn progress(&self) -> &Receiver<AudioAssetSourceScanProgress> {
         &self.progress
+    }
+
+    /// Returns whether the worker has exited without blocking the caller.
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     /// Waits for the scan and returns all source statuses collected before completion.

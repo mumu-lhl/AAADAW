@@ -1,4 +1,4 @@
-use aaadaw_app::{AudioEditError, duplicate_audio_item};
+use aaadaw_app::{AudioEditError, duplicate_audio_item, set_audio_item_start_sample};
 use aaadaw_core::{DawAction, Project};
 
 fn project_with_audio_item(
@@ -40,6 +40,26 @@ fn duplicate_audio_item_preserves_source_and_can_be_undone() {
     assert!(project.undo().expect("duplicate should be undoable"));
     assert_eq!(project.audio_items().len(), 1);
     assert_eq!(project.audio_items()[0].id(), item_id);
+}
+
+#[test]
+fn exact_position_edit_preserves_source_range_and_rejects_overflow() {
+    let (mut project, item_id) = project_with_audio_item(240, 960);
+    let action = set_audio_item_start_sample(&project, item_id, 12_345)
+        .expect("exact position action should be built");
+    project.apply(action).expect("position should update");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.start_sample(), 12_345);
+    assert_eq!(item.source_offset_samples(), 120);
+    assert_eq!(item.length_samples(), 960);
+    assert!(project.undo().expect("position edit should be undoable"));
+    assert_eq!(project.audio_items()[0].start_sample(), 240);
+
+    let (project, item_id) = project_with_audio_item(u64::MAX - 10, 10);
+    assert_eq!(
+        set_audio_item_start_sample(&project, item_id, u64::MAX - 9),
+        Err(AudioEditError::PositionOutOfRange)
+    );
 }
 
 #[test]
