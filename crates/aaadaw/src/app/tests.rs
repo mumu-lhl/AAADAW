@@ -353,6 +353,8 @@ fn track_rename_is_undoable() {
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
 
+    let _ = app.update(Message::BeginTrackNameEdit(track_id));
+    assert_eq!(app.track_name_edits.get(&track_id).unwrap(), "Audio 1");
     let _ = app.update(Message::TrackNameChanged(track_id, "Lead Vox".to_owned()));
     let _ = app.update(Message::CommitTrackName(track_id));
     assert_eq!(app.project.tracks()[0].name(), "Lead Vox");
@@ -363,6 +365,32 @@ fn track_rename_is_undoable() {
     let _ = app.update(Message::CommitTrackName(track_id));
     assert_eq!(app.project.tracks()[0].name(), "Audio 1");
     assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn track_context_menu_selects_its_target_and_closes_after_an_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::OpenTrackContextMenu(track_id),
+    ));
+    assert_eq!(app.timeline.context_track, Some(track_id));
+    assert_eq!(app.timeline.selected_track, Some(track_id));
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::ToggleTrackContextMenu(track_id),
+    ));
+    assert!(app.timeline.context_track.is_none());
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::ToggleTrackContextMenu(track_id),
+    ));
+    assert_eq!(app.timeline.context_track, Some(track_id));
+
+    let _ = app.update(Message::ToggleMute(track_id));
+    assert!(app.timeline.context_track.is_none());
+    assert!(app.project.tracks()[0].is_muted());
 }
 
 #[test]

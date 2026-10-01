@@ -13,4 +13,5 @@ aaadaw-core = { path = "../aaadaw-core" }
 aaadaw-app = { path = "../aaadaw-app" }
 aaadaw-storage = { path = "../aaadaw-storage" }
 rfd = "0.15.4"
-iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "tokio", "linux-theme-detection"] }
+iced = { version = "0.14.0", default-features = false, features = ["wgpu", "canvas", "advanced", "x11", "wayland", "tokio", "linux-theme-detection"] }
+bytemuck = { version = "1.24", features = ["derive"] }

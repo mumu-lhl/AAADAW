@@ -34,7 +34,7 @@ The repository architecture calls for a REAPER-inspired Iced shell with a top me
 5. **Project workspace:** action search, project information, and shortcut help.
 6. **Status area:** one compact status line reports the latest operation and save state.
 
-The current list-based timeline remains a provisional editor until the separate wgpu viewport roadmap item is implemented.
+The initial shell kept the previous list-based editor. The wgpu timeline viewport has since replaced it in the Arrangement; see `ROADMAP.md` and `docs/tickets/2026-10-01-desktop-arrangement.md` for the delivered viewport scope and remaining direct-edit work.
 
 ## Module boundaries
 

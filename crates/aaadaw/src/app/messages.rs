@@ -1,10 +1,15 @@
 #[cfg(feature = "jack-backend")]
 use super::SharedPreparedPlayback;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
+use crate::timeline::TimelineEvent;
 use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
 use aaadaw_core::{DawAction, ItemId, NoteId, Project, TrackId};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+pub(crate) fn track_name_input_id(track_id: TrackId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("aaadaw-track-name-{}", track_id.value()))
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WorkspacePage {
@@ -33,6 +38,15 @@ pub(crate) enum PathPickerTarget {
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
     SelectWorkspace(WorkspacePage),
+    Timeline(TimelineEvent),
+    TcpScrolled {
+        offset: f32,
+        height: f32,
+    },
+    TimelineScrolled {
+        offset: f32,
+        height: f32,
+    },
     PickPath(PathPickerTarget),
     PathPicked(PathPickerTarget, Result<Option<PathBuf>, String>),
     AddTrack,
@@ -47,6 +61,7 @@ pub(crate) enum Message {
     QuantizeMidiItem(ItemId),
     DeleteTrack(TrackId),
     MoveTrack(TrackId, i8),
+    BeginTrackNameEdit(TrackId),
     TrackNameChanged(TrackId, String),
     CommitTrackName(TrackId),
     ToggleMute(TrackId),

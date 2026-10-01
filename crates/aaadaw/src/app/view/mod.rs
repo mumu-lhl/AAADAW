@@ -3,6 +3,7 @@ use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
+mod item_inspector;
 mod media;
 mod project;
 
@@ -32,9 +33,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     let toolbar = row![
         text("AAADAW").size(24),
-        button(file_label).on_press(Message::ToggleMainMenu(MainMenu::File)),
-        button(edit_label).on_press(Message::ToggleMainMenu(MainMenu::Edit)),
-        button(track_label).on_press(Message::ToggleMainMenu(MainMenu::Track)),
+        button(file_label)
+            .style(menu_button_style(app.active_menu == Some(MainMenu::File)))
+            .on_press(Message::ToggleMainMenu(MainMenu::File)),
+        button(edit_label)
+            .style(menu_button_style(app.active_menu == Some(MainMenu::Edit)))
+            .on_press(Message::ToggleMainMenu(MainMenu::Edit)),
+        button(track_label)
+            .style(menu_button_style(app.active_menu == Some(MainMenu::Track)))
+            .on_press(Message::ToggleMainMenu(MainMenu::Track)),
         text(project_name.clone()).width(Length::Fill),
     ]
     .spacing(10)
@@ -48,13 +55,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     text_input("Project file path", &app.project_path_query)
                         .on_input(Message::ProjectPathChanged)
                         .width(Length::Fill),
-                    button("Open path").on_press(Message::OpenProject),
-                    button("Save path").on_press(Message::SaveProject),
+                    utility_button("Open path", Message::OpenProject),
+                    utility_button("Save path", Message::SaveProject),
                 ]
                 .spacing(8),
                 row![
-                    button("Open…").on_press(Message::PickPath(PathPickerTarget::OpenProject)),
-                    button("Save as…").on_press(Message::PickPath(PathPickerTarget::SaveProject)),
+                    utility_button("Open…", Message::PickPath(PathPickerTarget::OpenProject)),
+                    utility_button("Save as…", Message::PickPath(PathPickerTarget::SaveProject)),
                     text(if app.is_dirty() {
                         "Unsaved changes"
                     } else if app.project_path.is_some() {
@@ -70,14 +77,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ),
         Some(MainMenu::Edit) => Some(
             row![
-                button("Undo").on_press(Message::Undo),
-                button("Redo").on_press(Message::Redo),
+                utility_button("Undo", Message::Undo),
+                utility_button("Redo", Message::Redo),
             ]
             .spacing(8)
             .into(),
         ),
         Some(MainMenu::Track) => Some(
-            row![button("Add track").on_press(Message::AddTrack)]
+            row![utility_button("Add track", Message::AddTrack)]
                 .spacing(8)
                 .into(),
         ),
@@ -90,18 +97,27 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         } else {
             "Arrangement"
         })
+        .style(workspace_button_style(
+            app.active_workspace == WorkspacePage::Arrangement,
+        ))
         .on_press(Message::SelectWorkspace(WorkspacePage::Arrangement)),
         button(if app.active_workspace == WorkspacePage::Media {
             "● Media"
         } else {
             "Media"
         })
+        .style(workspace_button_style(
+            app.active_workspace == WorkspacePage::Media,
+        ))
         .on_press(Message::SelectWorkspace(WorkspacePage::Media)),
         button(if app.active_workspace == WorkspacePage::Project {
             "● Project"
         } else {
             "Project"
         })
+        .style(workspace_button_style(
+            app.active_workspace == WorkspacePage::Project,
+        ))
         .on_press(Message::SelectWorkspace(WorkspacePage::Project)),
     ]
     .spacing(8);
@@ -150,6 +166,32 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn menu_button_style(
+    active: bool,
+) -> fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+    if active {
+        iced::widget::button::warning
+    } else {
+        iced::widget::button::secondary
+    }
+}
+
+fn workspace_button_style(
+    active: bool,
+) -> fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+    if active {
+        iced::widget::button::primary
+    } else {
+        iced::widget::button::secondary
+    }
+}
+
+fn utility_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {
+    button(label)
+        .style(iced::widget::button::secondary)
+        .on_press(message)
 }
 
 #[cfg(feature = "jack-backend")]

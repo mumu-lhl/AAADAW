@@ -1,3 +1,4 @@
+use crate::timeline::{self, TimelineState};
 use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementWorker, AudioAssetSourceStatusEntry,
     AudioItemImportWorker, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
@@ -32,6 +33,7 @@ pub(crate) use messages::{MainMenu, Message, PathPickerTarget, WorkspacePage};
 pub(crate) fn run() -> iced::Result {
     let application = iced::application(App::new, App::update, view::view)
         .title("AAADAW")
+        .theme(|_: &App| iced::Theme::Dark)
         .window_size(iced::Size::new(1280.0, 800.0));
     let application = application.subscription(App::subscription);
     application.run()
@@ -47,6 +49,7 @@ struct App {
     audio_item_start_edits: HashMap<ItemId, String>,
     active_workspace: WorkspacePage,
     active_menu: Option<MainMenu>,
+    timeline: TimelineState,
     path_picker_busy: bool,
     audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,
     audio_asset_management_worker: Option<AudioAssetManagementWorker>,
@@ -154,12 +157,24 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if !matches!(
+            &message,
+            Message::Timeline(
+                timeline::TimelineEvent::OpenTrackContextMenu(_)
+                    | timeline::TimelineEvent::ToggleTrackContextMenu(_)
+            )
+        ) {
+            self.timeline.context_track = None;
+        }
         let allowed_during_io = matches!(
             &message,
             Message::ProjectLoaded(..)
                 | Message::ProjectSaved(..)
                 | Message::ToggleMainMenu(_)
                 | Message::SelectWorkspace(_)
+                | Message::Timeline(_)
+                | Message::TcpScrolled { .. }
+                | Message::TimelineScrolled { .. }
                 | Message::PathPicked(..)
                 | Message::AudioItemRelinked(..)
                 | Message::BackgroundTick
@@ -170,6 +185,9 @@ impl App {
                 Message::PathPicked(..)
                     | Message::ToggleMainMenu(_)
                     | Message::SelectWorkspace(_)
+                    | Message::Timeline(_)
+                    | Message::TcpScrolled { .. }
+                    | Message::TimelineScrolled { .. }
                     | Message::BackgroundTick
             )
         {
@@ -182,6 +200,9 @@ impl App {
                 Message::AudioFilePathChanged(_)
                     | Message::ToggleMainMenu(_)
                     | Message::SelectWorkspace(_)
+                    | Message::Timeline(_)
+                    | Message::TcpScrolled { .. }
+                    | Message::TimelineScrolled { .. }
                     | Message::CancelAudioImport
                     | Message::AudioImportStarted(_)
                     | Message::AudioImportFinished(_)
@@ -196,6 +217,9 @@ impl App {
                 &message,
                 Message::ToggleMainMenu(_)
                     | Message::SelectWorkspace(_)
+                    | Message::Timeline(_)
+                    | Message::TcpScrolled { .. }
+                    | Message::TimelineScrolled { .. }
                     | Message::AudioAssetManagementStarted(_)
                     | Message::AudioAssetManagementFinished(_)
                     | Message::CancelAudioAssetManagement
@@ -270,6 +294,40 @@ impl App {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
             Message::SelectWorkspace(page) => self.active_workspace = page,
+            Message::Timeline(event) => self.timeline.handle(event),
+            Message::BeginTrackNameEdit(track_id) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    self.track_name_edits
+                        .insert(track_id, track.name().to_owned());
+                    self.timeline.selected_track = Some(track_id);
+                    let input_id = messages::track_name_input_id(track_id);
+                    task = Task::batch([
+                        iced::widget::operation::focus(input_id.clone()),
+                        iced::widget::operation::move_cursor_to_end(input_id),
+                    ]);
+                }
+            }
+            Message::TcpScrolled { offset, height } => {
+                let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
+                self.timeline.vertical_scroll = offset;
+                self.timeline.viewport_height = height;
+                if offset_changed {
+                    task = scroll_arrangement_to(timeline::TIMELINE_SCROLL_ID, offset);
+                }
+            }
+            Message::TimelineScrolled { offset, height } => {
+                let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
+                self.timeline.vertical_scroll = offset;
+                self.timeline.viewport_height = height;
+                if offset_changed {
+                    task = scroll_arrangement_to(timeline::TCP_SCROLL_ID, offset);
+                }
+            }
             #[cfg(feature = "jack-backend")]
             Message::TogglePlayback => {
                 if self.playback_playing {
@@ -479,6 +537,16 @@ impl App {
                 match result {
                     Some(Ok(project)) => {
                         self.project = project;
+                        self.timeline.rebuild(&self.project);
+                        self.timeline.selected_item = None;
+                        self.timeline.selected_track = None;
+                        self.timeline.origin_tick = 0;
+                        self.timeline.edit_cursor_tick = 0;
+                        self.timeline.vertical_scroll = 0.0;
+                        task = Task::batch([
+                            scroll_arrangement_to(timeline::TCP_SCROLL_ID, 0.0),
+                            scroll_arrangement_to(timeline::TIMELINE_SCROLL_ID, 0.0),
+                        ]);
                         self.track_name_edits.clear();
                         self.audio_item_start_edits.clear();
                         self.audio_asset_source_statuses.clear();
@@ -717,6 +785,7 @@ impl App {
         self.status = match self.project.apply(action) {
             Ok(()) => {
                 self.revision = self.revision.wrapping_add(1);
+                self.timeline.rebuild(&self.project);
                 success.to_owned()
             }
             Err(error) => format!("Action failed: {error}"),
@@ -859,6 +928,7 @@ impl App {
         self.status = match self.project.undo() {
             Ok(true) => {
                 self.revision = self.revision.wrapping_add(1);
+                self.timeline.rebuild(&self.project);
                 "Action undone".to_owned()
             }
             Ok(false) => "Nothing to undo".to_owned(),
@@ -871,6 +941,7 @@ impl App {
         self.status = match self.project.redo() {
             Ok(true) => {
                 self.revision = self.revision.wrapping_add(1);
+                self.timeline.rebuild(&self.project);
                 "Action redone".to_owned()
             }
             Ok(false) => "Nothing to redo".to_owned(),
@@ -891,6 +962,17 @@ impl App {
 fn project_path_from_query(query: &str) -> Option<PathBuf> {
     let query = query.trim();
     (!query.is_empty()).then(|| PathBuf::from(query))
+}
+
+fn scroll_arrangement_to(target: &'static str, offset_y: f32) -> Task<Message> {
+    use iced::advanced::widget::operation::scrollable::{self, AbsoluteOffset};
+
+    let target = iced::widget::Id::new(target);
+    let offset = AbsoluteOffset {
+        x: None,
+        y: Some(offset_y.max(0.0)),
+    };
+    iced::advanced::widget::operate(scrollable::scroll_to(target, offset))
 }
 
 /// Runs blocking project storage work away from the Iced update thread.

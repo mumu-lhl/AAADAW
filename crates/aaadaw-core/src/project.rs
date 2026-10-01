@@ -352,6 +352,16 @@ impl Project {
         self.state.meter_map.position_at_tick(tick)
     }
 
+    /// Returns the time signature active at a PPQ tick position.
+    pub fn time_signature_at_tick(&self, tick: u64) -> TimeSignature {
+        self.state.meter_map.signature_at_tick(tick)
+    }
+
+    /// Returns the project's ordered time-signature changes, including tick zero.
+    pub fn time_signature_points(&self) -> impl Iterator<Item = (u64, TimeSignature)> + '_ {
+        self.state.meter_map.points()
+    }
+
     /// Applies an action atomically and records it as one undoable history entry.
     ///
     /// A failed action, including a failed nested action in a transaction, leaves

@@ -193,7 +193,7 @@ git commit -m "refactor: isolate project file operations"
 
 - [ ] **Step 1: Update the desktop-shell documentation**
 
-Document the top menus, default Arrangement workspace, separate Media/Project workspaces, bottom transport, and native project/audio file pickers. State explicitly that the current timeline remains list-based and the wgpu viewport is future work.
+Document the top menus, default Arrangement workspace, separate Media/Project workspaces, bottom transport, and native project/audio file pickers. This plan captured the initial shell, when the timeline was list-based; the later spatial viewport is tracked in `docs/tickets/2026-10-01-desktop-arrangement.md`.
 
 - [ ] **Step 2: Run the app for a visual smoke test when a desktop session is available**
 

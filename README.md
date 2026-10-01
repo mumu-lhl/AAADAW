@@ -13,7 +13,7 @@ The core project model includes sample-clock `AudioItem`s with undoable edits an
 
 ## Desktop shell
 
-The shell has **File**, **Edit**, and **Track** menus, with **Arrangement** selected by default. Arrangement keeps track controls on the left and the current Audio/MIDI item editor in the center. The editor is still list-based: it supports sample-clock position edits and item actions, but is not a graphical timeline. The planned Iced/wgpu timeline viewport, with ruler, zoom, and spatial item layout, is future work.
+The shell has **File**, **Edit**, and **Track** menus, with **Arrangement** selected by default. Arrangement now shows track-aligned Audio/MIDI items on a meter-aware musical ruler, with horizontal zoom/pan, an edit cursor, track/item selection, and a resizable track-control panel. The Inspector retains precise sample/tick and MIDI-note editing. Item dragging, time selection, splitting, waveforms, and a piano roll remain future work.
 
 **Media** contains audio import, source scanning, external-asset packing, and missing-link repair. **Project** contains action search and shortcut help. A transport strip stays at the bottom in every workspace; builds without `jack-backend` show a compact JACK hint, while JACK builds expose playback and seek controls. Native system file pickers handle project open/save, audio import, and relinking; cancelling a picker leaves the existing path field unchanged.
 

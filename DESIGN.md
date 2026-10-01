@@ -206,14 +206,14 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 ## Current UI Audit
 
-本审计基于 `README.md`、产品/架构文档、路线图和 `crates/aaadaw/src/app/view/`、`timeline.rs` 的当前 Iced 实现。当前默认窗口为 Arrangement；尚无图形化时间线。以下优先级按对核心 DAW 工作流和后续实现的影响排序。
+本审计基于 `README.md`、产品/架构文档、路线图和 `crates/aaadaw/src/app/view/`、`timeline.rs` 的当前 Iced 实现。当前默认窗口为 Arrangement；已提供基础空间时间线和 Inspector，仍缺少主要的直接编排手势。以下优先级按对核心 DAW 工作流和后续实现的影响排序。
 
 | 严重度 | 维度 | 当前问题 | 后续影响 / 处理 |
 | --- | --- | --- | --- |
-| P0 — 阻塞空间编辑 | Information architecture / interaction | `timeline.rs` 是按 Audio Items 与 MIDI Items 分组的纵向清单，按列表顺序显示位置和一排数值按钮；没有时间标尺、轨道时间行、Item 几何、选择、游标、时间选区、Snap、拖动或缩放。 | 不能在主工作区完成 DAW 的编排，也无法自然接入剪切、自动化、录音落点、波形或钢琴卷帘。列表编辑器不能继续作为主 Arrange 的结构基础；精确数值编辑和现有 `DawAction` 可保留为 Inspector/属性入口。 |
-| P1 — 阻塞轨道扩展 | Layout / density / interaction | 左侧 TCP 固定 300 px，外层 padding 14 px；track heading 把名称输入、Rename、上下移动和 Delete 挤在一行；Mute/Solo 以按钮呈现，Volume/Pan 只有离散 +/- 步进。没有 Arm、真实连续 fader/pan、Meter、FX、Routing、Folder、track selection 或行高状态。 | 窄窗口时没有退化布局；内容宽度继续增长会挤压 Arrange。先建立可 resize 的 TCP/Arrange 分割、稳定轨道行和可复用 track controls，再增加录音/路由/FX/Mixer 控件。 |
+| P0 — 阻塞空间编辑 | Information architecture / interaction | 已用 Iced/wgpu 视口替代主 Arrangement 清单，并实现轨道时间行、Audio/MIDI Item 几何、音乐标尺、水平缩放/平移、基础选择和 edit cursor；Item 仍不可拖动，且没有时间选区、Snap、切分、波形或 MIDI note 预览。 | 主工作区已能定位并检查 Items；完成直接移动与切分后，才能自然支撑更多空间编辑。精确数值编辑继续作为 Inspector 入口。 |
+| P1 — 阻塞轨道扩展 | Layout / density / interaction | TCP/Arrange 已可调宽度并按同一垂直滚动对齐轨道，但 TCP 控件仍较密：名称编辑、重排和删除入口靠得近；Mute/Solo 是 compact toggle，Volume/Pan 仍用离散步进。没有 Arm、连续 fader/pan、Meter、FX、Routing 或 Folder。 | 继续验证窄窗口布局；将高频控制与低频轨道操作分组，再按领域能力接入录音、Meter、FX、Routing 和 Folder。 |
 | P1 — 阻塞 Mixer 一致性 | Information architecture / consistency | 当前没有 Mixer。未来若从零另造 mixer 控件，容易与 TCP 的音量、Mute/Solo、选择等操作产生两套状态/命令。 | 先在共享 track-view model 和 Action 层明确 track status，再做与 TCP 同源的 MCP；未有 routing/FX domain model 前不应假装它们已完整实现。 |
-| P1 — 高风险的列表布局 | Density / scrolling | Item 编辑行内最多展示六个 nudging 按钮，以及复制、删除、定位和位置输入；MIDI note 也使用长按钮行。项目更大或窗口更窄时不按时间视口裁剪；实现把可见 Items/notes 限制为 200 条。 | 控制行宽度不随内容增长；固定 200 条可能让工程中其余对象在该视图不可见。空间视口应按可见范围组织数据，数值微调移入 Inspector/菜单。 |
+| P1 — 高风险的列表布局 | Density / scrolling | Arrangement 已按时间视口显示全部 Items，主视图没有 200 条上限；Inspector 仍用长控件行编辑 MIDI notes，窄布局下控件密度仍需检查。 | 保持空间视口裁剪和无固定 Item 上限；后续缩短/分组 Inspector 的低频编辑控件。 |
 | P2 — 命令发现不完整 | Information architecture / interaction | File/Edit/Track 是按钮展开面板，不是完整 menu bar；没有 View 菜单、主 toolbar、命令 Action 注册表和对象 context menu。快捷键仅覆盖 undo/redo/save/open，JACK 构建加 Space；Project 中的 Action search 只识别 add track、undo、redo。 | 随着 Item、Mixer、FX、automation 增加，功能会散落在页面或找不到。应在主要空间编辑前建立一致的命令命名、Action 搜索和上下文入口；快捷键需注册、冲突检查和可配置。 |
 | P2 — Transport 是占位条 | Hierarchy / interaction | 底部条位置常驻，值得保留；非 JACK 构建只显示 `JACK: enable jack-backend`。JACK 构建显示 play/stop/restart、sample 输入/seek 和状态；当前没有 Pause、Record、Loop、bars/beats 时钟、Tempo 或 Time Signature。 | 固定位置正确但控制完整性低。按 Transport contract 渐进填入已支持的状态，明确不可用项，并让时间/工程节奏信息有稳定读数。 |
 | P2 — 无统一视觉系统 | Visual hierarchy / consistency | 当前主要使用 Iced 默认控件与主题，没有 AAADAW 的状态色、meter/record 语言、字号层级或间距 token；view 中散布 padding/spacing 数值。菜单和 Transport 用 `rounded_box`，其它工作区没有一致的 panel/分隔规范。 | 新增控件会各自决定高度、间距和激活色。先定义 token 与状态规则，再逐面板应用；不用为了统一而一次性重画已有 utility 页。 |
@@ -223,7 +223,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 按依赖关系逐步重构，不做全 UI 一次性重写。此 roadmap 是设计建议，不代表本次启动实现或扩大 `ROADMAP.md` 的功能范围。
 
-1. **先重构 Arrangement/TCP 主工作面（推荐首个 surface）**：提供真正的左右分区和可 resize splitter；建立共享轨道行、时间 ruler、水平/垂直滚动、游标、基础 track/item selection、视口 zoom 与项目 Item 的按时间绘制。第一步不要求波形、录音、FX 或完整 drag-edit 都上线；但组件边界须允许逐步加入这些行为。保留精确 sample/tick 编辑作为属性入口。
+1. **[x] 重构 Arrangement/TCP 主工作面**：已提供可 resize splitter、共享轨道行、时间 ruler、水平缩放/平移、垂直滚动、游标、基础 track/item selection 与按时间绘制；Item 拖动、时间选区、波形和完整 drag-edit 留待后续。精确 sample/tick 编辑保留在 Inspector。
 2. **完成 TCP 控件布局与状态反馈**：增加 compact/normal 布局和统一选择模型；依次接入连续 Volume/Pan、Mute/Solo、Meter、Arm 状态，再按 domain/model 可用性接入 FX、Routing、Folder。验证多选和 undo 行为。
 3. **建立命令与 Transport 基线**：统一 menu、toolbar、context menu、Action 搜索和快捷键的命令定义；补充配置/帮助入口。将 Transport 的项目时间读数、tempo/meter、播放状态和已有 JACK 控制收敛到固定优先级，并只呈现已支持的操作。
 4. **增加 Mixer 并验证状态同源**：实现稳定 channel strip 和 Master strip；测试从 TCP 与 Mixer 改变同一控制的双向即时反映。再扩展 FX inserts、Sends 摘要和 meter 视图。

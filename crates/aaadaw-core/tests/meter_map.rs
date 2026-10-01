@@ -16,4 +16,19 @@ fn time_signature_changes_start_a_new_measure_at_the_bar_line() {
     assert_eq!(position.measure(), 3);
     assert_eq!(position.beat(), 1);
     assert_eq!(position.tick_in_beat(), 0);
+    assert_eq!(
+        project.time_signature_at_tick(0),
+        TimeSignature::new(4, 4).unwrap()
+    );
+    assert_eq!(
+        project.time_signature_at_tick(3840),
+        TimeSignature::new(7, 8).unwrap()
+    );
+    assert_eq!(
+        project.time_signature_points().collect::<Vec<_>>(),
+        vec![
+            (0, TimeSignature::new(4, 4).unwrap()),
+            (3840, TimeSignature::new(7, 8).unwrap()),
+        ]
+    );
 }

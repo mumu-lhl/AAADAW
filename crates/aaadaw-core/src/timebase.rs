@@ -326,6 +326,14 @@ impl MeterMap {
         })
     }
 
+    pub(crate) fn signature_at_tick(&self, tick: u64) -> TimeSignature {
+        let index = self
+            .points
+            .partition_point(|point| point.start_tick <= tick)
+            - 1;
+        self.points[index].signature
+    }
+
     fn recalculate_measures(points: &mut [MeterPoint], ppq: u32) -> Result<(), TimebaseError> {
         points[0].start_measure = 0;
         for index in 1..points.len() {

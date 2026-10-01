@@ -88,10 +88,9 @@
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
 - [ ] 建立可停靠面板骨架；扩展 transport 至其他设备后端。
-- [x] 建立 Audio/MIDI Item 概览；AudioItem 显示秒位置并支持数字输入精确编辑 sample-clock 起点、撤销的 10 ms/100 ms/1 s 微调、相邻复制和删除，JACK 模式可定位到 Item 起点；MIDI 支持创建/删除四拍 Item、音符列表与可撤销的音高/时值/力度编辑及 1/16 量化。
-- [ ] 实现嵌入 Iced 的 wgpu 时间线视口；支持平移/缩放、标尺和空间化轨道/Item 显示。
+- [x] 建立空间化 Arrangement：Audio/MIDI Item 按轨道和音乐时间显示；拍号感知标尺、水平缩放/平移、轨道/item 选择、edit cursor、垂直轨道滚动、可调 TCP 分割和 Inspector。AudioItem 保留 sample-clock 精确输入、撤销微调、复制/删除及 JACK 定位；MIDI 保留 Item/音符列表与可撤销编辑和 1/16 量化。
+- [ ] 增加 Item 拖动/吸附、时间选区和切分；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
-- [ ] 增加时间选区、Item 选择、切分及网格吸附；精确 sample-clock 起点编辑已可通过数字输入完成。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [ ] 将快捷键映射配置化并直接纳入统一 Action 注册表；增加冲突检查与用户配置基础结构。
 - [ ] 实现音频波形的基础显示；缓存、多级降采样和大工程性能优化按后续里程碑推进。
