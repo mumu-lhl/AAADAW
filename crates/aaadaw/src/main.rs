@@ -1,8 +1,8 @@
 use aaadaw_app::{
-    AudioItemImportProgress, AudioItemImportWorker, MidiEditError, add_quarter_note,
-    adjust_midi_note_pitch, adjust_midi_note_velocity, create_four_beat_midi_item,
-    delete_midi_note, move_midi_item_by_beat, move_midi_note_by_sixteenth,
-    quantize_midi_item_to_sixteenth, start_audio_item_import,
+    AudioItemImportProgress, AudioItemImportWorker, add_quarter_note, adjust_midi_note_pitch,
+    adjust_midi_note_velocity, create_four_beat_midi_item, delete_midi_note, duplicate_audio_item,
+    move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
+    start_audio_item_import,
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_app::{
@@ -93,6 +93,7 @@ enum Message {
     AdjustPan(TrackId, f32),
     NudgeAudioItem(ItemId, i8, u32),
     DeleteAudioItem(ItemId),
+    DuplicateAudioItem(ItemId),
     Undo,
     Redo,
     ActionQueryChanged(String),
@@ -229,6 +230,7 @@ impl App {
                         | Message::AdjustPan(..)
                         | Message::NudgeAudioItem(..)
                         | Message::DeleteAudioItem(_)
+                        | Message::DuplicateAudioItem(_)
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
@@ -256,38 +258,38 @@ impl App {
             Message::AddTrack => self.add_track(),
             Message::AddMidiItem => {
                 let action = create_four_beat_midi_item(&self.project);
-                self.apply_midi_edit(action, "Four-beat MIDI item created");
+                self.apply_edit(action, "Four-beat MIDI item created");
             }
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
-                self.apply_midi_edit(action, "C4 MIDI note added");
+                self.apply_edit(action, "C4 MIDI note added");
             }
             Message::DeleteMidiItem(item_id) => {
                 self.apply_action(DawAction::DeleteMidiItem { item_id }, "MIDI item deleted");
             }
             Message::NudgeMidiItem(item_id, direction) => {
                 let action = move_midi_item_by_beat(&self.project, item_id, direction);
-                self.apply_midi_edit(action, "MIDI item moved by one beat");
+                self.apply_edit(action, "MIDI item moved by one beat");
             }
             Message::NudgeMidiNote(item_id, note_id, direction) => {
                 let action =
                     move_midi_note_by_sixteenth(&self.project, item_id, note_id, direction);
-                self.apply_midi_edit(action, "MIDI note changed");
+                self.apply_edit(action, "MIDI note changed");
             }
             Message::AdjustMidiNotePitch(item_id, note_id, delta) => {
                 let action = adjust_midi_note_pitch(&self.project, item_id, note_id, delta);
-                self.apply_midi_edit(action, "MIDI note changed");
+                self.apply_edit(action, "MIDI note changed");
             }
             Message::AdjustMidiNoteVelocity(item_id, note_id, delta) => {
                 let action = adjust_midi_note_velocity(&self.project, item_id, note_id, delta);
-                self.apply_midi_edit(action, "MIDI note changed");
+                self.apply_edit(action, "MIDI note changed");
             }
             Message::DeleteMidiNote(item_id, note_id) => {
                 self.apply_action(delete_midi_note(item_id, note_id), "MIDI note deleted");
             }
             Message::QuantizeMidiItem(item_id) => {
                 let action = quantize_midi_item_to_sixteenth(item_id);
-                self.apply_midi_edit(action, "MIDI item quantized to 1/16");
+                self.apply_edit(action, "MIDI item quantized to 1/16");
             }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
             Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
@@ -363,6 +365,10 @@ impl App {
             }
             Message::DeleteAudioItem(item_id) => {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted")
+            }
+            Message::DuplicateAudioItem(item_id) => {
+                let action = duplicate_audio_item(&self.project, item_id);
+                self.apply_edit(action, "Audio item duplicated");
             }
             Message::Undo => self.undo(),
             Message::Redo => self.redo(),
@@ -979,10 +985,10 @@ impl App {
         );
     }
 
-    fn apply_midi_edit(&mut self, action: Result<DawAction, MidiEditError>, success: &str) {
+    fn apply_edit<E: std::fmt::Display>(&mut self, action: Result<DawAction, E>, success: &str) {
         match action {
             Ok(action) => self.apply_action(action, success),
-            Err(error) => self.status = format!("MIDI edit failed: {error}"),
+            Err(error) => self.status = format!("Edit failed: {error}"),
         }
     }
 
@@ -1442,7 +1448,7 @@ mod tests {
         assert!(app.project.midi_items().is_empty());
         assert_eq!(
             app.status,
-            "MIDI edit failed: add a track before creating a MIDI item"
+            "Edit failed: add a track before creating a MIDI item"
         );
 
         let _ = app.update(Message::AddTrack);
@@ -1585,6 +1591,33 @@ mod tests {
         let _ = app.update(Message::Undo);
         assert_eq!(app.project.tracks().len(), 1);
         assert_eq!(app.project.tracks()[0].id(), track_id);
+    }
+
+    #[test]
+    fn audio_timeline_duplicate_preserves_source_offset_and_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://duplicate-test".to_owned(),
+                start_sample: 240,
+                source_offset_samples: 120,
+                length_samples: 960,
+            })
+            .expect("source item should be inserted");
+        let source_id = app.project.audio_items()[0].id();
+
+        let _ = app.update(Message::DuplicateAudioItem(source_id));
+        let duplicate = &app.project.audio_items()[1];
+        assert_eq!(duplicate.start_sample(), 1_200);
+        assert_eq!(duplicate.media_ref(), "asset://duplicate-test");
+        assert_eq!(duplicate.source_offset_samples(), 120);
+        assert_eq!(duplicate.length_samples(), 960);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items().len(), 1);
+        assert_eq!(app.project.audio_items()[0].id(), source_id);
     }
 
     #[test]

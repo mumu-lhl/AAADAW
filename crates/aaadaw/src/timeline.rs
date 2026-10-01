@@ -27,6 +27,7 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
             button("+10ms").on_press(Message::NudgeAudioItem(item.id(), 1, 10)),
             button("+100ms").on_press(Message::NudgeAudioItem(item.id(), 1, 100)),
             button("+1s").on_press(Message::NudgeAudioItem(item.id(), 1, 1_000)),
+            button("Duplicate").on_press(Message::DuplicateAudioItem(item.id())),
             button("Delete").on_press(Message::DeleteAudioItem(item.id())),
         ]
         .spacing(8);
