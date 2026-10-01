@@ -25,6 +25,12 @@ fn app_entrypoint_has_iced_result_signature() {
 }
 
 #[test]
+fn view_builder_has_app_view_signature() {
+    let builder: for<'a> fn(&'a App) -> iced::Element<'a, Message> = super::view::view;
+    let _ = builder;
+}
+
+#[test]
 fn audio_asset_maintenance_requires_a_saved_project_snapshot() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("project.aaadaw")),
@@ -52,6 +58,8 @@ fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
     assert_eq!(app.active_menu, Some(MainMenu::File));
     let _ = app.update(Message::SelectWorkspace(WorkspacePage::Media));
     assert_eq!(app.active_workspace, WorkspacePage::Media);
+    let _ = app.update(Message::SelectWorkspace(WorkspacePage::Project));
+    assert_eq!(app.active_workspace, WorkspacePage::Project);
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
     assert_eq!(app.active_menu, None);
 }
