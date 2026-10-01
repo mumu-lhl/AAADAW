@@ -7,4 +7,5 @@ license.workspace = true
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
+aaadaw-storage = { path = "../aaadaw-storage" }
 iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "thread-pool", "linux-theme-detection"] }

@@ -7,6 +7,7 @@ name = "aaadaw"
 version = "0.1.0"
 dependencies = [
  "aaadaw-core",
+ "aaadaw-storage",
  "iced",
 ]
 

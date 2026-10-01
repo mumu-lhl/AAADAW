@@ -16,6 +16,7 @@ Requires the stable Rust toolchain with `rustfmt` and `clippy`, plus [`cargo-nex
 
 ```sh
 cargo run -p aaadaw
+cargo run -p aaadaw -- /path/to/project.aaadaw
 cargo check --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
@@ -26,7 +27,7 @@ cargo xtest
 
 ## Workspace
 
-- `crates/aaadaw`: Iced desktop shell. Track changes use `aaadaw-core` actions.
+- `crates/aaadaw`: Iced desktop shell with track controls, action search, and background project open/save. Track changes use `aaadaw-core` actions.
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic, including MIDI and sample-clock audio items. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
 - `crates/aaadaw-app`: control-layer orchestration that resolves project media, prepares seek-positioned graphs, and owns background feeders; optional `jack-backend` supports playback and safe graph replacement.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite project persistence and chunked embedded audio assets through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
