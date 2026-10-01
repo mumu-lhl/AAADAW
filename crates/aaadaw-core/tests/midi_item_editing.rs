@@ -1,6 +1,55 @@
 use aaadaw_core::{ActionError, DawAction, MidiNoteData, Project};
 
 #[test]
+fn midi_items_can_be_deleted_and_restored_with_their_notes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("creating a track should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("inserting a MIDI item should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 240,
+                duration: 960,
+                velocity: 100,
+            }],
+        })
+        .expect("adding a note should succeed");
+    let note_id = project.midi_items()[0].notes()[0].id();
+
+    project
+        .apply(DawAction::DeleteMidiItem { item_id })
+        .expect("deleting a MIDI item should succeed");
+    assert!(project.midi_items().is_empty());
+    assert!(project.undo().expect("delete undo should succeed"));
+    let restored = &project.midi_items()[0];
+    assert_eq!(restored.id(), item_id);
+    assert_eq!(restored.notes()[0].id(), note_id);
+    assert_eq!(restored.notes()[0].tick(), 240);
+    assert!(project.redo().expect("delete redo should succeed"));
+    assert!(project.midi_items().is_empty());
+
+    assert_eq!(
+        project.apply(DawAction::DeleteMidiItem { item_id }),
+        Err(ActionError::MidiItemNotFound { item_id })
+    );
+}
+
+#[test]
 fn midi_items_can_be_moved_and_resized_without_losing_notes() {
     let mut project = Project::new();
     project

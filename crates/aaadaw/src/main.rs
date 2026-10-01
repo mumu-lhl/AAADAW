@@ -76,6 +76,7 @@ enum Message {
     AddTrack,
     AddMidiItem,
     AddMidiNote(ItemId),
+    DeleteMidiItem(ItemId),
     NudgeMidiItem(ItemId, i8),
     NudgeMidiNote(ItemId, NoteId, i8),
     AdjustMidiNotePitch(ItemId, NoteId, i8),
@@ -107,6 +108,8 @@ enum Message {
     BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
+    #[cfg(feature = "jack-backend")]
+    TogglePlayback,
     #[cfg(feature = "jack-backend")]
     StartPlayback,
     #[cfg(feature = "jack-backend")]
@@ -163,11 +166,15 @@ impl App {
         #[cfg(not(feature = "jack-backend"))]
         let playback_active = false;
 
-        if self.import_busy || playback_active {
+        let background_ticks = if self.import_busy || playback_active {
             iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
-        }
+        };
+        iced::Subscription::batch([
+            iced::event::listen_with(keyboard_shortcut_event),
+            background_ticks,
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -205,6 +212,7 @@ impl App {
                     Message::AddTrack
                         | Message::AddMidiItem
                         | Message::AddMidiNote(_)
+                        | Message::DeleteMidiItem(_)
                         | Message::NudgeMidiItem(..)
                         | Message::NudgeMidiNote(..)
                         | Message::AdjustMidiNotePitch(..)
@@ -237,6 +245,14 @@ impl App {
         }
         let mut task = Task::none();
         match message {
+            #[cfg(feature = "jack-backend")]
+            Message::TogglePlayback => {
+                if self.playback_playing {
+                    self.stop_playback();
+                } else {
+                    task = self.start_playback();
+                }
+            }
             Message::AddTrack => self.add_track(),
             Message::AddMidiItem => {
                 let action = create_four_beat_midi_item(&self.project);
@@ -245,6 +261,9 @@ impl App {
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
                 self.apply_midi_edit(action, "C4 MIDI note added");
+            }
+            Message::DeleteMidiItem(item_id) => {
+                self.apply_action(DawAction::DeleteMidiItem { item_id }, "MIDI item deleted");
             }
             Message::NudgeMidiItem(item_id, direction) => {
                 let action = move_midi_item_by_beat(&self.project, item_id, direction);
@@ -534,6 +553,15 @@ impl App {
         ]
         .spacing(8);
 
+        #[cfg(feature = "jack-backend")]
+        let shortcut_help = text(
+            "Shortcuts: Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open · Space play/stop",
+        );
+        #[cfg(not(feature = "jack-backend"))]
+        let shortcut_help = text(
+            "Shortcuts: Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z redo · Ctrl/Cmd+S save · Ctrl/Cmd+O open",
+        );
+
         let mut track_list = column![text("Tracks").size(18)].spacing(10);
         for track in self.project.tracks() {
             let track_id = track.id();
@@ -565,6 +593,7 @@ impl App {
                 project_controls,
                 import_controls,
                 action_search,
+                shortcut_help,
                 workspace,
                 text(if self.status.is_empty() {
                     "New project. Enter a path to save or open a project."
@@ -1172,6 +1201,65 @@ fn prepare_project_playback_file(
     Ok(prepared)
 }
 
+fn keyboard_shortcut_event(
+    event: iced::Event,
+    status: iced::event::Status,
+    _window: iced::window::Id,
+) -> Option<Message> {
+    if status != iced::event::Status::Ignored {
+        return None;
+    }
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key,
+        modifiers,
+        repeat: false,
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    shortcut_message(key.as_ref(), modifiers)
+}
+
+fn shortcut_message(
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Message> {
+    use iced::keyboard::{Key, Modifiers, key::Named};
+
+    if modifiers == Modifiers::COMMAND {
+        return match key {
+            Key::Character("z") | Key::Character("Z") => Some(Message::Undo),
+            Key::Character("y") | Key::Character("Y") => Some(Message::Redo),
+            Key::Character("s") | Key::Character("S") => Some(Message::SaveProject),
+            Key::Character("o") | Key::Character("O") => Some(Message::OpenProject),
+            _ => None,
+        };
+    }
+    if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
+        return match key {
+            Key::Character("z") | Key::Character("Z") => Some(Message::Redo),
+            _ => None,
+        };
+    }
+    if modifiers == Modifiers::NONE {
+        return match key {
+            Key::Named(Named::Space) => {
+                #[cfg(feature = "jack-backend")]
+                {
+                    Some(Message::TogglePlayback)
+                }
+                #[cfg(not(feature = "jack-backend"))]
+                {
+                    None
+                }
+            }
+            _ => None,
+        };
+    }
+    None
+}
+
 fn track_row<'a>(track: &'a Track, edited_name: &'a str, has_edit: bool) -> Element<'a, Message> {
     let track_id = track.id();
     let heading = row![
@@ -1206,13 +1294,79 @@ fn track_row<'a>(track: &'a Track, edited_name: &'a str, has_edit: bool) -> Elem
 mod tests {
     #[cfg(feature = "jack-backend")]
     use super::prepare_project_playback_file;
-    use super::{App, Message, load_project_file, save_project_file};
+    use super::{
+        App, Message, keyboard_shortcut_event, load_project_file, save_project_file,
+        shortcut_message,
+    };
     use aaadaw_core::{DawAction, MidiNoteData, Project};
     #[cfg(feature = "jack-backend")]
     use aaadaw_storage::ProjectStore;
+    use iced::keyboard::{Key, Modifiers};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn keyboard_shortcuts_route_to_existing_app_messages() {
+        assert!(matches!(
+            shortcut_message(Key::Character("z"), Modifiers::COMMAND),
+            Some(Message::Undo)
+        ));
+        assert!(matches!(
+            shortcut_message(Key::Character("z"), Modifiers::COMMAND | Modifiers::SHIFT),
+            Some(Message::Redo)
+        ));
+        assert!(matches!(
+            shortcut_message(Key::Character("s"), Modifiers::COMMAND),
+            Some(Message::SaveProject)
+        ));
+        assert!(matches!(
+            shortcut_message(Key::Character("o"), Modifiers::COMMAND),
+            Some(Message::OpenProject)
+        ));
+        assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND).is_none());
+        let undo_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("z".into()),
+            modified_key: Key::Character("z".into()),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyZ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: None,
+            repeat: false,
+        });
+        assert!(
+            keyboard_shortcut_event(
+                undo_event.clone(),
+                iced::event::Status::Captured,
+                iced::window::Id::unique()
+            )
+            .is_none()
+        );
+        assert!(matches!(
+            keyboard_shortcut_event(
+                undo_event,
+                iced::event::Status::Ignored,
+                iced::window::Id::unique()
+            ),
+            Some(Message::Undo)
+        ));
+        #[cfg(feature = "jack-backend")]
+        assert!(matches!(
+            shortcut_message(
+                Key::Named(iced::keyboard::key::Named::Space),
+                Modifiers::NONE
+            ),
+            Some(Message::TogglePlayback)
+        ));
+        #[cfg(not(feature = "jack-backend"))]
+        assert!(
+            shortcut_message(
+                Key::Named(iced::keyboard::key::Named::Space),
+                Modifiers::NONE
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn track_controls_and_undo_change_project_only_through_actions() {
@@ -1368,6 +1522,10 @@ mod tests {
         let _ = app.update(Message::Undo);
         assert_eq!(app.project.midi_items()[0].notes().len(), 4);
         assert_eq!(app.project.midi_items()[0].notes()[0].id(), note_id);
+        let _ = app.update(Message::DeleteMidiItem(item_id));
+        assert!(app.project.midi_items().is_empty());
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items()[0].notes().len(), 4);
     }
 
     #[test]

@@ -962,6 +962,17 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::DeleteMidiItem { item_id } => {
+                let index = state
+                    .midi_items
+                    .iter()
+                    .position(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                ProjectEvent::MidiItemRemoved {
+                    index,
+                    item: state.midi_items[index].clone(),
+                }
+            }
             DawAction::AddMidiNotes { item_id, notes } => {
                 let item = state
                     .midi_items

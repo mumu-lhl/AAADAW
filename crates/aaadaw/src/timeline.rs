@@ -61,6 +61,7 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
             button("−beat").on_press(Message::NudgeMidiItem(item.id(), -1)),
             button("+beat").on_press(Message::NudgeMidiItem(item.id(), 1)),
             button("Add C4").on_press(Message::AddMidiNote(item.id())),
+            button("Delete item").on_press(Message::DeleteMidiItem(item.id())),
         ];
         if !item.notes().is_empty() {
             item_heading = item_heading

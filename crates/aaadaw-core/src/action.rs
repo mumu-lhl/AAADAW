@@ -56,6 +56,8 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Delete a MIDI item and retain it for undo.
+    DeleteMidiItem { item_id: ItemId },
     /// Add notes to a MIDI item. Note ticks are relative to the item start.
     AddMidiNotes {
         item_id: ItemId,

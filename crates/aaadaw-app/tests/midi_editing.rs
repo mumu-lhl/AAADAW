@@ -33,6 +33,11 @@ fn four_beat_items_append_after_existing_items() {
     assert_eq!(project.midi_items()[1].start_tick(), 3_840);
     assert_eq!(project.midi_items()[1].length_ticks(), 3_840);
 
+    let first_item_id = project.midi_items()[0].id();
+    assert_eq!(
+        move_midi_item_by_beat(&project, first_item_id, -1),
+        Err(MidiEditError::CannotMoveBeforeTimelineStart)
+    );
     let item_id = project.midi_items()[1].id();
     let action = move_midi_item_by_beat(&project, item_id, -1).expect("item should move left");
     project.apply(action).expect("move action should apply");
@@ -73,6 +78,11 @@ fn quarter_notes_fill_clip_and_note_edits_are_bounded_and_quantizable() {
     project.apply(action).expect("note move should apply");
     assert_eq!(project.midi_items()[0].notes()[0].tick(), 240);
 
+    let last_note_id = project.midi_items()[0].notes()[3].id();
+    assert_eq!(
+        move_midi_note_by_sixteenth(&project, item_id, last_note_id, 1),
+        Err(MidiEditError::CannotMoveBeyondTimeline)
+    );
     let action = adjust_midi_note_pitch(&project, item_id, note_id, 100)
         .expect("pitch action should be created");
     project.apply(action).expect("pitch edit should apply");
@@ -85,6 +95,30 @@ fn quarter_notes_fill_clip_and_note_edits_are_bounded_and_quantizable() {
     let action = quantize_midi_item_to_sixteenth(item_id).expect("grid action should be created");
     project.apply(action).expect("quantize should apply");
     assert_eq!(project.midi_items()[0].notes()[0].tick(), 240);
+}
+
+#[test]
+fn item_actions_report_tick_overflow_without_returning_invalid_placements() {
+    let (mut project, track_id) = project_with_track();
+    let length_ticks = u64::from(project.settings().ppq()) * 4;
+    let start_tick = u64::MAX - length_ticks;
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick,
+            length_ticks,
+        })
+        .expect("last representable item should be allowed");
+    let item_id = project.midi_items()[0].id();
+
+    assert_eq!(
+        create_four_beat_midi_item(&project),
+        Err(MidiEditError::TimelinePositionOutOfRange)
+    );
+    assert_eq!(
+        move_midi_item_by_beat(&project, item_id, 1),
+        Err(MidiEditError::CannotMoveBeyondTimeline)
+    );
 }
 
 #[test]
