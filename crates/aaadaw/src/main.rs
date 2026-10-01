@@ -1,9 +1,14 @@
-use aaadaw_app::{AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import};
+use aaadaw_app::{
+    AudioItemImportProgress, AudioItemImportWorker, MidiEditError, add_quarter_note,
+    adjust_midi_note_pitch, adjust_midi_note_velocity, create_four_beat_midi_item,
+    delete_midi_note, move_midi_item_by_beat, move_midi_note_by_sixteenth,
+    quantize_midi_item_to_sixteenth, start_audio_item_import,
+};
 #[cfg(feature = "jack-backend")]
 use aaadaw_app::{
     PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
 };
-use aaadaw_core::{DawAction, ItemId, Project, ProjectSnapshot, Track, TrackId};
+use aaadaw_core::{DawAction, ItemId, NoteId, Project, ProjectSnapshot, Track, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task};
@@ -69,6 +74,14 @@ impl std::fmt::Debug for SharedAudioImportWorker {
 #[derive(Debug, Clone)]
 enum Message {
     AddTrack,
+    AddMidiItem,
+    AddMidiNote(ItemId),
+    NudgeMidiItem(ItemId, i8),
+    NudgeMidiNote(ItemId, NoteId, i8),
+    AdjustMidiNotePitch(ItemId, NoteId, i8),
+    AdjustMidiNoteVelocity(ItemId, NoteId, i8),
+    DeleteMidiNote(ItemId, NoteId),
+    QuantizeMidiItem(ItemId),
     DeleteTrack(TrackId),
     MoveTrack(TrackId, i8),
     TrackNameChanged(TrackId, String),
@@ -190,6 +203,14 @@ impl App {
                 && matches!(
                     &message,
                     Message::AddTrack
+                        | Message::AddMidiItem
+                        | Message::AddMidiNote(_)
+                        | Message::NudgeMidiItem(..)
+                        | Message::NudgeMidiNote(..)
+                        | Message::AdjustMidiNotePitch(..)
+                        | Message::AdjustMidiNoteVelocity(..)
+                        | Message::DeleteMidiNote(..)
+                        | Message::QuantizeMidiItem(_)
                         | Message::DeleteTrack(_)
                         | Message::MoveTrack(..)
                         | Message::TrackNameChanged(..)
@@ -217,6 +238,38 @@ impl App {
         let mut task = Task::none();
         match message {
             Message::AddTrack => self.add_track(),
+            Message::AddMidiItem => {
+                let action = create_four_beat_midi_item(&self.project);
+                self.apply_midi_edit(action, "Four-beat MIDI item created");
+            }
+            Message::AddMidiNote(item_id) => {
+                let action = add_quarter_note(&self.project, item_id);
+                self.apply_midi_edit(action, "C4 MIDI note added");
+            }
+            Message::NudgeMidiItem(item_id, direction) => {
+                let action = move_midi_item_by_beat(&self.project, item_id, direction);
+                self.apply_midi_edit(action, "MIDI item moved by one beat");
+            }
+            Message::NudgeMidiNote(item_id, note_id, direction) => {
+                let action =
+                    move_midi_note_by_sixteenth(&self.project, item_id, note_id, direction);
+                self.apply_midi_edit(action, "MIDI note changed");
+            }
+            Message::AdjustMidiNotePitch(item_id, note_id, delta) => {
+                let action = adjust_midi_note_pitch(&self.project, item_id, note_id, delta);
+                self.apply_midi_edit(action, "MIDI note changed");
+            }
+            Message::AdjustMidiNoteVelocity(item_id, note_id, delta) => {
+                let action = adjust_midi_note_velocity(&self.project, item_id, note_id, delta);
+                self.apply_midi_edit(action, "MIDI note changed");
+            }
+            Message::DeleteMidiNote(item_id, note_id) => {
+                self.apply_action(delete_midi_note(item_id, note_id), "MIDI note deleted");
+            }
+            Message::QuantizeMidiItem(item_id) => {
+                let action = quantize_midi_item_to_sixteenth(item_id);
+                self.apply_midi_edit(action, "MIDI item quantized to 1/16");
+            }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
             Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
             Message::TrackNameChanged(track_id, name) => {
@@ -897,6 +950,13 @@ impl App {
         );
     }
 
+    fn apply_midi_edit(&mut self, action: Result<DawAction, MidiEditError>, success: &str) {
+        match action {
+            Ok(action) => self.apply_action(action, success),
+            Err(error) => self.status = format!("MIDI edit failed: {error}"),
+        }
+    }
+
     fn apply_action(&mut self, action: DawAction, success: &str) {
         self.status = match self.project.apply(action) {
             Ok(()) => {
@@ -1147,7 +1207,7 @@ mod tests {
     #[cfg(feature = "jack-backend")]
     use super::prepare_project_playback_file;
     use super::{App, Message, load_project_file, save_project_file};
-    use aaadaw_core::{DawAction, Project};
+    use aaadaw_core::{DawAction, MidiNoteData, Project};
     #[cfg(feature = "jack-backend")]
     use aaadaw_storage::ProjectStore;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1219,6 +1279,95 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn midi_items_append_after_existing_items_and_require_a_track() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddMidiItem);
+        assert!(app.project.midi_items().is_empty());
+        assert_eq!(
+            app.status,
+            "MIDI edit failed: add a track before creating a MIDI item"
+        );
+
+        let _ = app.update(Message::AddTrack);
+        let _ = app.update(Message::AddMidiItem);
+        let _ = app.update(Message::AddMidiItem);
+        assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+        assert_eq!(app.project.midi_items()[1].start_tick(), 3_840);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items().len(), 1);
+    }
+
+    #[test]
+    fn midi_item_creation_and_note_editing_use_undoable_actions() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let _ = app.update(Message::AddMidiItem);
+        let midi_item = &app.project.midi_items()[0];
+        let item_id = midi_item.id();
+        assert_eq!(midi_item.start_tick(), 0);
+        assert_eq!(midi_item.length_ticks(), 3_840);
+        let _ = app.update(Message::NudgeMidiItem(item_id, 1));
+        assert_eq!(app.project.midi_items()[0].start_tick(), 960);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+
+        let _ = app.update(Message::AddMidiNote(item_id));
+        let note = &app.project.midi_items()[0].notes()[0];
+        let note_id = note.id();
+        assert_eq!(
+            (note.pitch(), note.tick(), note.duration(), note.velocity()),
+            (60, 0, 960, 100)
+        );
+        for _ in 0..3 {
+            let _ = app.update(Message::AddMidiNote(item_id));
+        }
+        assert_eq!(
+            app.project.midi_items()[0]
+                .notes()
+                .iter()
+                .map(|note| note.tick())
+                .collect::<Vec<_>>(),
+            [0, 960, 1_920, 2_880]
+        );
+        let revision = app.revision;
+        let _ = app.update(Message::AddMidiNote(item_id));
+        assert_eq!(app.project.midi_items()[0].notes().len(), 4);
+        assert_eq!(app.revision, revision);
+
+        app.project
+            .apply(DawAction::EditMidiNote {
+                item_id,
+                note_id,
+                data: MidiNoteData {
+                    pitch: 60,
+                    tick: 40,
+                    duration: 960,
+                    velocity: 100,
+                },
+            })
+            .expect("test note should move off-grid");
+        let _ = app.update(Message::QuantizeMidiItem(item_id));
+        assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 0);
+        let _ = app.update(Message::NudgeMidiNote(item_id, note_id, 1));
+        assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 240);
+
+        let _ = app.update(Message::AdjustMidiNotePitch(item_id, note_id, 1));
+        assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 61);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 60);
+
+        assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 240);
+        let _ = app.update(Message::AdjustMidiNoteVelocity(item_id, note_id, 5));
+        assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 105);
+
+        let _ = app.update(Message::DeleteMidiNote(item_id, note_id));
+        assert_eq!(app.project.midi_items()[0].notes().len(), 3);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items()[0].notes().len(), 4);
+        assert_eq!(app.project.midi_items()[0].notes()[0].id(), note_id);
     }
 
     #[test]

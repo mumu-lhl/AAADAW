@@ -5,9 +5,15 @@
 //! them into project actions. Call its APIs from a control thread, never an audio callback.
 
 mod audio_import;
+mod midi_editing;
 
 pub use audio_import::{
     AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import,
+};
+pub use midi_editing::{
+    MidiEditError, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
+    create_four_beat_midi_item, delete_midi_note, move_midi_item_by_beat,
+    move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
 };
 
 use aaadaw_core::Project;

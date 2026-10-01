@@ -43,15 +43,76 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
         )));
     }
 
-    let mut midi_items = column![text("MIDI items")].spacing(6);
+    let midi_heading = row![
+        text("MIDI items").width(Length::Fill),
+        button("Add 4-beat item").on_press(Message::AddMidiItem),
+    ];
+    let mut midi_items = column![midi_heading].spacing(6);
     for item in project.midi_items().iter().take(MAX_VISIBLE_ITEMS) {
-        midi_items = midi_items.push(text(format!(
-            "{} · tick {} · length {} · {} notes",
-            track_name(project, item.track_id()),
-            item.start_tick(),
-            item.length_ticks(),
-            item.notes().len()
-        )));
+        let mut item_heading = row![
+            text(format!(
+                "{} · tick {} · length {} · {} notes",
+                track_name(project, item.track_id()),
+                item.start_tick(),
+                item.length_ticks(),
+                item.notes().len()
+            ))
+            .width(Length::Fill),
+            button("−beat").on_press(Message::NudgeMidiItem(item.id(), -1)),
+            button("+beat").on_press(Message::NudgeMidiItem(item.id(), 1)),
+            button("Add C4").on_press(Message::AddMidiNote(item.id())),
+        ];
+        if !item.notes().is_empty() {
+            item_heading = item_heading
+                .push(button("Quantize 1/16").on_press(Message::QuantizeMidiItem(item.id())));
+        }
+        let mut item_content = column![item_heading].spacing(4);
+        for note in item.notes().iter().take(MAX_VISIBLE_ITEMS) {
+            item_content = item_content.push(
+                row![
+                    text(format!(
+                        "{} · tick {} · {} ticks · vel {}",
+                        midi_pitch_name(note.pitch()),
+                        note.tick(),
+                        note.duration(),
+                        note.velocity()
+                    ))
+                    .width(Length::Fill),
+                    button("−1/16").on_press(Message::NudgeMidiNote(item.id(), note.id(), -1)),
+                    button("+1/16").on_press(Message::NudgeMidiNote(item.id(), note.id(), 1)),
+                    button("Pitch−").on_press(Message::AdjustMidiNotePitch(
+                        item.id(),
+                        note.id(),
+                        -1
+                    )),
+                    button("Pitch+").on_press(Message::AdjustMidiNotePitch(
+                        item.id(),
+                        note.id(),
+                        1
+                    )),
+                    button("Vel−").on_press(Message::AdjustMidiNoteVelocity(
+                        item.id(),
+                        note.id(),
+                        -1
+                    )),
+                    button("Vel+").on_press(Message::AdjustMidiNoteVelocity(
+                        item.id(),
+                        note.id(),
+                        1
+                    )),
+                    button("Delete").on_press(Message::DeleteMidiNote(item.id(), note.id())),
+                ]
+                .spacing(6),
+            );
+        }
+        if item.notes().len() > MAX_VISIBLE_ITEMS {
+            item_content = item_content.push(text(format!(
+                "Showing {} of {} notes",
+                MAX_VISIBLE_ITEMS,
+                item.notes().len()
+            )));
+        }
+        midi_items = midi_items.push(container(item_content).padding(8));
     }
     if project.midi_items().len() > MAX_VISIBLE_ITEMS {
         midi_items = midi_items.push(text(format!(
@@ -61,33 +122,34 @@ pub(super) fn view(project: &Project) -> Element<'static, Message> {
         )));
     }
 
-    let content = if project.audio_items().is_empty() && project.midi_items().is_empty() {
-        column![
-            text("Timeline").size(20),
-            text("No items yet. Import audio to place it on the first track."),
-            text(format!(
-                "Project rate: {} Hz",
-                project.settings().sample_rate()
-            )),
-        ]
-    } else {
-        column![
-            text("Timeline").size(20),
-            text(format!(
-                "Project rate: {} Hz",
-                project.settings().sample_rate()
-            )),
-            audio_items,
-            midi_items,
-        ]
-        .spacing(12)
-    };
+    let mut content = column![
+        text("Timeline").size(20),
+        text(format!(
+            "Project rate: {} Hz",
+            project.settings().sample_rate()
+        )),
+    ];
+    if project.audio_items().is_empty() && project.midi_items().is_empty() {
+        content = content.push(text(
+            "No items yet. Import audio or add a MIDI item to start editing.",
+        ));
+    }
+    let content = content.push(audio_items).push(midi_items).spacing(12);
 
     container(scrollable(content))
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(18)
         .into()
+}
+
+fn midi_pitch_name(pitch: u8) -> String {
+    const PITCH_CLASSES: [&str; 12] = [
+        "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
+    ];
+    let pitch_class = PITCH_CLASSES[usize::from(pitch % 12)];
+    let octave = i16::from(pitch) / 12 - 1;
+    format!("{pitch_class}{octave}")
 }
 
 fn track_name(project: &Project, track_id: TrackId) -> String {
