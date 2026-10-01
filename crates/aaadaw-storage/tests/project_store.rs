@@ -1,6 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,6 +16,22 @@ fn remove_database(path: &PathBuf) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(format!("{}-wal", path.display()));
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+}
+
+struct FailingReader {
+    remaining_bytes: usize,
+}
+
+impl Read for FailingReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining_bytes == 0 {
+            return Err(std::io::Error::other("simulated source failure"));
+        }
+        let amount = output.len().min(self.remaining_bytes);
+        output[..amount].fill(0x5a);
+        self.remaining_bytes -= amount;
+        Ok(amount)
+    }
 }
 
 #[test]
@@ -116,15 +133,17 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
 }
 
 #[test]
-fn existing_schema_two_files_get_the_additive_audio_item_table_without_version_bump() {
+fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
     let path = project_path();
     let store = ProjectStore::open(&path).expect("database should open");
     store.close().expect("database should close");
 
     let connection = Connection::open(&path).expect("database should be SQLite");
     connection
-        .execute_batch("DROP TABLE audio_items")
-        .expect("simulate a pre-AudioItem schema-two file");
+        .execute_batch(
+            "DROP TABLE audio_items; DROP TABLE audio_asset_chunks; DROP TABLE audio_assets",
+        )
+        .expect("simulate a schema-two file without audio tables");
     drop(connection);
 
     let mut store = ProjectStore::open(&path).expect("missing additive table should be ensured");
@@ -157,6 +176,92 @@ fn existing_schema_two_files_get_the_additive_audio_item_table_without_version_b
         project.snapshot()
     );
     store.close().expect("database should close");
+    remove_database(&path);
+}
+
+#[test]
+fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
+    let path = project_path();
+    let bytes = (0_usize..700_123)
+        .map(|index| (index.wrapping_mul(31) % 251) as u8)
+        .collect::<Vec<_>>();
+    let mut store = ProjectStore::open(&path).expect("project database should open");
+    assert_eq!(
+        store
+            .import_audio_asset("asset://large-fixture", "fixture.bin", Cursor::new(&bytes))
+            .expect("asset import should succeed"),
+        bytes.len() as u64
+    );
+    assert!(matches!(
+        store.import_audio_asset(
+            "asset://large-fixture",
+            "duplicate.bin",
+            Cursor::new(&bytes)
+        ),
+        Err(StorageError::AudioAssetAlreadyExists(_))
+    ));
+    assert!(matches!(
+        store.import_audio_asset("asset://empty", "empty.bin", Cursor::new([])),
+        Err(StorageError::EmptyAudioAsset)
+    ));
+    assert!(matches!(
+        store.audio_asset_reader("asset://empty"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+    assert!(matches!(
+        store.import_audio_asset(
+            "asset://partial",
+            "interrupted.bin",
+            FailingReader {
+                remaining_bytes: 256 * 1024 + 17,
+            },
+        ),
+        Err(StorageError::Io(_))
+    ));
+    assert!(matches!(
+        store.audio_asset_reader("asset://partial"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+    store
+        .import_audio_asset("asset://partial", "complete.bin", Cursor::new(&bytes))
+        .expect("failed partial import should leave the reference reusable");
+
+    let mut reader = store
+        .audio_asset_reader("asset://large-fixture")
+        .expect("asset reader should open");
+    assert_eq!(reader.original_name(), "fixture.bin");
+    assert_eq!(reader.byte_len(), bytes.len() as u64);
+    let mut around_boundary = [0; 19];
+    reader
+        .seek(SeekFrom::Start(256 * 1024 - 7))
+        .expect("reader should seek to a chunk boundary");
+    reader
+        .read_exact(&mut around_boundary)
+        .expect("reader should span adjacent chunks");
+    assert_eq!(&around_boundary, &bytes[256 * 1024 - 7..256 * 1024 + 12]);
+
+    reader
+        .seek(SeekFrom::End(-17))
+        .expect("reader should seek relative to EOF");
+    let mut tail = [0; 17];
+    reader
+        .read_exact(&mut tail)
+        .expect("tail should be readable");
+    assert_eq!(&tail, &bytes[bytes.len() - 17..]);
+    drop(reader);
+    store.close().expect("asset database should checkpoint");
+
+    let reopened = ProjectStore::open(&path).expect("asset database should reopen");
+    let mut reader = reopened
+        .audio_asset_reader("asset://large-fixture")
+        .expect("embedded asset should persist");
+    let mut restored = vec![0; bytes.len()];
+    reader
+        .read_exact(&mut restored)
+        .expect("all chunks should be readable after reopen");
+    assert_eq!(restored, bytes);
+    drop(reader);
+    reopened.close().expect("reopened database should close");
     remove_database(&path);
 }
 

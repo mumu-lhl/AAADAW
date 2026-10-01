@@ -45,7 +45,7 @@
 
 - [x] 实现稳定 ID、轨道、MIDI Item 和 MIDI 音符的基础领域模型。
 - [x] 实现轨道静音/独奏状态和撤销/重做，并纳入当前开发 schema。
-- [x] 实现 sample-clock 锚定的 `AudioItem`，媒体引用保持不透明，并支持 Action、Undo/Redo、快照和 SQLite 往返；媒体引用解析与资产内容存储仍待实现。
+- [x] 实现 sample-clock 锚定的 `AudioItem`，媒体引用保持不透明，并支持 Action、Undo/Redo、快照和 SQLite 往返；Storage 可将引用解析到工程内音频资产。
 - [ ] 实现自动化和路由引用领域模型。
 - [x] 实现类型化 `DawAction`、现有操作的输入验证、原子批量事务、撤销/重做和 Action 历史；失败事务不得留下部分状态。
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
@@ -53,7 +53,7 @@
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
 - [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1/v2、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
-- [ ] 扩展 schema 支持自动化、插件状态和音频资产，并按工程规模优化全量快照写入。
+- [ ] 扩展 schema 支持自动化、插件状态和音频技术元数据，并按工程规模优化全量快照写入；音频资产内容已用当前开发 schema 的附加 chunk 表存储，不提升 schema 版本。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [ ] 验收异常退出、磁盘空间不足、WAL 恢复和关闭后单文件复制/迁移场景。
 
@@ -93,7 +93,8 @@
 ### 4. 音频导入、录音与 MIDI 编辑
 
 - [x] 新建 `aaadaw-media`，以 Symphonia 实现 packet-based 文件解码；输出带采样率/声道的 interleaved f32 chunks，并可由后台 feeder 下混/重采样后送入引擎 SPSC PCM 队列。
-- [ ] 将不透明媒体引用解析到资产目录；增加媒体元数据、工程内资产内容存储和更多格式 fixture。
+- [x] 通过当前 schema 的附加表，以固定大小 SQLite BLOB chunks 内嵌音频内容；支持不可变媒体引用查询、独立 seekable reader 和媒体 worker 流式解码，不提升 schema 版本。
+- [ ] 增加采样率/声道/时长等媒体元数据探测与持久化、外部文件导入管理及更多格式 fixture。
 - [ ] 实现实时录音链路：设备回调经预分配 SPSC 队列传递 PCM，后台线程写入 RF64（或经 ADR 选定的等效格式），保存可恢复的录音元数据。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
 - [x] 实现 MIDI Item、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。

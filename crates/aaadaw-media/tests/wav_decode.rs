@@ -1,6 +1,11 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
-use aaadaw_media::{AudioStreamDecoder, spawn_audio_item_stream, spawn_mono_stream};
+use aaadaw_media::{
+    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
+    spawn_mono_stream,
+};
+use aaadaw_storage::ProjectStore;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -9,6 +14,11 @@ static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 fn wav_path() -> PathBuf {
     let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("aaadaw-media-{}-{id}.wav", std::process::id()))
+}
+
+fn project_path() -> PathBuf {
+    let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("aaadaw-media-{}-{id}.aaadaw", std::process::id()))
 }
 
 fn pcm_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
@@ -110,6 +120,74 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
     }
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
+    let path = project_path();
+    let wav = pcm_wav(&[-32768, 0, 16384, 32767], 48_000);
+    let mut store = ProjectStore::open(&path).expect("project database should open");
+    store
+        .import_audio_asset("asset://embedded-wav", "embedded.wav", Cursor::new(&wav))
+        .expect("WAV should be embedded in bounded database chunks");
+    let reader = store
+        .audio_asset_reader("asset://embedded-wav")
+        .expect("embedded asset should resolve to a reader");
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Embedded Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://embedded-wav".to_owned(),
+            start_sample: 1,
+            source_offset_samples: 1,
+            length_samples: 2,
+        })
+        .expect("item should reference the embedded asset");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(4).expect("stream capacity should be positive");
+    spawn_audio_item_stream_from_reader(
+        &item,
+        reader,
+        Some(wav.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("embedded reader should start a background decoder")
+    .join()
+    .expect("embedded WAV should decode into the PCM stream");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        4,
+    )
+    .expect("render graph should bind the stream to the item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("embedded item should render");
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[0], [0.0, 0.0]);
+    assert_eq!(output[1], [0.0, 0.0]);
+    assert!((output[2][0] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert!((output[2][1] - 0.5 * center_gain).abs() < 1.0e-6);
+    assert_eq!(output[3], [0.0, 0.0]);
+
+    store.close().expect("project database should close");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
 }
 
 #[test]

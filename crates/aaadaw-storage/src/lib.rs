@@ -5,4 +5,4 @@
 
 mod store;
 
-pub use store::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
+pub use store::{CURRENT_SCHEMA_VERSION, ProjectStore, SqliteAudioAssetReader, StorageError};

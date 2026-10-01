@@ -7,15 +7,19 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 mod stream;
-pub use stream::{AudioFeedWorker, spawn_audio_item_stream, spawn_mono_stream};
+pub use stream::{
+    AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_from_reader,
+    spawn_mono_stream,
+};
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 
 /// One decoded, interleaved floating-point PCM packet.
@@ -129,9 +133,24 @@ impl AudioStreamDecoder {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, MediaError> {
         let path = path.as_ref();
         let file = File::open(path).map_err(MediaError::Io)?;
-        let source = MediaSourceStream::new(Box::new(file), Default::default());
+        let byte_len = file.metadata().map_err(MediaError::Io)?.len();
+        let extension = path.extension().and_then(|extension| extension.to_str());
+        Self::from_reader(file, Some(byte_len), extension)
+    }
+
+    /// Opens a seekable reader, such as an embedded SQLite asset, for decoding.
+    pub fn from_reader<R>(
+        reader: R,
+        byte_len: Option<u64>,
+        extension: Option<&str>,
+    ) -> Result<Self, MediaError>
+    where
+        R: Read + Seek + Send + Sync + 'static,
+    {
+        let source = SeekableMediaSource { reader, byte_len };
+        let source = MediaSourceStream::new(Box::new(source), Default::default());
         let mut hint = Hint::new();
-        if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
+        if let Some(extension) = extension {
             hint.with_extension(extension);
         }
         let format = symphonia::default::get_probe().probe(
@@ -192,5 +211,32 @@ impl AudioStreamDecoder {
                 samples,
             }));
         }
+    }
+}
+
+struct SeekableMediaSource<R> {
+    reader: R,
+    byte_len: Option<u64>,
+}
+
+impl<R: Read> Read for SeekableMediaSource<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reader.read(buffer)
+    }
+}
+
+impl<R: Seek> Seek for SeekableMediaSource<R> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.reader.seek(position)
+    }
+}
+
+impl<R: Read + Seek + Send + Sync> MediaSource for SeekableMediaSource<R> {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.byte_len
     }
 }

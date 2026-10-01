@@ -3,10 +3,14 @@ use aaadaw_core::{
     Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
     TrackSnapshot,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
@@ -73,6 +77,24 @@ ALTER TABLE tempo_points
 ADD COLUMN curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 1));
 "#;
 
+const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
+
+const AUDIO_ASSETS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS audio_assets (
+    media_ref TEXT PRIMARY KEY CHECK (length(trim(media_ref)) > 0),
+    original_name TEXT NOT NULL,
+    byte_len INTEGER NOT NULL CHECK (byte_len >= 0),
+    chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
+    chunk_size INTEGER NOT NULL CHECK (chunk_size > 0)
+);
+CREATE TABLE IF NOT EXISTS audio_asset_chunks (
+    media_ref TEXT NOT NULL REFERENCES audio_assets(media_ref) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+    data BLOB NOT NULL CHECK (length(data) > 0),
+    PRIMARY KEY (media_ref, chunk_index)
+);
+"#;
+
 const AUDIO_ITEMS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS audio_items (
     id INTEGER PRIMARY KEY CHECK (id >= 0),
@@ -99,6 +121,12 @@ pub enum StorageError {
     IntegerOutOfRange(u64),
     UnsupportedJournalMode(String),
     CheckpointBusy,
+    AudioAssetReferenceEmpty,
+    AudioAssetAlreadyExists(String),
+    AudioAssetNotFound(String),
+    EmptyAudioAsset,
+    MemoryDatabaseHasNoIndependentAssetReader,
+    Io(io::Error),
 }
 
 impl fmt::Display for StorageError {
@@ -135,6 +163,20 @@ impl fmt::Display for StorageError {
                 write!(formatter, "SQLite refused WAL mode and selected {mode}")
             }
             Self::CheckpointBusy => formatter.write_str("WAL checkpoint could not complete"),
+            Self::AudioAssetReferenceEmpty => {
+                formatter.write_str("audio asset reference must not be empty")
+            }
+            Self::AudioAssetAlreadyExists(media_ref) => {
+                write!(formatter, "audio asset {media_ref:?} already exists")
+            }
+            Self::AudioAssetNotFound(media_ref) => {
+                write!(formatter, "audio asset {media_ref:?} was not found")
+            }
+            Self::EmptyAudioAsset => formatter.write_str("audio asset content must not be empty"),
+            Self::MemoryDatabaseHasNoIndependentAssetReader => formatter.write_str(
+                "an independent audio asset reader is unavailable for in-memory databases",
+            ),
+            Self::Io(error) => write!(formatter, "I/O error: {error}"),
         }
     }
 }
@@ -144,6 +186,7 @@ impl std::error::Error for StorageError {
         match self {
             Self::Sql(error) => Some(error),
             Self::Snapshot(error) => Some(error),
+            Self::Io(error) => Some(error),
             _ => None,
         }
     }
@@ -161,6 +204,129 @@ impl From<SnapshotError> for StorageError {
     }
 }
 
+impl From<io::Error> for StorageError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+/// Seekable, chunk-backed reader for an audio asset embedded in a project file.
+///
+/// Reads fetch bounded chunks from an independent read-only SQLite connection,
+/// so a decoder can seek without loading the whole asset into memory.
+pub struct SqliteAudioAssetReader {
+    original_name: String,
+    byte_len: u64,
+    state: Mutex<AudioAssetReaderState>,
+}
+
+struct AudioAssetReaderState {
+    connection: Connection,
+    media_ref: String,
+    chunk_size: u64,
+    position: u64,
+    cached_chunk: Option<(u64, Vec<u8>)>,
+}
+
+impl SqliteAudioAssetReader {
+    /// Returns the source file name recorded at import time.
+    pub fn original_name(&self) -> &str {
+        &self.original_name
+    }
+
+    /// Returns the embedded asset's byte length.
+    pub fn byte_len(&self) -> u64 {
+        self.byte_len
+    }
+
+    fn state_mut(&mut self) -> io::Result<&mut AudioAssetReaderState> {
+        self.state
+            .get_mut()
+            .map_err(|_| io::Error::other("audio asset reader mutex was poisoned"))
+    }
+}
+
+impl Read for SqliteAudioAssetReader {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let byte_len = self.byte_len;
+        let state = self.state_mut()?;
+        if output.is_empty() || state.position >= byte_len {
+            return Ok(0);
+        }
+
+        let bytes_to_read = output
+            .len()
+            .min(usize::try_from(byte_len - state.position).unwrap_or(usize::MAX));
+        let mut written = 0;
+        while written < bytes_to_read {
+            let chunk_index = state.position / state.chunk_size;
+            let chunk_offset = (state.position % state.chunk_size) as usize;
+            if state
+                .cached_chunk
+                .as_ref()
+                .is_none_or(|(cached_index, _)| *cached_index != chunk_index)
+            {
+                let sql_chunk_index = i64::try_from(chunk_index).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "audio asset chunk index overflow",
+                    )
+                })?;
+                let chunk = state
+                    .connection
+                    .query_row(
+                        "SELECT data FROM audio_asset_chunks \
+                         WHERE media_ref = ?1 AND chunk_index = ?2",
+                        params![state.media_ref, sql_chunk_index],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                state.cached_chunk = Some((chunk_index, chunk));
+            }
+
+            let (_, chunk) = state.cached_chunk.as_ref().expect("chunk was just loaded");
+            let Some(chunk_available) = chunk.len().checked_sub(chunk_offset) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "audio asset chunk is shorter than its declared range",
+                ));
+            };
+            if chunk_available == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "audio asset contains an empty or truncated chunk",
+                ));
+            }
+            let amount = chunk_available.min(bytes_to_read - written);
+            output[written..written + amount]
+                .copy_from_slice(&chunk[chunk_offset..chunk_offset + amount]);
+            written += amount;
+            state.position += amount as u64;
+        }
+        Ok(written)
+    }
+}
+
+impl Seek for SqliteAudioAssetReader {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let byte_len = self.byte_len;
+        let state = self.state_mut()?;
+        let position = match from {
+            SeekFrom::Start(position) => i128::from(position),
+            SeekFrom::Current(offset) => i128::from(state.position) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(byte_len) + i128::from(offset),
+        };
+        if position < 0 || position > i128::from(u64::MAX) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "audio asset seek is outside the supported range",
+            ));
+        }
+        state.position = position as u64;
+        Ok(state.position)
+    }
+}
+
 /// Owns a SQLite connection for one `.aaadaw` project file.
 ///
 /// Saves are atomic full-snapshot replacements. The connection uses WAL while
@@ -168,12 +334,20 @@ impl From<SnapshotError> for StorageError {
 /// into a portable single file.
 pub struct ProjectStore {
     connection: Connection,
+    database_path: PathBuf,
 }
 
 impl ProjectStore {
     /// Opens or creates a project database and applies pending schema migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let mut connection = Connection::open(path)?;
+        let requested_path = path.as_ref().to_owned();
+        let mut connection = Connection::open(&requested_path)?;
+        let database_path =
+            if requested_path == Path::new(":memory:") || requested_path.is_absolute() {
+                requested_path
+            } else {
+                std::env::current_dir()?.join(requested_path)
+            };
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "page_size", PAGE_SIZE)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -193,7 +367,143 @@ impl ProjectStore {
         }
         connection.pragma_update(None, "application_id", APPLICATION_ID)?;
         migrate(&mut connection)?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            database_path,
+        })
+    }
+
+    /// Imports an audio asset as bounded SQLite BLOB chunks under an immutable reference.
+    ///
+    /// The reader is consumed incrementally; at most one chunk is buffered in memory.
+    /// Import runs in a single transaction, so incomplete assets are never visible.
+    pub fn import_audio_asset(
+        &mut self,
+        media_ref: &str,
+        original_name: &str,
+        mut source: impl Read,
+    ) -> Result<u64, StorageError> {
+        if media_ref.trim().is_empty() {
+            return Err(StorageError::AudioAssetReferenceEmpty);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if transaction
+            .query_row(
+                "SELECT 1 FROM audio_assets WHERE media_ref = ?1",
+                [media_ref],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some()
+        {
+            return Err(StorageError::AudioAssetAlreadyExists(media_ref.to_owned()));
+        }
+
+        transaction.execute(
+            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, chunk_size) \
+             VALUES(?1, ?2, 0, 0, ?3)",
+            params![media_ref, original_name, AUDIO_ASSET_CHUNK_SIZE as i64],
+        )?;
+
+        let mut chunk_buffer = vec![0; AUDIO_ASSET_CHUNK_SIZE];
+        let mut byte_len = 0_u64;
+        let mut chunk_count = 0_usize;
+        loop {
+            let chunk_len = fill_chunk(&mut source, &mut chunk_buffer)?;
+            if chunk_len == 0 {
+                break;
+            }
+            transaction.execute(
+                "INSERT INTO audio_asset_chunks(media_ref, chunk_index, data) \
+                 VALUES(?1, ?2, ?3)",
+                params![
+                    media_ref,
+                    usize_to_sql(chunk_count)?,
+                    &chunk_buffer[..chunk_len]
+                ],
+            )?;
+            byte_len = byte_len
+                .checked_add(chunk_len as u64)
+                .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+            to_sql_integer(byte_len)?;
+            chunk_count = chunk_count
+                .checked_add(1)
+                .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+        }
+        if byte_len == 0 {
+            return Err(StorageError::EmptyAudioAsset);
+        }
+        transaction.execute(
+            "UPDATE audio_assets SET byte_len = ?2, chunk_count = ?3 WHERE media_ref = ?1",
+            params![
+                media_ref,
+                to_sql_integer(byte_len)?,
+                usize_to_sql(chunk_count)?
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(byte_len)
+    }
+
+    /// Opens an independent reader that streams one embedded asset from SQLite chunks.
+    pub fn audio_asset_reader(
+        &self,
+        media_ref: &str,
+    ) -> Result<SqliteAudioAssetReader, StorageError> {
+        if self.database_path == Path::new(":memory:") {
+            return Err(StorageError::MemoryDatabaseHasNoIndependentAssetReader);
+        }
+        let connection =
+            Connection::open_with_flags(&self.database_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        let metadata = connection
+            .query_row(
+                "SELECT byte_len, chunk_count, chunk_size, original_name \
+                 FROM audio_assets WHERE media_ref = ?1",
+                [media_ref],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+        let byte_len = u64::try_from(metadata.0)
+            .map_err(|_| StorageError::InvalidStoredData("negative audio asset byte length"))?;
+        let chunk_count = u64::try_from(metadata.1)
+            .map_err(|_| StorageError::InvalidStoredData("negative audio asset chunk count"))?;
+        let chunk_size = u64::try_from(metadata.2)
+            .ok()
+            .filter(|size| *size > 0)
+            .ok_or(StorageError::InvalidStoredData(
+                "audio asset chunk size must be positive",
+            ))?;
+        let expected_chunks = byte_len.div_ceil(chunk_size);
+        usize::try_from(chunk_size).map_err(|_| {
+            StorageError::InvalidStoredData("audio asset chunk size exceeds platform limits")
+        })?;
+        if byte_len == 0 || expected_chunks != chunk_count {
+            return Err(StorageError::InvalidStoredData(
+                "audio asset metadata has an invalid length or chunk count",
+            ));
+        }
+        Ok(SqliteAudioAssetReader {
+            original_name: metadata.3,
+            byte_len,
+            state: Mutex::new(AudioAssetReaderState {
+                connection,
+                media_ref: media_ref.to_owned(),
+                chunk_size,
+                position: 0,
+                cached_chunk: None,
+            }),
+        })
     }
 
     /// Returns the schema version after migrations have been applied.
@@ -299,6 +609,17 @@ impl ProjectStore {
     }
 }
 
+fn fill_chunk(reader: &mut impl Read, buffer: &mut [u8]) -> Result<usize, io::Error> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match reader.read(&mut buffer[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled)
+}
+
 fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let mut version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > i64::from(CURRENT_SCHEMA_VERSION) {
@@ -320,6 +641,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         version = next_version;
     }
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
+    connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, MediaError};
 use aaadaw_core::AudioItem;
 use aaadaw_engine::PcmStreamProducer;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +27,13 @@ pub fn spawn_mono_stream(
     output_sample_rate: u32,
     producer: PcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
-    spawn_stream(path, output_sample_rate, 0, None, producer)
+    spawn_stream(
+        DecoderInput::Path(path.as_ref().to_owned()),
+        output_sample_rate,
+        0,
+        None,
+        producer,
+    )
 }
 
 /// Feeds a timeline item from a resolved media file, applying its source trim
@@ -41,7 +48,38 @@ pub fn spawn_audio_item_stream(
         return Err(MediaError::InvalidAudioItemLength);
     }
     spawn_stream(
-        resolved_path,
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples()),
+        producer,
+    )
+}
+
+/// Decodes an embedded or otherwise seekable media source into an AudioItem stream.
+///
+/// The reader is moved to the background worker; `byte_len` and `extension_hint`
+/// help the container probe without requiring the source to be a filesystem path.
+pub fn spawn_audio_item_stream_from_reader<R>(
+    item: &AudioItem,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: PcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    if item.length_samples() == 0 {
+        return Err(MediaError::InvalidAudioItemLength);
+    }
+    spawn_stream(
+        DecoderInput::Reader {
+            reader: Box::new(reader),
+            byte_len,
+            extension: extension_hint.map(str::to_owned),
+        },
         output_sample_rate,
         item.source_offset_samples(),
         Some(item.length_samples()),
@@ -50,7 +88,7 @@ pub fn spawn_audio_item_stream(
 }
 
 fn spawn_stream(
-    path: impl AsRef<Path>,
+    input: DecoderInput,
     output_sample_rate: u32,
     source_offset_samples: u64,
     output_length_samples: Option<u64>,
@@ -59,15 +97,13 @@ fn spawn_stream(
     if output_sample_rate == 0 {
         return Err(MediaError::InvalidOutputSampleRate);
     }
-
-    let path = path.as_ref().to_owned();
     let cancelled = Arc::new(AtomicBool::new(false));
     let worker_cancelled = Arc::clone(&cancelled);
     let thread = thread::Builder::new()
         .name("aaadaw-media-decode".to_owned())
         .spawn(move || {
             run_worker(
-                path,
+                input,
                 output_sample_rate,
                 source_offset_samples,
                 output_length_samples,
@@ -111,15 +147,35 @@ impl Drop for AudioFeedWorker {
     }
 }
 
+trait ReadSeek: Read + Seek {}
+
+impl<T: Read + Seek> ReadSeek for T {}
+
+enum DecoderInput {
+    Path(PathBuf),
+    Reader {
+        reader: Box<dyn ReadSeek + Send + Sync>,
+        byte_len: Option<u64>,
+        extension: Option<String>,
+    },
+}
+
 fn run_worker(
-    path: PathBuf,
+    input: DecoderInput,
     output_sample_rate: u32,
     mut source_offset_remaining: u64,
     mut output_samples_remaining: Option<u64>,
     mut producer: PcmStreamProducer,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), MediaError> {
-    let mut decoder = AudioStreamDecoder::open(path)?;
+    let mut decoder = match input {
+        DecoderInput::Path(path) => AudioStreamDecoder::open(path)?,
+        DecoderInput::Reader {
+            reader,
+            byte_len,
+            extension,
+        } => AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?,
+    };
     let mut resampler: Option<StreamingMonoResampler> = None;
     let mut mono_input = Vec::new();
 
