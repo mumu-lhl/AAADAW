@@ -1,4 +1,4 @@
-use crate::Message;
+use crate::app::Message;
 use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
 use aaadaw_core::{ItemId, Project, TrackId};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
