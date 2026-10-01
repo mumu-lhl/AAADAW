@@ -141,7 +141,8 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
     let connection = Connection::open(&path).expect("database should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE audio_items; DROP TABLE audio_asset_chunks; DROP TABLE audio_assets",
+            "DROP TABLE audio_items; DROP TABLE audio_asset_chunks; \
+             DROP TABLE audio_asset_links; DROP TABLE audio_assets",
         )
         .expect("simulate a schema-two file without audio tables");
     drop(connection);
@@ -257,6 +258,89 @@ fn importing_an_external_file_embeds_it_and_returns_a_media_reference() {
 
     store.close().expect("project database should close");
     remove_database(&database_path);
+}
+
+#[test]
+fn external_audio_links_can_be_relinked_and_packed_under_the_same_reference() {
+    let database_path = project_path();
+    let original_path = database_path.with_extension("wav");
+    let replacement_path = database_path.with_extension("replacement.wav");
+    std::fs::write(&original_path, [1, 2, 3]).expect("external fixture should be written");
+    let replacement_bytes = vec![4, 5, 6, 7];
+    std::fs::write(&replacement_path, &replacement_bytes)
+        .expect("replacement fixture should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project database should open");
+
+    let media_ref = store
+        .link_external_audio_file(&original_path)
+        .expect("external file should link without embedding");
+    let linked = store
+        .resolve_audio_asset(&media_ref)
+        .expect("linked reference should resolve");
+    assert!(matches!(
+        linked,
+        aaadaw_storage::ResolvedAudioAsset::LinkedFile { path, .. }
+            if path == original_path.canonicalize().unwrap()
+    ));
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("linked files should report their storage mode"),
+        aaadaw_storage::AudioAssetSourceStatus::Linked
+    );
+
+    store
+        .relink_external_audio_file(&media_ref, &replacement_path)
+        .expect("external reference should be relinkable");
+    let second_media_ref = store
+        .link_external_audio_file(&original_path)
+        .expect("another external file should link");
+    store
+        .pack_external_audio_asset(&media_ref)
+        .expect("linked bytes should be packed into the project");
+    store
+        .pack_external_audio_asset(&media_ref)
+        .expect("packing an already embedded reference should be idempotent");
+    assert_eq!(
+        store
+            .pack_all_external_audio_assets()
+            .expect("all remaining external links should pack"),
+        vec![second_media_ref]
+    );
+    let mut resolved = store
+        .resolve_audio_asset(&media_ref)
+        .expect("packed reference should resolve to embedded content");
+    let aaadaw_storage::ResolvedAudioAsset::Embedded(ref mut reader) = resolved else {
+        panic!("packed media should no longer use the external link");
+    };
+    let mut embedded = Vec::new();
+    reader
+        .read_to_end(&mut embedded)
+        .expect("packed bytes should be readable");
+    assert_eq!(embedded, replacement_bytes);
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("packed origin should be checkable"),
+        aaadaw_storage::AudioAssetSourceStatus::Unchanged
+    );
+
+    drop(resolved);
+    std::fs::remove_file(&replacement_path).expect("external source should be removable");
+    assert!(matches!(
+        store.resolve_audio_asset(&media_ref),
+        Ok(aaadaw_storage::ResolvedAudioAsset::Embedded(_))
+    ));
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("missing source should be reported"),
+        aaadaw_storage::AudioAssetSourceStatus::Missing
+    );
+
+    store.close().expect("project database should close");
+    remove_database(&database_path);
+    std::fs::remove_file(original_path).expect("original fixture should be removed");
 }
 
 #[test]

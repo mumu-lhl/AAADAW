@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS audio_assets (
     source_path TEXT,
     content_hash BLOB
 );
+CREATE TABLE IF NOT EXISTS audio_asset_links (
+    media_ref TEXT PRIMARY KEY CHECK (length(trim(media_ref)) > 0),
+    original_name TEXT NOT NULL,
+    external_path TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audio_asset_chunks (
     media_ref TEXT NOT NULL REFERENCES audio_assets(media_ref) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
@@ -128,6 +133,8 @@ pub enum StorageError {
     AudioAssetReferenceEmpty,
     AudioAssetAlreadyExists(String),
     AudioAssetNotFound(String),
+    AudioAssetNotLinked(String),
+    ExternalPathNotUtf8,
     EmptyAudioAsset,
     MemoryDatabaseHasNoIndependentAssetReader,
     Io(io::Error),
@@ -176,6 +183,15 @@ impl fmt::Display for StorageError {
             Self::AudioAssetNotFound(media_ref) => {
                 write!(formatter, "audio asset {media_ref:?} was not found")
             }
+            Self::AudioAssetNotLinked(media_ref) => {
+                write!(
+                    formatter,
+                    "audio asset {media_ref:?} is not externally linked"
+                )
+            }
+            Self::ExternalPathNotUtf8 => {
+                formatter.write_str("external audio path is not valid UTF-8")
+            }
             Self::EmptyAudioAsset => formatter.write_str("audio asset content must not be empty"),
             Self::MemoryDatabaseHasNoIndependentAssetReader => formatter.write_str(
                 "an independent audio asset reader is unavailable for in-memory databases",
@@ -217,6 +233,8 @@ impl From<io::Error> for StorageError {
 /// Status of the original external file recorded when an asset was imported.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioAssetSourceStatus {
+    /// The asset currently resolves directly to an external file.
+    Linked,
     /// The asset was imported from a reader with no original file path.
     Untracked,
     /// The file exists and matches the embedded bytes' SHA-256 fingerprint.
@@ -227,6 +245,17 @@ pub enum AudioAssetSourceStatus {
     Missing,
     /// The asset predates source fingerprint metadata.
     Unverified,
+}
+
+/// A resolved source for a project media reference.
+pub enum ResolvedAudioAsset {
+    /// Immutable bytes embedded in the project database.
+    Embedded(SqliteAudioAssetReader),
+    /// A live external file; playback follows the current contents at this path.
+    LinkedFile {
+        path: PathBuf,
+        original_name: String,
+    },
 }
 
 /// Seekable, chunk-backed reader for an audio asset embedded in a project file.
@@ -392,6 +421,27 @@ impl ProjectStore {
         })
     }
 
+    fn new_asset_reference(&self) -> Result<String, StorageError> {
+        for _ in 0..8 {
+            let token: String =
+                self.connection
+                    .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+            let media_ref = format!("asset://{token}");
+            let exists: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1) \
+                 OR EXISTS(SELECT 1 FROM audio_asset_links WHERE media_ref = ?1)",
+                [&media_ref],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Ok(media_ref);
+            }
+        }
+        Err(StorageError::InvalidStoredData(
+            "failed to allocate a unique audio asset reference",
+        ))
+    }
+
     /// Imports an external file into the project and returns its opaque `asset://` reference.
     ///
     /// The source file is left untouched. Run this synchronous operation on a
@@ -409,12 +459,155 @@ impl ProjectStore {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "audio".to_owned());
-        let token: String =
-            self.connection
-                .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
-        let media_ref = format!("asset://{token}");
+        let media_ref = self.new_asset_reference()?;
         self.import_audio_asset_with_source_path(&media_ref, &original_name, source_path, source)?;
         Ok(media_ref)
+    }
+
+    /// Registers a live external-file reference without copying its audio bytes into the project.
+    ///
+    /// The file's canonical absolute path is persisted. Use this opt-in mode for shared or very
+    /// large sources; moving the file or project may require relinking it later.
+    pub fn link_external_audio_file(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<String, StorageError> {
+        let path = path.as_ref().canonicalize()?;
+        let source = File::open(&path)?;
+        if !source.metadata()?.is_file() {
+            return Err(StorageError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "external audio source is not a regular file",
+            )));
+        }
+        let external_path = path.to_str().ok_or(StorageError::ExternalPathNotUtf8)?;
+        let original_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "audio".to_owned());
+        let media_ref = self.new_asset_reference()?;
+        self.connection.execute(
+            "INSERT INTO audio_asset_links(media_ref, original_name, external_path) \
+             VALUES(?1, ?2, ?3)",
+            params![media_ref, original_name, external_path],
+        )?;
+        Ok(media_ref)
+    }
+
+    /// Resolves a media reference to embedded bytes or a live external path.
+    pub fn resolve_audio_asset(&self, media_ref: &str) -> Result<ResolvedAudioAsset, StorageError> {
+        let embedded: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+            [media_ref],
+            |row| row.get(0),
+        )?;
+        if embedded {
+            return self
+                .audio_asset_reader(media_ref)
+                .map(ResolvedAudioAsset::Embedded);
+        }
+        let linked = self
+            .connection
+            .query_row(
+                "SELECT original_name, external_path FROM audio_asset_links WHERE media_ref = ?1",
+                [media_ref],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+        Ok(ResolvedAudioAsset::LinkedFile {
+            original_name: linked.0,
+            path: PathBuf::from(linked.1),
+        })
+    }
+
+    /// Changes the source path of an external link after user-confirmed relinking.
+    pub fn relink_external_audio_file(
+        &mut self,
+        media_ref: &str,
+        new_path: impl AsRef<Path>,
+    ) -> Result<(), StorageError> {
+        let path = new_path.as_ref().canonicalize()?;
+        let source = File::open(&path)?;
+        if !source.metadata()?.is_file() {
+            return Err(StorageError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "external audio source is not a regular file",
+            )));
+        }
+        let external_path = path.to_str().ok_or(StorageError::ExternalPathNotUtf8)?;
+        let updated = self.connection.execute(
+            "UPDATE audio_asset_links SET external_path = ?2 WHERE media_ref = ?1",
+            params![media_ref, external_path],
+        )?;
+        if updated == 0 {
+            return Err(StorageError::AudioAssetNotLinked(media_ref.to_owned()));
+        }
+        Ok(())
+    }
+
+    /// Embeds the current contents of an external link while keeping its media reference stable.
+    pub fn pack_external_audio_asset(&mut self, media_ref: &str) -> Result<(), StorageError> {
+        let linked = self
+            .connection
+            .query_row(
+                "SELECT original_name, external_path FROM audio_asset_links WHERE media_ref = ?1",
+                [media_ref],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((original_name, external_path)) = linked else {
+            let embedded: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+                [media_ref],
+                |row| row.get(0),
+            )?;
+            return if embedded {
+                Ok(())
+            } else {
+                Err(StorageError::AudioAssetNotLinked(media_ref.to_owned()))
+            };
+        };
+        let already_embedded: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+            [media_ref],
+            |row| row.get(0),
+        )?;
+        if !already_embedded {
+            let source = File::open(&external_path)?;
+            self.import_audio_asset_with_source_path(
+                media_ref,
+                &original_name,
+                Some(&external_path),
+                source,
+            )?;
+        }
+        self.connection.execute(
+            "DELETE FROM audio_asset_links WHERE media_ref = ?1",
+            [media_ref],
+        )?;
+        Ok(())
+    }
+
+    /// Packs every currently linked external asset into the project.
+    ///
+    /// Each asset is packed independently. If one file is missing or unreadable,
+    /// earlier assets remain embedded and the remaining links are safe to retry.
+    pub fn pack_all_external_audio_assets(&mut self) -> Result<Vec<String>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT media_ref FROM audio_asset_links ORDER BY media_ref")?;
+        let media_refs = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+
+        let mut packed = Vec::with_capacity(media_refs.len());
+        for media_ref in media_refs {
+            self.pack_external_audio_asset(&media_ref)?;
+            packed.push(media_ref);
+        }
+        Ok(packed)
     }
 
     /// Imports an audio asset as bounded SQLite BLOB chunks under an immutable reference.
@@ -588,8 +781,27 @@ impl ProjectStore {
                     ))
                 },
             )
-            .optional()?
-            .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+            .optional()?;
+        let Some(metadata) = metadata else {
+            let external_path: Option<String> = self
+                .connection
+                .query_row(
+                    "SELECT external_path FROM audio_asset_links WHERE media_ref = ?1",
+                    [media_ref],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(external_path) = external_path else {
+                return Err(StorageError::AudioAssetNotFound(media_ref.to_owned()));
+            };
+            return match File::open(external_path) {
+                Ok(_) => Ok(AudioAssetSourceStatus::Linked),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    Ok(AudioAssetSourceStatus::Missing)
+                }
+                Err(error) => Err(StorageError::Io(error)),
+            };
+        };
         let Some(source_path) = metadata.0 else {
             return Ok(AudioAssetSourceStatus::Untracked);
         };
