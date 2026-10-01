@@ -12,7 +12,10 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
@@ -137,6 +140,8 @@ pub enum StorageError {
     ExternalPathNotUtf8,
     EmptyAudioAsset,
     MemoryDatabaseHasNoIndependentAssetReader,
+    AudioAssetImportCancelled,
+    AudioAssetImportWorkerPanicked,
     Io(io::Error),
 }
 
@@ -196,6 +201,10 @@ impl fmt::Display for StorageError {
             Self::MemoryDatabaseHasNoIndependentAssetReader => formatter.write_str(
                 "an independent audio asset reader is unavailable for in-memory databases",
             ),
+            Self::AudioAssetImportCancelled => formatter.write_str("audio asset import cancelled"),
+            Self::AudioAssetImportWorkerPanicked => {
+                formatter.write_str("audio asset import worker panicked")
+            }
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
         }
     }
@@ -245,6 +254,50 @@ pub enum AudioAssetSourceStatus {
     Missing,
     /// The asset predates source fingerprint metadata.
     Unverified,
+}
+
+/// Progress for a background audio-file import.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AudioAssetImportProgress {
+    pub bytes_imported: u64,
+    pub total_bytes: u64,
+}
+
+/// A cancellable background import which embeds one external audio file.
+pub struct AudioAssetImportWorker {
+    cancelled: Arc<AtomicBool>,
+    progress: Receiver<AudioAssetImportProgress>,
+    thread: Option<JoinHandle<Result<String, StorageError>>>,
+}
+
+impl AudioAssetImportWorker {
+    /// Requests cancellation; the import rolls back at its next chunk boundary.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Receives progress updates until the import thread closes the channel.
+    pub fn progress(&self) -> &Receiver<AudioAssetImportProgress> {
+        &self.progress
+    }
+
+    /// Waits for the import and returns its new media reference.
+    pub fn join(mut self) -> Result<String, StorageError> {
+        self.thread
+            .take()
+            .expect("worker thread is joined once")
+            .join()
+            .map_err(|_| StorageError::AudioAssetImportWorkerPanicked)?
+    }
+}
+
+impl Drop for AudioAssetImportWorker {
+    fn drop(&mut self) {
+        self.cancel();
+        if let Some(worker) = self.thread.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 /// A resolved source for a project media reference.
@@ -442,11 +495,58 @@ impl ProjectStore {
         ))
     }
 
+    /// Starts importing an external file on a background thread.
+    ///
+    /// Progress messages are emitted once per stored chunk. Dropping the worker requests
+    /// cancellation and waits for the current bounded operation to finish.
+    pub fn start_audio_asset_import(
+        &self,
+        source_path: impl AsRef<Path>,
+    ) -> Result<AudioAssetImportWorker, StorageError> {
+        let project_path = self.database_path.clone();
+        let source_path = source_path.as_ref().to_owned();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (progress_sender, progress) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("aaadaw-asset-import".to_owned())
+            .spawn(move || {
+                let total_bytes = std::fs::metadata(&source_path)?.len();
+                let mut store = ProjectStore::open(project_path)?;
+                store.import_audio_file_with_progress(&source_path, |bytes_imported| {
+                    if worker_cancelled.load(Ordering::Acquire) {
+                        return Err(StorageError::AudioAssetImportCancelled);
+                    }
+                    progress_sender
+                        .send(AudioAssetImportProgress {
+                            bytes_imported,
+                            total_bytes,
+                        })
+                        .map_err(|_| StorageError::AudioAssetImportCancelled)
+                })
+            })
+            .map_err(StorageError::Io)?;
+        Ok(AudioAssetImportWorker {
+            cancelled,
+            progress,
+            thread: Some(thread),
+        })
+    }
+
     /// Imports an external file into the project and returns its opaque `asset://` reference.
     ///
     /// The source file is left untouched. Run this synchronous operation on a
     /// background thread; project assets are read incrementally into bounded chunks.
     pub fn import_audio_file(&mut self, path: impl AsRef<Path>) -> Result<String, StorageError> {
+        self.import_audio_file_with_progress(path, |_| Ok(()))
+    }
+
+    /// Imports a file and reports bytes imported after each stored chunk.
+    pub fn import_audio_file_with_progress(
+        &mut self,
+        path: impl AsRef<Path>,
+        mut on_progress: impl FnMut(u64) -> Result<(), StorageError>,
+    ) -> Result<String, StorageError> {
         let path = path.as_ref();
         let source_path = if path.is_absolute() {
             path.to_owned()
@@ -460,7 +560,13 @@ impl ProjectStore {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "audio".to_owned());
         let media_ref = self.new_asset_reference()?;
-        self.import_audio_asset_with_source_path(&media_ref, &original_name, source_path, source)?;
+        self.import_audio_asset_with_source_path(
+            &media_ref,
+            &original_name,
+            source_path,
+            source,
+            &mut on_progress,
+        )?;
         Ok(media_ref)
     }
 
@@ -580,6 +686,7 @@ impl ProjectStore {
                 &original_name,
                 Some(&external_path),
                 source,
+                |_| Ok(()),
             )?;
         }
         self.connection.execute(
@@ -620,7 +727,7 @@ impl ProjectStore {
         original_name: &str,
         source: impl Read,
     ) -> Result<u64, StorageError> {
-        self.import_audio_asset_with_source_path(media_ref, original_name, None, source)
+        self.import_audio_asset_with_source_path(media_ref, original_name, None, source, |_| Ok(()))
     }
 
     fn import_audio_asset_with_source_path(
@@ -629,6 +736,7 @@ impl ProjectStore {
         original_name: &str,
         source_path: Option<&str>,
         mut source: impl Read,
+        mut on_progress: impl FnMut(u64) -> Result<(), StorageError>,
     ) -> Result<u64, StorageError> {
         if media_ref.trim().is_empty() {
             return Err(StorageError::AudioAssetReferenceEmpty);
@@ -658,6 +766,7 @@ impl ProjectStore {
                 source_path
             ],
         )?;
+        on_progress(0)?;
 
         let mut chunk_buffer = vec![0; AUDIO_ASSET_CHUNK_SIZE];
         let mut byte_len = 0_u64;
@@ -685,6 +794,7 @@ impl ProjectStore {
             chunk_count = chunk_count
                 .checked_add(1)
                 .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+            on_progress(byte_len)?;
         }
         if byte_len == 0 {
             return Err(StorageError::EmptyAudioAsset);

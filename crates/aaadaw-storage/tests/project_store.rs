@@ -198,6 +198,68 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
 }
 
 #[test]
+fn background_asset_import_reports_progress_and_cancellation_rolls_back() {
+    let database_path = project_path();
+    let source_path = database_path.with_extension("wav");
+    let source_bytes = (0_usize..700_123)
+        .map(|index| (index.wrapping_mul(17) % 251) as u8)
+        .collect::<Vec<_>>();
+    std::fs::write(&source_path, &source_bytes).expect("source fixture should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+
+    let cancelled = store.import_audio_file_with_progress(&source_path, |bytes| {
+        if bytes > 0 {
+            Err(StorageError::AudioAssetImportCancelled)
+        } else {
+            Ok(())
+        }
+    });
+    assert!(matches!(
+        cancelled,
+        Err(StorageError::AudioAssetImportCancelled)
+    ));
+    let connection = Connection::open(&database_path).expect("database should remain readable");
+    let incomplete_assets: i64 = connection
+        .query_row("SELECT COUNT(*) FROM audio_assets", [], |row| row.get(0))
+        .expect("cancelled transaction should leave no asset row");
+    assert_eq!(incomplete_assets, 0);
+    drop(connection);
+
+    let worker = store
+        .start_audio_asset_import(&source_path)
+        .expect("background import should start");
+    let mut progress = Vec::new();
+    while let Ok(update) = worker.progress().recv() {
+        progress.push(update);
+    }
+    let media_ref = worker.join().expect("background import should complete");
+    assert_eq!(progress.first().unwrap().bytes_imported, 0);
+    assert_eq!(
+        progress.last().unwrap().bytes_imported,
+        source_bytes.len() as u64
+    );
+    assert!(progress.windows(2).all(|pair| {
+        pair[0].bytes_imported <= pair[1].bytes_imported
+            && pair
+                .iter()
+                .all(|entry| entry.total_bytes == source_bytes.len() as u64)
+    }));
+    let mut reader = store
+        .audio_asset_reader(&media_ref)
+        .expect("completed import should resolve");
+    let mut embedded = Vec::new();
+    reader
+        .read_to_end(&mut embedded)
+        .expect("completed import should be readable");
+    assert_eq!(embedded, source_bytes);
+    drop(reader);
+
+    store.close().expect("project database should close");
+    remove_database(&database_path);
+    std::fs::remove_file(source_path).expect("source fixture should be removed");
+}
+
+#[test]
 fn importing_an_external_file_embeds_it_and_returns_a_media_reference() {
     let database_path = project_path();
     let source_path = database_path.with_extension("wav");

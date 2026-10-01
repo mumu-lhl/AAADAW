@@ -6,6 +6,6 @@
 mod store;
 
 pub use store::{
-    AudioAssetSourceStatus, CURRENT_SCHEMA_VERSION, ProjectStore, ResolvedAudioAsset,
-    SqliteAudioAssetReader, StorageError,
+    AudioAssetImportProgress, AudioAssetImportWorker, AudioAssetSourceStatus,
+    CURRENT_SCHEMA_VERSION, ProjectStore, ResolvedAudioAsset, SqliteAudioAssetReader, StorageError,
 };
