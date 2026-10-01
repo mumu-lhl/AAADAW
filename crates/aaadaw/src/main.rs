@@ -7,6 +7,7 @@ use aaadaw_core::{DawAction, ItemId, Project, ProjectSnapshot, Track, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -28,6 +29,7 @@ struct App {
     action_query: String,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    track_name_edits: HashMap<TrackId, String>,
     revision: u64,
     saved_revision: u64,
     io_busy: bool,
@@ -68,6 +70,9 @@ impl std::fmt::Debug for SharedAudioImportWorker {
 enum Message {
     AddTrack,
     DeleteTrack(TrackId),
+    MoveTrack(TrackId, i8),
+    TrackNameChanged(TrackId, String),
+    CommitTrackName(TrackId),
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
@@ -186,6 +191,9 @@ impl App {
                     &message,
                     Message::AddTrack
                         | Message::DeleteTrack(_)
+                        | Message::MoveTrack(..)
+                        | Message::TrackNameChanged(..)
+                        | Message::CommitTrackName(_)
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
@@ -209,9 +217,12 @@ impl App {
         let mut task = Task::none();
         match message {
             Message::AddTrack => self.add_track(),
-            Message::DeleteTrack(track_id) => {
-                self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted")
+            Message::DeleteTrack(track_id) => self.delete_track(track_id),
+            Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
+            Message::TrackNameChanged(track_id, name) => {
+                self.track_name_edits.insert(track_id, name);
             }
+            Message::CommitTrackName(track_id) => self.commit_track_name(track_id),
             Message::ToggleMute(track_id) => {
                 if let Some(track) = self
                     .project
@@ -310,6 +321,7 @@ impl App {
                 match result {
                     Some(Ok(project)) => {
                         self.project = project;
+                        self.track_name_edits.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.revision = 0;
@@ -471,7 +483,16 @@ impl App {
 
         let mut track_list = column![text("Tracks").size(18)].spacing(10);
         for track in self.project.tracks() {
-            track_list = track_list.push(track_row(track));
+            let track_id = track.id();
+            let edited_name = self
+                .track_name_edits
+                .get(&track_id)
+                .map_or(track.name(), String::as_str);
+            track_list = track_list.push(track_row(
+                track,
+                edited_name,
+                self.track_name_edits.contains_key(&track_id),
+            ));
         }
         if self.project.tracks().is_empty() {
             track_list = track_list.push(text("No tracks. Add one to start editing."));
@@ -886,6 +907,67 @@ impl App {
         };
     }
 
+    fn delete_track(&mut self, track_id: TrackId) {
+        self.track_name_edits.remove(&track_id);
+        self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
+    }
+
+    fn commit_track_name(&mut self, track_id: TrackId) {
+        let Some(name) = self.track_name_edits.get(&track_id).cloned() else {
+            return;
+        };
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            self.status = "Track name must not be empty".to_owned();
+            return;
+        }
+        let Some(current_name) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .map(|track| track.name().to_owned())
+        else {
+            self.track_name_edits.remove(&track_id);
+            self.status = "Track no longer exists".to_owned();
+            return;
+        };
+        self.track_name_edits.remove(&track_id);
+        if name == current_name {
+            self.status = "Track name unchanged".to_owned();
+            return;
+        }
+        self.apply_action(DawAction::SetTrackName { track_id, name }, "Track renamed");
+    }
+
+    fn move_track(&mut self, track_id: TrackId, direction: i8) {
+        let Some(index) = self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+        else {
+            self.status = "Track no longer exists".to_owned();
+            return;
+        };
+        let target_index = match direction {
+            -1 => index.checked_sub(1),
+            1 if index + 1 < self.project.tracks().len() => Some(index + 1),
+            _ => None,
+        };
+        let Some(target_index) = target_index else {
+            self.status = "Track is already at that end of the list".to_owned();
+            return;
+        };
+        self.apply_action(
+            DawAction::MoveTrack {
+                track_id,
+                index: target_index,
+            },
+            "Track order changed",
+        );
+    }
+
     fn nudge_audio_item(&mut self, item_id: ItemId, direction: i8) {
         let Some((media_ref, source_offset_samples, length_samples, start_sample)) = self
             .project
@@ -1028,29 +1110,34 @@ fn prepare_project_playback_file(
     Ok(prepared)
 }
 
-fn track_row(track: &Track) -> Element<'_, Message> {
+fn track_row<'a>(track: &'a Track, edited_name: &'a str, has_edit: bool) -> Element<'a, Message> {
     let track_id = track.id();
-    row![
-        text(format!(
-            "{} · {:.1} dB · pan {:+.2}",
-            track.name(),
-            track.volume_db(),
-            track.pan()
-        ))
-        .width(Length::Fill),
+    let heading = row![
+        text_input("Track name", edited_name)
+            .on_input(move |name| Message::TrackNameChanged(track_id, name))
+            .on_submit(Message::CommitTrackName(track_id))
+            .width(Length::Fill),
+        button(if has_edit { "Save" } else { "Rename" })
+            .on_press(Message::CommitTrackName(track_id)),
+        button("↑").on_press(Message::MoveTrack(track_id, -1)),
+        button("↓").on_press(Message::MoveTrack(track_id, 1)),
         button("Delete").on_press(Message::DeleteTrack(track_id)),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+    let controls = row![
         button(if track.is_muted() { "Unmute" } else { "Mute" })
             .on_press(Message::ToggleMute(track_id)),
         button(if track.is_solo() { "Unsolo" } else { "Solo" })
             .on_press(Message::ToggleSolo(track_id)),
-        button("−").on_press(Message::AdjustVolume(track_id, -1.0)),
-        button("+").on_press(Message::AdjustVolume(track_id, 1.0)),
+        button("−dB").on_press(Message::AdjustVolume(track_id, -1.0)),
+        button("+dB").on_press(Message::AdjustVolume(track_id, 1.0)),
         button("◀").on_press(Message::AdjustPan(track_id, -0.1)),
         button("▶").on_press(Message::AdjustPan(track_id, 0.1)),
     ]
     .spacing(6)
-    .align_y(Alignment::Center)
-    .into()
+    .align_y(Alignment::Center);
+    column![heading, controls].spacing(6).into()
 }
 
 #[cfg(test)]
@@ -1130,6 +1217,40 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn track_rename_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+
+        let _ = app.update(Message::TrackNameChanged(track_id, "Lead Vox".to_owned()));
+        let _ = app.update(Message::CommitTrackName(track_id));
+        assert_eq!(app.project.tracks()[0].name(), "Lead Vox");
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.tracks()[0].name(), "Audio 1");
+        let revision = app.revision;
+        let _ = app.update(Message::TrackNameChanged(track_id, "   ".to_owned()));
+        let _ = app.update(Message::CommitTrackName(track_id));
+        assert_eq!(app.project.tracks()[0].name(), "Audio 1");
+        assert_eq!(app.revision, revision);
+    }
+
+    #[test]
+    fn track_reorder_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let _ = app.update(Message::AddTrack);
+        let first_id = app.project.tracks()[0].id();
+        let second_id = app.project.tracks()[1].id();
+
+        let _ = app.update(Message::MoveTrack(second_id, -1));
+        assert_eq!(app.project.tracks()[0].id(), second_id);
+        assert_eq!(app.project.tracks()[1].id(), first_id);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.tracks()[0].id(), first_id);
+        assert_eq!(app.project.tracks()[1].id(), second_id);
     }
 
     #[test]

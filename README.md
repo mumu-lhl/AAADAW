@@ -27,7 +27,7 @@ cargo xtest
 
 ## Workspace
 
-- `crates/aaadaw`: Iced desktop shell with undoable track creation/deletion and controls, an Audio/MIDI item overview, undoable one-second audio-item moves/deletion, action search, background project open/save, and cancellable audio-file import; optional `jack-backend` adds live transport and item seek. Project changes use `aaadaw-core` actions.
+- `crates/aaadaw`: Iced desktop shell with undoable track creation/deletion/rename/reorder and controls, an Audio/MIDI item overview, undoable one-second audio-item moves/deletion, action search, background project open/save, and cancellable audio-file import; optional `jack-backend` adds live transport and item seek. Project changes use `aaadaw-core` actions.
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic, including MIDI and sample-clock audio items. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
 - `crates/aaadaw-app`: control-layer orchestration for media playback and cancellable embedded imports; it prepares seek-positioned graphs, owns background feeders, and returns placement `DawAction`s. Optional `jack-backend` supports playback and safe graph replacement.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite project persistence and chunked embedded audio assets through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
