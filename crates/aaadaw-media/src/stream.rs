@@ -1,18 +1,21 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, MediaError};
 use aaadaw_core::AudioItem;
 use aaadaw_engine::PcmStreamProducer;
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const MAX_UPSAMPLE_RATIO: f64 = 64.0;
+type WorkerStartupResult = Result<(), (Option<io::ErrorKind>, String)>;
 
 /// A cancellable decoder/resampler worker feeding one mono engine stream.
 pub struct AudioFeedWorker {
     cancelled: Arc<AtomicBool>,
+    startup: Option<Receiver<WorkerStartupResult>>,
     thread: Option<JoinHandle<Result<(), MediaError>>>,
 }
 
@@ -145,28 +148,43 @@ fn spawn_stream(
     }
     let cancelled = Arc::new(AtomicBool::new(false));
     let worker_cancelled = Arc::clone(&cancelled);
+    let (startup_sender, startup) = mpsc::sync_channel(1);
+    let config = WorkerConfig {
+        output_sample_rate,
+        source_offset_remaining: source_offset_samples,
+        output_samples_remaining: output_length_samples,
+        output_samples_to_skip,
+    };
     let thread = thread::Builder::new()
         .name("aaadaw-media-decode".to_owned())
-        .spawn(move || {
-            run_worker(
-                input,
-                output_sample_rate,
-                source_offset_samples,
-                output_length_samples,
-                output_samples_to_skip,
-                producer,
-                worker_cancelled,
-            )
-        })
+        .spawn(move || run_worker(input, config, producer, worker_cancelled, startup_sender))
         .map_err(MediaError::ThreadSpawn)?;
 
     Ok(AudioFeedWorker {
         cancelled,
+        startup: Some(startup),
         thread: Some(thread),
     })
 }
 
 impl AudioFeedWorker {
+    /// Waits until the worker opens and probes its source successfully.
+    ///
+    /// The source I/O remains on the worker thread; this caller only waits for its result.
+    pub fn wait_ready(&mut self) -> Result<(), MediaError> {
+        let startup = self
+            .startup
+            .take()
+            .ok_or(MediaError::WorkerStartupAlreadyChecked)?;
+        match startup.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err((io_kind, message))) => {
+                Err(MediaError::WorkerStartupFailed { message, io_kind })
+            }
+            Err(_) => Err(MediaError::WorkerPanicked),
+        }
+    }
+
     /// Waits for decoding to reach EOF and returns any worker error.
     /// The stream consumer must continue draining if the queue is bounded.
     pub fn join(mut self) -> Result<(), MediaError> {
@@ -207,22 +225,47 @@ enum DecoderInput {
     },
 }
 
+struct WorkerConfig {
+    output_sample_rate: u32,
+    source_offset_remaining: u64,
+    output_samples_remaining: Option<u64>,
+    output_samples_to_skip: u64,
+}
+
 fn run_worker(
     input: DecoderInput,
-    output_sample_rate: u32,
-    mut source_offset_remaining: u64,
-    mut output_samples_remaining: Option<u64>,
-    mut output_samples_to_skip: u64,
+    config: WorkerConfig,
     mut producer: PcmStreamProducer,
     cancelled: Arc<AtomicBool>,
+    startup: SyncSender<WorkerStartupResult>,
 ) -> Result<(), MediaError> {
-    let mut decoder = match input {
-        DecoderInput::Path(path) => AudioStreamDecoder::open(path)?,
+    let WorkerConfig {
+        output_sample_rate,
+        mut source_offset_remaining,
+        mut output_samples_remaining,
+        mut output_samples_to_skip,
+    } = config;
+    let decoder_result = match input {
+        DecoderInput::Path(path) => AudioStreamDecoder::open(path),
         DecoderInput::Reader {
             reader,
             byte_len,
             extension,
-        } => AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?,
+        } => AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref()),
+    };
+    let mut decoder = match decoder_result {
+        Ok(decoder) => {
+            let _ = startup.send(Ok(()));
+            decoder
+        }
+        Err(error) => {
+            let io_kind = match &error {
+                MediaError::Io(error) => Some(error.kind()),
+                _ => None,
+            };
+            let _ = startup.send(Err((io_kind, error.to_string())));
+            return Err(error);
+        }
     };
     let mut resampler: Option<StreamingMonoResampler> = None;
     let mut mono_input = Vec::new();

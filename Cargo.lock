@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "aaadaw-app"
+version = "0.1.0"
+dependencies = [
+ "aaadaw-core",
+ "aaadaw-engine",
+ "aaadaw-media",
+ "aaadaw-storage",
+]
+
+[[package]]
 name = "aaadaw-core"
 version = "0.1.0"
 

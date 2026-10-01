@@ -1,0 +1,12 @@
+[package]
+name = "aaadaw-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aaadaw-core = { path = "../aaadaw-core" }
+aaadaw-engine = { path = "../aaadaw-engine" }
+aaadaw-media = { path = "../aaadaw-media" }
+aaadaw-storage = { path = "../aaadaw-storage" }

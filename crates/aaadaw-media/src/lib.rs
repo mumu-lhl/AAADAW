@@ -97,6 +97,11 @@ pub enum MediaError {
     AudioTooLong,
     ThreadSpawn(std::io::Error),
     WorkerPanicked,
+    WorkerStartupFailed {
+        message: String,
+        io_kind: Option<std::io::ErrorKind>,
+    },
+    WorkerStartupAlreadyChecked,
 }
 
 impl fmt::Display for MediaError {
@@ -138,6 +143,15 @@ impl fmt::Display for MediaError {
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
             Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),
             Self::WorkerPanicked => formatter.write_str("audio decoding worker panicked"),
+            Self::WorkerStartupFailed { message, .. } => {
+                write!(
+                    formatter,
+                    "audio decoding worker could not open its source: {message}"
+                )
+            }
+            Self::WorkerStartupAlreadyChecked => {
+                formatter.write_str("audio decoding worker startup was already checked")
+            }
         }
     }
 }
