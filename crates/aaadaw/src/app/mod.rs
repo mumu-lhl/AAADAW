@@ -8,17 +8,21 @@ use aaadaw_app::{
 use aaadaw_app::{
     PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
 };
-use aaadaw_core::{DawAction, ItemId, Project, ProjectSnapshot, TrackId};
+#[cfg(feature = "jack-backend")]
+use aaadaw_core::ProjectSnapshot;
+use aaadaw_core::{DawAction, ItemId, Project, TrackId};
+#[cfg(feature = "jack-backend")]
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 mod media;
 mod messages;
+mod project_io;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -123,7 +127,9 @@ impl App {
         app.status = format!("Opening {}…", path.display());
         let message_path = path.clone();
         let task = Task::perform(
-            run_blocking("aaadaw-project-open", move || load_project_file(path)),
+            run_blocking("aaadaw-project-open", move || {
+                project_io::load_project_file(path)
+            }),
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
         (app, task)
@@ -433,11 +439,11 @@ impl App {
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
             Message::OpenProject => {
                 self.active_menu = None;
-                task = self.open_project();
+                task = project_io::open_project(self);
             }
             Message::SaveProject => {
                 self.active_menu = None;
-                task = self.save_project();
+                task = project_io::save_project(self, None);
             }
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ImportAudio => task = self.start_audio_import(),
@@ -531,60 +537,6 @@ impl App {
 
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
-    }
-
-    fn open_project(&mut self) -> Task<Message> {
-        #[cfg(feature = "jack-backend")]
-        if self.playback.is_some() {
-            self.status = "Close JACK output before opening another project".to_owned();
-            return Task::none();
-        }
-        if self.io_busy {
-            self.status = "Wait for current project operation to finish".to_owned();
-            return Task::none();
-        }
-        if self.is_dirty() {
-            self.status = "Save current project before opening another".to_owned();
-            return Task::none();
-        }
-        let Some(path) = project_path_from_query(&self.project_path_query) else {
-            self.status = "Enter a project file path first".to_owned();
-            return Task::none();
-        };
-        self.io_busy = true;
-        self.status = format!("Opening {}…", path.display());
-        let message_path = path.clone();
-        Task::perform(
-            run_blocking("aaadaw-project-open", move || load_project_file(path)),
-            move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
-        )
-    }
-
-    fn save_project(&mut self) -> Task<Message> {
-        if self.io_busy {
-            self.status = "Wait for current project operation to finish".to_owned();
-            return Task::none();
-        }
-        let Some(path) = self
-            .project_path
-            .clone()
-            .or_else(|| project_path_from_query(&self.project_path_query))
-        else {
-            self.status = "Enter a project file path first".to_owned();
-            return Task::none();
-        };
-        let can_overwrite = self.project_path.is_some();
-        let revision = self.revision;
-        let snapshot = self.project.snapshot();
-        self.io_busy = true;
-        self.status = format!("Saving {}…", path.display());
-        let message_path = path.clone();
-        Task::perform(
-            run_blocking("aaadaw-project-save", move || {
-                save_project_file(path, snapshot, can_overwrite)
-            }),
-            move |result| Message::ProjectSaved(message_path, revision, result),
-        )
     }
 
     #[cfg(feature = "jack-backend")]
@@ -953,38 +905,6 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|error| format!("could not start worker: {error}"))?
         .join()
         .map_err(|_| format!("{name} worker panicked"))?
-}
-
-fn load_project_file(path: PathBuf) -> Result<Project, String> {
-    if !path.is_file() {
-        return Err(format!("project file {} does not exist", path.display()));
-    }
-    let store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
-    let project = store.load().map_err(|error| error.to_string());
-    let close = store.close().map_err(|error| error.to_string());
-    let project = project?;
-    close?;
-    Ok(project)
-}
-
-fn save_project_file(
-    path: PathBuf,
-    snapshot: ProjectSnapshot,
-    can_overwrite: bool,
-) -> Result<(), String> {
-    if path == Path::new(":memory:") {
-        return Err("project path must name a file".to_owned());
-    }
-    if !can_overwrite && path.exists() {
-        return Err("file exists; open it before saving to that path".to_owned());
-    }
-    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
-    let mut store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
-    let save = store.save(&project).map_err(|error| error.to_string());
-    let close = store.close().map_err(|error| error.to_string());
-    save?;
-    close?;
-    Ok(())
 }
 
 #[cfg(feature = "jack-backend")]

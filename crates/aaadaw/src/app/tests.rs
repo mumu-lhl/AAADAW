@@ -1,8 +1,9 @@
 #[cfg(feature = "jack-backend")]
 use super::prepare_project_playback_file;
+use super::project_io::{load_project_file, save_project_file};
 use super::{
     App, MainMenu, Message, PathPickerTarget, WorkspacePage, keyboard_shortcut_event,
-    load_project_file, save_project_file, shortcut_message,
+    shortcut_message,
 };
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 #[cfg(feature = "jack-backend")]
@@ -538,6 +539,66 @@ fn completed_audio_import_places_item_through_project_action() {
     assert_eq!(app.project.audio_items()[0].length_samples(), 128);
     assert_eq!(app.revision, 2);
     assert!(!app.import_busy);
+}
+
+#[test]
+fn save_as_target_overrides_the_current_project_path() {
+    let current = std::path::Path::new("/projects/current.aaadaw");
+    let selected = std::path::PathBuf::from("/projects/dialog.aaadaw");
+
+    let resolved = super::project_io::resolve_save_target(
+        Some(current),
+        "/projects/typed.aaadaw",
+        Some(selected.clone()),
+    );
+
+    assert_eq!(resolved, Some((selected, false)));
+}
+
+#[test]
+fn save_as_allows_overwrite_only_for_the_current_file() {
+    let current = std::path::Path::new("/projects/current.aaadaw");
+    let selected_current = std::path::PathBuf::from("/projects/current.aaadaw");
+    let selected_other = std::path::PathBuf::from("/projects/other.aaadaw");
+
+    assert_eq!(
+        super::project_io::resolve_save_target(Some(current), "", None),
+        Some((current.to_path_buf(), true))
+    );
+    assert_eq!(
+        super::project_io::resolve_save_target(
+            Some(current),
+            "/projects/typed.aaadaw",
+            Some(selected_current.clone()),
+        ),
+        Some((selected_current, true))
+    );
+    assert_eq!(
+        super::project_io::resolve_save_target(
+            Some(current),
+            "/projects/typed.aaadaw",
+            Some(selected_other.clone()),
+        ),
+        Some((selected_other, false))
+    );
+    assert_eq!(
+        super::project_io::resolve_save_target(None, "/projects/typed.aaadaw", None),
+        Some((std::path::PathBuf::from("/projects/typed.aaadaw"), false))
+    );
+}
+
+#[test]
+fn dirty_project_cannot_be_replaced_by_open() {
+    let mut app = App {
+        project_path_query: "/projects/another.aaadaw".to_owned(),
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = super::project_io::open_project(&mut app);
+
+    assert!(!app.io_busy);
+    assert_eq!(app.status, "Save current project before opening another");
 }
 
 #[test]

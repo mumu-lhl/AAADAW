@@ -61,29 +61,26 @@ impl App {
     ) -> Task<Message> {
         self.path_picker_busy = false;
         match result {
-            Ok(Some(path)) => {
-                let path = path.to_string_lossy().into_owned();
-                match target {
-                    PathPickerTarget::OpenProject => {
-                        self.project_path_query = path;
-                        self.active_menu = None;
-                        self.open_project()
-                    }
-                    PathPickerTarget::SaveProject => {
-                        self.project_path_query = path;
-                        self.active_menu = None;
-                        self.save_project()
-                    }
-                    PathPickerTarget::ImportAudio => {
-                        self.audio_file_path_query = path;
-                        Task::none()
-                    }
-                    PathPickerTarget::RelinkAudio => {
-                        self.relink_source_path_query = path;
-                        Task::none()
-                    }
+            Ok(Some(path)) => match target {
+                PathPickerTarget::OpenProject => {
+                    self.project_path_query = path.to_string_lossy().into_owned();
+                    self.active_menu = None;
+                    super::project_io::open_project(self)
                 }
-            }
+                PathPickerTarget::SaveProject => {
+                    self.project_path_query = path.to_string_lossy().into_owned();
+                    self.active_menu = None;
+                    super::project_io::save_project(self, Some(path))
+                }
+                PathPickerTarget::ImportAudio => {
+                    self.audio_file_path_query = path.to_string_lossy().into_owned();
+                    Task::none()
+                }
+                PathPickerTarget::RelinkAudio => {
+                    self.relink_source_path_query = path.to_string_lossy().into_owned();
+                    Task::none()
+                }
+            },
             Ok(None) => Task::none(),
             Err(error) => {
                 self.status = format!("File dialog failed: {error}");
