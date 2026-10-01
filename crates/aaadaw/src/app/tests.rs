@@ -65,6 +65,42 @@ fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
 }
 
 #[test]
+fn cancelled_picker_preserves_path_and_clears_busy_state() {
+    let mut app = App {
+        path_picker_busy: true,
+        audio_file_path_query: "previous.wav".to_owned(),
+        revision: 4,
+        ..App::default()
+    };
+
+    let _ = app.path_picked(PathPickerTarget::ImportAudio, Ok(None));
+
+    assert_eq!(app.audio_file_path_query, "previous.wav");
+    assert_eq!(app.revision, 4);
+    assert!(!app.path_picker_busy);
+}
+
+#[test]
+fn failed_picker_reports_error_and_clears_busy_state() {
+    let mut app = App {
+        path_picker_busy: true,
+        audio_file_path_query: "previous.wav".to_owned(),
+        revision: 4,
+        ..App::default()
+    };
+
+    let _ = app.path_picked(
+        PathPickerTarget::ImportAudio,
+        Err("dialog unavailable".to_owned()),
+    );
+
+    assert_eq!(app.audio_file_path_query, "previous.wav");
+    assert_eq!(app.revision, 4);
+    assert!(!app.path_picker_busy);
+    assert_eq!(app.status, "File dialog failed: dialog unavailable");
+}
+
+#[test]
 fn native_picker_results_fill_the_requested_path_fields() {
     let mut app = App {
         path_picker_busy: true,
