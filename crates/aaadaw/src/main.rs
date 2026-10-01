@@ -67,6 +67,7 @@ impl std::fmt::Debug for SharedAudioImportWorker {
 #[derive(Debug, Clone)]
 enum Message {
     AddTrack,
+    DeleteTrack(TrackId),
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
@@ -183,6 +184,7 @@ impl App {
                 && matches!(
                     &message,
                     Message::AddTrack
+                        | Message::DeleteTrack(_)
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
@@ -205,6 +207,9 @@ impl App {
         let mut task = Task::none();
         match message {
             Message::AddTrack => self.add_track(),
+            Message::DeleteTrack(track_id) => {
+                self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted")
+            }
             Message::ToggleMute(track_id) => {
                 if let Some(track) = self
                     .project
@@ -1011,6 +1016,7 @@ fn track_row(track: &Track) -> Element<'_, Message> {
     let track_id = track.id();
     row![
         text(format!("{} · {:.1} dB", track.name(), track.volume_db())).width(Length::Fill),
+        button("Delete").on_press(Message::DeleteTrack(track_id)),
         button(if track.is_muted() { "Unmute" } else { "Mute" })
             .on_press(Message::ToggleMute(track_id)),
         button(if track.is_solo() { "Unsolo" } else { "Solo" })
@@ -1100,6 +1106,19 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn track_delete_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+
+        let _ = app.update(Message::DeleteTrack(track_id));
+        assert!(app.project.tracks().is_empty());
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.tracks().len(), 1);
+        assert_eq!(app.project.tracks()[0].id(), track_id);
     }
 
     #[test]
