@@ -176,6 +176,23 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
         project.snapshot()
     );
     store.close().expect("database should close");
+
+    let connection = Connection::open(&path).expect("database should be SQLite");
+    connection
+        .execute_batch(
+            "ALTER TABLE audio_assets DROP COLUMN content_hash; \
+             ALTER TABLE audio_assets DROP COLUMN source_path",
+        )
+        .expect("simulate an earlier additive audio-asset table");
+    drop(connection);
+    let store = ProjectStore::open(&path).expect("missing fingerprint columns should be added");
+    assert_eq!(
+        store
+            .schema_version()
+            .expect("schema version should remain readable"),
+        CURRENT_SCHEMA_VERSION
+    );
+    store.close().expect("upgraded asset database should close");
     remove_database(&path);
 }
 
@@ -210,11 +227,36 @@ fn importing_an_external_file_embeds_it_and_returns_a_media_reference() {
         std::fs::read(&source_path).expect("source should remain"),
         source_bytes
     );
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("source fingerprint should be checked"),
+        aaadaw_storage::AudioAssetSourceStatus::Unchanged
+    );
+
+    let changed_bytes = vec![0x3c; source_bytes.len()];
+    std::fs::write(&source_path, &changed_bytes).expect("original source should be editable");
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("changed source should be detected"),
+        aaadaw_storage::AudioAssetSourceStatus::Changed
+    );
+    assert_eq!(
+        embedded_bytes, source_bytes,
+        "embedded snapshot stays immutable"
+    );
     drop(reader);
+    std::fs::remove_file(&source_path).expect("original source should be removable");
+    assert_eq!(
+        store
+            .audio_asset_source_status(&media_ref)
+            .expect("missing source should be reported"),
+        aaadaw_storage::AudioAssetSourceStatus::Missing
+    );
 
     store.close().expect("project database should close");
     remove_database(&database_path);
-    std::fs::remove_file(source_path).expect("source fixture should be removed");
 }
 
 #[test]
@@ -269,6 +311,12 @@ fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
         .expect("asset reader should open");
     assert_eq!(reader.original_name(), "fixture.bin");
     assert_eq!(reader.byte_len(), bytes.len() as u64);
+    assert_eq!(
+        store
+            .audio_asset_source_status("asset://large-fixture")
+            .expect("reader-only imports have no source path"),
+        aaadaw_storage::AudioAssetSourceStatus::Untracked
+    );
     let mut around_boundary = [0; 19];
     reader
         .seek(SeekFrom::Start(256 * 1024 - 7))

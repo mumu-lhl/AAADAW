@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
 rusqlite = { version = "0.37", features = ["bundled"] }
+sha2 = "0.11"

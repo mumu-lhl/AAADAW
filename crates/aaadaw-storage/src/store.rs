@@ -6,6 +6,7 @@ use aaadaw_core::{
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
@@ -86,7 +87,9 @@ CREATE TABLE IF NOT EXISTS audio_assets (
     original_name TEXT NOT NULL,
     byte_len INTEGER NOT NULL CHECK (byte_len >= 0),
     chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
-    chunk_size INTEGER NOT NULL CHECK (chunk_size > 0)
+    chunk_size INTEGER NOT NULL CHECK (chunk_size > 0),
+    source_path TEXT,
+    content_hash BLOB
 );
 CREATE TABLE IF NOT EXISTS audio_asset_chunks (
     media_ref TEXT NOT NULL REFERENCES audio_assets(media_ref) ON DELETE CASCADE,
@@ -209,6 +212,21 @@ impl From<io::Error> for StorageError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+/// Status of the original external file recorded when an asset was imported.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioAssetSourceStatus {
+    /// The asset was imported from a reader with no original file path.
+    Untracked,
+    /// The file exists and matches the embedded bytes' SHA-256 fingerprint.
+    Unchanged,
+    /// The file exists but its content differs from the embedded snapshot.
+    Changed,
+    /// The recorded source path no longer exists.
+    Missing,
+    /// The asset predates source fingerprint metadata.
+    Unverified,
 }
 
 /// Seekable, chunk-backed reader for an audio asset embedded in a project file.
@@ -380,6 +398,12 @@ impl ProjectStore {
     /// background thread; project assets are read incrementally into bounded chunks.
     pub fn import_audio_file(&mut self, path: impl AsRef<Path>) -> Result<String, StorageError> {
         let path = path.as_ref();
+        let source_path = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        let source_path = source_path.to_str();
         let source = File::open(path)?;
         let original_name = path
             .file_name()
@@ -389,7 +413,7 @@ impl ProjectStore {
             self.connection
                 .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
         let media_ref = format!("asset://{token}");
-        self.import_audio_asset(&media_ref, &original_name, source)?;
+        self.import_audio_asset_with_source_path(&media_ref, &original_name, source_path, source)?;
         Ok(media_ref)
     }
 
@@ -401,6 +425,16 @@ impl ProjectStore {
         &mut self,
         media_ref: &str,
         original_name: &str,
+        source: impl Read,
+    ) -> Result<u64, StorageError> {
+        self.import_audio_asset_with_source_path(media_ref, original_name, None, source)
+    }
+
+    fn import_audio_asset_with_source_path(
+        &mut self,
+        media_ref: &str,
+        original_name: &str,
+        source_path: Option<&str>,
         mut source: impl Read,
     ) -> Result<u64, StorageError> {
         if media_ref.trim().is_empty() {
@@ -422,14 +456,20 @@ impl ProjectStore {
         }
 
         transaction.execute(
-            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, chunk_size) \
-             VALUES(?1, ?2, 0, 0, ?3)",
-            params![media_ref, original_name, AUDIO_ASSET_CHUNK_SIZE as i64],
+            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, \
+             chunk_size, source_path, content_hash) VALUES(?1, ?2, 0, 0, ?3, ?4, NULL)",
+            params![
+                media_ref,
+                original_name,
+                AUDIO_ASSET_CHUNK_SIZE as i64,
+                source_path
+            ],
         )?;
 
         let mut chunk_buffer = vec![0; AUDIO_ASSET_CHUNK_SIZE];
         let mut byte_len = 0_u64;
         let mut chunk_count = 0_usize;
+        let mut content_hasher = Sha256::new();
         loop {
             let chunk_len = fill_chunk(&mut source, &mut chunk_buffer)?;
             if chunk_len == 0 {
@@ -444,6 +484,7 @@ impl ProjectStore {
                     &chunk_buffer[..chunk_len]
                 ],
             )?;
+            content_hasher.update(&chunk_buffer[..chunk_len]);
             byte_len = byte_len
                 .checked_add(chunk_len as u64)
                 .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
@@ -456,11 +497,13 @@ impl ProjectStore {
             return Err(StorageError::EmptyAudioAsset);
         }
         transaction.execute(
-            "UPDATE audio_assets SET byte_len = ?2, chunk_count = ?3 WHERE media_ref = ?1",
+            "UPDATE audio_assets SET byte_len = ?2, chunk_count = ?3, content_hash = ?4 \
+             WHERE media_ref = ?1",
             params![
                 media_ref,
                 to_sql_integer(byte_len)?,
-                usize_to_sql(chunk_count)?
+                usize_to_sql(chunk_count)?,
+                content_hasher.finalize().as_slice()
             ],
         )?;
         transaction.commit()?;
@@ -524,6 +567,51 @@ impl ProjectStore {
                 cached_chunk: None,
             }),
         })
+    }
+
+    /// Re-hashes the recorded original file to determine whether it still matches the import snapshot.
+    ///
+    /// This reads the entire external file and should run on a background thread.
+    pub fn audio_asset_source_status(
+        &self,
+        media_ref: &str,
+    ) -> Result<AudioAssetSourceStatus, StorageError> {
+        let metadata = self
+            .connection
+            .query_row(
+                "SELECT source_path, content_hash FROM audio_assets WHERE media_ref = ?1",
+                [media_ref],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<Vec<u8>>>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+        let Some(source_path) = metadata.0 else {
+            return Ok(AudioAssetSourceStatus::Untracked);
+        };
+        let Some(expected_hash) = metadata.1 else {
+            return Ok(AudioAssetSourceStatus::Unverified);
+        };
+        let expected_hash: [u8; 32] = expected_hash.try_into().map_err(|_| {
+            StorageError::InvalidStoredData("audio asset SHA-256 fingerprint has an invalid length")
+        })?;
+        let mut source = match File::open(source_path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(AudioAssetSourceStatus::Missing);
+            }
+            Err(error) => return Err(StorageError::Io(error)),
+        };
+        let actual_hash = sha256_reader(&mut source)?;
+        if actual_hash == expected_hash {
+            Ok(AudioAssetSourceStatus::Unchanged)
+        } else {
+            Ok(AudioAssetSourceStatus::Changed)
+        }
     }
 
     /// Returns the schema version after migrations have been applied.
@@ -629,6 +717,37 @@ impl ProjectStore {
     }
 }
 
+fn ensure_audio_asset_metadata_columns(connection: &Connection) -> Result<(), StorageError> {
+    for (column, definition) in [("source_path", "TEXT"), ("content_hash", "BLOB")] {
+        let mut statement = connection.prepare("PRAGMA table_info(audio_assets)")?;
+        let mut rows = statement.query([])?;
+        let mut found = false;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            found |= name == column;
+        }
+        if !found {
+            connection.execute_batch(&format!(
+                "ALTER TABLE audio_assets ADD COLUMN {column} {definition}"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+fn sha256_reader(reader: &mut impl Read) -> Result<[u8; 32], io::Error> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().into())
+}
+
 fn fill_chunk(reader: &mut impl Read, buffer: &mut [u8]) -> Result<usize, io::Error> {
     let mut filled = 0;
     while filled < buffer.len() {
@@ -662,6 +781,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     }
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
+    ensure_audio_asset_metadata_columns(connection)?;
     Ok(())
 }
 

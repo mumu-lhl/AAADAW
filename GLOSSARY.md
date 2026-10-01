@@ -13,7 +13,7 @@ A track placement containing MIDI notes, positioned and sized in PPQ ticks so it
 _Avoid_: MIDI asset.
 
 **Audio Asset**:
-Immutable source-media bytes embedded in a project and stored as bounded SQLite BLOB chunks; a seekable reader exposes the content to background decoders.
+An immutable snapshot of source-media bytes embedded in a project; edits to the original file do not alter it. The original source can be checked for changes, and refreshing creates a new asset rather than mutating this one.
 _Avoid_: Audio Item; an asset is source content, while an item is its timeline placement.
 
 **Media Reference**:

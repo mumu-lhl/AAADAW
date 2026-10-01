@@ -4,7 +4,7 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 
 ## Project status
 
-The core project model now includes sample-clock `AudioItem`s with undoable edits and SQLite persistence. Project audio assets can be embedded as bounded SQLite BLOB chunks, opened through seekable readers, then decoded and scheduled by the render graph without loading the whole asset into memory. An optional Linux JACK stereo-output backend is available; external-link/relink and pack-project workflows, richer media metadata, automatic seek coordination, native PipeWire/WASAPI output, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
+The core project model now includes sample-clock `AudioItem`s with undoable edits and SQLite persistence. Project audio assets are immutable snapshots embedded as bounded SQLite BLOB chunks and decoded through seekable readers without loading the whole asset into memory. File imports preserve the original and record its path/SHA-256 so a background check can report changed or missing sources. An optional Linux JACK stereo-output backend is available; external-link/relink and pack-project workflows, richer media metadata, automatic seek coordination, native PipeWire/WASAPI output, UI, recording, and plugin hosting remain future work. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [Implementation roadmap](ROADMAP.md)
