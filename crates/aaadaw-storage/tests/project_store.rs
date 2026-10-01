@@ -4,6 +4,9 @@ use rusqlite::Connection;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -20,6 +23,26 @@ fn remove_database(path: &PathBuf) {
 
 struct FailingReader {
     remaining_bytes: usize,
+}
+
+struct GatedReader {
+    data: Cursor<Vec<u8>>,
+    entered: Option<Sender<()>>,
+    release: Receiver<()>,
+}
+
+impl Read for GatedReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(entered) = self.entered.take() {
+            entered
+                .send(())
+                .expect("test should still be waiting for reader");
+            self.release
+                .recv()
+                .expect("test should release the source reader");
+        }
+        self.data.read(output)
+    }
 }
 
 impl Read for FailingReader {
@@ -142,7 +165,8 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
     connection
         .execute_batch(
             "DROP TABLE audio_items; DROP TABLE audio_asset_chunks; \
-             DROP TABLE audio_asset_links; DROP TABLE audio_assets",
+             DROP TABLE audio_asset_storage_chunks; DROP TABLE audio_asset_links; \
+             DROP TABLE audio_assets",
         )
         .expect("simulate a schema-two file without audio tables");
     drop(connection);
@@ -181,8 +205,11 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
     let connection = Connection::open(&path).expect("database should be SQLite");
     connection
         .execute_batch(
-            "ALTER TABLE audio_assets DROP COLUMN content_hash; \
-             ALTER TABLE audio_assets DROP COLUMN source_path",
+            "DROP INDEX audio_assets_storage_key; \
+             ALTER TABLE audio_assets DROP COLUMN content_hash; \
+             ALTER TABLE audio_assets DROP COLUMN source_path; \
+             ALTER TABLE audio_assets DROP COLUMN storage_key; \
+             ALTER TABLE audio_assets DROP COLUMN import_state",
         )
         .expect("simulate an earlier additive audio-asset table");
     drop(connection);
@@ -194,6 +221,62 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
         CURRENT_SCHEMA_VERSION
     );
     store.close().expect("upgraded asset database should close");
+    remove_database(&path);
+}
+
+#[test]
+fn project_writes_can_proceed_while_an_import_waits_for_source_data() {
+    let path = project_path();
+    let store = ProjectStore::open(&path).expect("project database should open");
+    store.close().expect("project database should close");
+    let (entered_sender, entered_receiver) = mpsc::channel();
+    let (release_sender, release_receiver) = mpsc::channel();
+    let import_path = path.clone();
+    let importer = thread::spawn(move || {
+        let mut store = ProjectStore::open(import_path).expect("import project should open");
+        let result = store.import_audio_asset(
+            "asset://gated-import",
+            "gated.wav",
+            GatedReader {
+                data: Cursor::new(vec![1, 2, 3]),
+                entered: Some(entered_sender),
+                release: release_receiver,
+            },
+        );
+        store.close().expect("import project should close");
+        result
+    });
+
+    entered_receiver
+        .recv()
+        .expect("import should reach its source read");
+    let observer = ProjectStore::open(&path).expect("reader should open during import");
+    assert!(matches!(
+        observer.resolve_audio_asset("asset://gated-import"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+    observer
+        .close()
+        .expect("observer should close without seeing staged data");
+    let writer = Connection::open(&path).expect("another writer should open the project");
+    writer
+        .busy_timeout(Duration::from_millis(100))
+        .expect("short lock timeout should configure");
+    writer
+        .execute("CREATE TABLE lock_probe(value INTEGER)", [])
+        .expect("source I/O should not hold a SQLite write transaction");
+    drop(writer);
+
+    release_sender
+        .send(())
+        .expect("source reader should be released");
+    assert_eq!(
+        importer
+            .join()
+            .expect("import worker should not panic")
+            .expect("staged asset should publish"),
+        3
+    );
     remove_database(&path);
 }
 
@@ -494,6 +577,81 @@ fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
     assert_eq!(restored, bytes);
     drop(reader);
     reopened.close().expect("reopened database should close");
+    remove_database(&path);
+}
+
+#[test]
+fn legacy_chunks_remain_readable_and_crashed_imports_can_be_cleaned() {
+    let path = project_path();
+    let store = ProjectStore::open(&path).expect("project database should open");
+    store.close().expect("project database should close");
+
+    let connection = Connection::open(&path).expect("database should be SQLite");
+    connection
+        .execute(
+            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, \
+             chunk_size, source_path, content_hash, storage_key, import_state) \
+             VALUES('asset://legacy-chunks', 'legacy.wav', 3, 1, 262144, NULL, NULL, NULL, 1)",
+            [],
+        )
+        .expect("legacy manifest should insert");
+    connection
+        .execute(
+            "INSERT INTO audio_asset_chunks(media_ref, chunk_index, data) \
+             VALUES('asset://legacy-chunks', 0, ?1)",
+            [[11_u8, 22, 33].as_slice()],
+        )
+        .expect("legacy chunk should insert");
+    connection
+        .execute(
+            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, \
+             chunk_size, source_path, content_hash, storage_key, import_state) \
+             VALUES('asset://abandoned', 'incomplete.wav', 0, 0, 262144, NULL, NULL, 'deadbeef', 0)",
+            [],
+        )
+        .expect("pending manifest should insert");
+    connection
+        .execute(
+            "INSERT INTO audio_asset_storage_chunks(storage_key, chunk_index, data) \
+             VALUES('deadbeef', 0, ?1)",
+            [[99_u8].as_slice()],
+        )
+        .expect("pending chunk should insert");
+    drop(connection);
+
+    let mut store = ProjectStore::open(&path).expect("project should reopen");
+    let mut legacy = store
+        .audio_asset_reader("asset://legacy-chunks")
+        .expect("pre-staging chunk rows should remain readable");
+    let mut legacy_bytes = Vec::new();
+    legacy
+        .read_to_end(&mut legacy_bytes)
+        .expect("legacy bytes should read");
+    assert_eq!(legacy_bytes, [11, 22, 33]);
+    drop(legacy);
+
+    assert_eq!(
+        store
+            .cleanup_incomplete_audio_asset_imports()
+            .expect("crashed import residue should be cleaned"),
+        1
+    );
+    assert!(matches!(
+        store.audio_asset_reader("asset://abandoned"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+    let connection = Connection::open(&path).expect("project file should remain accessible");
+    let remaining_chunks: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM audio_asset_storage_chunks WHERE storage_key = 'deadbeef'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("abandoned chunks should be removed");
+    assert_eq!(remaining_chunks, 0);
+    drop(connection);
+
+    store.close().expect("reopened project should close");
     remove_database(&path);
 }
 

@@ -83,6 +83,7 @@ ADD COLUMN curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
+const AUDIO_ASSET_IMPORT_BATCH_CHUNKS: usize = 16;
 
 const AUDIO_ASSETS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS audio_assets (
@@ -92,7 +93,15 @@ CREATE TABLE IF NOT EXISTS audio_assets (
     chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
     chunk_size INTEGER NOT NULL CHECK (chunk_size > 0),
     source_path TEXT,
-    content_hash BLOB
+    content_hash BLOB,
+    storage_key TEXT,
+    import_state INTEGER NOT NULL DEFAULT 1 CHECK (import_state IN (0, 1))
+);
+CREATE TABLE IF NOT EXISTS audio_asset_storage_chunks (
+    storage_key TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+    data BLOB NOT NULL CHECK (length(data) > 0),
+    PRIMARY KEY (storage_key, chunk_index)
 );
 CREATE TABLE IF NOT EXISTS audio_asset_links (
     media_ref TEXT PRIMARY KEY CHECK (length(trim(media_ref)) > 0),
@@ -257,6 +266,8 @@ pub enum AudioAssetSourceStatus {
 }
 
 /// Progress for a background audio-file import.
+///
+/// Bytes count committed to staging chunks; the asset stays unresolved until final publication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioAssetImportProgress {
     pub bytes_imported: u64,
@@ -271,7 +282,7 @@ pub struct AudioAssetImportWorker {
 }
 
 impl AudioAssetImportWorker {
-    /// Requests cancellation; the import rolls back at its next chunk boundary.
+    /// Requests cancellation; the import cleans up at its next committed batch boundary.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
@@ -324,6 +335,7 @@ pub struct SqliteAudioAssetReader {
 struct AudioAssetReaderState {
     connection: Connection,
     media_ref: String,
+    storage_key: Option<String>,
     chunk_size: u64,
     position: u64,
     cached_chunk: Option<(u64, Vec<u8>)>,
@@ -373,15 +385,22 @@ impl Read for SqliteAudioAssetReader {
                         "audio asset chunk index overflow",
                     )
                 })?;
-                let chunk = state
-                    .connection
-                    .query_row(
+                let chunk = if let Some(storage_key) = &state.storage_key {
+                    state.connection.query_row(
+                        "SELECT data FROM audio_asset_storage_chunks \
+                             WHERE storage_key = ?1 AND chunk_index = ?2",
+                        params![storage_key, sql_chunk_index],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                } else {
+                    state.connection.query_row(
                         "SELECT data FROM audio_asset_chunks \
-                         WHERE media_ref = ?1 AND chunk_index = ?2",
+                             WHERE media_ref = ?1 AND chunk_index = ?2",
                         params![state.media_ref, sql_chunk_index],
                         |row| row.get::<_, Vec<u8>>(0),
                     )
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                }
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 state.cached_chunk = Some((chunk_index, chunk));
             }
 
@@ -497,8 +516,8 @@ impl ProjectStore {
 
     /// Starts importing an external file on a background thread.
     ///
-    /// Progress messages are emitted once per stored chunk. Dropping the worker requests
-    /// cancellation and waits for the current bounded operation to finish.
+    /// Progress messages are emitted once per committed chunk batch. Dropping the worker
+    /// requests cancellation and waits for the current bounded batch to finish.
     pub fn start_audio_asset_import(
         &self,
         source_path: impl AsRef<Path>,
@@ -536,12 +555,15 @@ impl ProjectStore {
     /// Imports an external file into the project and returns its opaque `asset://` reference.
     ///
     /// The source file is left untouched. Run this synchronous operation on a
-    /// background thread; project assets are read incrementally into bounded chunks.
+    /// background thread; bounded batches keep SQLite write transactions short.
     pub fn import_audio_file(&mut self, path: impl AsRef<Path>) -> Result<String, StorageError> {
         self.import_audio_file_with_progress(path, |_| Ok(()))
     }
 
-    /// Imports a file and reports bytes imported after each stored chunk.
+    /// Imports a file and reports bytes staged after each committed chunk batch.
+    ///
+    /// The callback runs on the importing thread and should return quickly. Returning an error
+    /// cancels the import and removes its unpublished manifest and staged chunks.
     pub fn import_audio_file_with_progress(
         &mut self,
         path: impl AsRef<Path>,
@@ -603,7 +625,7 @@ impl ProjectStore {
     /// Resolves a media reference to embedded bytes or a live external path.
     pub fn resolve_audio_asset(&self, media_ref: &str) -> Result<ResolvedAudioAsset, StorageError> {
         let embedded: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1 AND import_state = 1)",
             [media_ref],
             |row| row.get(0),
         )?;
@@ -664,7 +686,7 @@ impl ProjectStore {
             .optional()?;
         let Some((original_name, external_path)) = linked else {
             let embedded: bool = self.connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+                "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1 AND import_state = 1)",
                 [media_ref],
                 |row| row.get(0),
             )?;
@@ -675,7 +697,7 @@ impl ProjectStore {
             };
         };
         let already_embedded: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1 AND import_state = 1)",
             [media_ref],
             |row| row.get(0),
         )?;
@@ -719,8 +741,9 @@ impl ProjectStore {
 
     /// Imports an audio asset as bounded SQLite BLOB chunks under an immutable reference.
     ///
-    /// The reader is consumed incrementally; at most one chunk is buffered in memory.
-    /// Import runs in a single transaction, so incomplete assets are never visible.
+    /// The reader is consumed incrementally and at most one bounded batch is buffered in memory.
+    /// Chunk batches commit independently; a pending manifest stays hidden until a final short
+    /// transaction publishes the complete asset. Errors remove staged data when possible.
     pub fn import_audio_asset(
         &mut self,
         media_ref: &str,
@@ -741,76 +764,160 @@ impl ProjectStore {
         if media_ref.trim().is_empty() {
             return Err(StorageError::AudioAssetReferenceEmpty);
         }
+        let storage_key: String =
+            self.connection
+                .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+        {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if transaction
+                .query_row(
+                    "SELECT 1 FROM audio_assets WHERE media_ref = ?1",
+                    [media_ref],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            {
+                return Err(StorageError::AudioAssetAlreadyExists(media_ref.to_owned()));
+            }
+            transaction.execute(
+                "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, \
+                 chunk_size, source_path, content_hash, storage_key, import_state) \
+                 VALUES(?1, ?2, 0, 0, ?3, ?4, NULL, ?5, 0)",
+                params![
+                    media_ref,
+                    original_name,
+                    AUDIO_ASSET_CHUNK_SIZE as i64,
+                    source_path,
+                    storage_key
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        let import_result = (|| {
+            on_progress(0)?;
+            let mut chunk_buffer = vec![0; AUDIO_ASSET_CHUNK_SIZE];
+            let mut pending_chunks = Vec::with_capacity(AUDIO_ASSET_IMPORT_BATCH_CHUNKS);
+            let mut byte_len = 0_u64;
+            let mut chunk_count = 0_usize;
+            let mut content_hasher = Sha256::new();
+            loop {
+                let chunk_len = fill_chunk(&mut source, &mut chunk_buffer)?;
+                if chunk_len == 0 {
+                    break;
+                }
+                content_hasher.update(&chunk_buffer[..chunk_len]);
+                byte_len = byte_len
+                    .checked_add(chunk_len as u64)
+                    .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+                to_sql_integer(byte_len)?;
+                pending_chunks.push(chunk_buffer[..chunk_len].to_vec());
+                if pending_chunks.len() == AUDIO_ASSET_IMPORT_BATCH_CHUNKS {
+                    write_audio_asset_chunk_batch(
+                        &mut self.connection,
+                        &storage_key,
+                        chunk_count,
+                        &pending_chunks,
+                    )?;
+                    chunk_count = chunk_count
+                        .checked_add(pending_chunks.len())
+                        .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+                    pending_chunks.clear();
+                    on_progress(byte_len)?;
+                }
+            }
+            if !pending_chunks.is_empty() {
+                write_audio_asset_chunk_batch(
+                    &mut self.connection,
+                    &storage_key,
+                    chunk_count,
+                    &pending_chunks,
+                )?;
+                chunk_count = chunk_count
+                    .checked_add(pending_chunks.len())
+                    .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+                on_progress(byte_len)?;
+            }
+            if byte_len == 0 {
+                return Err(StorageError::EmptyAudioAsset);
+            }
+
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let updated = transaction.execute(
+                "UPDATE audio_assets SET byte_len = ?2, chunk_count = ?3, content_hash = ?4, \
+                 import_state = 1 WHERE media_ref = ?1 AND storage_key = ?5 AND import_state = 0",
+                params![
+                    media_ref,
+                    to_sql_integer(byte_len)?,
+                    usize_to_sql(chunk_count)?,
+                    content_hasher.finalize().as_slice(),
+                    storage_key
+                ],
+            )?;
+            if updated != 1 {
+                return Err(StorageError::InvalidStoredData(
+                    "staged audio asset manifest disappeared before publication",
+                ));
+            }
+            transaction.commit()?;
+            Ok(byte_len)
+        })();
+
+        if import_result.is_err() {
+            self.discard_incomplete_audio_asset(media_ref, &storage_key)?;
+        }
+        import_result
+    }
+
+    fn discard_incomplete_audio_asset(
+        &mut self,
+        media_ref: &str,
+        storage_key: &str,
+    ) -> Result<(), StorageError> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if transaction
-            .query_row(
-                "SELECT 1 FROM audio_assets WHERE media_ref = ?1",
-                [media_ref],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some()
-        {
-            return Err(StorageError::AudioAssetAlreadyExists(media_ref.to_owned()));
-        }
-
         transaction.execute(
-            "INSERT INTO audio_assets(media_ref, original_name, byte_len, chunk_count, \
-             chunk_size, source_path, content_hash) VALUES(?1, ?2, 0, 0, ?3, ?4, NULL)",
-            params![
-                media_ref,
-                original_name,
-                AUDIO_ASSET_CHUNK_SIZE as i64,
-                source_path
-            ],
+            "DELETE FROM audio_asset_storage_chunks WHERE storage_key = ?1",
+            [storage_key],
         )?;
-        on_progress(0)?;
-
-        let mut chunk_buffer = vec![0; AUDIO_ASSET_CHUNK_SIZE];
-        let mut byte_len = 0_u64;
-        let mut chunk_count = 0_usize;
-        let mut content_hasher = Sha256::new();
-        loop {
-            let chunk_len = fill_chunk(&mut source, &mut chunk_buffer)?;
-            if chunk_len == 0 {
-                break;
-            }
-            transaction.execute(
-                "INSERT INTO audio_asset_chunks(media_ref, chunk_index, data) \
-                 VALUES(?1, ?2, ?3)",
-                params![
-                    media_ref,
-                    usize_to_sql(chunk_count)?,
-                    &chunk_buffer[..chunk_len]
-                ],
-            )?;
-            content_hasher.update(&chunk_buffer[..chunk_len]);
-            byte_len = byte_len
-                .checked_add(chunk_len as u64)
-                .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
-            to_sql_integer(byte_len)?;
-            chunk_count = chunk_count
-                .checked_add(1)
-                .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
-            on_progress(byte_len)?;
-        }
-        if byte_len == 0 {
-            return Err(StorageError::EmptyAudioAsset);
-        }
         transaction.execute(
-            "UPDATE audio_assets SET byte_len = ?2, chunk_count = ?3, content_hash = ?4 \
-             WHERE media_ref = ?1",
-            params![
-                media_ref,
-                to_sql_integer(byte_len)?,
-                usize_to_sql(chunk_count)?,
-                content_hasher.finalize().as_slice()
-            ],
+            "DELETE FROM audio_assets WHERE media_ref = ?1 AND storage_key = ?2 \
+             AND import_state = 0",
+            params![media_ref, storage_key],
         )?;
         transaction.commit()?;
-        Ok(byte_len)
+        Ok(())
+    }
+
+    /// Removes manifests and chunk data left by a process crash during import.
+    ///
+    /// Call only when no audio asset import workers are active for this project.
+    pub fn cleanup_incomplete_audio_asset_imports(&mut self) -> Result<usize, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let storage_keys = {
+            let mut statement = transaction
+                .prepare("SELECT storage_key FROM audio_assets WHERE import_state = 0")?;
+            statement
+                .query_map([], |row| row.get::<_, Option<String>>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for storage_key in storage_keys.into_iter().flatten() {
+            transaction.execute(
+                "DELETE FROM audio_asset_storage_chunks WHERE storage_key = ?1",
+                [storage_key],
+            )?;
+        }
+        let removed = transaction.execute("DELETE FROM audio_assets WHERE import_state = 0", [])?;
+        transaction.commit()?;
+        Ok(removed)
     }
 
     /// Opens an independent reader that streams one embedded asset from SQLite chunks.
@@ -826,8 +933,8 @@ impl ProjectStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         let metadata = connection
             .query_row(
-                "SELECT byte_len, chunk_count, chunk_size, original_name \
-                 FROM audio_assets WHERE media_ref = ?1",
+                "SELECT byte_len, chunk_count, chunk_size, original_name, storage_key, import_state \
+                 FROM audio_assets WHERE media_ref = ?1 AND import_state = 1",
                 [media_ref],
                 |row| {
                     Ok((
@@ -835,11 +942,16 @@ impl ProjectStore {
                         row.get::<_, i64>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
                     ))
                 },
             )
             .optional()?
             .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+        if metadata.5 != 1 {
+            return Err(StorageError::AudioAssetNotFound(media_ref.to_owned()));
+        }
         let byte_len = u64::try_from(metadata.0)
             .map_err(|_| StorageError::InvalidStoredData("negative audio asset byte length"))?;
         let chunk_count = u64::try_from(metadata.1)
@@ -865,6 +977,7 @@ impl ProjectStore {
             state: Mutex::new(AudioAssetReaderState {
                 connection,
                 media_ref: media_ref.to_owned(),
+                storage_key: metadata.4,
                 chunk_size,
                 position: 0,
                 cached_chunk: None,
@@ -882,7 +995,8 @@ impl ProjectStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT source_path, content_hash FROM audio_assets WHERE media_ref = ?1",
+                "SELECT source_path, content_hash FROM audio_assets \
+                 WHERE media_ref = ?1 AND import_state = 1",
                 [media_ref],
                 |row| {
                     Ok((
@@ -1040,7 +1154,15 @@ impl ProjectStore {
 }
 
 fn ensure_audio_asset_metadata_columns(connection: &Connection) -> Result<(), StorageError> {
-    for (column, definition) in [("source_path", "TEXT"), ("content_hash", "BLOB")] {
+    for (column, definition) in [
+        ("source_path", "TEXT"),
+        ("content_hash", "BLOB"),
+        ("storage_key", "TEXT"),
+        (
+            "import_state",
+            "INTEGER NOT NULL DEFAULT 1 CHECK (import_state IN (0, 1))",
+        ),
+    ] {
         let mut statement = connection.prepare("PRAGMA table_info(audio_assets)")?;
         let mut rows = statement.query([])?;
         let mut found = false;
@@ -1054,6 +1176,10 @@ fn ensure_audio_asset_metadata_columns(connection: &Connection) -> Result<(), St
             ))?;
         }
     }
+    connection.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS audio_assets_storage_key \
+         ON audio_assets(storage_key) WHERE storage_key IS NOT NULL",
+    )?;
     Ok(())
 }
 
@@ -1068,6 +1194,27 @@ fn sha256_reader(reader: &mut impl Read) -> Result<[u8; 32], io::Error> {
         hasher.update(&buffer[..read]);
     }
     Ok(hasher.finalize().into())
+}
+
+fn write_audio_asset_chunk_batch(
+    connection: &mut Connection,
+    storage_key: &str,
+    first_chunk_index: usize,
+    chunks: &[Vec<u8>],
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for (offset, chunk) in chunks.iter().enumerate() {
+        let chunk_index = first_chunk_index
+            .checked_add(offset)
+            .ok_or(StorageError::IntegerOutOfRange(u64::MAX))?;
+        transaction.execute(
+            "INSERT INTO audio_asset_storage_chunks(storage_key, chunk_index, data) \
+             VALUES(?1, ?2, ?3)",
+            params![storage_key, usize_to_sql(chunk_index)?, chunk],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 fn fill_chunk(reader: &mut impl Read, buffer: &mut [u8]) -> Result<usize, io::Error> {
