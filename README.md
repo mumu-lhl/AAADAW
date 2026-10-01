@@ -7,6 +7,7 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 The core project model includes sample-clock `AudioItem`s with undoable edits and SQLite persistence. Audio assets are immutable embedded snapshots by default, with seekable readers, cancellable background import/scan/pack workers, and persisted decoder metadata. `aaadaw-app` resolves embedded and external items into worker-fed render graphs and prepares seek-positioned refills. The Iced 0.14 desktop shell supports track and Audio/MIDI item editing, native file dialogs, audio import and asset maintenance, project actions, and optional Linux JACK playback. MIDI note playback is not yet wired to an instrument; replacing changed embedded snapshots from the UI, other native audio backends, recording, and plugin hosting remain future work. See [Desktop shell](#desktop-shell) for the current workspace layout. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
+- [UI/UX design contract](DESIGN.md)
 - [Implementation roadmap](ROADMAP.md)
 - [Project action-history decision](docs/adr/0001-project-action-history.md)
 
