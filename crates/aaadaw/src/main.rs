@@ -71,6 +71,7 @@ enum Message {
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
+    AdjustPan(TrackId, f32),
     NudgeAudioItem(ItemId, i8),
     DeleteAudioItem(ItemId),
     Undo,
@@ -188,6 +189,7 @@ impl App {
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
+                        | Message::AdjustPan(..)
                         | Message::NudgeAudioItem(..)
                         | Message::DeleteAudioItem(_)
                         | Message::Undo
@@ -256,6 +258,20 @@ impl App {
                             volume_db,
                         },
                         "Track volume changed",
+                    );
+                }
+            }
+            Message::AdjustPan(track_id, delta) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    let pan = (track.pan() + delta).clamp(-1.0, 1.0);
+                    self.apply_action(
+                        DawAction::SetTrackPan { track_id, pan },
+                        "Track pan changed",
                     );
                 }
             }
@@ -1015,7 +1031,13 @@ fn prepare_project_playback_file(
 fn track_row(track: &Track) -> Element<'_, Message> {
     let track_id = track.id();
     row![
-        text(format!("{} · {:.1} dB", track.name(), track.volume_db())).width(Length::Fill),
+        text(format!(
+            "{} · {:.1} dB · pan {:+.2}",
+            track.name(),
+            track.volume_db(),
+            track.pan()
+        ))
+        .width(Length::Fill),
         button("Delete").on_press(Message::DeleteTrack(track_id)),
         button(if track.is_muted() { "Unmute" } else { "Mute" })
             .on_press(Message::ToggleMute(track_id)),
@@ -1023,6 +1045,8 @@ fn track_row(track: &Track) -> Element<'_, Message> {
             .on_press(Message::ToggleSolo(track_id)),
         button("−").on_press(Message::AdjustVolume(track_id, -1.0)),
         button("+").on_press(Message::AdjustVolume(track_id, 1.0)),
+        button("◀").on_press(Message::AdjustPan(track_id, -0.1)),
+        button("▶").on_press(Message::AdjustPan(track_id, 0.1)),
     ]
     .spacing(6)
     .align_y(Alignment::Center)
@@ -1106,6 +1130,18 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn track_pan_adjustment_is_undoable() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+
+        let _ = app.update(Message::AdjustPan(track_id, 0.25));
+        assert_eq!(app.project.tracks()[0].pan(), 0.25);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.tracks()[0].pan(), 0.0);
     }
 
     #[test]
