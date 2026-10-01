@@ -3,7 +3,7 @@ use aaadaw_app::{AudioItemImportProgress, AudioItemImportWorker, start_audio_ite
 use aaadaw_app::{
     PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
 };
-use aaadaw_core::{DawAction, Project, ProjectSnapshot, Track, TrackId};
+use aaadaw_core::{DawAction, ItemId, Project, ProjectSnapshot, Track, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task};
@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+mod timeline;
 
 fn main() -> iced::Result {
     let application = iced::application(App::new, App::update, App::view)
@@ -68,6 +70,7 @@ enum Message {
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
     AdjustVolume(TrackId, f32),
+    NudgeAudioItem(ItemId, i8),
     Undo,
     Redo,
     ActionQueryChanged(String),
@@ -91,6 +94,8 @@ enum Message {
     RestartPlayback,
     #[cfg(feature = "jack-backend")]
     SeekSampleChanged(String),
+    #[cfg(feature = "jack-backend")]
+    SeekToItem(u64),
     #[cfg(feature = "jack-backend")]
     SeekToSample,
     #[cfg(feature = "jack-backend")]
@@ -180,6 +185,7 @@ impl App {
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
+                        | Message::NudgeAudioItem(..)
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
@@ -246,6 +252,9 @@ impl App {
                     );
                 }
             }
+            Message::NudgeAudioItem(item_id, direction) => {
+                self.nudge_audio_item(item_id, direction)
+            }
             Message::Undo => self.undo(),
             Message::Redo => self.redo(),
             Message::ActionQueryChanged(query) => self.action_query = query,
@@ -309,6 +318,11 @@ impl App {
             Message::RestartPlayback => task = self.restart_playback(),
             #[cfg(feature = "jack-backend")]
             Message::SeekSampleChanged(sample) => self.seek_sample_query = sample,
+            #[cfg(feature = "jack-backend")]
+            Message::SeekToItem(sample) => {
+                self.seek_sample_query = sample.to_string();
+                task = self.prepare_playback(sample, self.playback_playing);
+            }
             #[cfg(feature = "jack-backend")]
             Message::SeekToSample => task = self.seek_to_sample(),
             #[cfg(feature = "jack-backend")]
@@ -441,23 +455,7 @@ impl App {
             .width(300)
             .height(Length::Fill)
             .padding(14);
-        let editor = container(
-            column![
-                text("Timeline").size(20),
-                text("Audio and MIDI item editing will appear here."),
-                text(format!(
-                    "Project rate: {} Hz · {} tracks · {} audio items · {} MIDI items",
-                    self.project.settings().sample_rate(),
-                    self.project.tracks().len(),
-                    self.project.audio_items().len(),
-                    self.project.midi_items().len(),
-                )),
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(18);
+        let editor = timeline::view(&self.project);
 
         let workspace = row![tracks, editor].spacing(12).height(Length::Fill);
 
@@ -862,6 +860,46 @@ impl App {
         };
     }
 
+    fn nudge_audio_item(&mut self, item_id: ItemId, direction: i8) {
+        let Some((media_ref, source_offset_samples, length_samples, start_sample)) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .map(|item| {
+                (
+                    item.media_ref().to_owned(),
+                    item.source_offset_samples(),
+                    item.length_samples(),
+                    item.start_sample(),
+                )
+            })
+        else {
+            self.status = "Audio item no longer exists".to_owned();
+            return;
+        };
+        let delta = u64::from(self.project.settings().sample_rate());
+        let moved_sample = match direction {
+            -1 => start_sample.checked_sub(delta),
+            1 => start_sample.checked_add(delta),
+            _ => None,
+        };
+        let Some(start_sample) = moved_sample else {
+            self.status = "Audio item cannot move beyond the sample timeline".to_owned();
+            return;
+        };
+        self.apply_action(
+            DawAction::EditAudioItem {
+                item_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            },
+            "Audio item moved by one second",
+        );
+    }
+
     fn undo(&mut self) {
         self.status = match self.project.undo() {
             Ok(true) => {
@@ -1057,6 +1095,30 @@ mod tests {
             let sidecar = format!("{}{suffix}", path.display());
             let _ = std::fs::remove_file(sidecar);
         }
+    }
+
+    #[test]
+    fn audio_timeline_nudge_is_undoable_and_cannot_cross_sample_zero() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://nudge-test".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 256,
+            })
+            .expect("test item should be inserted");
+        let item_id = app.project.audio_items()[0].id();
+
+        let _ = app.update(Message::NudgeAudioItem(item_id, 1));
+        assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+        let _ = app.update(Message::NudgeAudioItem(item_id, -1));
+        assert_eq!(app.project.audio_items()[0].start_sample(), 0);
     }
 
     #[test]
