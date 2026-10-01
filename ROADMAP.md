@@ -84,7 +84,7 @@
 
 ### 3. 桌面 UI 与基本编辑
 
-- [x] 用 Iced 0.14 建立桌面窗口、轨道控制区、Action 搜索及后台工程打开/保存；状态修改只经 `Project.apply(DawAction)`。
+- [x] 用 Iced 0.14 建立桌面窗口、REAPER-inspired File/Edit/Track 菜单、默认 Arrangement 及独立 Media/Project 工作区；底部常驻 transport，工程/音频路径使用原生文件选择器；状态修改只经 `Project.apply(DawAction)`。
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
 - [ ] 建立可停靠面板骨架；扩展 transport 至其他设备后端。

@@ -4,11 +4,17 @@ AAADAW is a Rust digital audio workstation project. The initial implementation i
 
 ## Project status
 
-The core project model now includes sample-clock `AudioItem`s with undoable edits and SQLite persistence. Project audio assets are immutable snapshots embedded as bounded SQLite BLOB chunks and decoded through seekable readers without loading the whole asset into memory. Background import, pack, and source-scan workers report progress and support cancellation; imports stage in short transactions. Symphonia probes and SQLite persists decoder header metadata for embedded assets. The `aaadaw-app` crate resolves embedded and external `AudioItem`s into worker-fed render graphs and prepares seek-positioned refills. The Iced 0.14 desktop shell now has a REAPER-inspired top menu and separate Arrangement, Media, and Project workspaces. Native file dialogs handle project open/save, audio import, and relinking. The Arrangement workspace contains track controls and an Audio/MIDI item editor with undoable sample-clock nudges (10 ms–1 s), exact start-sample entry, adjacent duplication, MIDI clip/note creation and deletion, pitch/timing/velocity edits, and 1/16 quantization. MIDI note playback is not yet wired to an instrument. Build with the optional Linux JACK feature to enable desktop play/stop/restart controls, playhead display, and arbitrary-sample seek refills. The desktop shell also provides undo/redo and project I/O keyboard shortcuts plus JACK play/stop; it embeds imported audio into the first track with progress and cancellation. The shell also scans source status, packs external links, and relinks missing live links; replacing changed embedded snapshots from the UI remains future work. Native PipeWire/WASAPI output, recording, and plugin hosting are also pending. The system architecture and phased implementation scope are documented in:
+The core project model includes sample-clock `AudioItem`s with undoable edits and SQLite persistence. Audio assets are immutable embedded snapshots by default, with seekable readers, cancellable background import/scan/pack workers, and persisted decoder metadata. `aaadaw-app` resolves embedded and external items into worker-fed render graphs and prepares seek-positioned refills. The Iced 0.14 desktop shell supports track and Audio/MIDI item editing, native file dialogs, audio import and asset maintenance, project actions, and optional Linux JACK playback. MIDI note playback is not yet wired to an instrument; replacing changed embedded snapshots from the UI, other native audio backends, recording, and plugin hosting remain future work. See [Desktop shell](#desktop-shell) for the current workspace layout. The system architecture and phased implementation scope are documented in:
 
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [Implementation roadmap](ROADMAP.md)
 - [Project action-history decision](docs/adr/0001-project-action-history.md)
+
+## Desktop shell
+
+The shell has **File**, **Edit**, and **Track** menus, with **Arrangement** selected by default. Arrangement keeps track controls on the left and the current Audio/MIDI item editor in the center. The editor is still list-based: it supports sample-clock position edits and item actions, but is not a graphical timeline. The planned Iced/wgpu timeline viewport, with ruler, zoom, and spatial item layout, is future work.
+
+**Media** contains audio import, source scanning, external-asset packing, and missing-link repair. **Project** contains action search and shortcut help. A transport strip stays at the bottom in every workspace; builds without `jack-backend` show a compact JACK hint, while JACK builds expose playback and seek controls. Native system file pickers handle project open/save, audio import, and relinking; cancelling a picker leaves the existing path field unchanged.
 
 ## Development
 
@@ -27,7 +33,7 @@ cargo xtest
 
 ## Workspace
 
-- `crates/aaadaw`: Iced desktop shell with REAPER-inspired top menus and Arrangement/Media/Project workspaces; native file dialogs for project open/save, audio import, and relinking; undoable track and Audio/MIDI item editing; keyboard shortcuts; and optional JACK transport. Project changes use `aaadaw-core` actions.
+- `crates/aaadaw`: Iced desktop shell with REAPER-inspired File/Edit/Track menus, Arrangement by default, separate Media/Project workspaces, a persistent bottom transport, and native file dialogs; undoable track and Audio/MIDI item editing; keyboard shortcuts; and optional JACK transport. Project changes use `aaadaw-core` actions.
 - `crates/aaadaw-core`: platform-independent project actions, state, and domain logic, including MIDI and sample-clock audio items. GUI, audio drivers, and persistence adapters must call through this crate's public `Project` interface rather than mutating project state directly.
 - `crates/aaadaw-app`: control-layer orchestration for media playback, audio/MIDI timeline-editing intents, and cancellable embedded imports; it prepares seek-positioned graphs, owns background feeders, and returns project `DawAction`s. Optional `jack-backend` supports playback and safe graph replacement.
 - `crates/aaadaw-storage`: `.aaadaw` SQLite project persistence and chunked embedded audio assets through `rusqlite` with its `bundled` SQLite library; a system SQLite installation is not required.
