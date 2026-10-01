@@ -52,11 +52,25 @@ impl DecodedAudioChunk {
     }
 }
 
+/// Header metadata for the first decodable audio track.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AudioMetadata {
+    pub container: String,
+    pub codec: String,
+    pub sample_rate: Option<u32>,
+    pub channel_count: Option<u32>,
+    pub bits_per_sample: Option<u32>,
+    pub frame_count: Option<u64>,
+    pub duration_nanos: Option<u64>,
+    pub byte_len: Option<u64>,
+}
+
 /// A packet-by-packet decoder for the first decodable audio track in a file.
 pub struct AudioStreamDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
+    metadata: AudioMetadata,
 }
 
 /// Errors encountered while opening or decoding an audio file.
@@ -176,29 +190,62 @@ impl AudioStreamDecoder {
             MetadataOptions::default(),
         )?;
 
-        let (track_id, codec_params) = {
+        let container = format.format_info().short_name.to_owned();
+        let (track_id, codec_params, frame_count, duration_nanos) = {
             let track = format
                 .default_track(TrackType::Audio)
                 .ok_or(MediaError::NoAudioTrack)?;
+            let duration_nanos = track
+                .duration
+                .and_then(|duration| {
+                    track
+                        .time_base
+                        .and_then(|base| base.calc_duration(duration))
+                })
+                .and_then(|time| u64::try_from(time.as_nanos()).ok());
             (
                 track.id,
                 track
                     .codec_params
                     .clone()
                     .ok_or(MediaError::MissingCodecParameters)?,
+                track.num_frames,
+                duration_nanos,
             )
         };
         let audio_params = codec_params
             .audio()
             .ok_or(MediaError::MissingAudioCodecParameters)?;
+        let sample_rate = audio_params.sample_rate;
+        let channel_count = audio_params
+            .channels
+            .as_ref()
+            .and_then(|channels| u32::try_from(channels.count()).ok());
+        let bits_per_sample = audio_params.bits_per_sample;
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(audio_params, &AudioDecoderOptions::default())?;
+        let metadata = AudioMetadata {
+            container,
+            codec: decoder.codec_info().short_name.to_owned(),
+            sample_rate,
+            channel_count,
+            bits_per_sample,
+            frame_count,
+            duration_nanos,
+            byte_len,
+        };
 
         Ok(Self {
             format,
             decoder,
             track_id,
+            metadata,
         })
+    }
+
+    /// Returns container and codec header metadata without decoding the whole stream.
+    pub fn metadata(&self) -> &AudioMetadata {
+        &self.metadata
     }
 
     /// Decodes the next packet from the selected track, or returns `None` at EOF.
@@ -228,6 +275,13 @@ impl AudioStreamDecoder {
             }));
         }
     }
+}
+
+/// Probes container and first-audio-track metadata from a file without decoding its samples.
+///
+/// Call this from a background thread because probing may perform file I/O.
+pub fn probe_audio_metadata(path: impl AsRef<Path>) -> Result<AudioMetadata, MediaError> {
+    Ok(AudioStreamDecoder::open(path)?.metadata().clone())
 }
 
 struct SeekableMediaSource<R> {

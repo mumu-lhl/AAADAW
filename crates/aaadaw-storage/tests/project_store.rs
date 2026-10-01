@@ -165,8 +165,8 @@ fn existing_schema_two_files_get_additive_audio_tables_without_version_bump() {
     connection
         .execute_batch(
             "DROP TABLE audio_items; DROP TABLE audio_asset_chunks; \
-             DROP TABLE audio_asset_storage_chunks; DROP TABLE audio_asset_links; \
-             DROP TABLE audio_assets",
+             DROP TABLE audio_asset_storage_chunks; DROP TABLE audio_asset_metadata; \
+             DROP TABLE audio_asset_links; DROP TABLE audio_assets",
         )
         .expect("simulate a schema-two file without audio tables");
     drop(connection);
@@ -483,6 +483,56 @@ fn cancelled_external_pack_keeps_its_link_and_can_be_retried() {
     store.close().expect("project should close");
     remove_database(&database_path);
     std::fs::remove_file(source_path).expect("external fixture should be removed");
+}
+
+#[test]
+fn decoder_metadata_persists_only_for_complete_embedded_assets() {
+    let database_path = project_path();
+    let linked_path = database_path.with_extension("linked.wav");
+    std::fs::write(&linked_path, [1, 2, 3]).expect("linked source should be written");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let embedded_ref = "asset://metadata";
+    store
+        .import_audio_asset(embedded_ref, "metadata.wav", Cursor::new([1, 2, 3, 4]))
+        .expect("embedded asset should import");
+    let linked_ref = store
+        .link_external_audio_file(&linked_path)
+        .expect("external file should link");
+    let metadata = aaadaw_storage::AudioAssetMetadata {
+        container: "wav".to_owned(),
+        codec: "pcm".to_owned(),
+        sample_rate: Some(48_000),
+        channel_count: Some(2),
+        bits_per_sample: Some(24),
+        frame_count: Some(256),
+        duration_nanos: Some(5_333_333),
+        byte_len: Some(4),
+    };
+    store
+        .set_audio_asset_metadata(embedded_ref, &metadata)
+        .expect("metadata should attach to the embedded snapshot");
+    assert_eq!(
+        store
+            .audio_asset_metadata(embedded_ref)
+            .expect("metadata should be queryable"),
+        Some(metadata.clone())
+    );
+    assert!(matches!(
+        store.set_audio_asset_metadata(&linked_ref, &metadata),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+
+    store.close().expect("project should close");
+    let reopened = ProjectStore::open(&database_path).expect("project should reopen");
+    assert_eq!(
+        reopened
+            .audio_asset_metadata(embedded_ref)
+            .expect("metadata should survive reopen"),
+        Some(metadata)
+    );
+    reopened.close().expect("reopened project should close");
+    remove_database(&database_path);
+    std::fs::remove_file(linked_path).expect("linked fixture should be removed");
 }
 
 #[test]

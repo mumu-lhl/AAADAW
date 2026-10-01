@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS audio_asset_storage_chunks (
     data BLOB NOT NULL CHECK (length(data) > 0),
     PRIMARY KEY (storage_key, chunk_index)
 );
+CREATE TABLE IF NOT EXISTS audio_asset_metadata (
+    media_ref TEXT PRIMARY KEY REFERENCES audio_assets(media_ref) ON DELETE CASCADE,
+    container TEXT NOT NULL CHECK (length(trim(container)) > 0),
+    codec TEXT NOT NULL CHECK (length(trim(codec)) > 0),
+    sample_rate INTEGER CHECK (sample_rate IS NULL OR sample_rate > 0),
+    channel_count INTEGER CHECK (channel_count IS NULL OR channel_count > 0),
+    bits_per_sample INTEGER CHECK (bits_per_sample IS NULL OR bits_per_sample > 0),
+    frame_count INTEGER CHECK (frame_count IS NULL OR frame_count >= 0),
+    duration_nanos INTEGER CHECK (duration_nanos IS NULL OR duration_nanos >= 0),
+    byte_len INTEGER CHECK (byte_len IS NULL OR byte_len >= 0)
+);
 CREATE TABLE IF NOT EXISTS audio_asset_links (
     media_ref TEXT PRIMARY KEY CHECK (length(trim(media_ref)) > 0),
     original_name TEXT NOT NULL,
@@ -263,6 +274,19 @@ impl From<io::Error> for StorageError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+/// Technical header metadata discovered by the media decoder for an embedded asset.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioAssetMetadata {
+    pub container: String,
+    pub codec: String,
+    pub sample_rate: Option<u32>,
+    pub channel_count: Option<u32>,
+    pub bits_per_sample: Option<u32>,
+    pub frame_count: Option<u64>,
+    pub duration_nanos: Option<u64>,
+    pub byte_len: Option<u64>,
 }
 
 /// Status of the original external file recorded when an asset was imported.
@@ -1220,6 +1244,102 @@ impl ProjectStore {
                 cached_chunk: None,
             }),
         })
+    }
+
+    /// Stores decoder-discovered metadata for a complete embedded asset.
+    pub fn set_audio_asset_metadata(
+        &mut self,
+        media_ref: &str,
+        metadata: &AudioAssetMetadata,
+    ) -> Result<(), StorageError> {
+        if metadata.container.trim().is_empty() || metadata.codec.trim().is_empty() {
+            return Err(StorageError::InvalidStoredData(
+                "audio metadata container and codec labels must not be empty",
+            ));
+        }
+        let embedded: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audio_assets WHERE media_ref = ?1 AND import_state = 1)",
+            [media_ref],
+            |row| row.get(0),
+        )?;
+        if !embedded {
+            return Err(StorageError::AudioAssetNotFound(media_ref.to_owned()));
+        }
+        self.connection.execute(
+            "INSERT INTO audio_asset_metadata(\
+                media_ref, container, codec, sample_rate, channel_count, bits_per_sample, \
+                frame_count, duration_nanos, byte_len\
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+             ON CONFLICT(media_ref) DO UPDATE SET \
+                container = excluded.container, codec = excluded.codec, \
+                sample_rate = excluded.sample_rate, channel_count = excluded.channel_count, \
+                bits_per_sample = excluded.bits_per_sample, frame_count = excluded.frame_count, \
+                duration_nanos = excluded.duration_nanos, byte_len = excluded.byte_len",
+            params![
+                media_ref,
+                metadata.container,
+                metadata.codec,
+                metadata.sample_rate.map(i64::from),
+                metadata.channel_count.map(i64::from),
+                metadata.bits_per_sample.map(i64::from),
+                metadata.frame_count.map(to_sql_integer).transpose()?,
+                metadata.duration_nanos.map(to_sql_integer).transpose()?,
+                metadata.byte_len.map(to_sql_integer).transpose()?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Returns metadata previously probed for a complete embedded asset.
+    pub fn audio_asset_metadata(
+        &self,
+        media_ref: &str,
+    ) -> Result<Option<AudioAssetMetadata>, StorageError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT container, codec, sample_rate, channel_count, bits_per_sample, \
+                 frame_count, duration_nanos, byte_len FROM audio_asset_metadata \
+                 WHERE media_ref = ?1",
+                [media_ref],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(
+            |(
+                container,
+                codec,
+                sample_rate,
+                channel_count,
+                bits_per_sample,
+                frame_count,
+                duration_nanos,
+                byte_len,
+            )| {
+                Ok(AudioAssetMetadata {
+                    container,
+                    codec,
+                    sample_rate: sample_rate.map(from_sql_u32).transpose()?,
+                    channel_count: channel_count.map(from_sql_u32).transpose()?,
+                    bits_per_sample: bits_per_sample.map(from_sql_u32).transpose()?,
+                    frame_count: frame_count.map(from_sql_u64).transpose()?,
+                    duration_nanos: duration_nanos.map(from_sql_u64).transpose()?,
+                    byte_len: byte_len.map(from_sql_u64).transpose()?,
+                })
+            },
+        )
+        .transpose()
     }
 
     /// Re-hashes the recorded original file to determine whether it still matches the import snapshot.

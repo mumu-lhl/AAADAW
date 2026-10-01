@@ -48,7 +48,17 @@ fn decodes_wav_packets_as_interleaved_f32() {
     std::fs::write(&path, pcm_wav(&[-32768, 0, 16384, 32767], 44_100))
         .expect("test WAV should be written");
 
+    let probed = aaadaw_media::probe_audio_metadata(&path).expect("WAV metadata should probe");
+    assert_eq!(probed.container, "wave");
+    assert_eq!(probed.frame_count, Some(4));
     let mut decoder = AudioStreamDecoder::open(&path).expect("WAV should open");
+    assert_eq!(decoder.metadata().container, "wave");
+    assert_eq!(decoder.metadata().sample_rate, Some(44_100));
+    assert_eq!(decoder.metadata().channel_count, Some(1));
+    assert_eq!(decoder.metadata().bits_per_sample, Some(16));
+    assert_eq!(decoder.metadata().frame_count, Some(4));
+    assert_eq!(decoder.metadata().byte_len, Some(52));
+    assert!(decoder.metadata().duration_nanos.is_some());
     let mut decoded_samples = Vec::new();
     let mut decoded_frames = 0;
     while let Some(chunk) = decoder.next_chunk().expect("WAV packet should decode") {
@@ -130,6 +140,37 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
     store
         .import_audio_asset("asset://embedded-wav", "embedded.wav", Cursor::new(&wav))
         .expect("WAV should be embedded in bounded database chunks");
+    let metadata_reader = store
+        .audio_asset_reader("asset://embedded-wav")
+        .expect("embedded metadata source should open");
+    let metadata_decoder =
+        AudioStreamDecoder::from_reader(metadata_reader, Some(wav.len() as u64), Some("wav"))
+            .expect("embedded WAV headers should probe");
+    let probed = metadata_decoder.metadata();
+    store
+        .set_audio_asset_metadata(
+            "asset://embedded-wav",
+            &aaadaw_storage::AudioAssetMetadata {
+                container: probed.container.clone(),
+                codec: probed.codec.clone(),
+                sample_rate: probed.sample_rate,
+                channel_count: probed.channel_count,
+                bits_per_sample: probed.bits_per_sample,
+                frame_count: probed.frame_count,
+                duration_nanos: probed.duration_nanos,
+                byte_len: probed.byte_len,
+            },
+        )
+        .expect("header metadata should persist beside the immutable asset");
+    assert_eq!(
+        store
+            .audio_asset_metadata("asset://embedded-wav")
+            .expect("stored metadata should load")
+            .unwrap()
+            .frame_count,
+        Some(4)
+    );
+    drop(metadata_decoder);
     let reader = store
         .audio_asset_reader("asset://embedded-wav")
         .expect("embedded asset should resolve to a reader");
