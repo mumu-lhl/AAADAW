@@ -5,6 +5,40 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 impl App {
+    pub(super) fn initialize_clap_plugin_scan(
+        &mut self,
+        cache_path: Option<PathBuf>,
+        mut warnings: Vec<String>,
+    ) -> Task<Message> {
+        self.clap_plugin_cache_path = cache_path;
+        if let Some(error) = self.restore_cached_clap_plugin_scan() {
+            warnings.push(format!("CLAP scan cache was ignored: {error}"));
+        }
+        let task = self.start_clap_plugin_scan();
+        if !warnings.is_empty() {
+            self.clap_plugin_settings_feedback = format!(
+                "{}; {}",
+                self.clap_plugin_settings_feedback,
+                warnings.join("; ")
+            );
+        }
+        task
+    }
+
+    pub(super) fn restore_cached_clap_plugin_scan(&mut self) -> Option<String> {
+        let path = self.clap_plugin_cache_path.as_deref()?;
+        match super::clap_plugin_cache::load_from(path) {
+            Ok(Some(cached)) => {
+                self.clap_plugin_scan = cached.report;
+                self.clap_plugin_scan_is_cached = true;
+                self.clap_plugin_scan_paths = cached.search_paths;
+                None
+            }
+            Ok(None) => None,
+            Err(error) => Some(error),
+        }
+    }
+
     pub(super) fn add_clap_plugin_path(&mut self, path: PathBuf) -> Task<Message> {
         if !path.is_dir() {
             self.clap_plugin_settings_feedback =
@@ -81,12 +115,31 @@ impl App {
         }
         if self.clap_plugin_paths.is_empty() {
             self.clap_plugin_scan = ClapPluginScanReport::default();
+            self.clap_plugin_scan_is_cached = false;
+            self.clap_plugin_scan_paths.clear();
             self.clap_plugin_settings_feedback = "No CLAP search paths are configured".to_owned();
+            if let Some(path) = &self.clap_plugin_cache_path
+                && let Err(error) = super::clap_plugin_cache::save_to(
+                    path,
+                    &self.clap_plugin_paths,
+                    &self.clap_plugin_scan,
+                )
+            {
+                self.clap_plugin_settings_feedback =
+                    format!("No CLAP search paths are configured; cache update failed: {error}");
+            }
             return Task::none();
         }
         let paths = self.clap_plugin_paths.clone();
         self.clap_plugin_scan_busy = true;
-        self.clap_plugin_settings_feedback = format!("Scanning {} search paths…", paths.len());
+        self.clap_plugin_settings_feedback = if self.clap_plugin_scan_is_cached {
+            format!(
+                "Refreshing {} search paths; cached results remain available",
+                paths.len()
+            )
+        } else {
+            format!("Scanning {} search paths…", paths.len())
+        };
         Task::perform(
             run_blocking("aaadaw-clap-plugin-scan", move || {
                 Ok(scan_clap_plugins(&paths))
@@ -99,16 +152,34 @@ impl App {
         self.clap_plugin_scan_busy = false;
         match result {
             Ok(report) => {
-                self.clap_plugin_settings_feedback = format!(
+                let summary = format!(
                     "Scan complete: {} plugins found, {} entries checked, {} issues",
                     report.plugins.len(),
                     report.entries_checked,
                     report.errors.len()
                 );
+                if let Some(path) = &self.clap_plugin_cache_path
+                    && let Err(error) =
+                        super::clap_plugin_cache::save_to(path, &self.clap_plugin_paths, &report)
+                {
+                    self.clap_plugin_settings_feedback =
+                        format!("{summary}; cache update failed: {error}");
+                } else {
+                    self.clap_plugin_settings_feedback = summary;
+                }
                 self.clap_plugin_scan = report;
+                self.clap_plugin_scan_is_cached = false;
+                self.clap_plugin_scan_paths = self.clap_plugin_paths.clone();
             }
             Err(error) => {
-                self.clap_plugin_settings_feedback = format!("Plugin scan failed: {error}");
+                self.clap_plugin_settings_feedback = if self.clap_plugin_scan_is_cached {
+                    format!(
+                        "Refresh failed; cached results from {} paths retained: {error}",
+                        self.clap_plugin_scan_paths.len()
+                    )
+                } else {
+                    format!("Plugin scan failed; previous results remain available: {error}")
+                };
             }
         }
     }

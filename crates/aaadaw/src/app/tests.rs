@@ -649,6 +649,101 @@ fn clap_plugin_scan_results_update_settings_without_mutating_project_state() {
 }
 
 #[test]
+fn cached_clap_scan_results_remain_usable_when_refresh_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache_path = directory.path().join("clap-scan-cache.json");
+    let previous = test_clap_scan_report("Cached Instrument");
+    let cached_paths = vec![std::path::PathBuf::from("/previous/plugins")];
+    super::clap_plugin_cache::save_to(&cache_path, &cached_paths, &previous).unwrap();
+    let mut app = App {
+        clap_plugin_cache_path: Some(cache_path),
+        clap_plugin_paths: vec![directory.path().to_path_buf()],
+        ..App::default()
+    };
+
+    assert_eq!(app.restore_cached_clap_plugin_scan(), None);
+    assert!(app.clap_plugin_scan_is_cached);
+    assert_eq!(app.clap_plugin_scan_paths, cached_paths);
+    assert_eq!(app.clap_plugin_scan, previous);
+
+    let _task = app.start_clap_plugin_scan();
+    assert!(app.clap_plugin_scan_busy);
+    let _ = app.update(Message::ClapPluginsScanned(Err("worker failed".to_owned())));
+
+    assert!(!app.clap_plugin_scan_busy);
+    assert!(app.clap_plugin_scan_is_cached);
+    assert_eq!(app.clap_plugin_scan.plugins[0].name, "Cached Instrument");
+    assert!(app.clap_plugin_settings_feedback.contains("cached results"));
+}
+
+#[test]
+fn startup_clap_scan_loads_cached_results_before_starting_refresh() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache_path = directory.path().join("clap-scan-cache.json");
+    let cached = test_clap_scan_report("Startup Instrument");
+    super::clap_plugin_cache::save_to(
+        &cache_path,
+        &[std::path::PathBuf::from("/previous/plugins")],
+        &cached,
+    )
+    .unwrap();
+    let mut app = App {
+        clap_plugin_paths: vec![directory.path().to_path_buf()],
+        ..App::default()
+    };
+
+    let _task = app.initialize_clap_plugin_scan(Some(cache_path), Vec::new());
+
+    assert!(app.clap_plugin_scan_busy);
+    assert!(app.clap_plugin_scan_is_cached);
+    assert_eq!(app.clap_plugin_scan, cached);
+    assert!(
+        app.clap_plugin_settings_feedback
+            .contains("cached results remain available")
+    );
+}
+
+#[test]
+fn successful_clap_refresh_replaces_the_cache_and_marks_results_fresh() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache_path = directory.path().join("clap-scan-cache.json");
+    let search_path = directory.path().join("plugins");
+    std::fs::create_dir(&search_path).unwrap();
+    let fresh = test_clap_scan_report("Fresh Instrument");
+    let mut app = App {
+        clap_plugin_cache_path: Some(cache_path.clone()),
+        clap_plugin_paths: vec![search_path.clone()],
+        clap_plugin_scan_busy: true,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ClapPluginsScanned(Ok(fresh.clone())));
+
+    assert!(!app.clap_plugin_scan_busy);
+    assert!(!app.clap_plugin_scan_is_cached);
+    assert_eq!(app.clap_plugin_scan, fresh);
+    let cached = super::clap_plugin_cache::load_from(&cache_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(cached.report, fresh);
+    assert_eq!(cached.search_paths, vec![search_path]);
+}
+
+fn test_clap_scan_report(name: &str) -> aaadaw_app::ClapPluginScanReport {
+    aaadaw_app::ClapPluginScanReport {
+        plugins: vec![aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test.clap"),
+            plugin_id: "org.example.test".to_owned(),
+            name: name.to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["instrument".to_owned()],
+        }],
+        errors: Vec::new(),
+        entries_checked: 1,
+    }
+}
+
+#[test]
 fn track_fx_add_button_opens_a_scanned_plugin_picker_and_chain_edits_use_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

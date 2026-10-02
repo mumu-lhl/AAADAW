@@ -131,7 +131,7 @@
 ### 5. CLAP 插件与参数自动化基础
 
 - [x] 在 Settings 的 CLAP Plugins 类别配置多个搜索路径、递归扫描 CLAP entry/bundle，并显示插件与扫描错误（[`docs/tickets/2026-10-02-clap-plugin-discovery.md`](docs/tickets/2026-10-02-clap-plugin-discovery.md)）。
-- [ ] 缓存最近一次 CLAP 扫描结果；启动时先显示缓存并后台扫描已配置路径，扫描失败时保留上次可用结果（[`docs/tickets/2026-10-02-clap-startup-scan-cache.md`](docs/tickets/2026-10-02-clap-startup-scan-cache.md)）。
+- [x] 缓存最近一次 CLAP 扫描结果；启动时先显示缓存并后台扫描已配置路径，扫描失败时保留上次可用结果（[`docs/tickets/2026-10-02-clap-startup-scan-cache.md`](docs/tickets/2026-10-02-clap-startup-scan-cache.md)）。
 - [x] 为轨道实现可撤销的有序 CLAP FX chain 与逐项启用/旁路，并经 schema v4 持久化（[`docs/tickets/2026-10-02-track-fx-project-model.md`](docs/tickets/2026-10-02-track-fx-project-model.md)）。
 - [x] 为有序轨道链加载和实时处理启用的立体声 CLAP 效果器；渲染图替换会在音频线程停止处理器，并将其返回匹配的 owner（[`docs/tickets/2026-10-02-clap-track-fx-processing.md`](docs/tickets/2026-10-02-clap-track-fx-processing.md)）。
 - [ ] 将 CLAP owner/processor 生命周期接入应用播放、图替换和参数编辑；支持 MIDI 乐器进入轨道 FX chain。

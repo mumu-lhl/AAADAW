@@ -37,4 +37,4 @@ Settings distinguishes cached results from an active refresh or a failed refresh
 
 ## Status
 
-Planned.
+Complete. The app restores the last successful catalog before launching its startup scan, refreshes configured paths in the background, and retains cached results if refresh fails. Verification passed with `cargo xtest` (194 workspace tests), strict app Clippy, and a private Xvfb run that scanned `/home/mumulhl/.clap` and wrote the cache without touching the normal user config.

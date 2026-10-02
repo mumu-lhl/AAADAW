@@ -19,3 +19,6 @@ rfd = "0.15.4"
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "canvas", "advanced", "x11", "wayland", "tokio", "linux-theme-detection"] }
 bytemuck = { version = "1.24", features = ["derive"] }
 x11rb = "0.13.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.27.0"

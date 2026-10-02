@@ -192,6 +192,21 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
         );
     }
 
+    let catalog_status = if app.clap_plugin_scan_busy && app.clap_plugin_scan_is_cached {
+        "Cached results are shown while configured paths are refreshed"
+    } else if app.clap_plugin_scan_is_cached {
+        "Showing the last cached scan results"
+    } else if app.clap_plugin_scan_busy {
+        "A background scan is running; previous results remain available"
+    } else if app.clap_plugin_scan.entries_checked == 0
+        && app.clap_plugin_scan.plugins.is_empty()
+        && app.clap_plugin_scan.errors.is_empty()
+    {
+        "No scan results yet"
+    } else {
+        "Showing the latest scan results"
+    };
+
     column![
         text("CLAP plug-ins").size(17),
         text(
@@ -221,6 +236,7 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
             app.clap_plugin_scan.plugins.len()
         ))
         .size(12),
+        text(catalog_status).size(10),
         scrollable(container(catalog).padding(iced::Padding::default().right(10.0)))
             .height(Length::Fill),
         text(app.clap_plugin_settings_feedback.clone()).size(11),

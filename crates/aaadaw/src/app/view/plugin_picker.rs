@@ -62,7 +62,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         entries = entries.push(container(text(empty_text).size(12)).padding([12, 4]));
     }
 
-    let scan_state = if app.clap_plugin_scan_busy {
+    let scan_state = if app.clap_plugin_scan_busy && app.clap_plugin_scan_is_cached {
+        "Refreshing paths; cached results are shown"
+    } else if app.clap_plugin_scan_is_cached {
+        "Using cached results; choose an entry to add it"
+    } else if app.clap_plugin_scan_busy {
         "Scanning; the latest completed results are shown"
     } else {
         "Choose an entry to add it to the track FX chain"

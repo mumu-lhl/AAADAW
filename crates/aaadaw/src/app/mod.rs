@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
 mod clap_track_fx;
@@ -83,8 +84,11 @@ struct App {
     settings_category: SettingsCategory,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
+    clap_plugin_cache_path: Option<PathBuf>,
     clap_plugin_scan: ClapPluginScanReport,
     clap_plugin_scan_busy: bool,
+    clap_plugin_scan_is_cached: bool,
+    clap_plugin_scan_paths: Vec<PathBuf>,
     clap_plugin_settings_feedback: String,
     timeline: TimelineState,
     path_picker_busy: bool,
@@ -237,6 +241,7 @@ impl App {
         let default_plugin_paths = default_clap_search_paths();
         app.clap_plugin_default_paths = default_plugin_paths.iter().cloned().collect();
         app.clap_plugin_paths = default_plugin_paths;
+        let mut plugin_settings_warnings = Vec::new();
         match clap_plugin_config::load() {
             Ok(paths) => {
                 app.clap_plugin_paths = clap_plugin_settings::merge_clap_plugin_paths(
@@ -245,12 +250,16 @@ impl App {
                 );
             }
             Err(error) => {
-                app.clap_plugin_settings_feedback =
-                    format!("CLAP search path config unavailable: {error}");
+                plugin_settings_warnings
+                    .push(format!("CLAP search path config unavailable: {error}"));
             }
         }
+        let plugin_scan_task = app.initialize_clap_plugin_scan(
+            clap_plugin_cache::default_path(),
+            plugin_settings_warnings,
+        );
         let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
-            return (app, main_window_task);
+            return (app, Task::batch([main_window_task, plugin_scan_task]));
         };
         app.project_path_query = path.to_string_lossy().into_owned();
         app.io_busy = true;
@@ -262,7 +271,7 @@ impl App {
             }),
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
-        (app, Task::batch([main_window_task, task]))
+        (app, Task::batch([main_window_task, plugin_scan_task, task]))
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
