@@ -18,7 +18,7 @@ Plugin private-state persistence, custom plugin windows, effects, multi-output i
 
 ## Dependencies
 
-ADR 0005, [`docs/tickets/2026-10-02-clap-host-processor.md`](2026-10-02-clap-host-processor.md), persisted `TrackInstrument`, `MidiEventPlan`, JACK/PipeWire render graph.
+ADR 0005, [`docs/tickets/2026-10-02-clap-host-processor.md`](2026-10-02-clap-host-processor.md), [`docs/tickets/2026-10-02-clap-render-graph.md`](2026-10-02-clap-render-graph.md), persisted `TrackInstrument`, `MidiEventPlan`, JACK/PipeWire render graph.
 
 ## Acceptance
 
@@ -34,4 +34,4 @@ Inspect the track instrument controls in the real application at 1280×800 and 9
 
 ## Status
 
-In progress; the CLAP host processor ticket is complete.
+Planned; blocked by the realtime render graph ticket.
