@@ -44,6 +44,7 @@ pub(crate) enum PathPickerTarget {
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
     DismissMainMenu,
+    Escape,
     SelectWorkspace(WorkspacePage),
     Timeline(TimelineEvent),
     TcpScrolled {

@@ -70,7 +70,7 @@ fn vs_main(
     } else if kind == 8u {
         x = 0.0;
         width = uniforms.view.x;
-    } else if kind >= 3u && kind <= 6u {
+    } else if (kind >= 3u && kind <= 6u) || kind == 10u {
         width = uniforms.view.w;
         if corner.x > 0.5 {
             x += select(1.0, 2.0, kind == 5u || kind == 6u);

@@ -1,4 +1,4 @@
-use super::{ItemDragPreview, ItemKind, SelectedItemGeometry, TimelineItem};
+use super::{ItemDragPreview, ItemKind, SelectedItemGeometry, TimeSelection, TimelineItem};
 use bytemuck::{Pod, Zeroable, cast_slice};
 use iced::Rectangle;
 use iced::wgpu;
@@ -15,6 +15,8 @@ const EDIT_CURSOR: u32 = 5;
 const PLAYHEAD: u32 = 6;
 const SELECTED_ITEM: u32 = 7;
 const DROP_TARGET: u32 = 8;
+const TIME_SELECTION_FILL: u32 = 9;
+const TIME_SELECTION_EDGE: u32 = 10;
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
@@ -27,6 +29,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) edit_cursor_tick: u64,
     pub(super) playhead_tick: Option<u64>,
     pub(super) selected_items: Vec<SelectedItemGeometry>,
+    pub(super) time_selection: Option<TimeSelection>,
     pub(super) drag_preview: Option<ItemDragPreview>,
     pub(super) selected_track_index: u32,
     pub(super) width: f32,
@@ -317,7 +320,36 @@ impl Primitive for TimelinePrimitive {
         }
         pipeline.previewed_indices = previewed_indices;
 
-        let mut dynamic = Vec::with_capacity(self.grid_lines.len() + 3 + self.selected_items.len());
+        let mut dynamic = Vec::with_capacity(
+            self.grid_lines.len()
+                + 3
+                + self.selected_items.len()
+                + self.time_selection.is_some().then_some(3).unwrap_or(0),
+        );
+        if let Some(selection) = self.time_selection {
+            dynamic.push(GpuRect::new(
+                selection.start_tick,
+                selection.end_tick,
+                0.0,
+                self.height,
+                [63, 126, 147, 48],
+                0,
+                u32::MAX,
+                TIME_SELECTION_FILL,
+            ));
+            for tick in [selection.start_tick, selection.end_tick] {
+                dynamic.push(GpuRect::new(
+                    tick,
+                    tick,
+                    0.0,
+                    self.height,
+                    [110, 181, 195, 235],
+                    0,
+                    u32::MAX,
+                    TIME_SELECTION_EDGE,
+                ));
+            }
+        }
         if let Some(preview) = self.drag_preview
             && let Some(target_track_index) = preview.target_track_index
         {

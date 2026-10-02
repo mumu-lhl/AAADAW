@@ -169,7 +169,10 @@ impl App {
         }
         if !matches!(
             &message,
-            Message::ToggleMainMenu(_) | Message::DismissMainMenu | Message::ActionQueryChanged(_)
+            Message::ToggleMainMenu(_)
+                | Message::DismissMainMenu
+                | Message::Escape
+                | Message::ActionQueryChanged(_)
         ) {
             self.active_menu = None;
         }
@@ -179,6 +182,7 @@ impl App {
                 | Message::ProjectSaved(..)
                 | Message::ToggleMainMenu(_)
                 | Message::DismissMainMenu
+                | Message::Escape
                 | Message::SelectWorkspace(_)
                 | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                 | Message::Timeline(_)
@@ -214,6 +218,7 @@ impl App {
                 Message::PathPicked(..)
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
+                    | Message::Escape
                     | Message::SelectWorkspace(_)
                     | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
@@ -230,6 +235,7 @@ impl App {
                 &message,
                 Message::AudioFilePathChanged(_)
                     | Message::ToggleMainMenu(_)
+                    | Message::Escape
                     | Message::SelectWorkspace(_)
                     | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
@@ -249,6 +255,7 @@ impl App {
                 &message,
                 Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
+                    | Message::Escape
                     | Message::SelectWorkspace(_)
                     | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
@@ -271,6 +278,7 @@ impl App {
                     Message::PlaybackPrepared { .. }
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
+                        | Message::Escape
                         | Message::SelectWorkspace(_)
                         | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                         | Message::BackgroundTick
@@ -331,6 +339,12 @@ impl App {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
             Message::DismissMainMenu => self.active_menu = None,
+            Message::Escape => {
+                if self.active_menu.take().is_none() {
+                    self.timeline
+                        .handle(timeline::TimelineEvent::ClearTimeSelection);
+                }
+            }
             Message::SelectWorkspace(page) => self.active_workspace = page,
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
@@ -559,6 +573,7 @@ impl App {
                         self.timeline.rebuild(&self.project);
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
+                        self.timeline.time_selection = None;
                         self.timeline.origin_tick = 0;
                         self.timeline.edit_cursor_tick = 0;
                         self.timeline.vertical_scroll = 0.0;
@@ -1331,7 +1346,7 @@ fn shortcut_message(
     if modifiers == iced::keyboard::Modifiers::NONE
         && key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
     {
-        return Some(Message::DismissMainMenu);
+        return Some(Message::Escape);
     }
     commands::from_shortcut(&key, modifiers).map(Message::ExecuteCommand)
 }

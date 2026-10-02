@@ -6,7 +6,9 @@ use iced::widget::canvas;
 use iced::widget::canvas::Text;
 use iced::widget::pane_grid::{self, Axis, Split};
 use iced::widget::shader;
-use iced::{Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Theme, keyboard, mouse};
+use iced::{
+    Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -17,6 +19,7 @@ pub(crate) const TIMELINE_SCROLL_ID: &str = "aaadaw-timeline-scroll";
 
 const MIN_PIXELS_PER_TICK: f32 = 0.002;
 const MAX_PIXELS_PER_TICK: f32 = 1.5;
+const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArrangementPane {
@@ -37,6 +40,11 @@ pub(crate) enum TimelineEvent {
         range: bool,
     },
     SelectEmpty(u64),
+    SetTimeSelection {
+        start_tick: u64,
+        end_tick: u64,
+    },
+    ClearTimeSelection,
     ToggleSnapToSixteenth,
     BeginItemDrag {
         item_id: ItemId,
@@ -66,6 +74,21 @@ pub(crate) enum TimelineEvent {
 pub(crate) enum ItemKind {
     Audio,
     Midi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TimeSelection {
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+}
+
+impl TimeSelection {
+    fn normalized(start_tick: u64, end_tick: u64) -> Option<Self> {
+        (start_tick != end_tick).then(|| Self {
+            start_tick: start_tick.min(end_tick),
+            end_tick: start_tick.max(end_tick),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +192,7 @@ pub(crate) struct TimelineState {
     pub(crate) selected_track: Option<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) snap_to_sixteenth: bool,
     pub(crate) edit_cursor_tick: u64,
@@ -214,6 +238,7 @@ impl Default for TimelineState {
             selected_track: None,
             selected_item: None,
             selected_items: HashSet::new(),
+            time_selection: None,
             context_track: None,
             snap_to_sixteenth: true,
             edit_cursor_tick: 0,
@@ -293,6 +318,11 @@ impl TimelineState {
                 self.edit_cursor_tick = tick;
                 self.select_item(None, false, false, false);
             }
+            TimelineEvent::SetTimeSelection {
+                start_tick,
+                end_tick,
+            } => self.time_selection = TimeSelection::normalized(start_tick, end_tick),
+            TimelineEvent::ClearTimeSelection => self.time_selection = None,
             TimelineEvent::ToggleSnapToSixteenth => {
                 if self.cache.sixteenth_ticks.is_some() {
                     self.snap_to_sixteenth = !self.snap_to_sixteenth;
@@ -509,6 +539,8 @@ impl TimelineState {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick,
             selected_items: self.selected_item_geometries(),
+            time_selection: self.time_selection,
+            snap_to_sixteenth: self.snap_to_sixteenth,
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
         }
@@ -536,6 +568,8 @@ struct TimelineProgram<'a> {
     edit_cursor_tick: u64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
+    time_selection: Option<TimeSelection>,
+    snap_to_sixteenth: bool,
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
 }
@@ -545,6 +579,7 @@ struct TimelineInteractionState {
     modifiers: keyboard::Modifiers,
     pan_last_x: Option<f32>,
     pending_item_drag: Option<PendingItemDrag>,
+    pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -555,6 +590,39 @@ struct PendingItemDrag {
     pointer_start_y: f32,
     modifiers: keyboard::Modifiers,
     is_dragging: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeSelectionEdge {
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeSelectionDragMode {
+    Create,
+    ResizeStart,
+    ResizeEnd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingTimeSelectionDrag {
+    mode: TimeSelectionDragMode,
+    anchor_tick: u64,
+    fixed_tick: u64,
+    pointer_start_x: f32,
+    pointer_start_y: f32,
+    is_dragging: bool,
+}
+
+impl PendingTimeSelectionDrag {
+    fn range_at(self, active_tick: u64) -> (u64, u64) {
+        match self.mode {
+            TimeSelectionDragMode::Create => (self.fixed_tick, active_tick),
+            TimeSelectionDragMode::ResizeStart => (active_tick, self.fixed_tick),
+            TimeSelectionDragMode::ResizeEnd => (self.fixed_tick, active_tick),
+        }
+    }
 }
 
 impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
@@ -579,12 +647,22 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_item_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
-            return cancel_drag.then(|| {
-                shader::Action::publish(crate::app::Message::Timeline(
-                    TimelineEvent::CancelItemDrag,
-                ))
-                .and_capture()
-            });
+            let cancel_time_selection_drag = state
+                .pending_time_selection_drag
+                .take()
+                .is_some_and(|drag| drag.is_dragging);
+            return if cancel_drag {
+                Some(
+                    shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::CancelItemDrag,
+                    ))
+                    .and_capture(),
+                )
+            } else if cancel_time_selection_drag {
+                Some(shader::Action::capture())
+            } else {
+                None
+            };
         }
 
         match event {
@@ -685,6 +763,33 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                                 .and_capture(),
                         )
                     }
+                } else if let Some(mut drag) = state.pending_time_selection_drag {
+                    let local_x = position.x - bounds.x;
+                    let local_y = position.y - bounds.y;
+                    let distance =
+                        (local_x - drag.pointer_start_x).hypot(local_y - drag.pointer_start_y);
+                    if !drag.is_dragging && distance < 3.0 {
+                        None
+                    } else {
+                        drag.is_dragging = true;
+                        state.pending_time_selection_drag = Some(drag);
+                        let active_tick = snap_tick_to_grid(
+                            tick_at_x(self.origin_tick, self.pixels_per_tick, local_x),
+                            self.cache.sixteenth_ticks,
+                            self.snap_to_sixteenth,
+                            state.modifiers.shift(),
+                        );
+                        let (start_tick, end_tick) = drag.range_at(active_tick);
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetTimeSelection {
+                                    start_tick,
+                                    end_tick,
+                                },
+                            ))
+                            .and_capture(),
+                        )
+                    }
                 } else {
                     None
                 }
@@ -696,7 +801,31 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
                 let hit = self.cache.item_at(track_index, tick);
-                if let Some(item) = hit {
+                let selection_edge = self.time_selection.and_then(|selection| {
+                    time_selection_edge_at_tick(selection, tick, self.pixels_per_tick)
+                });
+                if let Some(edge) = selection_edge {
+                    let selection = self.time_selection.expect("edge requires a selection");
+                    let (mode, fixed_tick) = match edge {
+                        TimeSelectionEdge::Start => {
+                            (TimeSelectionDragMode::ResizeStart, selection.end_tick)
+                        }
+                        TimeSelectionEdge::End => {
+                            (TimeSelectionDragMode::ResizeEnd, selection.start_tick)
+                        }
+                    };
+                    state.pending_item_drag = None;
+                    state.pending_time_selection_drag = Some(PendingTimeSelectionDrag {
+                        mode,
+                        anchor_tick: tick,
+                        fixed_tick,
+                        pointer_start_x: position.x,
+                        pointer_start_y: position.y,
+                        is_dragging: false,
+                    });
+                    Some(shader::Action::capture())
+                } else if let Some(item) = hit {
+                    state.pending_time_selection_drag = None;
                     state.pending_item_drag = Some(PendingItemDrag {
                         item_id: item.id,
                         pointer_start_tick: tick,
@@ -708,28 +837,50 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     Some(shader::Action::capture())
                 } else {
                     state.pending_item_drag = None;
-                    Some(
-                        shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::SelectEmpty(tick),
-                        ))
-                        .and_capture(),
-                    )
+                    state.pending_time_selection_drag = Some(PendingTimeSelectionDrag {
+                        mode: TimeSelectionDragMode::Create,
+                        anchor_tick: tick,
+                        fixed_tick: snap_tick_to_grid(
+                            tick,
+                            self.cache.sixteenth_ticks,
+                            self.snap_to_sixteenth,
+                            state.modifiers.shift(),
+                        ),
+                        pointer_start_x: position.x,
+                        pointer_start_y: position.y,
+                        is_dragging: false,
+                    });
+                    Some(shader::Action::capture())
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let Some(drag) = state.pending_item_drag.take() else {
-                    return None;
-                };
-                let event = if drag.is_dragging {
-                    TimelineEvent::EndItemDrag
-                } else {
-                    TimelineEvent::SelectItem {
-                        item_id: Some(drag.item_id),
-                        additive: drag.modifiers.command(),
-                        range: drag.modifiers.shift(),
+                if let Some(drag) = state.pending_item_drag.take() {
+                    let event = if drag.is_dragging {
+                        TimelineEvent::EndItemDrag
+                    } else {
+                        TimelineEvent::SelectItem {
+                            item_id: Some(drag.item_id),
+                            additive: drag.modifiers.command(),
+                            range: drag.modifiers.shift(),
+                        }
+                    };
+                    Some(
+                        shader::Action::publish(crate::app::Message::Timeline(event)).and_capture(),
+                    )
+                } else if let Some(drag) = state.pending_time_selection_drag.take() {
+                    if drag.mode == TimeSelectionDragMode::Create && !drag.is_dragging {
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SelectEmpty(drag.anchor_tick),
+                            ))
+                            .and_capture(),
+                        )
+                    } else {
+                        Some(shader::Action::capture())
                     }
-                };
-                Some(shader::Action::publish(crate::app::Message::Timeline(event)).and_capture())
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -755,6 +906,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
+            time_selection: self.time_selection,
             drag_preview: self.drag_preview,
             selected_track_index: track_index,
             width: bounds.width,
@@ -779,6 +931,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
     ) -> mouse::Interaction {
         if let Some(position) = cursor.position_in(bounds) {
             let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+            if self.time_selection.is_some_and(|selection| {
+                time_selection_edge_at_tick(selection, tick, self.pixels_per_tick).is_some()
+            }) {
+                return mouse::Interaction::ResizingHorizontally;
+            }
             let row_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
             if self.cache.item_at(row_index, tick).is_some() {
                 return mouse::Interaction::Pointer;
@@ -908,6 +1065,31 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(29, 33, 36));
+        if let Some(selection) = self.state.time_selection {
+            let tick_x = |tick: u64| {
+                (i128::from(tick) - i128::from(self.state.origin_tick)) as f64
+                    * f64::from(self.state.pixels_per_tick)
+            };
+            let start_x = tick_x(selection.start_tick);
+            let end_x = tick_x(selection.end_tick);
+            frame.fill_rectangle(
+                Point::new(start_x as f32, 0.0),
+                Size::new((end_x - start_x) as f32, bounds.height),
+                Color::from_rgba8(63, 126, 147, 0.18),
+            );
+            for x in [start_x, end_x] {
+                let path = canvas::Path::line(
+                    Point::new(x as f32, 0.0),
+                    Point::new(x as f32, bounds.height),
+                );
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgb8(110, 181, 195))
+                        .with_width(1.5),
+                );
+            }
+        }
         for line in self.state.ruler_lines(self.project, bounds.width) {
             let line_color = if line.is_measure {
                 Color::from_rgb8(101, 110, 116)
@@ -1021,6 +1203,35 @@ fn tick_at_x(origin_tick: u64, pixels_per_tick: f32, x: f32) -> u64 {
         .round() as u64
 }
 
+fn snap_tick_to_grid(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+    let Some(grid) = grid.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
+        return tick;
+    };
+    let grid = u128::from(grid);
+    (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64
+}
+
+fn time_selection_edge_at_tick(
+    selection: TimeSelection,
+    tick: u64,
+    pixels_per_tick: f32,
+) -> Option<TimeSelectionEdge> {
+    let pixels_per_tick = f64::from(pixels_per_tick);
+    let start_distance =
+        i128::from(tick).abs_diff(i128::from(selection.start_tick)) as f64 * pixels_per_tick;
+    let end_distance =
+        i128::from(tick).abs_diff(i128::from(selection.end_tick)) as f64 * pixels_per_tick;
+    let start_hit = start_distance <= TIME_SELECTION_EDGE_HIT_RADIUS_PX;
+    let end_hit = end_distance <= TIME_SELECTION_EDGE_HIT_RADIUS_PX;
+    match (start_hit, end_hit) {
+        (true, true) if start_distance <= end_distance => Some(TimeSelectionEdge::Start),
+        (true, true) => Some(TimeSelectionEdge::End),
+        (true, false) => Some(TimeSelectionEdge::Start),
+        (false, true) => Some(TimeSelectionEdge::End),
+        (false, false) => None,
+    }
+}
+
 fn media_label(media_ref: &str) -> String {
     let file_name = std::path::Path::new(media_ref)
         .file_name()
@@ -1030,7 +1241,10 @@ fn media_label(media_ref: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemKind, TimelineCache, TimelineEvent, TimelineState, tick_at_x};
+    use super::{
+        ItemKind, PendingTimeSelectionDrag, TimeSelection, TimeSelectionDragMode, TimelineCache,
+        TimelineEvent, TimelineState, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+    };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TimeSignature};
 
     fn project_with_items() -> (Project, [aaadaw_core::TrackId; 3], [aaadaw_core::ItemId; 3]) {
@@ -1182,6 +1396,108 @@ mod tests {
         assert!(timeline.selected_items.contains(&items[1]));
         assert!(timeline.selected_items.contains(&items[2]));
         assert!(!timeline.selected_items.contains(&items[0]));
+    }
+
+    #[test]
+    fn time_selection_is_normalized_and_independent_from_item_selection_and_cursor() {
+        let (project, tracks, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[1]),
+            additive: false,
+            range: false,
+        });
+        timeline.edit_cursor_tick = 720;
+        let selected_items = timeline.selected_items.clone();
+
+        timeline.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 960,
+            end_tick: 240,
+        });
+        assert_eq!(
+            timeline.time_selection,
+            Some(TimeSelection {
+                start_tick: 240,
+                end_tick: 960,
+            })
+        );
+        assert_eq!(timeline.selected_items, selected_items);
+        assert_eq!(timeline.selected_item, Some(items[1]));
+        assert_eq!(timeline.selected_track, Some(tracks[0]));
+        assert_eq!(timeline.edit_cursor_tick, 720);
+
+        timeline.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 480,
+            end_tick: 480,
+        });
+        assert_eq!(timeline.time_selection, None);
+        timeline.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 100,
+            end_tick: 300,
+        });
+        timeline.handle(TimelineEvent::ClearTimeSelection);
+        assert_eq!(timeline.time_selection, None);
+        assert_eq!(timeline.selected_items, selected_items);
+    }
+
+    #[test]
+    fn time_selection_snaps_to_sixteenths_and_shift_bypasses_snap() {
+        let (project, _, _) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        assert_eq!(
+            snap_tick_to_grid(361, timeline.cache.sixteenth_ticks, true, false),
+            480
+        );
+        assert_eq!(
+            snap_tick_to_grid(359, timeline.cache.sixteenth_ticks, true, false),
+            240
+        );
+        assert_eq!(
+            snap_tick_to_grid(361, timeline.cache.sixteenth_ticks, true, true),
+            361
+        );
+
+        timeline.handle(TimelineEvent::ToggleSnapToSixteenth);
+        assert_eq!(
+            snap_tick_to_grid(
+                361,
+                timeline.cache.sixteenth_ticks,
+                timeline.snap_to_sixteenth,
+                false
+            ),
+            361
+        );
+    }
+
+    #[test]
+    fn time_selection_edges_are_hit_testable_and_drags_keep_the_opposite_edge_fixed() {
+        let selection = TimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        };
+        assert_eq!(
+            time_selection_edge_at_tick(selection, 250, 0.5),
+            Some(super::TimeSelectionEdge::Start)
+        );
+        assert_eq!(
+            time_selection_edge_at_tick(selection, 950, 0.5),
+            Some(super::TimeSelectionEdge::End)
+        );
+        assert_eq!(time_selection_edge_at_tick(selection, 600, 0.5), None);
+
+        let resize_start = PendingTimeSelectionDrag {
+            mode: TimeSelectionDragMode::ResizeStart,
+            anchor_tick: 240,
+            fixed_tick: selection.end_tick,
+            pointer_start_x: 0.0,
+            pointer_start_y: 0.0,
+            is_dragging: true,
+        };
+        assert_eq!(resize_start.range_at(120), (120, 960));
+        assert_eq!(resize_start.range_at(1_200), (1_200, 960));
     }
 
     #[test]

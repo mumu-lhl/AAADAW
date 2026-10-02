@@ -74,7 +74,7 @@ fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
 }
 
 #[test]
-fn full_menu_bar_switches_sections_and_escape_dismisses_it() {
+fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection() {
     let mut app = App::default();
     let menus = [
         MainMenu::File,
@@ -99,10 +99,48 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it() {
             Key::Named(iced::keyboard::key::Named::Escape),
             Modifiers::NONE
         ),
-        Some(Message::DismissMainMenu)
+        Some(Message::Escape)
     ));
-    let _ = app.update(Message::DismissMainMenu);
+    let _ = app.update(Message::Escape);
     assert_eq!(app.active_menu, None);
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.timeline.selected_track = Some(track_id);
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        },
+    ));
+    app.timeline.edit_cursor_tick = 720;
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Item));
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.active_menu, None);
+    assert!(app.timeline.time_selection.is_some());
+
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.edit_cursor_tick, 720);
+    assert_eq!(app.timeline.selected_track, Some(track_id));
+}
+
+#[test]
+fn loading_a_project_clears_the_previous_time_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        },
+    ));
+
+    let _ = app.update(Message::ProjectLoaded(
+        std::path::PathBuf::from("loaded.aaadaw"),
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok(Project::new())))),
+    ));
+
+    assert_eq!(app.timeline.time_selection, None);
 }
 
 #[test]
@@ -257,7 +295,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             iced::event::Status::Captured,
             iced::window::Id::unique()
         ),
-        Some(Message::DismissMainMenu)
+        Some(Message::Escape)
     ));
     #[cfg(feature = "jack-backend")]
     assert!(matches!(

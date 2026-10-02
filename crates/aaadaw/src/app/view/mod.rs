@@ -64,9 +64,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .padding(tokens::SPACING_LG)
         .height(Length::Fill);
     let transport = container(
-        row![text("Transport").size(14), playback_controls(app)]
-            .spacing(tokens::SECTION_GAP)
-            .align_y(Alignment::Center),
+        row![
+            text("Transport").size(14),
+            playback_controls(app),
+            iced::widget::Space::new().width(Length::Fill),
+            time_selection_readout(app),
+        ]
+        .spacing(tokens::SECTION_GAP)
+        .align_y(Alignment::Center),
     )
     .width(Length::Fill)
     .padding(tokens::PANEL_PADDING)
@@ -99,6 +104,32 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)
         .into()
+}
+
+fn time_selection_readout(app: &App) -> Element<'_, Message> {
+    let Some(selection) = app.timeline.time_selection else {
+        return iced::widget::Space::new().width(Length::Shrink).into();
+    };
+    let format_tick = |tick| {
+        app.project
+            .musical_position_at_tick(tick)
+            .map(|position| {
+                format!(
+                    "{}.{}.{}",
+                    position.measure(),
+                    position.beat(),
+                    position.tick_in_beat()
+                )
+            })
+            .unwrap_or_else(|_| format!("{tick} ticks"))
+    };
+    text(format!(
+        "Sel {}–{}",
+        format_tick(selection.start_tick),
+        format_tick(selection.end_tick)
+    ))
+    .size(12)
+    .into()
 }
 
 fn workspace_button_style(
