@@ -100,7 +100,7 @@
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [x] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
 - [x] 固定主窗口为 Arrangement，将 Media 收敛为 Media Browser 面板、移除 Project 子页面，并在 File 菜单加入新建工程命令（[`docs/tickets/2026-10-02-arrangement-only-main-window.md`](docs/tickets/2026-10-02-arrangement-only-main-window.md)）。
-- [x] 将 Settings 改为左侧类别栏与右侧设置面板；快捷键列表为每个 Action 提供独立的恢复默认入口（[`docs/tickets/2026-10-02-settings-category-navigation.md`](docs/tickets/2026-10-02-settings-category-navigation.md)）。
+- [x] 将 Settings 改为左侧类别栏与右侧设置面板；点击 Keyboard Shortcuts 显示完整快捷键列表，并为每个 Action 提供独立的恢复默认入口（[`docs/tickets/2026-10-02-settings-category-navigation.md`](docs/tickets/2026-10-02-settings-category-navigation.md)）。
 - [ ] 为 Arrange Snap 增加可选网格单位；让吸附开关与网格间距分开，默认 1/16，并支持常用音符时值及附点/三连音细分（[`docs/tickets/2026-10-02-selectable-snap-grid.md`](docs/tickets/2026-10-02-selectable-snap-grid.md)）。
 - [x] 实现音频波形的基础显示（[`docs/tickets/2026-10-02-arrangement-audio-waveforms.md`](docs/tickets/2026-10-02-arrangement-audio-waveforms.md)）；缓存、多级降采样和大工程性能优化按后续里程碑推进。
 

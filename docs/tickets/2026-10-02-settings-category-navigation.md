@@ -33,6 +33,6 @@ Inspect the Settings window at 1280×800 and 900×620 in private Xvfb. The left 
 
 ## Status
 
-Complete: Settings now has a left navigation rail for command categories and a right shortcut editor. Each Action can clear its current binding or stage restoration of its built-in default, including the unassigned default; Restore All Defaults and Save remain available. Switching categories preserves edits and cancels an in-progress capture cleanly.
+Complete: Settings now has a left category rail with a clickable Keyboard Shortcuts category and a right editor showing the complete command list, grouped by Action category. Each Action can clear its current binding or stage restoration of its built-in default, including the unassigned default; Restore All Defaults and Save remain available. Future preference pages can use the same category-to-detail layout without adding empty sections.
 
-Verification: `cargo xtest -p aaadaw` passed (163 tests), strict workspace Clippy passed, and the Settings window was inspected in private Xvfb at 1280×800 and 900×620, including switching to Edit.
+Verification: `cargo xtest -p aaadaw` passed (163 tests), strict workspace Clippy passed, and the Settings window was inspected in private Xvfb at 1280×800 and 900×620.

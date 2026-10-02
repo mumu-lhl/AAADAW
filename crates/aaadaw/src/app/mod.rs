@@ -33,7 +33,7 @@ mod project_io;
 mod tests;
 mod view;
 
-pub(crate) use messages::{MainMenu, Message, PathPickerTarget};
+pub(crate) use messages::{MainMenu, Message, PathPickerTarget, SettingsCategory};
 
 pub(crate) fn run() -> iced::Result {
     iced::daemon(App::new, App::update, view::view_for_window)
@@ -60,7 +60,7 @@ struct App {
     settings_window_id: Option<iced::window::Id>,
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
-    settings_category: String,
+    settings_category: SettingsCategory,
     timeline: TimelineState,
     path_picker_busy: bool,
     audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,

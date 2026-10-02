@@ -32,6 +32,12 @@ pub(crate) enum PathPickerTarget {
     RelinkAudio,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsCategory {
+    #[default]
+    KeyboardShortcuts,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
@@ -44,7 +50,7 @@ pub(crate) enum Message {
     StartShortcutCapture(String),
     ClearShortcutBinding(String),
     RestoreShortcutDefault(String),
-    SelectSettingsCategory(String),
+    SelectSettingsCategory(SettingsCategory),
     CancelShortcutCapture,
     ShortcutCaptureKey {
         action_id: String,

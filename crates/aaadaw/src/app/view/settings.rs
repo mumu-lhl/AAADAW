@@ -1,45 +1,34 @@
-use super::super::{App, Message, commands};
+use super::super::{App, Message, SettingsCategory, commands};
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let entries = commands::shortcut_entries(app);
-    let categories = entries.iter().map(|entry| entry.category).fold(
-        Vec::<&str>::new(),
-        |mut categories, category| {
-            if !categories.contains(&category) {
-                categories.push(category);
-            }
-            categories
-        },
-    );
-    let active_category = categories
-        .iter()
-        .copied()
-        .find(|category| *category == app.settings_category)
-        .or_else(|| categories.first().copied())
-        .unwrap_or("File");
-
-    let mut navigation = column![text("Keyboard shortcuts").size(13)].spacing(4);
-    for category in categories {
-        let selected = category == active_category;
-        navigation = navigation.push(
-            button(text(category))
-                .width(Length::Fill)
-                .style(if selected {
-                    button::primary
-                } else {
-                    button::secondary
-                })
-                .on_press(Message::SelectSettingsCategory(category.to_owned())),
-        );
-    }
+    let selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
+    let navigation = column![
+        text("Settings").size(13),
+        button("Keyboard Shortcuts")
+            .width(Length::Fill)
+            .style(if selected {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SelectSettingsCategory(
+                SettingsCategory::KeyboardShortcuts
+            )),
+    ]
+    .spacing(4);
 
     let mut bindings = column![].spacing(5);
-    for entry in entries
-        .into_iter()
-        .filter(|entry| entry.category == active_category)
-    {
+    let mut action_category = None;
+    for entry in entries {
+        if action_category != Some(entry.category) {
+            action_category = Some(entry.category);
+            bindings = bindings
+                .push(text(entry.category).size(12))
+                .push(rule::horizontal(1));
+        }
         let action_id = entry.id.to_owned();
         let recording = app.shortcut_capture_id.as_deref() == Some(entry.id);
         let shown_binding = if recording {
@@ -60,12 +49,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .width(Length::Fill)
                     .spacing(2),
                 button(text(shown_binding))
+                    .style(if recording {
+                        button::warning
+                    } else {
+                        button::secondary
+                    })
                     .width(Length::Fixed(150.0))
                     .on_press(Message::StartShortcutCapture(action_id.clone())),
                 button("Clear")
+                    .style(button::text)
                     .width(Length::Fixed(48.0))
                     .on_press(Message::ClearShortcutBinding(action_id.clone())),
                 button("Default")
+                    .style(button::text)
                     .width(Length::Fixed(68.0))
                     .on_press(Message::RestoreShortcutDefault(action_id)),
             ]
@@ -75,7 +71,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     }
 
     let details = column![
-        text(format!("Keyboard shortcuts · {active_category}")).size(17),
+        text("Keyboard shortcuts").size(17),
         text("Select a binding, then press Ctrl/Cmd with a letter, optionally Shift, or Space.")
             .size(12),
         rule::horizontal(1),
@@ -83,7 +79,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .height(Length::Fill),
         text(app.shortcut_editor_feedback.clone()).size(12),
         row![
-            button("Restore all defaults").on_press(Message::ResetShortcutBindings),
+            button("Restore all defaults")
+                .style(button::secondary)
+                .on_press(Message::ResetShortcutBindings),
             iced::widget::Space::new().width(Length::Fill),
             button("Save changes").on_press(Message::SaveShortcutBindings),
         ]
@@ -95,7 +93,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     let content = row![
         container(navigation)
-            .width(Length::Fixed(154.0))
+            .width(Length::Fixed(178.0))
             .height(Length::Fill)
             .padding(iced::Padding::default().right(10.0)),
         rule::vertical(1),

@@ -546,8 +546,13 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
         ..App::default()
     };
     let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
-    let _ = app.update(Message::SelectSettingsCategory("Edit".to_owned()));
-    assert_eq!(app.settings_category, "Edit");
+    let _ = app.update(Message::SelectSettingsCategory(
+        super::SettingsCategory::KeyboardShortcuts,
+    ));
+    assert_eq!(
+        app.settings_category,
+        super::SettingsCategory::KeyboardShortcuts
+    );
     assert_eq!(
         app.shortcut_binding_edits.get("file.new-project").unwrap(),
         "Mod+P"
