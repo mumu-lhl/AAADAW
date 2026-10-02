@@ -54,25 +54,27 @@ struct GpuRect {
     kind: u32,
 }
 
+struct GpuRectSpec {
+    start_tick: u64,
+    end_tick: u64,
+    y: f32,
+    height: f32,
+    color: [u8; 4],
+    item_id: u64,
+    track_index: u32,
+    kind: u32,
+}
+
 impl GpuRect {
-    fn new(
-        start_tick: u64,
-        end_tick: u64,
-        y: f32,
-        height: f32,
-        color: [u8; 4],
-        item_id: u64,
-        track_index: u32,
-        kind: u32,
-    ) -> Self {
+    fn new(spec: GpuRectSpec) -> Self {
         Self {
-            start_tick: split_tick(start_tick),
-            end_tick: split_tick(end_tick),
-            y_height: [y, height],
-            color: color.map(linearize_srgb),
-            item_id: split_tick(item_id),
-            track_index,
-            kind,
+            start_tick: split_tick(spec.start_tick),
+            end_tick: split_tick(spec.end_tick),
+            y_height: [spec.y, spec.height],
+            color: spec.color.map(linearize_srgb),
+            item_id: split_tick(spec.item_id),
+            track_index: spec.track_index,
+            kind: spec.kind,
         }
     }
 }
@@ -235,48 +237,48 @@ impl Primitive for TimelinePrimitive {
                 } else {
                     [38, 43, 47, 255]
                 };
-                instances.push(GpuRect::new(
-                    0,
-                    0,
-                    track_index as f32 * self.row_height,
-                    self.row_height,
+                instances.push(GpuRect::new(GpuRectSpec {
+                    start_tick: 0,
+                    end_tick: 0,
+                    y: track_index as f32 * self.row_height,
+                    height: self.row_height,
                     color,
-                    0,
+                    item_id: 0,
                     track_index,
-                    LANE,
-                ));
+                    kind: LANE,
+                }));
             }
             for item in self.items.iter() {
                 let (color, kind) = match item.kind {
                     ItemKind::Audio => ([74, 99, 122, 255], AUDIO_ITEM),
                     ItemKind::Midi => ([89, 112, 74, 255], MIDI_ITEM),
                 };
-                instances.push(GpuRect::new(
-                    item.start_tick,
-                    item.end_tick,
-                    item.track_index as f32 * self.row_height + 7.0,
-                    self.row_height - 14.0,
+                instances.push(GpuRect::new(GpuRectSpec {
+                    start_tick: item.start_tick,
+                    end_tick: item.end_tick,
+                    y: item.track_index as f32 * self.row_height + 7.0,
+                    height: self.row_height - 14.0,
                     color,
-                    item.id.value(),
-                    item.track_index as u32,
+                    item_id: item.id.value(),
+                    track_index: item.track_index as u32,
                     kind,
-                ));
+                }));
             }
             for bin in self.waveform_bins.iter() {
                 let height = (self.row_height * 0.56).max(1.0);
                 let center = bin.track_index as f32 * self.row_height + self.row_height * 0.62;
                 let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
                 let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
-                instances.push(GpuRect::new(
-                    bin.start_tick,
-                    bin.end_tick,
-                    top.min(bottom),
-                    (bottom - top).abs().max(1.0),
-                    [150, 177, 190, 255],
-                    0,
-                    bin.track_index as u32,
-                    AUDIO_WAVEFORM,
-                ));
+                instances.push(GpuRect::new(GpuRectSpec {
+                    start_tick: bin.start_tick,
+                    end_tick: bin.end_tick,
+                    y: top.min(bottom),
+                    height: (bottom - top).abs().max(1.0),
+                    color: [150, 177, 190, 255],
+                    item_id: 0,
+                    track_index: bin.track_index as u32,
+                    kind: AUDIO_WAVEFORM,
+                }));
             }
             ensure_capacity(
                 device,
@@ -350,46 +352,46 @@ impl Primitive for TimelinePrimitive {
                 + if self.time_selection.is_some() { 3 } else { 0 },
         );
         if let Some(selection) = self.time_selection {
-            dynamic.push(GpuRect::new(
-                selection.start_tick,
-                selection.end_tick,
-                0.0,
-                self.height,
-                [63, 126, 147, 48],
-                0,
-                u32::MAX,
-                TIME_SELECTION_FILL,
-            ));
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: selection.start_tick,
+                end_tick: selection.end_tick,
+                y: 0.0,
+                height: self.height,
+                color: [63, 126, 147, 48],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: TIME_SELECTION_FILL,
+            }));
             for tick in [selection.start_tick, selection.end_tick] {
-                dynamic.push(GpuRect::new(
-                    tick,
-                    tick,
-                    0.0,
-                    self.height,
-                    [110, 181, 195, 235],
-                    0,
-                    u32::MAX,
-                    TIME_SELECTION_EDGE,
-                ));
+                dynamic.push(GpuRect::new(GpuRectSpec {
+                    start_tick: tick,
+                    end_tick: tick,
+                    y: 0.0,
+                    height: self.height,
+                    color: [110, 181, 195, 235],
+                    item_id: 0,
+                    track_index: u32::MAX,
+                    kind: TIME_SELECTION_EDGE,
+                }));
             }
         }
         if let Some(preview) = self.drag_preview
             && let Some(target_track_index) = preview.target_track_index
         {
-            dynamic.push(GpuRect::new(
-                0,
-                0,
-                target_track_index as f32 * self.row_height,
-                self.row_height,
-                if preview.valid {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: 0,
+                end_tick: 0,
+                y: target_track_index as f32 * self.row_height,
+                height: self.row_height,
+                color: if preview.valid {
                     [79, 111, 87, 110]
                 } else {
                     [139, 67, 57, 110]
                 },
-                0,
-                target_track_index as u32,
-                DROP_TARGET,
-            ));
+                item_id: 0,
+                track_index: target_track_index as u32,
+                kind: DROP_TARGET,
+            }));
         }
         for selected in &self.selected_items {
             let preview = self.drag_preview;
@@ -402,54 +404,54 @@ impl Primitive for TimelinePrimitive {
             let row = i128::try_from(selected.track_index).unwrap_or(i128::MAX)
                 + preview.map_or(0, |preview| i128::from(preview.track_delta));
             let track_index = u32::try_from(row).unwrap_or(u32::MAX);
-            dynamic.push(GpuRect::new(
+            dynamic.push(GpuRect::new(GpuRectSpec {
                 start_tick,
                 end_tick,
-                track_index as f32 * self.row_height + 7.0,
-                self.row_height - 14.0,
-                [245, 185, 92, 255],
-                selected.item_id.value(),
+                y: track_index as f32 * self.row_height + 7.0,
+                height: self.row_height - 14.0,
+                color: [245, 185, 92, 255],
+                item_id: selected.item_id.value(),
                 track_index,
-                SELECTED_ITEM,
-            ));
+                kind: SELECTED_ITEM,
+            }));
         }
         for (tick, is_measure) in &self.grid_lines {
-            dynamic.push(GpuRect::new(
-                *tick,
-                *tick,
-                0.0,
-                self.height,
-                if *is_measure {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *tick,
+                end_tick: *tick,
+                y: 0.0,
+                height: self.height,
+                color: if *is_measure {
                     [83, 91, 98, 170]
                 } else {
                     [57, 64, 70, 135]
                 },
-                0,
-                u32::MAX,
-                if *is_measure { BAR_LINE } else { BEAT_LINE },
-            ));
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: if *is_measure { BAR_LINE } else { BEAT_LINE },
+            }));
         }
-        dynamic.push(GpuRect::new(
-            self.edit_cursor_tick,
-            self.edit_cursor_tick,
-            0.0,
-            self.height,
-            [231, 184, 101, 255],
-            0,
-            u32::MAX,
-            EDIT_CURSOR,
-        ));
+        dynamic.push(GpuRect::new(GpuRectSpec {
+            start_tick: self.edit_cursor_tick,
+            end_tick: self.edit_cursor_tick,
+            y: 0.0,
+            height: self.height,
+            color: [231, 184, 101, 255],
+            item_id: 0,
+            track_index: u32::MAX,
+            kind: EDIT_CURSOR,
+        }));
         if let Some(playhead_tick) = self.playhead_tick {
-            dynamic.push(GpuRect::new(
-                playhead_tick,
-                playhead_tick,
-                0.0,
-                self.height,
-                [76, 178, 209, 235],
-                0,
-                u32::MAX,
-                PLAYHEAD,
-            ));
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: playhead_tick,
+                end_tick: playhead_tick,
+                y: 0.0,
+                height: self.height,
+                color: [76, 178, 209, 235],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: PLAYHEAD,
+            }));
         }
         ensure_capacity(
             device,
@@ -515,16 +517,16 @@ fn item_appearance(kind: ItemKind) -> ([u8; 4], u32) {
 
 fn item_rect(item: &TimelineItem, row_height: f32) -> GpuRect {
     let (color, kind) = item_appearance(item.kind);
-    GpuRect::new(
-        item.start_tick,
-        item.end_tick,
-        item.track_index as f32 * row_height + 7.0,
-        row_height - 14.0,
+    GpuRect::new(GpuRectSpec {
+        start_tick: item.start_tick,
+        end_tick: item.end_tick,
+        y: item.track_index as f32 * row_height + 7.0,
+        height: row_height - 14.0,
         color,
-        item.id.value(),
-        item.track_index as u32,
+        item_id: item.id.value(),
+        track_index: item.track_index as u32,
         kind,
-    )
+    })
 }
 
 fn selected_item_rect(
@@ -536,16 +538,16 @@ fn selected_item_rect(
     row_height: f32,
 ) -> GpuRect {
     let (color, item_kind) = item_appearance(kind);
-    GpuRect::new(
+    GpuRect::new(GpuRectSpec {
         start_tick,
         end_tick,
-        track_index as f32 * row_height + 7.0,
-        row_height - 14.0,
+        y: track_index as f32 * row_height + 7.0,
+        height: row_height - 14.0,
         color,
         item_id,
         track_index,
-        item_kind,
-    )
+        kind: item_kind,
+    })
 }
 
 fn write_item_rect(
