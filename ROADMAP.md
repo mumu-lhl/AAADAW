@@ -131,10 +131,11 @@
 ### 5. CLAP 插件与参数自动化基础
 
 - [x] 在 Settings 的 CLAP Plugins 类别配置多个搜索路径、递归扫描 CLAP entry/bundle，并显示插件与扫描错误（[`docs/tickets/2026-10-02-clap-plugin-discovery.md`](docs/tickets/2026-10-02-clap-plugin-discovery.md)）。
+- [ ] 缓存最近一次 CLAP 扫描结果；启动时先显示缓存并后台扫描已配置路径，扫描失败时保留上次可用结果（[`docs/tickets/2026-10-02-clap-startup-scan-cache.md`](docs/tickets/2026-10-02-clap-startup-scan-cache.md)）。
 - [x] 为轨道实现可撤销的有序 CLAP FX chain 与逐项启用/旁路，并经 schema v4 持久化（[`docs/tickets/2026-10-02-track-fx-project-model.md`](docs/tickets/2026-10-02-track-fx-project-model.md)）。
 - [x] 为有序轨道链加载和实时处理启用的立体声 CLAP 效果器；渲染图替换会在音频线程停止处理器，并将其返回匹配的 owner（[`docs/tickets/2026-10-02-clap-track-fx-processing.md`](docs/tickets/2026-10-02-clap-track-fx-processing.md)）。
 - [ ] 将 CLAP owner/processor 生命周期接入应用播放、图替换和参数编辑；支持 MIDI 乐器进入轨道 FX chain。
-- [ ] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧显示所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
+- [x] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧嵌入所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
 - [ ] 将插件参数变更接入 Action；提供 begin/perform/end 手势语义，为自动化录制保留一致的接口。
 - [ ] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败。
 - [ ] 显示进程内插件的风险提示；MVP 不承诺插件崩溃隔离，第三方插件不得被误认为运行在安全沙盒中。
