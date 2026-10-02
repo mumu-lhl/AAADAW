@@ -3,6 +3,7 @@ use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -152,6 +153,64 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
     store
         .close()
         .expect("the reopened project should close cleanly");
+    assert!(!PathBuf::from(format!("{}-wal", path.display())).exists());
+    assert!(!PathBuf::from(format!("{}-shm", path.display())).exists());
+
+    let copy_path = path.with_extension("copy.aaadaw");
+    std::fs::copy(&path, &copy_path).expect("closed project should copy as one file");
+    let copy = ProjectStore::open(&copy_path).expect("copied project should reopen");
+    assert_eq!(
+        copy.load().unwrap().snapshot(),
+        project.snapshot(),
+        "single-file copy should preserve the saved project"
+    );
+    copy.close().expect("copied project should close cleanly");
+    remove_database(&path);
+    remove_database(&copy_path);
+}
+
+#[test]
+fn project_store_recovers_committed_state_after_unexpected_process_exit() {
+    const CHILD_PATH_ENV: &str = "AAADAW_TEST_WAL_CHILD_PATH";
+    if let Some(path) = std::env::var_os(CHILD_PATH_ENV) {
+        let path = PathBuf::from(path);
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Recovered".to_owned(),
+            })
+            .expect("child project state should be created");
+        let mut store = ProjectStore::open(&path).expect("child project should open");
+        store
+            .save(&project)
+            .expect("child project should commit to the WAL");
+        let wal_path = PathBuf::from(format!("{}-wal", path.display()));
+        assert!(
+            std::fs::metadata(&wal_path).is_ok_and(|metadata| metadata.len() > 32),
+            "child must exit with committed frames still in the WAL"
+        );
+
+        // Skip ProjectStore::close and Rust destructors to simulate a process crash.
+        std::process::exit(0);
+    }
+
+    let path = project_path();
+    let child = Command::new(std::env::current_exe().expect("test executable path should exist"))
+        .arg("--exact")
+        .arg("project_store_recovers_committed_state_after_unexpected_process_exit")
+        .env(CHILD_PATH_ENV, &path)
+        .status()
+        .expect("WAL recovery child should start");
+    assert!(child.success(), "WAL recovery child should commit and exit");
+
+    let store = ProjectStore::open(&path).expect("project should recover from the WAL");
+    let recovered = store.load().expect("recovered project should load");
+    assert_eq!(recovered.tracks().len(), 1);
+    assert_eq!(recovered.tracks()[0].name(), "Recovered");
+    store
+        .close()
+        .expect("recovered project should close cleanly");
     remove_database(&path);
 }
 
