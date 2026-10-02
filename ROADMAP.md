@@ -89,7 +89,7 @@
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
 - [x] 建立首个可停靠面板 Media Browser（[`docs/tickets/2026-10-02-dock-media-browser.md`](docs/tickets/2026-10-02-dock-media-browser.md)）。
-- [ ] 扩展 transport 至其他设备后端。
+- [ ] 扩展 transport 至其他设备后端（[`docs/tickets/2026-10-02-pipewire-playback.md`](docs/tickets/2026-10-02-pipewire-playback.md)）。
 - [x] 建立空间化 Arrangement：Audio/MIDI Item 按轨道和音乐时间显示；拍号感知标尺、水平缩放/平移、轨道/item 选择、edit cursor、垂直轨道滚动、可调 TCP 分割和 Inspector。AudioItem 保留 sample-clock 精确输入、撤销微调、复制/删除及 JACK 定位；MIDI 保留 Item/音符列表与可撤销编辑和 1/16 量化。
 - [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；内容、来源偏移和无效放置保护均已验证。
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
@@ -97,7 +97,7 @@
 - [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
-- [x] 将快捷键映射配置化并直接纳入统一 Action 注册表；增加冲突检查与用户配置基础结构（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
+- [ ] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。映射持久化和命令分发基础已实现。
 - [x] 实现音频波形的基础显示（[`docs/tickets/2026-10-02-arrangement-audio-waveforms.md`](docs/tickets/2026-10-02-arrangement-audio-waveforms.md)）；缓存、多级降采样和大工程性能优化按后续里程碑推进。
 
 **退出标准**：用户能在 UI 中建立工程、创建轨道、编辑 Item、播放并保存；关键编辑可撤销/重做；缩放和平移不会触发全量工程数据重算。
