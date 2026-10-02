@@ -7,9 +7,11 @@
 mod asset_management;
 mod audio_editing;
 mod audio_import;
+mod clap_plugins;
 mod midi_editing;
 mod waveform;
 
+pub use aaadaw_engine::ClapPluginDescriptor;
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
     AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
@@ -20,6 +22,9 @@ pub use audio_editing::{AudioEditError, duplicate_audio_item, set_audio_item_sta
 pub use audio_import::{
     AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import,
     start_audio_item_reimport,
+};
+pub use clap_plugins::{
+    ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,
 };
 pub use midi_editing::{
     MidiEditError, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,

@@ -1,10 +1,11 @@
 use crate::timeline::{self, TimelineState};
 use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementWorker, AudioAssetSourceStatusEntry,
-    AudioItemImportWorker, AudioWaveformResult, AudioWaveformWorker, add_quarter_note,
-    adjust_midi_note_pitch, adjust_midi_note_velocity, create_four_beat_midi_item,
-    delete_midi_note, duplicate_audio_item, move_midi_item_by_beat, move_midi_note_by_sixteenth,
-    quantize_midi_item_to_sixteenth, set_audio_item_start_sample,
+    AudioItemImportWorker, AudioWaveformResult, AudioWaveformWorker, ClapPluginScanReport,
+    add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
+    create_four_beat_midi_item, default_clap_search_paths, delete_midi_note, duplicate_audio_item,
+    move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
+    set_audio_item_start_sample,
 };
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::{
@@ -24,7 +25,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+mod clap_plugin_config;
+mod clap_plugin_settings;
 mod commands;
+mod config_paths;
 mod keyboard_config;
 mod media;
 mod messages;
@@ -61,6 +65,11 @@ struct App {
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
+    clap_plugin_paths: Vec<PathBuf>,
+    clap_plugin_default_paths: HashSet<PathBuf>,
+    clap_plugin_scan: ClapPluginScanReport,
+    clap_plugin_scan_busy: bool,
+    clap_plugin_settings_feedback: String,
     timeline: TimelineState,
     path_picker_busy: bool,
     audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,
@@ -209,6 +218,19 @@ impl App {
                 app.status = format!("Keyboard shortcut config unavailable: {error}");
             }
         }
+        let default_plugin_paths = default_clap_search_paths();
+        app.clap_plugin_default_paths = default_plugin_paths.iter().cloned().collect();
+        app.clap_plugin_paths = default_plugin_paths;
+        match clap_plugin_config::load() {
+            Ok(paths) => {
+                app.clap_plugin_paths =
+                    clap_plugin_settings::merge_clap_plugin_paths(app.clap_plugin_paths, paths);
+            }
+            Err(error) => {
+                app.clap_plugin_settings_feedback =
+                    format!("CLAP search path config unavailable: {error}");
+            }
+        }
         let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
             return (app, main_window_task);
         };
@@ -297,6 +319,10 @@ impl App {
                 | Message::ShortcutCaptureKey { .. }
                 | Message::SaveShortcutBindings
                 | Message::ResetShortcutBindings
+                | Message::RemoveClapPluginPath(_)
+                | Message::RescanClapPlugins
+                | Message::ClapPluginsScanned(_)
+                | Message::PickPath(PathPickerTarget::AddClapPluginPath)
         );
         let allowed_during_io = window_safe_message
             || matches!(
@@ -488,6 +514,11 @@ impl App {
                     self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
                 }
             }
+            Message::RemoveClapPluginPath(path) => {
+                task = self.remove_clap_plugin_path(path);
+            }
+            Message::RescanClapPlugins => task = self.start_clap_plugin_scan(),
+            Message::ClapPluginsScanned(result) => self.finish_clap_plugin_scan(result),
             Message::CancelShortcutCapture => {
                 self.shortcut_capture_id = None;
                 self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();

@@ -30,6 +30,35 @@ pub struct ClapInstrumentDescriptor {
     pub name: String,
 }
 
+/// A CLAP plugin exposed by one plugin entry file, for discovery and selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClapPluginDescriptor {
+    /// Path to the CLAP entry library or bundle selected by the user.
+    pub entry_path: PathBuf,
+    /// Stable CLAP plugin identifier stored in a project.
+    pub plugin_id: String,
+    /// Display name supplied by the plugin.
+    pub name: String,
+    /// Optional vendor name supplied by the plugin.
+    pub vendor: Option<String>,
+    /// CLAP feature tags supplied by the plugin.
+    pub features: Vec<String>,
+}
+
+impl ClapPluginDescriptor {
+    /// Returns whether the plugin advertises itself as an instrument.
+    pub fn is_instrument(&self) -> bool {
+        self.features.iter().any(|feature| feature == "instrument")
+    }
+
+    /// Returns whether the plugin advertises itself as an audio effect.
+    pub fn is_audio_effect(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == "audio-effect")
+    }
+}
+
 /// A CLAP host setup or processing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClapInstrumentError {
@@ -427,6 +456,51 @@ impl ClapInstrumentProcessor {
     }
 }
 
+/// Lists plugin descriptors exposed by one CLAP entry file.
+///
+/// Loading a CLAP entry executes its native initialization code. Call this from a worker after the
+/// user selects a trusted plugin library. Process isolation is not provided.
+///
+/// # Safety
+///
+/// `entry_path` must point to a valid, trusted CLAP library.
+pub unsafe fn inspect_clap_plugin_entry(
+    entry_path: &Path,
+) -> Result<Vec<ClapPluginDescriptor>, ClapInstrumentError> {
+    // SAFETY: upheld by this function's caller.
+    let entry = unsafe { PluginEntry::load(entry_path) }
+        .map_err(|error| ClapInstrumentError::new(format!("Could not load CLAP entry: {error}")))?;
+    describe_plugin_entry(&entry, entry_path)
+}
+
+fn describe_plugin_entry(
+    entry: &PluginEntry,
+    entry_path: &Path,
+) -> Result<Vec<ClapPluginDescriptor>, ClapInstrumentError> {
+    let factory = entry
+        .get_plugin_factory()
+        .ok_or_else(|| ClapInstrumentError::new("CLAP entry has no plugin factory"))?;
+    let mut descriptors = Vec::new();
+    for descriptor in factory.plugin_descriptors() {
+        let (Some(plugin_id), Some(name)) = (descriptor.id(), descriptor.name()) else {
+            continue;
+        };
+        descriptors.push(ClapPluginDescriptor {
+            entry_path: entry_path.to_owned(),
+            plugin_id: plugin_id.to_string_lossy().into_owned(),
+            name: name.to_string_lossy().into_owned(),
+            vendor: descriptor
+                .vendor()
+                .map(|vendor| vendor.to_string_lossy().into_owned()),
+            features: descriptor
+                .features()
+                .map(|feature| feature.to_string_lossy().into_owned())
+                .collect(),
+        });
+    }
+    Ok(descriptors)
+}
+
 /// Lists instrument descriptors exposed by one explicitly selected CLAP entry file.
 ///
 /// Loading a CLAP entry executes its native initialization code. Call this from a worker after the
@@ -439,29 +513,16 @@ pub unsafe fn inspect_clap_instrument_entry(
     entry_path: &Path,
 ) -> Result<Vec<ClapInstrumentDescriptor>, ClapInstrumentError> {
     // SAFETY: upheld by this function's caller.
-    let entry = unsafe { PluginEntry::load(entry_path) }
-        .map_err(|error| ClapInstrumentError::new(format!("Could not load CLAP entry: {error}")))?;
-    let factory = entry
-        .get_plugin_factory()
-        .ok_or_else(|| ClapInstrumentError::new("CLAP entry has no plugin factory"))?;
-    let mut descriptors = Vec::new();
-    for descriptor in factory.plugin_descriptors() {
-        if !descriptor
-            .features()
-            .any(|feature| feature == features::INSTRUMENT)
-        {
-            continue;
-        }
-        let (Some(plugin_id), Some(name)) = (descriptor.id(), descriptor.name()) else {
-            continue;
-        };
-        descriptors.push(ClapInstrumentDescriptor {
-            entry_path: entry_path.to_owned(),
-            plugin_id: plugin_id.to_string_lossy().into_owned(),
-            name: name.to_string_lossy().into_owned(),
-        });
-    }
-    Ok(descriptors)
+    let plugins = unsafe { inspect_clap_plugin_entry(entry_path) }?;
+    Ok(plugins
+        .into_iter()
+        .filter(ClapPluginDescriptor::is_instrument)
+        .map(|plugin| ClapInstrumentDescriptor {
+            entry_path: plugin.entry_path,
+            plugin_id: plugin.plugin_id,
+            name: plugin.name,
+        })
+        .collect())
 }
 
 fn validate_stereo_synth_ports(
@@ -737,6 +798,22 @@ mod tests {
             SinglePluginEntry<TestInstrument<IS_INSTRUMENT, CHANNEL_COUNT>>,
         >(c"test")
         .expect("static test plugin entry")
+    }
+
+    #[test]
+    fn plugin_inspection_includes_instruments_and_effects() {
+        let instrument = test_plugin_entry::<true, 2>();
+        let effects = test_plugin_entry::<false, 2>();
+        let instrument = describe_plugin_entry(&instrument, Path::new("synth.clap")).unwrap();
+        let effects = describe_plugin_entry(&effects, Path::new("effect.clap")).unwrap();
+
+        assert_eq!(instrument.len(), 1);
+        assert!(instrument[0].is_instrument());
+        assert!(!instrument[0].is_audio_effect());
+        assert_eq!(instrument[0].name, "AAADAW Test Synth");
+        assert_eq!(effects.len(), 1);
+        assert!(effects[0].is_audio_effect());
+        assert!(!effects[0].is_instrument());
     }
 
     #[test]

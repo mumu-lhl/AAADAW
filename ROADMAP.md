@@ -130,7 +130,7 @@
 
 ### 5. CLAP 插件与参数自动化基础
 
-- [ ] 在 Settings 的 CLAP Plugins 类别配置多个搜索路径、递归扫描 CLAP entry/bundle，并显示插件与扫描错误。
+- [x] 在 Settings 的 CLAP Plugins 类别配置多个搜索路径、递归扫描 CLAP entry/bundle，并显示插件与扫描错误（[`docs/tickets/2026-10-02-clap-plugin-discovery.md`](docs/tickets/2026-10-02-clap-plugin-discovery.md)）。
 - [ ] 通过 `clack` 实现进程内 CLAP 插件发现、加载、处理、卸载和基本参数控制。
 - [ ] 为轨道实现有序 FX chain 与每项启用/旁路；TCP 的 FX 按钮打开 chain 编辑器，左侧管理插件、右侧显示所选插件界面，添加与删除使用独立命令。
 - [ ] 将插件参数变更接入 Action；提供 begin/perform/end 手势语义，为自动化录制保留一致的接口。

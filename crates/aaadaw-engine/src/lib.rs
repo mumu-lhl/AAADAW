@@ -16,7 +16,8 @@ mod transport;
 
 pub use clap_instrument::{
     ClapInstrumentDescriptor, ClapInstrumentError, ClapInstrumentOwner, ClapInstrumentProcessor,
-    StoppedClapInstrumentProcessor, inspect_clap_instrument_entry,
+    ClapPluginDescriptor, StoppedClapInstrumentProcessor, inspect_clap_instrument_entry,
+    inspect_clap_plugin_entry,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};

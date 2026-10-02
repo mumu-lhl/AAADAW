@@ -33,4 +33,4 @@ The chain layout and plugin selector follow `DESIGN.md` at default and narrow wi
 
 ## Status
 
-Blocked by plugin discovery ticket.
+Ready; plugin discovery is complete.

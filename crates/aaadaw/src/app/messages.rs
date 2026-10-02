@@ -30,12 +30,14 @@ pub(crate) enum PathPickerTarget {
     ImportAudio,
     ImportAudioToProject,
     RelinkAudio,
+    AddClapPluginPath,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsCategory {
     #[default]
     KeyboardShortcuts,
+    ClapPlugins,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +53,9 @@ pub(crate) enum Message {
     ClearShortcutBinding(String),
     RestoreShortcutDefault(String),
     SelectSettingsCategory(SettingsCategory),
+    RemoveClapPluginPath(PathBuf),
+    RescanClapPlugins,
+    ClapPluginsScanned(Result<aaadaw_app::ClapPluginScanReport, String>),
     CancelShortcutCapture,
     ShortcutCaptureKey {
         action_id: String,

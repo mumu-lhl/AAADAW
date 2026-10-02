@@ -1,4 +1,5 @@
 use super::commands::ShortcutBindings;
+use super::config_paths::config_file_path;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -34,17 +35,7 @@ pub(super) fn reset() -> Result<(), String> {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let root = std::env::var_os("APPDATA").map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let root = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join("Library/Application Support"));
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let root = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-    root.map(|root| root.join("aaadaw").join(FILE_NAME))
+    config_file_path(FILE_NAME)
 }
 
 fn parse(contents: &str) -> Result<ShortcutBindings, String> {

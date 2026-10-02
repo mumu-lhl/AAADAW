@@ -49,6 +49,9 @@ impl App {
                             &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
                         )
                         .pick_file(),
+                    PathPickerTarget::AddClapPluginPath => rfd::FileDialog::new()
+                        .set_title("Choose a CLAP plugin search directory")
+                        .pick_folder(),
                 };
                 Ok(path)
             }),
@@ -86,6 +89,7 @@ impl App {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();
                     Task::none()
                 }
+                PathPickerTarget::AddClapPluginPath => self.add_clap_plugin_path(path),
             },
             Ok(None) => {
                 if self.status == "Wait for the file dialog to finish" {

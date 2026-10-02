@@ -33,4 +33,4 @@ At 1280×800 and 900×620, the Settings sidebar remains stable and CLAP Plugins 
 
 ## Status
 
-Ready.
+Complete. `cargo xtest` passed (179 workspace tests), strict workspace Clippy and the app build passed. Private Xvfb visual review at 760×620 and 640×460 passed; scanning `/home/mumulhl/.clap` found both Physics instruments without errors.

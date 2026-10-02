@@ -559,6 +559,18 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
     );
     assert!(app.shortcut_capture_id.is_none());
 
+    let _ = app.update(Message::SelectSettingsCategory(
+        super::SettingsCategory::ClapPlugins,
+    ));
+    assert_eq!(app.settings_category, super::SettingsCategory::ClapPlugins);
+    assert_eq!(
+        app.shortcut_binding_edits.get("file.new-project").unwrap(),
+        "Mod+P"
+    );
+    let _ = app.update(Message::SelectSettingsCategory(
+        super::SettingsCategory::KeyboardShortcuts,
+    ));
+
     let _ = app.update(Message::RestoreShortcutDefault(
         "file.new-project".to_owned(),
     ));
@@ -605,6 +617,35 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
             .binding,
         ""
     );
+}
+
+#[test]
+fn clap_plugin_scan_results_update_settings_without_mutating_project_state() {
+    let mut app = App {
+        clap_plugin_scan_busy: true,
+        ..App::default()
+    };
+    let project = app.project.snapshot();
+    let revision = app.revision;
+    let report = aaadaw_app::ClapPluginScanReport {
+        plugins: vec![aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test.clap"),
+            plugin_id: "org.example.test".to_owned(),
+            name: "Test Instrument".to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["instrument".to_owned()],
+        }],
+        errors: vec![],
+        entries_checked: 1,
+    };
+
+    let _ = app.update(Message::ClapPluginsScanned(Ok(report)));
+
+    assert!(!app.clap_plugin_scan_busy);
+    assert_eq!(app.clap_plugin_scan.plugins.len(), 1);
+    assert!(app.clap_plugin_scan.plugins[0].is_instrument());
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.snapshot(), project);
 }
 
 #[test]
