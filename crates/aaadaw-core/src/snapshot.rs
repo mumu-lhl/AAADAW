@@ -21,12 +21,23 @@ pub struct TrackSnapshot {
     pub muted: bool,
     pub solo: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,
+    pub fx_chain: Vec<TrackFxPluginSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrackInstrumentSnapshot {
     pub plugin_id: String,
     pub bundle_path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackFxPluginSnapshot {
+    /// Stable identifier reported by the CLAP plugin.
+    pub plugin_id: String,
+    /// Local path to the CLAP entry library or bundle.
+    pub bundle_path: String,
+    /// Whether the plugin is enabled in the chain.
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

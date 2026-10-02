@@ -16,6 +16,7 @@ pub enum ActionError {
     /// A track volume must be a finite decibel value.
     InvalidVolumeDb,
     InvalidTrackInstrument,
+    InvalidTrackFxPlugin,
     /// A tempo must be finite and greater than zero.
     InvalidTempoBpm,
     /// The resulting tempo map cannot be represented in sample positions.
@@ -88,6 +89,9 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
+            Self::InvalidTrackFxPlugin => {
+                formatter.write_str("track FX entries must have a plugin ID and bundle path")
+            }
             Self::InvalidTempoBpm => {
                 formatter.write_str("tempo must be finite and greater than zero")
             }

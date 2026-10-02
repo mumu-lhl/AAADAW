@@ -1,5 +1,6 @@
 use crate::{
-    GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackId, TrackInstrument,
+    GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
 
 /// A command that changes project state.
@@ -28,6 +29,11 @@ pub enum DawAction {
     SetTrackInstrument {
         track_id: TrackId,
         instrument: Option<TrackInstrument>,
+    },
+    /// Replace a track's ordered CLAP FX chain as one undoable operation.
+    SetTrackFxChain {
+        track_id: TrackId,
+        plugins: Vec<TrackFxPlugin>,
     },
     /// Rename a track.
     SetTrackName { track_id: TrackId, name: String },

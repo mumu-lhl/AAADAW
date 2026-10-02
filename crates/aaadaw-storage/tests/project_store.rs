@@ -100,6 +100,21 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("instrument assignment should succeed");
     project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                aaadaw_core::TrackFxPlugin::new("org.example.room", "/home/user/.clap/room.clap")
+                    .expect("first plugin reference should be valid"),
+                aaadaw_core::TrackFxPlugin::new(
+                    "org.example.limiter",
+                    "/home/user/.clap/limiter.clap",
+                )
+                .expect("second plugin reference should be valid")
+                .with_enabled(false),
+            ],
+        })
+        .expect("track FX chain should be assigned");
+    project
         .apply(DawAction::InsertAudioItem {
             track_id,
             media_ref: "asset://room-tone".to_owned(),
@@ -200,12 +215,13 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN instrument_path; \
              ALTER TABLE tracks DROP COLUMN instrument_id; \
+             DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
         .expect("remove v3 columns to represent a v2 project");
     drop(connection);
 
-    let store = ProjectStore::open(&path).expect("v2 project should migrate to v3");
+    let store = ProjectStore::open(&path).expect("v2 project should migrate to the current schema");
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     let migrated = store.load().expect("migrated project should load");
     assert_eq!(migrated.tracks()[0].name(), "Legacy");

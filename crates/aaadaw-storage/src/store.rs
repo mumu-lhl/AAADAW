@@ -1,7 +1,7 @@
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
     Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
-    TrackInstrumentSnapshot, TrackSnapshot,
+    TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -87,6 +87,17 @@ ALTER TABLE tracks ADD COLUMN instrument_id TEXT
     CHECK (instrument_id IS NULL OR length(trim(instrument_id)) > 0);
 ALTER TABLE tracks ADD COLUMN instrument_path TEXT
     CHECK (instrument_path IS NULL OR length(trim(instrument_path)) > 0);
+"#;
+
+const MIGRATION_4: &str = r#"
+CREATE TABLE track_fx_plugins (
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    plugin_id TEXT NOT NULL CHECK (length(trim(plugin_id)) > 0),
+    plugin_path TEXT NOT NULL CHECK (length(trim(plugin_path)) > 0),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    PRIMARY KEY (track_id, position)
+);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1668,6 +1679,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             1 => transaction.execute_batch(MIGRATION_1)?,
             2 => transaction.execute_batch(MIGRATION_2)?,
             3 => transaction.execute_batch(MIGRATION_3)?,
+            4 => transaction.execute_batch(MIGRATION_4)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1719,6 +1731,22 @@ fn write_snapshot(
                 track.instrument.as_ref().map(|instrument| &instrument.bundle_path)
             ],
         )?;
+    }
+
+    for track in &snapshot.tracks {
+        for (position, plugin) in track.fx_chain.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_fx_plugins(track_id, position, plugin_id, plugin_path, enabled) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    plugin.plugin_id,
+                    plugin.bundle_path,
+                    plugin.enabled,
+                ],
+            )?;
+        }
     }
 
     for (position, item) in snapshot.audio_items.iter().enumerate() {
@@ -1790,6 +1818,37 @@ fn write_snapshot(
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
+    let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
+    let mut fx_statement = connection.prepare(
+        "SELECT track_id, position, plugin_id, plugin_path, enabled \
+         FROM track_fx_plugins ORDER BY track_id, position",
+    )?;
+    let fx_rows = fx_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, bool>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (track_id, position, plugin_id, bundle_path, enabled) in fx_rows {
+        let _ = from_sql_u64(position)?;
+        if plugin_id.trim().is_empty() || bundle_path.trim().is_empty() {
+            return Err(StorageError::InvalidStoredData("track FX plugin reference"));
+        }
+        fx_chains
+            .entry(track_id)
+            .or_default()
+            .push(TrackFxPluginSnapshot {
+                plugin_id,
+                bundle_path,
+                enabled,
+            });
+    }
+
     let mut statement = connection.prepare(
         "SELECT id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path \
          FROM tracks ORDER BY position",
@@ -1837,6 +1896,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     muted,
                     solo,
                     instrument,
+                    fx_chain: fx_chains.remove(&id).unwrap_or_default(),
                 })
             },
         )

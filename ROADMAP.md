@@ -52,7 +52,7 @@
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v3、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v4、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [ ] 扩展 schema 支持自动化和插件状态，并按工程规模优化全量快照写入；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储，不提升 schema 版本。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [ ] 验收磁盘空间不足时的保存与恢复行为。
@@ -131,8 +131,9 @@
 ### 5. CLAP 插件与参数自动化基础
 
 - [x] 在 Settings 的 CLAP Plugins 类别配置多个搜索路径、递归扫描 CLAP entry/bundle，并显示插件与扫描错误（[`docs/tickets/2026-10-02-clap-plugin-discovery.md`](docs/tickets/2026-10-02-clap-plugin-discovery.md)）。
-- [ ] 通过 `clack` 实现进程内 CLAP 插件发现、加载、处理、卸载和基本参数控制。
-- [ ] 为轨道实现有序 FX chain 与每项启用/旁路；TCP 的 FX 按钮打开 chain 编辑器，左侧管理插件、右侧显示所选插件界面，添加与删除使用独立命令。
+- [x] 为轨道实现可撤销的有序 CLAP FX chain 与逐项启用/旁路，并经 schema v4 持久化（[`docs/tickets/2026-10-02-track-fx-project-model.md`](docs/tickets/2026-10-02-track-fx-project-model.md)）。
+- [ ] 通过 `clack` 实现进程内 CLAP 插件加载、实时处理、卸载和基本参数控制（[`docs/tickets/2026-10-02-clap-track-fx-processing.md`](docs/tickets/2026-10-02-clap-track-fx-processing.md)）。
+- [ ] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧显示所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
 - [ ] 将插件参数变更接入 Action；提供 begin/perform/end 手势语义，为自动化录制保留一致的接口。
 - [ ] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败。
 - [ ] 显示进程内插件的风险提示；MVP 不承诺插件崩溃隔离，第三方插件不得被误认为运行在安全沙盒中。

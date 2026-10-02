@@ -1,4 +1,7 @@
-use aaadaw_core::{DawAction, Project, SnapshotError, TrackInstrument, TrackInstrumentSnapshot};
+use aaadaw_core::{
+    DawAction, Project, SnapshotError, TrackFxPlugin, TrackFxPluginSnapshot, TrackInstrument,
+    TrackInstrumentSnapshot,
+};
 
 #[test]
 fn setting_track_pan_changes_the_track_position() {
@@ -129,4 +132,83 @@ fn snapshots_with_malformed_track_instruments_are_rejected() {
         Project::from_snapshot(snapshot),
         Err(SnapshotError::InvalidProjectData)
     ));
+}
+
+#[test]
+fn track_fx_chain_order_and_bypass_are_undoable_and_redoable() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Guitar".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let reverb = TrackFxPlugin::new("org.example.reverb", "/plugins/reverb.clap").unwrap();
+    let chorus = TrackFxPlugin::new("org.example.chorus", "/plugins/chorus.clap")
+        .unwrap()
+        .with_enabled(false);
+
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![reverb.clone(), chorus.clone()],
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].fx_chain(),
+        &[reverb.clone(), chorus.clone()]
+    );
+
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![chorus.clone(), reverb.clone().with_enabled(false)],
+        })
+        .unwrap();
+    assert_eq!(project.tracks()[0].fx_chain()[0], chorus);
+    assert_eq!(
+        project.tracks()[0].fx_chain()[1].plugin_id(),
+        "org.example.reverb"
+    );
+    assert!(!project.tracks()[0].fx_chain()[1].is_enabled());
+
+    assert!(project.undo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain(),
+        &[reverb.clone(), chorus.clone()]
+    );
+    assert!(project.undo().unwrap());
+    assert!(project.tracks()[0].fx_chain().is_empty());
+    assert!(project.redo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain(),
+        &[reverb.clone(), chorus.clone()]
+    );
+    assert!(project.redo().unwrap());
+    assert_eq!(project.tracks()[0].fx_chain()[0], chorus);
+    assert!(!project.tracks()[0].fx_chain()[1].is_enabled());
+}
+
+#[test]
+fn snapshots_with_malformed_track_fx_references_are_rejected() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Guitar".to_owned(),
+        })
+        .unwrap();
+    let mut snapshot = project.snapshot();
+    snapshot.tracks[0].fx_chain.push(TrackFxPluginSnapshot {
+        plugin_id: "org.example.effect".to_owned(),
+        bundle_path: "  ".to_owned(),
+        enabled: true,
+    });
+
+    assert!(matches!(
+        Project::from_snapshot(snapshot),
+        Err(SnapshotError::InvalidProjectData)
+    ));
+    assert!(TrackFxPlugin::new(" ", "/plugins/effect.clap").is_none());
 }

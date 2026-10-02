@@ -1,11 +1,12 @@
 use crate::snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackFxPluginSnapshot, TrackSnapshot,
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId,
-    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackId, TrackInstrument,
+    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -77,6 +78,11 @@ enum ProjectEvent {
         track_id: TrackId,
         before: Option<TrackInstrument>,
         after: Option<TrackInstrument>,
+    },
+    TrackFxChainChanged {
+        track_id: TrackId,
+        before: Vec<TrackFxPlugin>,
+        after: Vec<TrackFxPlugin>,
     },
     TrackRenamed {
         track_id: TrackId,
@@ -227,6 +233,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TrackInstrumentChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::TrackFxChainChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackFxChainChanged {
                 track_id: *track_id,
                 before: after.clone(),
                 after: before.clone(),
@@ -472,6 +487,15 @@ impl Project {
                             bundle_path: instrument.bundle_path().to_owned(),
                         }
                     }),
+                    fx_chain: track
+                        .fx_chain
+                        .iter()
+                        .map(|plugin| TrackFxPluginSnapshot {
+                            plugin_id: plugin.plugin_id().to_owned(),
+                            bundle_path: plugin.bundle_path().to_owned(),
+                            enabled: plugin.is_enabled(),
+                        })
+                        .collect(),
                 })
                 .collect(),
             audio_items: self
@@ -589,6 +613,15 @@ impl Project {
                 ),
                 None => None,
             };
+            let fx_chain = track
+                .fx_chain
+                .into_iter()
+                .map(|plugin| {
+                    TrackFxPlugin::new(plugin.plugin_id, plugin.bundle_path)
+                        .map(|plugin_ref| plugin_ref.with_enabled(plugin.enabled))
+                        .ok_or(SnapshotError::InvalidProjectData)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             if !track_ids.insert(track.id)
                 || !track.volume_db.is_finite()
                 || !track.pan.is_finite()
@@ -605,6 +638,7 @@ impl Project {
                 muted: track.muted,
                 solo: track.solo,
                 instrument,
+                fx_chain,
             });
         }
 
@@ -730,6 +764,7 @@ impl Project {
                     muted: false,
                     solo: false,
                     instrument: None,
+                    fx_chain: Vec::new(),
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -861,6 +896,23 @@ impl Project {
                     track_id,
                     before: track.instrument.clone(),
                     after: instrument,
+                }
+            }
+            DawAction::SetTrackFxChain { track_id, plugins } => {
+                if plugins.iter().any(|plugin| {
+                    plugin.plugin_id().trim().is_empty() || plugin.bundle_path().trim().is_empty()
+                }) {
+                    return Err(ActionError::InvalidTrackFxPlugin);
+                }
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackFxChainChanged {
+                    track_id,
+                    before: track.fx_chain.clone(),
+                    after: plugins,
                 }
             }
             DawAction::SetTrackName { track_id, name } => {
@@ -1532,6 +1584,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.instrument = after.clone();
+            }
+            ProjectEvent::TrackFxChainChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.fx_chain != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.fx_chain.clone_from(after);
             }
             ProjectEvent::TrackRenamed {
                 track_id,
