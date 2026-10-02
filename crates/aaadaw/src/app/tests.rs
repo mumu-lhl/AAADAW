@@ -620,6 +620,84 @@ fn track_context_menu_selects_its_target_and_closes_after_an_action() {
 }
 
 #[test]
+fn item_context_menu_selects_unselected_targets_and_preserves_existing_multiselection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for start_tick in [0, 1_920, 3_840] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 960,
+            })
+            .unwrap();
+    }
+    app.timeline.rebuild(&app.project);
+    let item_ids = app
+        .project
+        .midi_items()
+        .iter()
+        .map(|item| item.id())
+        .collect::<Vec<_>>();
+    app.timeline
+        .selected_items
+        .extend([item_ids[0], item_ids[1]]);
+    app.timeline.selected_item = Some(item_ids[1]);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 100,
+            end_tick: 500,
+        });
+    let selection = app.timeline.selected_items.clone();
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::OpenItemContextMenu {
+            item_id: item_ids[1],
+            x: 120.0,
+            y: 40.0,
+        },
+    ));
+    assert_eq!(app.timeline.context_item, Some(item_ids[1]));
+    assert_eq!(app.timeline.context_item_position, Some((120.0, 40.0)));
+    assert_eq!(app.timeline.selected_items, selection);
+    assert!(
+        commands::for_menu(&app, MainMenu::Item)
+            .iter()
+            .any(|entry| entry.id == CommandId::DeleteSelectedItems && entry.enabled)
+    );
+
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.timeline.context_item, None);
+    assert_eq!(
+        app.timeline.time_selection,
+        Some(crate::timeline::TimeSelection {
+            start_tick: 100,
+            end_tick: 500,
+        })
+    );
+    assert_eq!(app.timeline.selected_items, selection);
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::OpenItemContextMenu {
+            item_id: item_ids[2],
+            x: 20.0,
+            y: 8.0,
+        },
+    ));
+    assert_eq!(
+        app.timeline.selected_items,
+        [item_ids[2]].into_iter().collect()
+    );
+    assert_eq!(app.timeline.selected_item, Some(item_ids[2]));
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::SelectEmpty(4_000),
+    ));
+    assert_eq!(app.timeline.context_item, None);
+    assert_eq!(app.timeline.context_item_position, None);
+}
+
+#[test]
 fn track_menu_context_menu_and_action_search_share_command_definitions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

@@ -162,9 +162,17 @@ impl App {
             Message::Timeline(
                 timeline::TimelineEvent::OpenTrackContextMenu(_)
                     | timeline::TimelineEvent::ToggleTrackContextMenu(_)
-            )
+            ) | Message::Escape
         ) {
             self.timeline.context_track = None;
+        }
+        if !matches!(
+            &message,
+            Message::Timeline(timeline::TimelineEvent::OpenItemContextMenu { .. })
+                | Message::Escape
+        ) {
+            self.timeline.context_item = None;
+            self.timeline.context_item_position = None;
         }
         if !matches!(
             &message,
@@ -342,8 +350,14 @@ impl App {
             Message::DismissMainMenu => self.active_menu = None,
             Message::Escape => {
                 if self.active_menu.take().is_none() {
-                    self.timeline
-                        .handle(timeline::TimelineEvent::ClearTimeSelection);
+                    if self.timeline.context_item.take().is_some()
+                        || self.timeline.context_track.take().is_some()
+                    {
+                        self.timeline.context_item_position = None;
+                    } else {
+                        self.timeline
+                            .handle(timeline::TimelineEvent::ClearTimeSelection);
+                    }
                 }
             }
             Message::SelectWorkspace(page) => self.active_workspace = page,

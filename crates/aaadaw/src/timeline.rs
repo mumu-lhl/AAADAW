@@ -39,6 +39,12 @@ pub(crate) enum TimelineEvent {
         additive: bool,
         range: bool,
     },
+    OpenItemContextMenu {
+        item_id: ItemId,
+        x: f32,
+        y: f32,
+    },
+    CloseItemContextMenu,
     SelectEmpty(u64),
     SetTimeSelection {
         start_tick: u64,
@@ -194,6 +200,8 @@ pub(crate) struct TimelineState {
     pub(crate) selected_items: HashSet<ItemId>,
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
+    pub(crate) context_item: Option<ItemId>,
+    pub(crate) context_item_position: Option<(f32, f32)>,
     pub(crate) snap_to_sixteenth: bool,
     pub(crate) edit_cursor_tick: u64,
     pub(crate) origin_tick: u64,
@@ -240,6 +248,8 @@ impl Default for TimelineState {
             selected_items: HashSet::new(),
             time_selection: None,
             context_track: None,
+            context_item: None,
+            context_item_position: None,
             snap_to_sixteenth: true,
             edit_cursor_tick: 0,
             origin_tick: 0,
@@ -284,6 +294,13 @@ impl TimelineState {
         {
             self.context_track = None;
         }
+        if self
+            .context_item
+            .is_some_and(|item_id| !self.cache.item_indices.contains_key(&item_id))
+        {
+            self.context_item = None;
+            self.context_item_position = None;
+        }
     }
 
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
@@ -314,6 +331,19 @@ impl TimelineState {
                 additive,
                 range,
             } => self.select_item(item_id, additive, range, false),
+            TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
+                if self.cache.item_indices.contains_key(&item_id) {
+                    if !self.selected_items.contains(&item_id) {
+                        self.select_item(Some(item_id), false, false, false);
+                    }
+                    self.context_item = Some(item_id);
+                    self.context_item_position = Some((x, y));
+                }
+            }
+            TimelineEvent::CloseItemContextMenu => {
+                self.context_item = None;
+                self.context_item_position = None;
+            }
             TimelineEvent::SelectEmpty(tick) => {
                 self.edit_cursor_tick = tick;
                 self.select_item(None, false, false, false);
@@ -701,6 +731,20 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 } else {
                     None
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let position = cursor.position_in(bounds)?;
+                let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
+                let event = self.cache.item_at(track_index, tick).map_or(
+                    TimelineEvent::CloseItemContextMenu,
+                    |item| TimelineEvent::OpenItemContextMenu {
+                        item_id: item.id,
+                        x: position.x,
+                        y: position.y,
+                    },
+                );
+                Some(shader::Action::publish(crate::app::Message::Timeline(event)).and_capture())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
                 if state.pan_last_x.take().is_some() {

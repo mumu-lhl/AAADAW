@@ -161,7 +161,7 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         if entry.separator_before {
             actions = actions.push(iced::widget::rule::horizontal(1));
         }
-        actions = actions.push(context_track_command(entry));
+        actions = actions.push(context_menu_command(entry));
     }
     let contents = column![
         heading,
@@ -206,10 +206,66 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
             offset: viewport.absolute_offset().y,
             height: viewport.bounds().height,
         });
-    column![timeline::ruler_widget(&app.timeline, &app.project), scroll]
+    let contents = column![timeline::ruler_widget(&app.timeline, &app.project), scroll]
         .spacing(0)
         .width(Length::Fill)
+        .height(Length::Fill);
+    let Some(item_id) = app.timeline.context_item else {
+        return contents.into();
+    };
+    let (x, y) = app.timeline.context_item_position.unwrap_or((0.0, 0.0));
+    let popup = float(item_context_menu(app, item_id)).translate(move |bounds, viewport| {
+        let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+        let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+        let target_x = (bounds.x + x).clamp(viewport.x, max_x);
+        let target_y =
+            (bounds.y + 32.0 + y - app.timeline.vertical_scroll).clamp(viewport.y, max_y);
+        iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+    });
+    stack![contents, popup]
+        .width(Length::Fill)
         .height(Length::Fill)
+        .into()
+}
+
+fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<'a, Message> {
+    let is_audio = app
+        .project
+        .audio_items()
+        .iter()
+        .any(|item| item.id() == item_id);
+    let title = if is_audio { "Audio item" } else { "MIDI item" };
+    let heading = row![
+        text(title).size(12).width(Length::Fill),
+        button("×")
+            .style(iced::widget::button::text)
+            .on_press(Message::Timeline(TimelineEvent::CloseItemContextMenu))
+            .padding([super::tokens::SPACING_XS, super::tokens::SPACING_SM]),
+    ]
+    .align_y(Alignment::Center);
+    let mut actions = column![];
+    for entry in commands::for_menu(app, super::super::MainMenu::Item) {
+        if entry.id == CommandId::DuplicateSelectedAudioItem && !is_audio {
+            continue;
+        }
+        if entry.separator_before {
+            actions = actions.push(iced::widget::rule::horizontal(1));
+        }
+        actions = actions.push(context_item_command(entry));
+    }
+    let contents =
+        column![heading, actions.spacing(super::tokens::ROW_GAP)].spacing(super::tokens::ROW_GAP);
+    container(contents)
+        .width(230)
+        .padding(super::tokens::PANEL_PADDING)
+        .style(|_| container::Style {
+            background: Some(iced::Color::from_rgb8(38, 43, 47).into()),
+            border: iced::Border::default()
+                .color(iced::Color::from_rgb8(91, 100, 106))
+                .width(1.0)
+                .rounded(2.0),
+            ..container::Style::default()
+        })
         .into()
 }
 
@@ -331,7 +387,7 @@ fn action_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'
         .padding([3, 7])
 }
 
-fn context_track_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
+fn context_menu_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
     let message = Message::ExecuteCommand(entry.id);
     let enabled = entry.enabled;
     let destructive = entry.destructive;
@@ -347,6 +403,17 @@ fn context_track_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Me
             .style(iced::widget::button::secondary)
             .on_press_maybe(enabled.then_some(message))
     }
+}
+
+fn context_item_command<'a>(mut entry: CommandEntry) -> iced::widget::Button<'a, Message> {
+    entry.label = match entry.id {
+        CommandId::DuplicateSelectedAudioItem => "Duplicate".to_owned(),
+        CommandId::DeleteSelectedItems => "Delete selected items".to_owned(),
+        CommandId::SplitSelectedItemsAtCursor => "Split at edit cursor".to_owned(),
+        CommandId::SplitSelectedItemsAtTimeSelection => "Split at time selection".to_owned(),
+        _ => entry.label,
+    };
+    context_menu_command(entry)
 }
 
 fn pan_label(pan: f32) -> String {
