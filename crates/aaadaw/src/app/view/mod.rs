@@ -1,3 +1,4 @@
+use super::commands::CommandId;
 use super::{App, Message, WorkspacePage};
 #[cfg(feature = "jack-backend")]
 use iced::widget::text_input;
@@ -9,6 +10,7 @@ mod item_inspector;
 mod media;
 mod menu;
 mod project;
+mod tokens;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
@@ -22,7 +24,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .style(workspace_button_style(
             app.active_workspace == WorkspacePage::Arrangement,
         ))
-        .on_press(Message::SelectWorkspace(WorkspacePage::Arrangement)),
+        .on_press(Message::ExecuteCommand(CommandId::Workspace(
+            WorkspacePage::Arrangement,
+        ))),
         button(if app.active_workspace == WorkspacePage::Media {
             "● Media"
         } else {
@@ -31,7 +35,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .style(workspace_button_style(
             app.active_workspace == WorkspacePage::Media,
         ))
-        .on_press(Message::SelectWorkspace(WorkspacePage::Media)),
+        .on_press(Message::ExecuteCommand(CommandId::Workspace(
+            WorkspacePage::Media,
+        ))),
         button(if app.active_workspace == WorkspacePage::Project {
             "● Project"
         } else {
@@ -40,9 +46,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .style(workspace_button_style(
             app.active_workspace == WorkspacePage::Project,
         ))
-        .on_press(Message::SelectWorkspace(WorkspacePage::Project)),
+        .on_press(Message::ExecuteCommand(CommandId::Workspace(
+            WorkspacePage::Project,
+        ))),
     ]
-    .spacing(8);
+    .spacing(tokens::SPACING_MD);
 
     let workspace: Element<'_, Message> = match app.active_workspace {
         WorkspacePage::Arrangement => arrangement::view(app),
@@ -52,16 +60,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let status_text = app.status.clone();
 
     let mut content = column![toolbar]
-        .spacing(12)
-        .padding(14)
+        .spacing(tokens::SECTION_GAP)
+        .padding(tokens::SPACING_LG)
         .height(Length::Fill);
     let transport = container(
         row![text("Transport").size(14), playback_controls(app)]
-            .spacing(12)
+            .spacing(tokens::SECTION_GAP)
             .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding(8)
+    .padding(tokens::PANEL_PADDING)
     .style(iced::widget::container::rounded_box);
     content = content
         .push(workspace_tabs)

@@ -216,7 +216,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 | P1 — 高风险的列表布局 | Density / scrolling | Arrangement 已按时间视口显示全部 Items，主视图没有 200 条上限；Inspector 仍用长控件行编辑 MIDI notes，窄布局下控件密度仍需检查。 | 保持空间视口裁剪和无固定 Item 上限；后续缩短/分组 Inspector 的低频编辑控件。 |
 | P2 — 命令发现仍不完整 | Information architecture / interaction | 已有 File/Edit/View/Insert/Item/Track/Actions 菜单栏、可搜索的现有命令和 Track 右键菜单；Item context menu、主 toolbar、可配置 Action 注册表/快捷键仍未实现。快捷键仅覆盖 undo/redo/save/open，JACK 构建加 Space。 | 菜单与 Actions 搜索提供基础命令入口。随着 Item、Mixer、FX、automation 增加，继续为对象补充上下文入口，并建立完整 Action 注册、快捷键冲突检查和配置。 |
 | P2 — Transport 是占位条 | Hierarchy / interaction | 底部条位置常驻，值得保留；非 JACK 构建只显示 `JACK: enable jack-backend`。JACK 构建显示 play/stop/restart、sample 输入/seek 和状态；当前没有 Pause、Record、Loop、bars/beats 时钟、Tempo 或 Time Signature。 | 固定位置正确但控制完整性低。按 Transport contract 渐进填入已支持的状态，明确不可用项，并让时间/工程节奏信息有稳定读数。 |
-| P2 — 无统一视觉系统 | Visual hierarchy / consistency | 当前主要使用 Iced 默认控件与主题，没有 AAADAW 的状态色、meter/record 语言、字号层级或间距 token；view 中散布 padding/spacing 数值。菜单和 Transport 用 `rounded_box`，其它工作区没有一致的 panel/分隔规范。 | 新增控件会各自决定高度、间距和激活色。先定义 token 与状态规则，再逐面板应用；不用为了统一而一次性重画已有 utility 页。 |
+| P2 — 视觉系统尚未完整应用 | Visual hierarchy / consistency | 菜单与主窗口 shell 已开始使用 spacing token 和 DAW 状态样式；多数工作区仍主要使用 Iced 默认控件，view 中还散布 padding/spacing 数值。Meter/record 色彩、统一字号层级和 panel/分隔规范仍不完整。菜单使用方角边界，Transport 仍用 `rounded_box`。 | 扩展 token 与状态规则到 TCP、Inspector、Transport 和 utility 面板；按使用频率检查高度、间距和激活色，不用为了统一而一次性重画已有 utility 页。 |
 | P3 — 工作区边界 | IA / implementation debt | Arrangement、Media、Project 分为独立 workspace tab。Media 的导入/扫描/pack/relink 是合理的工程级维护功能；Project 的通用 Action search 目前很浅。切离 Arrangement 后仍保留底部 Transport，是现有优点。 | 保留 Media/Project 的可达性和后台进度；后续把高频 Media/FX/MIDI 工具转为可 dock 面板，避免频繁离开主编排区。纯 utility 内容可以保留独立页面。 |
 
 ## UI Modernization Roadmap
@@ -245,6 +245,6 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 - 把 `timeline.rs` 的线性列表从主 Arrangement 移出；逐步替换为按轨道和时间定位的 Item canvas，并把准确数值编辑放进 Inspector。
 - 把每轨大行按钮改为可连续调整且支持数值输入的自制 DAW controls；减少通过许多按钮“点刻度”的调节方式。
 - 把 fixed-width track list 改为与时间区共用 track geometry 的可 resize TCP。
-- 把 File/Edit/Track 的内嵌展开面板替换为紧凑 menu/toolbar 和上下文 Action 入口。
+- 已将 File/Edit/Track 内嵌展开面板替换为紧凑的 File/Edit/View/Insert/Item/Track/Actions 菜单栏，并让菜单、Actions 搜索、快捷键和轨道上下文菜单共用命令定义；主 toolbar 和更多 Item context actions 仍待扩展。
 - 去掉 Item/note 的固定 200 项可见上限，改由视口范围加载和明确的项目级搜索/定位。
 - 项目名称、保存状态、操作提示要分出稳定位置，避免一条 status 字符串同时承担工程身份和临时反馈。

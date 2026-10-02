@@ -1,3 +1,4 @@
+use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
 use super::super::{App, Message};
 use crate::timeline::{
     self, ArrangementPane, TCP_SCROLL_ID, TIMELINE_ROW_HEIGHT, TIMELINE_SCROLL_ID, TimelineEvent,
@@ -13,10 +14,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = row![
         button("+ Track")
             .style(iced::widget::button::secondary)
-            .on_press(Message::AddTrack),
+            .on_press_maybe(
+                commands::is_enabled(app, CommandId::AddTrack)
+                    .then_some(Message::ExecuteCommand(CommandId::AddTrack)),
+            ),
         button("+ MIDI item")
             .style(iced::widget::button::secondary)
-            .on_press(Message::AddMidiItem),
+            .on_press_maybe(
+                commands::is_enabled(app, CommandId::AddMidiItem)
+                    .then_some(Message::ExecuteCommand(CommandId::AddMidiItem)),
+            ),
         button(if !app.timeline.has_sixteenth_grid() {
             "Snap unavailable"
         } else if app.timeline.snap_to_sixteenth {
@@ -124,12 +131,7 @@ fn track_controls(app: &App) -> Element<'_, Message> {
         return controls.into();
     };
     let row_y = 32.0 + track_index as f32 * TIMELINE_ROW_HEIGHT - app.timeline.vertical_scroll;
-    let popup = float(track_context_menu(
-        track,
-        track_index,
-        app.project.tracks().len(),
-    ))
-    .translate(move |bounds, viewport| {
+    let popup = float(track_context_menu(app, track)).translate(move |bounds, viewport| {
         let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
         let target_y = (bounds.y + row_y).clamp(viewport.y, max_y);
         iced::Vector::new(8.0, target_y - bounds.y)
@@ -140,52 +142,37 @@ fn track_controls(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn track_context_menu<'a>(
-    track: &'a Track,
-    track_index: usize,
-    track_count: usize,
-) -> Element<'a, Message> {
+fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
-    let contents = column![
-        row![
-            text(track.name()).size(12).width(Length::Fill),
-            button("×")
-                .style(iced::widget::button::text)
-                .on_press(Message::Timeline(TimelineEvent::CloseTrackContextMenu))
-                .padding([1, 4]),
-        ]
-        .align_y(Alignment::Center),
-        action_button(
-            "Select track",
-            Message::Timeline(TimelineEvent::SelectTrack(track_id)),
-        ),
-        action_button("Rename…", Message::BeginTrackNameEdit(track_id)),
-        action_button(
-            if track.is_muted() { "Unmute" } else { "Mute" },
-            Message::ToggleMute(track_id),
-        ),
-        action_button(
-            if track.is_solo() { "Unsolo" } else { "Solo" },
-            Message::ToggleSolo(track_id),
-        ),
-        button("Move up")
-            .style(iced::widget::button::secondary)
-            .on_press_maybe((track_index > 0).then_some(Message::MoveTrack(track_id, -1)))
-            .width(Length::Fill)
-            .padding([3, 7]),
-        button("Move down")
-            .style(iced::widget::button::secondary)
-            .on_press_maybe(
-                (track_index + 1 < track_count).then_some(Message::MoveTrack(track_id, 1)),
-            )
-            .width(Length::Fill)
-            .padding([3, 7]),
-        danger_control("Delete track", Message::DeleteTrack(track_id)),
+    let heading = row![
+        text(track.name()).size(12).width(Length::Fill),
+        button("×")
+            .style(iced::widget::button::text)
+            .on_press(Message::Timeline(TimelineEvent::CloseTrackContextMenu))
+            .padding([super::tokens::SPACING_XS, super::tokens::SPACING_SM]),
     ]
-    .spacing(2);
+    .align_y(Alignment::Center);
+    let mut actions = column![action_button(
+        "Select track",
+        Message::Timeline(TimelineEvent::SelectTrack(track_id)),
+    ),]
+    .spacing(super::tokens::ROW_GAP);
+    for entry in commands::for_track_context(app, track_id) {
+        if entry.separator_before {
+            actions = actions.push(iced::widget::rule::horizontal(1));
+        }
+        actions = actions.push(context_track_command(entry));
+    }
+    let contents = column![
+        heading,
+        scrollable(actions)
+            .width(Length::Fill)
+            .height(Length::Shrink),
+    ]
+    .spacing(super::tokens::ROW_GAP);
     container(contents)
         .width(220)
-        .padding(5)
+        .padding(super::tokens::PANEL_PADDING)
         .style(|_| container::Style {
             background: Some(iced::Color::from_rgb8(38, 43, 47).into()),
             border: iced::Border::default()
@@ -260,8 +247,15 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     ]
     .spacing(3)
     .align_y(Alignment::Center);
+    let mute_command = CommandId::Track {
+        track_id,
+        command: TrackCommand::ToggleMute,
+    };
     let mute = button("M")
-        .on_press(Message::ToggleMute(track_id))
+        .on_press_maybe(
+            commands::is_enabled(app, mute_command)
+                .then_some(Message::ExecuteCommand(mute_command)),
+        )
         .style(move |theme: &Theme, status| {
             if track.is_muted() {
                 iced::widget::button::danger(theme, status)
@@ -270,8 +264,15 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
+    let solo_command = CommandId::Track {
+        track_id,
+        command: TrackCommand::ToggleSolo,
+    };
     let solo = button("S")
-        .on_press(Message::ToggleSolo(track_id))
+        .on_press_maybe(
+            commands::is_enabled(app, solo_command)
+                .then_some(Message::ExecuteCommand(solo_command)),
+        )
         .style(move |theme: &Theme, status| {
             if track.is_solo() {
                 iced::widget::button::warning(theme, status)
@@ -330,12 +331,22 @@ fn action_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'
         .padding([3, 7])
 }
 
-fn danger_control<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {
-    button(label)
-        .style(iced::widget::button::danger)
-        .on_press(message)
+fn context_track_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
+    let message = Message::ExecuteCommand(entry.id);
+    let enabled = entry.enabled;
+    let destructive = entry.destructive;
+    let button = button(iced::widget::text(entry.label))
         .width(Length::Fill)
-        .padding([3, 7])
+        .padding([super::tokens::SPACING_XS, super::tokens::SPACING_SM]);
+    if destructive {
+        button
+            .style(iced::widget::button::danger)
+            .on_press_maybe(enabled.then_some(message))
+    } else {
+        button
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(enabled.then_some(message))
+    }
 }
 
 fn pan_label(pan: f32) -> String {

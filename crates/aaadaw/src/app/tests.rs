@@ -1,3 +1,4 @@
+use super::commands::{self, CommandId, TrackCommand};
 #[cfg(feature = "jack-backend")]
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
@@ -57,9 +58,13 @@ fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
     };
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
     assert_eq!(app.active_menu, Some(MainMenu::File));
-    let _ = app.update(Message::SelectWorkspace(WorkspacePage::Media));
+    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
+        WorkspacePage::Media,
+    )));
     assert_eq!(app.active_workspace, WorkspacePage::Media);
-    let _ = app.update(Message::SelectWorkspace(WorkspacePage::Project));
+    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
+        WorkspacePage::Project,
+    )));
     assert_eq!(app.active_workspace, WorkspacePage::Project);
     assert_eq!(app.active_menu, None);
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
@@ -180,22 +185,22 @@ fn insert_menu_audio_picker_runs_the_import_path_and_keeps_save_guard() {
 }
 
 #[test]
-fn keyboard_shortcuts_route_to_existing_app_messages() {
+fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     assert!(matches!(
         shortcut_message(Key::Character("z"), Modifiers::COMMAND),
-        Some(Message::Undo)
+        Some(Message::ExecuteCommand(CommandId::Undo))
     ));
     assert!(matches!(
         shortcut_message(Key::Character("z"), Modifiers::COMMAND | Modifiers::SHIFT),
-        Some(Message::Redo)
+        Some(Message::ExecuteCommand(CommandId::Redo))
     ));
     assert!(matches!(
         shortcut_message(Key::Character("s"), Modifiers::COMMAND),
-        Some(Message::SaveProject)
+        Some(Message::ExecuteCommand(CommandId::SaveProject))
     ));
     assert!(matches!(
         shortcut_message(Key::Character("o"), Modifiers::COMMAND),
-        Some(Message::OpenProject)
+        Some(Message::ExecuteCommand(CommandId::OpenProject))
     ));
     assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND).is_none());
     let undo_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -221,8 +226,22 @@ fn keyboard_shortcuts_route_to_existing_app_messages() {
             iced::event::Status::Ignored,
             iced::window::Id::unique()
         ),
-        Some(Message::Undo)
+        Some(Message::ExecuteCommand(CommandId::Undo))
     ));
+    let app = App::default();
+    let undo = commands::for_menu(&app, MainMenu::Edit)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::Undo)
+        .expect("Edit menu should expose Undo");
+    let redo = commands::for_menu(&app, MainMenu::Edit)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::Redo)
+        .expect("Edit menu should expose Redo");
+    assert_eq!(undo.shortcut.as_deref(), Some("Ctrl/Cmd+Z"));
+    assert_eq!(
+        redo.shortcut.as_deref(),
+        Some("Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y")
+    );
     let escape_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::Escape),
         modified_key: Key::Named(iced::keyboard::key::Named::Escape),
@@ -246,7 +265,7 @@ fn keyboard_shortcuts_route_to_existing_app_messages() {
             Key::Named(iced::keyboard::key::Named::Space),
             Modifiers::NONE
         ),
-        Some(Message::TogglePlayback)
+        Some(Message::ExecuteCommand(CommandId::TogglePlayback))
     ));
     #[cfg(not(feature = "jack-backend"))]
     assert!(
@@ -332,6 +351,19 @@ fn action_search_dispatches_supported_commands() {
     let _ = app.update(Message::ActionQueryChanged("undo".to_owned()));
     let _ = app.update(Message::RunActionQuery);
     assert!(app.project.midi_items().is_empty());
+}
+
+#[test]
+fn action_search_does_not_run_commands_that_are_disabled_in_the_menu() {
+    let mut app = App::default();
+    let _ = app.update(Message::ActionQueryChanged("import audio".to_owned()));
+    let _ = app.update(Message::RunActionQuery);
+
+    assert!(!app.path_picker_busy);
+    assert_eq!(
+        app.status,
+        "Unknown action. Search for a command or choose one from the Actions menu."
+    );
 }
 
 #[test]
@@ -548,6 +580,69 @@ fn track_context_menu_selects_its_target_and_closes_after_an_action() {
     let _ = app.update(Message::ToggleMute(track_id));
     assert!(app.timeline.context_track.is_none());
     assert!(app.project.tracks()[0].is_muted());
+}
+
+#[test]
+fn track_menu_context_menu_and_action_search_share_command_definitions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let selected_id = app.project.tracks()[1].id();
+    app.timeline.selected_track = Some(selected_id);
+
+    let menu_entries = commands::for_menu(&app, MainMenu::Track);
+    let context_entries = commands::for_track_context(&app, selected_id);
+    for context_entry in context_entries {
+        let CommandId::Track { track_id, command } = context_entry.id else {
+            panic!("track context entry should target the clicked track");
+        };
+        let menu_entry = menu_entries
+            .iter()
+            .find(|entry| entry.id == CommandId::SelectedTrack(command))
+            .expect("the Track menu should expose the same command");
+        assert_eq!(context_entry.label, menu_entry.label);
+        assert_eq!(track_id, selected_id);
+    }
+    assert_eq!(
+        commands::find(&app, "move selected track up"),
+        Some(CommandId::SelectedTrack(TrackCommand::MoveUp))
+    );
+}
+
+#[test]
+fn toolbar_and_track_controls_share_command_availability() {
+    let mut app = App::default();
+    assert!(!commands::is_enabled(&app, CommandId::AddMidiItem));
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.timeline.selected_track = Some(track_id);
+    app.io_busy = true;
+
+    for command in [
+        CommandId::AddTrack,
+        CommandId::AddMidiItem,
+        CommandId::Track {
+            track_id,
+            command: TrackCommand::ToggleMute,
+        },
+        CommandId::Track {
+            track_id,
+            command: TrackCommand::ToggleSolo,
+        },
+    ] {
+        assert!(!commands::is_enabled(&app, command));
+    }
+
+    let track_menu = commands::for_menu(&app, MainMenu::Track);
+    for command in [TrackCommand::ToggleMute, TrackCommand::ToggleSolo] {
+        let entry = track_menu
+            .iter()
+            .find(|entry| entry.id == CommandId::SelectedTrack(command))
+            .expect("Track menu should expose each track control");
+        assert_eq!(entry.enabled, commands::is_enabled(&app, entry.id));
+        assert!(!entry.enabled);
+    }
 }
 
 #[test]

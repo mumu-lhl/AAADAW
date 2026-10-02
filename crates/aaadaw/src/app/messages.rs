@@ -1,5 +1,6 @@
 #[cfg(feature = "jack-backend")]
 use super::SharedPreparedPlayback;
+use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
 use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
@@ -86,6 +87,7 @@ pub(crate) enum Message {
     Redo,
     ActionQueryChanged(String),
     RunActionQuery,
+    ExecuteCommand(CommandId),
     OpenProject,
     SaveProject,
     AudioFilePathChanged(String),

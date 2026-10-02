@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+mod commands;
 mod media;
 mod messages;
 mod project_io;
@@ -179,6 +180,7 @@ impl App {
                 | Message::ToggleMainMenu(_)
                 | Message::DismissMainMenu
                 | Message::SelectWorkspace(_)
+                | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                 | Message::Timeline(_)
                 | Message::TcpScrolled { .. }
                 | Message::TimelineScrolled { .. }
@@ -213,6 +215,7 @@ impl App {
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::SelectWorkspace(_)
+                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -228,6 +231,7 @@ impl App {
                 Message::AudioFilePathChanged(_)
                     | Message::ToggleMainMenu(_)
                     | Message::SelectWorkspace(_)
+                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -246,6 +250,7 @@ impl App {
                 Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::SelectWorkspace(_)
+                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -267,6 +272,7 @@ impl App {
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
                         | Message::SelectWorkspace(_)
+                        | Message::ExecuteCommand(commands::CommandId::Workspace(_))
                         | Message::BackgroundTick
                 )
             {
@@ -509,6 +515,7 @@ impl App {
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
             Message::RunActionQuery => task = self.run_action_query(),
+            Message::ExecuteCommand(command) => task = commands::dispatch(self, command),
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
             Message::OpenProject => task = self.open_project_command(),
@@ -1103,75 +1110,12 @@ impl App {
     }
 
     fn run_action_query(&mut self) -> Task<Message> {
-        let query = self.action_query.trim().to_ascii_lowercase();
-        let action = match query.as_str() {
-            "add track" | "create track" => Some(Message::AddTrack),
-            "insert midi item" | "add midi item" | "midi item" => Some(Message::AddMidiItem),
-            "import audio" | "import audio…" | "audio file" => {
-                Some(Message::PickPath(PathPickerTarget::ImportAudioToProject))
-            }
-            "open project" | "open project…" => Some(Message::OpenProject),
-            "save project" | "save" => Some(Message::SaveProject),
-            "save project as" | "save project as…" | "save as" | "save as…" => {
-                Some(Message::PickPath(PathPickerTarget::SaveProject))
-            }
-            "delete selected item" | "delete selected items" | "delete items" => {
-                Some(Message::DeleteSelectedItems)
-            }
-            "duplicate selected audio item" => self
-                .timeline
-                .selected_item
-                .filter(|item_id| {
-                    self.timeline.selected_items.len() == 1
-                        && self
-                            .project
-                            .audio_items()
-                            .iter()
-                            .any(|item| item.id() == *item_id)
-                })
-                .map(Message::DuplicateAudioItem),
-            "undo" => Some(Message::Undo),
-            "redo" => Some(Message::Redo),
-            "arrangement" | "view arrangement" => {
-                Some(Message::SelectWorkspace(WorkspacePage::Arrangement))
-            }
-            "media" | "view media" => Some(Message::SelectWorkspace(WorkspacePage::Media)),
-            "project" | "view project" => Some(Message::SelectWorkspace(WorkspacePage::Project)),
-            "rename selected track" | "rename selected track…" => {
-                self.selected_track_id().map(Message::BeginTrackNameEdit)
-            }
-            "mute selected track" | "unmute selected track" => {
-                self.selected_track_id().map(Message::ToggleMute)
-            }
-            "solo selected track" | "unsolo selected track" => {
-                self.selected_track_id().map(Message::ToggleSolo)
-            }
-            "move selected track up" => self
-                .selected_track_id()
-                .map(|track_id| Message::MoveTrack(track_id, -1)),
-            "move selected track down" => self
-                .selected_track_id()
-                .map(|track_id| Message::MoveTrack(track_id, 1)),
-            "delete selected track" => self.selected_track_id().map(Message::DeleteTrack),
-            _ => None,
-        };
-        if let Some(action) = action {
-            self.update(action)
+        if let Some(command) = commands::find(self, &self.action_query) {
+            self.update(Message::ExecuteCommand(command))
         } else {
-            self.status = match query.as_str() {
-                "duplicate selected audio item" => "Select one audio item to duplicate".to_owned(),
-                "rename selected track"
-                | "rename selected track…"
-                | "mute selected track"
-                | "unmute selected track"
-                | "solo selected track"
-                | "unsolo selected track"
-                | "move selected track up"
-                | "move selected track down"
-                | "delete selected track" => "Select a track first".to_owned(),
-                _ => "Unknown action. Search for a command or choose one from the Actions menu."
-                    .to_owned(),
-            };
+            self.status =
+                "Unknown action. Search for a command or choose one from the Actions menu."
+                    .to_owned();
             Task::none()
         }
     }
@@ -1384,38 +1328,10 @@ fn shortcut_message(
     key: iced::keyboard::Key<&str>,
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
-    use iced::keyboard::{Key, Modifiers, key::Named};
-
-    if modifiers == Modifiers::COMMAND {
-        return match key {
-            Key::Character("z") | Key::Character("Z") => Some(Message::Undo),
-            Key::Character("y") | Key::Character("Y") => Some(Message::Redo),
-            Key::Character("s") | Key::Character("S") => Some(Message::SaveProject),
-            Key::Character("o") | Key::Character("O") => Some(Message::OpenProject),
-            _ => None,
-        };
+    if modifiers == iced::keyboard::Modifiers::NONE
+        && key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+    {
+        return Some(Message::DismissMainMenu);
     }
-    if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
-        return match key {
-            Key::Character("z") | Key::Character("Z") => Some(Message::Redo),
-            _ => None,
-        };
-    }
-    if modifiers == Modifiers::NONE {
-        return match key {
-            Key::Named(Named::Escape) => Some(Message::DismissMainMenu),
-            Key::Named(Named::Space) => {
-                #[cfg(feature = "jack-backend")]
-                {
-                    Some(Message::TogglePlayback)
-                }
-                #[cfg(not(feature = "jack-backend"))]
-                {
-                    None
-                }
-            }
-            _ => None,
-        };
-    }
-    None
+    commands::from_shortcut(&key, modifiers).map(Message::ExecuteCommand)
 }
