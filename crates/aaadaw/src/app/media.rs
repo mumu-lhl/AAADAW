@@ -87,7 +87,12 @@ impl App {
                     Task::none()
                 }
             },
-            Ok(None) => Task::none(),
+            Ok(None) => {
+                if self.status == "Wait for the file dialog to finish" {
+                    self.status.clear();
+                }
+                Task::none()
+            }
             Err(error) => {
                 self.status = format!("File dialog failed: {error}");
                 Task::none()

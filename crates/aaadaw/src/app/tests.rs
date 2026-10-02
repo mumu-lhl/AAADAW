@@ -161,6 +161,25 @@ fn cancelled_picker_preserves_path_and_clears_busy_state() {
 }
 
 #[test]
+fn cancelling_save_dialog_clears_the_wait_for_dialog_status() {
+    for trigger in [
+        Message::SaveProject,
+        Message::PickPath(PathPickerTarget::SaveProject),
+    ] {
+        let mut app = App::default();
+        let _ = app.update(trigger);
+        assert!(app.path_picker_busy);
+
+        let _ = app.update(Message::SaveProject);
+        assert_eq!(app.status, "Wait for the file dialog to finish");
+
+        let _ = app.update(Message::PathPicked(PathPickerTarget::SaveProject, Ok(None)));
+        assert!(!app.path_picker_busy);
+        assert_eq!(app.status, "");
+    }
+}
+
+#[test]
 fn failed_picker_reports_error_and_clears_busy_state() {
     let mut app = App {
         path_picker_busy: true,
