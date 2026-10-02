@@ -1,4 +1,4 @@
-use super::{App, MainMenu, Message, PathPickerTarget, WorkspacePage};
+use super::{App, MainMenu, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
 use iced::keyboard::key::Named;
@@ -9,13 +9,13 @@ pub(crate) type ShortcutBindings = HashMap<String, String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandId {
+    NewProject,
     OpenProject,
     SaveProject,
     SaveProjectAs,
     OpenSettings,
     Undo,
     Redo,
-    Workspace(WorkspacePage),
     ToggleMediaBrowserPanel,
     AddMidiItem,
     ImportAudio,
@@ -46,13 +46,13 @@ pub(crate) enum TrackCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {
+    NewProject,
     OpenProject,
     SaveProject,
     SaveProjectAs,
     OpenSettings,
     Undo,
     Redo,
-    Workspace(WorkspacePage),
     ToggleMediaBrowserPanel,
     AddMidiItem,
     ImportAudio,
@@ -147,6 +147,7 @@ impl Shortcut {
 }
 
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::Command('o')];
+const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::Command('n')];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
 const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
@@ -154,6 +155,16 @@ const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Comm
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
 
 const COMMANDS: &[CommandDefinition] = &[
+    CommandDefinition {
+        kind: CommandKind::NewProject,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "New project",
+        aliases: &["new", "new project"],
+        shortcuts: NEW_PROJECT_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
     CommandDefinition {
         kind: CommandKind::OpenProject,
         menu: Some(MainMenu::File),
@@ -211,36 +222,6 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Redo",
         aliases: &[],
         shortcuts: REDO_SHORTCUT,
-        destructive: false,
-        separator_before: false,
-    },
-    CommandDefinition {
-        kind: CommandKind::Workspace(WorkspacePage::Arrangement),
-        menu: Some(MainMenu::View),
-        category: "View",
-        label: "Arrangement",
-        aliases: &["view arrangement"],
-        shortcuts: &[],
-        destructive: false,
-        separator_before: false,
-    },
-    CommandDefinition {
-        kind: CommandKind::Workspace(WorkspacePage::Media),
-        menu: Some(MainMenu::View),
-        category: "View",
-        label: "Media",
-        aliases: &["view media"],
-        shortcuts: &[],
-        destructive: false,
-        separator_before: false,
-    },
-    CommandDefinition {
-        kind: CommandKind::Workspace(WorkspacePage::Project),
-        menu: Some(MainMenu::View),
-        category: "View",
-        label: "Project",
-        aliases: &["view project"],
-        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -494,6 +475,11 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
 }
 
 pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutBindings, String> {
+    const RETIRED_WORKSPACE_IDS: &[&str] = &["view.arrangement", "view.media", "view.project"];
+    let mut bindings = bindings.clone();
+    for id in RETIRED_WORKSPACE_IDS {
+        bindings.remove(*id);
+    }
     for id in bindings.keys() {
         if !COMMANDS
             .iter()
@@ -669,15 +655,13 @@ fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
 
 fn command_kind_id(kind: CommandKind) -> &'static str {
     match kind {
+        CommandKind::NewProject => "file.new-project",
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
         CommandKind::OpenSettings => "file.settings",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
-        CommandKind::Workspace(WorkspacePage::Arrangement) => "view.arrangement",
-        CommandKind::Workspace(WorkspacePage::Media) => "view.media",
-        CommandKind::Workspace(WorkspacePage::Project) => "view.project",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
@@ -700,13 +684,13 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
     let message = match command {
+        CommandId::NewProject => Message::NewProject,
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
         CommandId::OpenSettings => Message::OpenSettings,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
-        CommandId::Workspace(page) => Message::SelectWorkspace(page),
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
@@ -836,13 +820,13 @@ fn entry_for(
 
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
+        CommandKind::NewProject => !project_edit_busy(app) && !app.is_dirty(),
         CommandKind::OpenProject => !project_edit_busy(app) && !app.is_dirty(),
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs | CommandKind::Undo | CommandKind::Redo => {
             !project_edit_busy(app)
         }
-        CommandKind::Workspace(_) => true,
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::ImportAudio => {
@@ -911,13 +895,13 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
 
 fn command_id(kind: CommandKind) -> CommandId {
     match kind {
+        CommandKind::NewProject => CommandId::NewProject,
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
         CommandKind::OpenSettings => CommandId::OpenSettings,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
-        CommandKind::Workspace(page) => CommandId::Workspace(page),
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,

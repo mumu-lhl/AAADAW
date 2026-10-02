@@ -1,17 +1,17 @@
-use super::commands::CommandId;
-use super::{App, Message, WorkspacePage};
+use super::{App, Message};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use iced::widget::button;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::widget::text_input;
-use iced::widget::{button, column, container, float, mouse_area, pane_grid, row, stack, text};
+use iced::widget::{column, container, float, mouse_area, pane_grid, row, stack, text};
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
 mod item_inspector;
 mod media;
 mod menu;
-mod project;
 mod settings;
 mod tokens;
 
@@ -26,53 +26,10 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
-    let workspace_tabs = row![
-        button(if app.active_workspace == WorkspacePage::Arrangement {
-            "● Arrangement"
-        } else {
-            "Arrangement"
-        })
-        .style(workspace_button_style(
-            app.active_workspace == WorkspacePage::Arrangement,
-        ))
-        .on_press(Message::ExecuteCommand(CommandId::Workspace(
-            WorkspacePage::Arrangement,
-        ))),
-        button(if app.active_workspace == WorkspacePage::Media {
-            "● Media"
-        } else {
-            "Media"
-        })
-        .style(workspace_button_style(
-            app.active_workspace == WorkspacePage::Media,
-        ))
-        .on_press(Message::ExecuteCommand(CommandId::Workspace(
-            WorkspacePage::Media,
-        ))),
-        button(if app.active_workspace == WorkspacePage::Project {
-            "● Project"
-        } else {
-            "Project"
-        })
-        .style(workspace_button_style(
-            app.active_workspace == WorkspacePage::Project,
-        ))
-        .on_press(Message::ExecuteCommand(CommandId::Workspace(
-            WorkspacePage::Project,
-        ))),
-    ]
-    .spacing(tokens::SPACING_MD);
-
-    let workspace: Element<'_, Message> = match app.active_workspace {
-        WorkspacePage::Arrangement => {
-            if app.media_panel_dock.open {
-                docked_arrangement(app)
-            } else {
-                arrangement::view(app)
-            }
-        }
-        WorkspacePage::Media => media::view(app),
-        WorkspacePage::Project => project::view(app),
+    let arrangement: Element<'_, Message> = if app.media_panel_dock.open {
+        docked_arrangement(app)
+    } else {
+        arrangement::view(app)
     };
     let status_text = app.status.clone();
 
@@ -94,8 +51,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .padding(tokens::PANEL_PADDING)
     .style(iced::widget::container::rounded_box);
     content = content
-        .push(workspace_tabs)
-        .push(workspace)
+        .push(arrangement)
         .push(text(status_text))
         .push(transport);
     let base: Element<'_, Message> = container(content)
@@ -169,16 +125,6 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
     ))
     .size(12)
     .into()
-}
-
-fn workspace_button_style(
-    active: bool,
-) -> fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    if active {
-        iced::widget::button::primary
-    } else {
-        iced::widget::button::secondary
-    }
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]

@@ -6,7 +6,7 @@
 
 ## Product Direction
 
-AAADAW 是一款 **REAPER-inspired professional desktop DAW**：桌面优先、信息密集、功能优先、紧凑、高效，适合键盘和鼠标，也为高级用户保留较高的可配置性。Arrange View 是主要工作区域；轨道控制与时间线协作；Mixer 是独立且与轨道状态一致的主要工作区；Transport 始终清楚可访问。
+AAADAW 是一款 **REAPER-inspired professional desktop DAW**：桌面优先、信息密集、功能优先、紧凑、高效，适合键盘和鼠标，也为高级用户保留较高的可配置性。Arrange View 是主窗口的固定工作区域；轨道控制与时间线协作；Mixer 完成后可作为独立且与轨道状态一致的主要工作区；Transport 始终清楚可访问。Media Browser 是可停靠的辅助面板，不是全屏工作区；工程管理和 Action Search 通过菜单与命令入口完成，不创建 Project 工具页。
 
 REAPER 是产品工作流和信息架构的主要参照。继承可验证的工作方式，不追求逐像素相似，也不复刻其视觉主题。
 
@@ -20,7 +20,7 @@ REAPER 是产品工作流和信息架构的主要参照。继承可验证的工�
 
 ## Main Window Architecture
 
-主窗口围绕一个正在编辑的工程组织。全局命令在窗口边缘，空间编辑留给中央 Arrange View，辅助工作区可以切换或隐藏。
+主窗口围绕一个正在编辑的工程组织。全局命令在窗口边缘，空间编辑留给中央 Arrange View。主窗口不使用 Arrangement、Media、Project 这类子页面标签；辅助工作区以可停靠或隐藏的面板提供。
 
 | 区域 | 职责与布局原则 |
 | --- | --- |
@@ -31,9 +31,9 @@ REAPER 是产品工作流和信息架构的主要参照。继承可验证的工�
 | Arrange area | 主编辑画布。按轨道行显示 Audio/MIDI Items 与可见的自动化；与 TCP 行高、顺序、选择和滚动同步。 |
 | Transport | 固定在主窗口底部或用户选择的停靠位置。播放/停止、录音状态和当前时间始终可见；不得因切换工作区而消失。 |
 | Mixer Control Panel (MCP) | 与 Arrange 并列的主工作区，可显示、隐藏、停靠或浮动。每个 strip 控制与 TCP 表示同一个 track。 |
-| Dockable panels | FX browser、MIDI editor、media browser、routing/track list 等辅助工具可停靠、浮动、resize、hide/show。面板不应夺走 Arrange 的默认主次。 |
+| Dockable panels | FX browser、MIDI editor、media browser、routing/track list 等辅助工具可停靠、浮动、resize、hide/show。Media Browser 只能作为辅助面板；工程文件操作在 File 菜单，Action Search 在 Actions 菜单。面板不应夺走 Arrange 的默认主次。 |
 
-Arrange 与 TCP 之间必须有可拖动分隔线；两侧共用轨道顺序和垂直滚动。主工具栏和工作区切换不应在每个页面重复展示同一工程状态。工程名、dirty/saved、后台工作状态应在紧凑状态区可查。
+Arrange 与 TCP 之间必须有可拖动分隔线；两侧共用轨道顺序和垂直滚动。主工具栏和辅助面板不应重复展示同一工程状态。工程名、dirty/saved、后台工作状态应在紧凑状态区可查。
 
 ## Arrangement View
 
@@ -127,6 +127,8 @@ Stop 与 Pause 的结果必须不同且清楚：Pause 保持当前位置；Stop 
 首批适用面板：Mixer、FX browser/chain、MIDI editor、Media browser、routing matrix、track list/manager、项目/动作搜索。面板可以独立演进，但工程状态只在 Project 中保存一份。停靠系统按需实现，不要求初版一次提供所有方向、标签行为或工作区快照。
 
 纯配置和偏好设置使用由菜单命令打开的小型独立设置窗口，不占用 Arrange 或主窗口工作区。主菜单提供 Settings 入口；设置按主题分组并保持固定、紧凑的桌面布局，窗口可关闭后立即返回原工作区。快捷键映射属于 Settings，不放在 Project 工具页。设置窗口仅在用户主动打开时出现，不自动弹出或抢占其他应用的工作流。
+
+Settings 窗口采用左侧类别栏和右侧设置面板。快捷键是独立类别，右侧按 Action 分类列出完整命令；每条 Action 都有按键捕获、清除当前绑定和恢复该 Action 默认绑定的控件。全局恢复默认可作为补充入口保留。
 
 ## Interaction Model
 

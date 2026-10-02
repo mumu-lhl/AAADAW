@@ -2,10 +2,7 @@ use super::commands::{self, CommandId, TrackCommand};
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
-use super::{
-    App, MainMenu, Message, PathPickerTarget, WorkspacePage, keyboard_shortcut_event,
-    shortcut_message,
-};
+use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
@@ -13,12 +10,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
-
-#[test]
-fn default_workspace_is_arrangement() {
-    let app = App::default();
-    assert_eq!(app.active_workspace, WorkspacePage::Arrangement);
-}
 
 #[test]
 fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
@@ -31,6 +22,38 @@ fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
     let _ = app.update(Message::AddTrack);
     assert_eq!(app.project.tracks().len(), 2);
     assert_eq!(app.timeline.selected_track, None);
+}
+
+#[test]
+fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
+    let mut app = App::default();
+    let new_project = commands::for_menu(&app, MainMenu::File)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::NewProject)
+        .expect("File menu should expose New project");
+    assert!(new_project.enabled);
+    assert_eq!(new_project.label, "New project");
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    assert!(!commands::is_enabled(&app, CommandId::NewProject));
+    let _ = app.update(Message::NewProject);
+    assert_eq!(app.project.tracks()[0].id(), track_id);
+    assert_eq!(
+        app.status,
+        "Save the current project before creating a new one"
+    );
+
+    app.saved_revision = app.revision;
+    app.project_path = Some(std::path::PathBuf::from("saved.aaadaw"));
+    app.project_path_query = "saved.aaadaw".to_owned();
+    let _ = app.update(Message::NewProject);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project_path.is_none());
+    assert!(app.project_path_query.is_empty());
+    assert_eq!(app.revision, 0);
+    assert_eq!(app.saved_revision, 0);
+    assert_eq!(app.status, "New project created");
 }
 
 #[test]
@@ -64,21 +87,15 @@ fn audio_asset_maintenance_requires_a_saved_project_snapshot() {
 }
 
 #[test]
-fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
+fn menus_and_media_browser_panel_stay_available_during_jobs() {
     let mut app = App {
         audio_asset_management_busy: true,
         ..App::default()
     };
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
     assert_eq!(app.active_menu, Some(MainMenu::File));
-    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
-        WorkspacePage::Media,
-    )));
-    assert_eq!(app.active_workspace, WorkspacePage::Media);
-    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
-        WorkspacePage::Project,
-    )));
-    assert_eq!(app.active_workspace, WorkspacePage::Project);
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleMediaBrowserPanel));
+    assert!(app.media_panel_dock.open);
     assert_eq!(app.active_menu, None);
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
     assert_eq!(app.active_menu, Some(MainMenu::File));
@@ -559,7 +576,21 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
 }
 
 #[test]
-fn media_browser_dock_toggles_resizes_and_survives_workspace_changes() {
+fn removed_workspace_shortcuts_do_not_discard_other_saved_bindings() {
+    let bindings = HashMap::from([
+        ("view.media".to_owned(), "Mod+M".to_owned()),
+        ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
+    ]);
+    let validated = commands::validate_bindings(&bindings).unwrap();
+    assert!(!validated.contains_key("view.media"));
+    assert_eq!(
+        validated.get("file.save-project").map(String::as_str),
+        Some("Mod+Shift+S")
+    );
+}
+
+#[test]
+fn media_browser_dock_toggles_and_resizes_without_replacing_arrangement() {
     let mut app = App::default();
     assert!(!app.media_panel_dock.open);
     assert!(app.media_panel_dock.panes.is_none());
@@ -578,18 +609,25 @@ fn media_browser_dock_toggles_resizes_and_survives_workspace_changes() {
     let _ = app.update(Message::MediaPanelResized(split, 0.63));
     assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
 
-    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
-        WorkspacePage::Media,
-    )));
-    assert!(app.media_panel_dock.open);
-    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
-        WorkspacePage::Arrangement,
-    )));
     let _ = app.update(Message::ToggleMediaBrowserPanel);
     assert!(!app.media_panel_dock.open);
     let _ = app.update(Message::ToggleMediaBrowserPanel);
     assert!(app.media_panel_dock.open);
     assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
+}
+
+#[test]
+fn view_menu_contains_the_media_browser_panel_and_no_workspace_pages() {
+    let app = App::default();
+    let entries = commands::for_menu(&app, MainMenu::View);
+    assert!(entries.iter().any(|entry| {
+        entry.id == CommandId::ToggleMediaBrowserPanel && entry.label == "Toggle Media Browser"
+    }));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| { !["Arrangement", "Media", "Project"].contains(&entry.label.as_str()) })
+    );
 }
 
 #[test]

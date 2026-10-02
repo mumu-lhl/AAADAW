@@ -33,7 +33,7 @@ mod project_io;
 mod tests;
 mod view;
 
-pub(crate) use messages::{MainMenu, Message, PathPickerTarget, WorkspacePage};
+pub(crate) use messages::{MainMenu, Message, PathPickerTarget};
 
 pub(crate) fn run() -> iced::Result {
     iced::daemon(App::new, App::update, view::view_for_window)
@@ -54,7 +54,6 @@ struct App {
     project_path: Option<PathBuf>,
     track_name_edits: HashMap<TrackId, String>,
     audio_item_start_edits: HashMap<ItemId, String>,
-    active_workspace: WorkspacePage,
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
@@ -281,10 +280,12 @@ impl App {
         ) {
             self.active_menu = None;
         }
-        let settings_message = matches!(
+        let window_safe_message = matches!(
             &message,
             Message::OpenSettings
                 | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                | Message::ToggleMediaBrowserPanel
+                | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
                 | Message::WindowClosed(_)
                 | Message::StartShortcutCapture(_)
                 | Message::ClearShortcutBinding(_)
@@ -293,7 +294,7 @@ impl App {
                 | Message::SaveShortcutBindings
                 | Message::ResetShortcutBindings
         );
-        let allowed_during_io = settings_message
+        let allowed_during_io = window_safe_message
             || matches!(
                 &message,
                 Message::ProjectLoaded(..)
@@ -301,8 +302,7 @@ impl App {
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::Escape
-                    | Message::SelectWorkspace(_)
-                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                    | Message::ToggleMediaBrowserPanel
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -331,15 +331,14 @@ impl App {
             return Task::none();
         }
         if self.path_picker_busy
-            && !settings_message
+            && !window_safe_message
             && !matches!(
                 &message,
                 Message::PathPicked(..)
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::Escape
-                    | Message::SelectWorkspace(_)
-                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                    | Message::ToggleMediaBrowserPanel
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -350,14 +349,13 @@ impl App {
             return Task::none();
         }
         if self.import_busy
-            && !settings_message
+            && !window_safe_message
             && !matches!(
                 &message,
                 Message::AudioFilePathChanged(_)
                     | Message::ToggleMainMenu(_)
                     | Message::Escape
-                    | Message::SelectWorkspace(_)
-                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                    | Message::ToggleMediaBrowserPanel
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -371,14 +369,13 @@ impl App {
             return Task::none();
         }
         if self.audio_asset_management_busy
-            && !settings_message
+            && !window_safe_message
             && !matches!(
                 &message,
                 Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::Escape
-                    | Message::SelectWorkspace(_)
-                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                    | Message::ToggleMediaBrowserPanel
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
@@ -394,15 +391,14 @@ impl App {
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             if self.playback_busy
-                && !settings_message
+                && !window_safe_message
                 && !matches!(
                     &message,
                     Message::PlaybackPrepared { .. }
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
                         | Message::Escape
-                        | Message::SelectWorkspace(_)
-                        | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                        | Message::ToggleMediaBrowserPanel
                         | Message::BackgroundTick
                 )
             {
@@ -444,7 +440,6 @@ impl App {
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
-                        | Message::ImportAudio
                         | Message::RunAudioAssetManagement(_)
                         | Message::CancelAudioAssetManagement
                         | Message::ReimportAudioItem(_)
@@ -516,7 +511,7 @@ impl App {
                     }
                 }
             }
-            Message::SelectWorkspace(page) => self.active_workspace = page,
+            Message::NewProject => self.new_project(),
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
                 self.timeline
@@ -738,8 +733,8 @@ impl App {
             Message::SaveProject => {
                 task = self.save_project_command();
             }
-            Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ImportAudio => task = self.start_audio_import(),
+            Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ReimportAudioItem(item_id) => task = self.reimport_audio_item(item_id),
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
@@ -853,6 +848,48 @@ impl App {
 
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+
+    fn new_project(&mut self) {
+        if self.io_busy
+            || self.import_busy
+            || self.audio_asset_management_busy
+            || self.path_picker_busy
+        {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return;
+        }
+        if self.is_dirty() {
+            self.status = "Save the current project before creating a new one".to_owned();
+            return;
+        }
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if self.playback.is_some() {
+            self.status = format!(
+                "Close {} output before creating a new project",
+                self.playback_name()
+            );
+            return;
+        }
+
+        self.project = Project::new();
+        self.project_path = None;
+        self.project_path_query.clear();
+        self.revision = 0;
+        self.saved_revision = 0;
+        self.timeline.rebuild(&self.project);
+        self.timeline.selected_track = None;
+        self.timeline.selected_item = None;
+        self.timeline.selected_items.clear();
+        self.timeline.time_selection = None;
+        self.timeline.origin_tick = 0;
+        self.timeline.edit_cursor_tick = 0;
+        self.timeline.vertical_scroll = 0.0;
+        self.track_name_edits.clear();
+        self.audio_item_start_edits.clear();
+        self.audio_waveforms.clear();
+        self.audio_asset_source_statuses.clear();
+        self.status = "New project created".to_owned();
     }
 
     fn open_settings(&mut self) -> Task<Message> {

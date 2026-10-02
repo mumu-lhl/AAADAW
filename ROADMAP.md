@@ -85,7 +85,7 @@
 
 ### 3. 桌面 UI 与基本编辑
 
-- [x] 用 Iced 0.14 建立桌面窗口、基础文件/编辑/轨道命令入口、默认 Arrangement 及独立 Media/Project 工作区；底部常驻 transport，工程/音频路径使用原生文件选择器；状态修改只经 `Project.apply(DawAction)`。
+- [x] 用 Iced 0.14 建立桌面窗口、基础文件/编辑/轨道命令入口和固定 Arrangement 主窗口；底部常驻 transport，工程/音频路径使用原生文件选择器；状态修改只经 `Project.apply(DawAction)`。
 - [x] 按 `DESIGN.md` 将展开式命令面板重做为紧凑的 REAPER 式 File/Edit/View/Insert/Item/Track/Actions 菜单栏；菜单只列出现有可执行命令。基础 Actions 搜索与菜单操作已接入，完整可配置 Action 注册表仍待后续实现。
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
@@ -99,6 +99,8 @@
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [x] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
+- [x] 固定主窗口为 Arrangement，将 Media 收敛为 Media Browser 面板、移除 Project 子页面，并在 File 菜单加入新建工程命令（[`docs/tickets/2026-10-02-arrangement-only-main-window.md`](docs/tickets/2026-10-02-arrangement-only-main-window.md)）。
+- [ ] 将 Settings 改为左侧类别栏与右侧设置面板；快捷键列表为每个 Action 提供独立的恢复默认入口（[`docs/tickets/2026-10-02-settings-category-navigation.md`](docs/tickets/2026-10-02-settings-category-navigation.md)）。
 - [x] 实现音频波形的基础显示（[`docs/tickets/2026-10-02-arrangement-audio-waveforms.md`](docs/tickets/2026-10-02-arrangement-audio-waveforms.md)）；缓存、多级降采样和大工程性能优化按后续里程碑推进。
 
 **退出标准**：用户能在 UI 中建立工程、创建轨道、编辑 Item、播放并保存；关键编辑可撤销/重做；缩放和平移不会触发全量工程数据重算。

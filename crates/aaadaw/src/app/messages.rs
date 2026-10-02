@@ -12,14 +12,6 @@ pub(crate) fn track_name_input_id(track_id: TrackId) -> iced::widget::Id {
     iced::widget::Id::from(format!("aaadaw-track-name-{}", track_id.value()))
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum WorkspacePage {
-    #[default]
-    Arrangement,
-    Media,
-    Project,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MainMenu {
     File,
@@ -45,7 +37,7 @@ pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
     DismissMainMenu,
     Escape,
-    SelectWorkspace(WorkspacePage),
+    NewProject,
     ToggleMediaBrowserPanel,
     OpenSettings,
     WindowClosed(iced::window::Id),
@@ -110,8 +102,8 @@ pub(crate) enum Message {
     ExecuteCommand(CommandId),
     OpenProject,
     SaveProject,
-    AudioFilePathChanged(String),
     ImportAudio,
+    AudioFilePathChanged(String),
     CancelAudioImport,
     AudioImportStarted(SharedAudioImportWorker),
     AudioImportFinished(Result<DawAction, String>),
