@@ -491,6 +491,7 @@ pub struct AudioItemStream {
 /// A prepared CLAP processor associated with one project track.
 pub struct TrackInstrumentProcessor {
     track_id: TrackId,
+    instance_id: u64,
     processor: ClapInstrumentProcessor,
 }
 
@@ -540,8 +541,10 @@ impl TrackFxProcessor {
 impl TrackInstrumentProcessor {
     /// Associates an activated processor with the track whose MIDI it will render.
     pub fn new(track_id: TrackId, processor: ClapInstrumentProcessor) -> Self {
+        let instance_id = processor.instance_id();
         Self {
             track_id,
+            instance_id,
             processor,
         }
     }
@@ -549,6 +552,11 @@ impl TrackInstrumentProcessor {
     /// Returns the target track ID.
     pub fn track_id(&self) -> TrackId {
         self.track_id
+    }
+
+    /// Returns the matching control-thread owner's identity.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Returns the ID and processor if graph construction fails.
@@ -560,6 +568,7 @@ impl TrackInstrumentProcessor {
 /// A CLAP processor stopped on the audio thread and ready for control-thread deactivation.
 pub struct StoppedTrackInstrument {
     track_id: TrackId,
+    instance_id: u64,
     processor: StoppedClapInstrumentProcessor,
 }
 
@@ -567,6 +576,11 @@ impl StoppedTrackInstrument {
     /// Returns the track whose processor was stopped.
     pub fn track_id(&self) -> TrackId {
         self.track_id
+    }
+
+    /// Returns the identity of the instrument owner that must receive this processor.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Returns the stopped processor for its matching control-thread owner.
@@ -614,6 +628,7 @@ impl StoppedTrackFxProcessor {
 struct InstrumentRoute {
     track_id: TrackId,
     track_index: usize,
+    instance_id: u64,
     processor: Option<ClapInstrumentProcessor>,
     stopped_processor: Option<StoppedClapInstrumentProcessor>,
     midi_events: Vec<ScheduledMidiEvent>,
@@ -955,6 +970,7 @@ impl AudioRenderGraph {
             instrument_routes.push(InstrumentRoute {
                 track_id: instrument.track_id,
                 track_index,
+                instance_id: instrument.instance_id,
                 midi_events: Vec::with_capacity(available_events),
                 audio: vec![[0.0, 0.0]; max_block_frames],
                 processor: None,
@@ -1013,6 +1029,95 @@ impl AudioRenderGraph {
     /// Returns the number of prepared track instruments.
     pub fn instrument_count(&self) -> usize {
         self.instruments.len()
+    }
+
+    /// Returns the MIDI event capacity required by one track in the compiled project schedule.
+    pub fn midi_event_capacity_for_track(&self, track_id: TrackId) -> usize {
+        self.midi_plan.event_count_for_track(track_id)
+    }
+
+    /// Installs pre-activated track instruments before the graph enters an audio callback.
+    ///
+    /// `project` must be the same project snapshot used to compile this graph. On validation
+    /// failure, `instruments` remains intact so matching owners can stop and deactivate them.
+    pub fn install_instrument_processors(
+        &mut self,
+        project: &aaadaw_core::Project,
+        instruments: &mut Vec<TrackInstrumentProcessor>,
+    ) -> Result<(), AudioGraphBuildError> {
+        if instruments.is_empty() {
+            return Ok(());
+        }
+        let mut seen_tracks = vec![false; project.tracks().len()];
+        for route in &self.instruments {
+            if let Some(track_index) = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == route.track_id)
+                && let Some(seen) = seen_tracks.get_mut(track_index)
+            {
+                *seen = true;
+            }
+        }
+        let mut routes = Vec::with_capacity(instruments.len());
+        for instrument in instruments.iter() {
+            let track_index = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == instrument.track_id)
+                .ok_or(AudioGraphBuildError::MissingInstrumentTrack {
+                    track_id: instrument.track_id.value(),
+                })?;
+            if std::mem::replace(&mut seen_tracks[track_index], true) {
+                return Err(AudioGraphBuildError::DuplicateTrackInstrument {
+                    track_id: instrument.track_id.value(),
+                });
+            }
+            let available_block_frames = instrument.processor.max_block_frames();
+            if available_block_frames < self.max_block_frames() {
+                return Err(AudioGraphBuildError::InstrumentBlockCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: self.max_block_frames(),
+                    available: available_block_frames,
+                });
+            }
+            let required_events = self.midi_plan.event_count_for_track(instrument.track_id);
+            let available_events = instrument.processor.max_events();
+            if available_events < required_events {
+                return Err(AudioGraphBuildError::InstrumentEventCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: required_events,
+                    available: available_events,
+                });
+            }
+            routes.push(InstrumentRoute {
+                track_id: instrument.track_id,
+                track_index,
+                instance_id: instrument.instance_id,
+                midi_events: Vec::with_capacity(available_events),
+                audio: vec![[0.0, 0.0]; self.max_block_frames()],
+                processor: None,
+                stopped_processor: None,
+            });
+        }
+
+        routes.sort_by_key(|route| route.track_index);
+        instruments.sort_by_key(|instrument| {
+            project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == instrument.track_id)
+                .expect("validated instrument track remains present")
+        });
+        for (route, instrument) in routes.iter_mut().zip(instruments.drain(..)) {
+            route.processor = Some(instrument.processor);
+        }
+        self.instruments.append(&mut routes);
+        self.instruments.sort_by_key(|route| route.track_index);
+        if self.midi_scratch.len() < self.midi_plan.len() {
+            self.midi_scratch.resize(self.midi_plan.len(), None);
+        }
+        Ok(())
     }
 
     /// Installs pre-activated track effects before the graph enters an audio callback.
@@ -1090,6 +1195,7 @@ impl AudioRenderGraph {
                     .take()
                     .map(|processor| StoppedTrackInstrument {
                         track_id: route.track_id,
+                        instance_id: route.instance_id,
                         processor,
                     })
             })

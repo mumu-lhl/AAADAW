@@ -791,6 +791,67 @@ fn track_fx_add_button_opens_a_scanned_plugin_picker_and_chain_edits_use_actions
 }
 
 #[test]
+fn track_context_instrument_picker_assigns_only_instruments_through_undoable_actions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.clap_plugin_scan.plugins = vec![
+        aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test-synth.clap"),
+            plugin_id: "org.example.test-synth".to_owned(),
+            name: "Test Synth".to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["instrument".to_owned()],
+        },
+        aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test-effect.clap"),
+            plugin_id: "org.example.test-effect".to_owned(),
+            name: "Test Effect".to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["audio-effect".to_owned()],
+        },
+    ];
+
+    let _ = app.update(Message::OpenTrackInstrumentPicker(track_id));
+    assert_eq!(app.plugin_picker_instrument_track_id, Some(track_id));
+    let _ = app.update(Message::SelectScannedInstrument(
+        "org.example.test-effect".to_owned(),
+    ));
+    assert!(app.project.tracks()[0].instrument().is_none());
+    assert!(app.status.contains("no longer in the scan results"));
+
+    let _ = app.update(Message::SelectScannedInstrument(
+        "org.example.test-synth".to_owned(),
+    ));
+    let instrument = app.project.tracks()[0]
+        .instrument()
+        .expect("selected instrument should be assigned");
+    assert_eq!(instrument.plugin_id(), "org.example.test-synth");
+    assert_eq!(instrument.bundle_path(), "/plugins/test-synth.clap");
+    assert_eq!(app.plugin_picker_window_id, None);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks()[0].instrument().is_none());
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0]
+            .instrument()
+            .map(|instrument| instrument.plugin_id()),
+        Some("org.example.test-synth")
+    );
+
+    let _ = app.update(Message::ClearTrackInstrument(track_id));
+    assert!(app.project.tracks()[0].instrument().is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0]
+            .instrument()
+            .map(|instrument| instrument.plugin_id()),
+        Some("org.example.test-synth")
+    );
+}
+
+#[test]
 fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
     let bindings = HashMap::from([
         ("edit.undo".to_owned(), "Ctrl+U".to_owned()),
@@ -1126,6 +1187,52 @@ fn clap_fx_activation_failure_is_reported_before_audio_output_starts() {
         .expect_err("missing plugin should block playback preparation");
     assert!(error.contains("org.example.missing"));
     assert!(app.clap_effect_owners.is_empty());
+
+    drop(prepared);
+    let _ = std::fs::remove_file(&project_path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn clap_instrument_activation_failure_is_reported_before_audio_output_starts() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-instrument-playback-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let store = ProjectStore::open(&project_path).expect("empty project store should open");
+    store.close().expect("empty project store should close");
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackInstrument {
+            track_id,
+            instrument: aaadaw_core::TrackInstrument::new(
+                "org.example.missing-synth",
+                "/missing/test-synth.clap",
+            ),
+        })
+        .expect("instrument should be assigned");
+
+    let mut prepared =
+        prepare_project_playback_file(project_path.clone(), app.project.snapshot(), 0)
+            .expect("empty media graph should prepare");
+    let error = app
+        .install_track_instrument_processors(&mut prepared)
+        .expect_err("missing instrument should block playback preparation");
+    assert!(error.contains("org.example.missing-synth"));
+    assert!(app.clap_instrument_owners.is_empty());
 
     drop(prepared);
     let _ = std::fs::remove_file(&project_path);

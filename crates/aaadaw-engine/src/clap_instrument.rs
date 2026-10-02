@@ -87,10 +87,12 @@ impl std::error::Error for ClapInstrumentError {}
 /// Control-thread ownership required to deactivate and destroy one CLAP instrument.
 pub struct ClapInstrumentOwner {
     instance: Option<PluginInstance<()>>,
+    instance_id: u64,
 }
 
 /// A started or stopped instrument processor and its preallocated render buffers.
 pub struct ClapInstrumentProcessor {
+    instance_id: u64,
     processor: PluginAudioProcessor<()>,
     output_ports: AudioPorts,
     left: Vec<f32>,
@@ -112,6 +114,7 @@ struct ActiveNote {
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
 pub struct StoppedClapInstrumentProcessor {
+    instance_id: u64,
     processor: clack_host::prelude::StoppedPluginAudioProcessor<()>,
 }
 
@@ -243,11 +246,14 @@ impl ClapInstrumentOwner {
             .map_err(|error| {
                 ClapInstrumentError::new(format!("Could not activate CLAP instrument: {error}"))
             })?;
+        let instance_id = NEXT_CLAP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
         Ok((
             Self {
                 instance: Some(instance),
+                instance_id,
             },
             ClapInstrumentProcessor {
+                instance_id,
                 processor: processor.into(),
                 output_ports: AudioPorts::with_capacity(2, 1),
                 left: vec![0.0; max_block_frames],
@@ -265,12 +271,37 @@ impl ClapInstrumentOwner {
 
     /// Deactivates and destroys the instrument on the calling control thread.
     pub fn deactivate(mut self, processor: StoppedClapInstrumentProcessor) {
+        assert_eq!(
+            self.instance_id, processor.instance_id,
+            "CLAP instrument processor must return to its matching owner"
+        );
         let instance = self
             .instance
             .as_mut()
             .expect("CLAP instrument owner is deactivated once");
         instance.deactivate(processor.processor);
         self.instance.take();
+    }
+
+    /// Returns the identity paired with this owner's activated processor.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
+    /// Deactivates an instrument whose graph was discarded before audio processing began.
+    ///
+    /// The processor handle must already have been dropped. Use [`Self::deactivate`] when the
+    /// graph returned a stopped processor after realtime processing.
+    pub fn try_deactivate_unused(&mut self) -> Result<(), ClapInstrumentError> {
+        let instance = self
+            .instance
+            .as_mut()
+            .expect("CLAP instrument owner is deactivated once");
+        instance.try_deactivate().map_err(|error| {
+            ClapInstrumentError::new(format!("Could not deactivate CLAP instrument: {error}"))
+        })?;
+        self.instance.take();
+        Ok(())
     }
 }
 
@@ -708,9 +739,14 @@ impl ClapInstrumentProcessor {
         self.stop_with_status().0
     }
 
+    pub(crate) fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
     pub(crate) fn stop_with_status(mut self) -> (StoppedClapInstrumentProcessor, bool) {
         let released = self.all_notes_off().is_ok();
         let stopped = StoppedClapInstrumentProcessor {
+            instance_id: self.instance_id,
             processor: self.processor.into_stopped(),
         };
         (stopped, released)
@@ -895,7 +931,9 @@ mod tests {
     use crate::{
         AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor, pcm_stream,
     };
-    use aaadaw_core::{DawAction, MidiNoteData, NoteId, Project, TrackFxPlugin, TrackId};
+    use aaadaw_core::{
+        DawAction, MidiNoteData, NoteId, Project, TrackFxPlugin, TrackId, TrackInstrument,
+    };
     use clack_extensions::audio_ports::{
         AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPortsImpl,
     };
@@ -1445,6 +1483,23 @@ mod tests {
     }
 
     #[test]
+    fn unused_instrument_owner_can_deactivate_after_its_processor_handle_is_dropped() {
+        let (mut owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            16,
+            1,
+        )
+        .expect("test synth should load");
+        drop(processor);
+
+        owner
+            .try_deactivate_unused()
+            .expect("unprocessed synth should deactivate when its prepared graph is discarded");
+    }
+
+    #[test]
     fn processor_rejects_events_outside_the_preallocated_block() {
         let entry = test_plugin_entry::<true, 2>();
         let (owner, mut processor) =
@@ -1502,6 +1557,18 @@ mod tests {
     fn render_graph_mixes_sample_accurate_stereo_instrument_output_with_pcm() {
         let (mut project, track_id, _) = test_project(1);
         project
+            .apply(DawAction::SetTrackInstrument {
+                track_id,
+                instrument: TrackInstrument::new(PLUGIN_ID, "synth.clap"),
+            })
+            .expect("instrument assignment should be valid");
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![TrackFxPlugin::new(EFFECT_PLUGIN_ID, "effect.clap").unwrap()],
+            })
+            .expect("track effect should be valid");
+        project
             .apply(DawAction::InsertAudioItem {
                 track_id,
                 media_ref: "asset://test".to_owned(),
@@ -1511,7 +1578,7 @@ mod tests {
             })
             .expect("test audio item should be valid");
         let item_id = project.audio_items()[0].id();
-        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+        let (instrument_owner, processor) = ClapInstrumentOwner::load_from_entry(
             test_plugin_entry::<true, 2>(),
             PLUGIN_ID,
             48_000,
@@ -1519,39 +1586,73 @@ mod tests {
             2,
         )
         .expect("test synth should load");
+        let instrument_instance_id = instrument_owner.instance_id();
+        let (effect_owner, effect_processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 32)
+                .expect("test effect should load");
+        let effect_instance_id = effect_owner.instance_id();
         let (mut producer, consumer) = pcm_stream(32).expect("stream capacity is valid");
         assert_eq!(producer.push_samples(&[0.1; 32]), 32);
         let mut instruments = vec![TrackInstrumentProcessor::new(track_id, processor)];
-        let mut graph = AudioRenderGraph::new_for_audio_items_with_instruments(
+        let mut effects = vec![TrackFxProcessor::new(
+            track_id,
+            0,
+            EFFECT_PLUGIN_ID,
+            effect_processor,
+        )];
+        let mut graph = AudioRenderGraph::new_for_audio_items(
             &project,
             vec![AudioItemStream::new(item_id, consumer)],
-            &mut instruments,
             32,
         )
-        .expect("streams and instrument should build a graph");
+        .expect("audio streams should build a graph");
+        graph
+            .install_instrument_processors(&project, &mut instruments)
+            .expect("assigned track instrument should install");
+        graph
+            .install_fx_processors(&project, &mut effects)
+            .expect("assigned track effect should install");
         assert!(instruments.is_empty());
+        assert!(effects.is_empty());
         graph.transport_mut().start();
 
-        let mut output = [[0.0; 2]; 32];
-        let stats = graph
-            .render_into(&mut output)
-            .expect("instrument graph should render");
+        let (mut retired_instruments, mut retired_effects, output, stats) =
+            std::thread::spawn(move || {
+                let mut output = [[0.0; 2]; 32];
+                let stats = graph
+                    .render_into(&mut output)
+                    .expect("instrument graph should render");
+                graph.stop_instruments();
+                graph.stop_fx_processors();
+                (
+                    graph.take_stopped_instruments(),
+                    graph.take_stopped_fx_processors(),
+                    output,
+                    stats,
+                )
+            })
+            .join()
+            .expect("render graph thread");
 
         assert_eq!(stats.midi_event_count, 2);
         assert_eq!(stats.underrun_samples, 0);
         let midi_level = 64.0 / 127.0;
-        let pcm_level = 0.1 * std::f32::consts::FRAC_1_SQRT_2;
+        let pcm_level = 0.1;
         for (frame_index, frame) in output.iter().enumerate() {
             let instrument_level = if frame_index < 25 { midi_level } else { 0.0 };
-            assert!((frame[0] - pcm_level - instrument_level).abs() < 0.0001);
-            assert!((frame[1] - pcm_level - instrument_level * 0.5).abs() < 0.0001);
+            assert!((frame[0] - (pcm_level + instrument_level) * 0.5).abs() < 0.0001);
+            assert!((frame[1] - (pcm_level + instrument_level * 0.5) * 0.5).abs() < 0.0001);
         }
-        let stopped = graph.stop_instruments();
-        assert_eq!(stopped, 0);
-        let mut retired = graph.take_stopped_instruments();
-        assert_eq!(retired.len(), 1);
-        let (_, processor) = retired.pop().expect("stopped route exists").into_parts();
-        owner.deactivate(processor);
+        assert_eq!(retired_instruments.len(), 1);
+        assert_eq!(retired_effects.len(), 1);
+        let stopped_instrument = retired_instruments.pop().expect("instrument route exists");
+        assert_eq!(stopped_instrument.instance_id(), instrument_instance_id);
+        let (_, processor) = stopped_instrument.into_parts();
+        instrument_owner.deactivate(processor);
+        let stopped_effect = retired_effects.pop().expect("effect route exists");
+        assert_eq!(stopped_effect.instance_id(), effect_instance_id);
+        let (_, _, _, processor) = stopped_effect.into_parts();
+        effect_owner.deactivate(processor);
         drop(producer);
     }
 

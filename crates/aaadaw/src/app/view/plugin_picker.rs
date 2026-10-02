@@ -4,8 +4,13 @@ use iced::widget::{button, column, container, row, rule, scrollable, text, text_
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    let picking_instrument = app.plugin_picker_instrument_track_id.is_some();
+    let target_track_id = app
+        .plugin_picker_instrument_track_id
+        .or(app.plugin_picker_track_id);
     let track_name = app
         .plugin_picker_track_id
+        .or(app.plugin_picker_instrument_track_id)
         .and_then(|track_id| {
             app.project
                 .tracks()
@@ -19,13 +24,46 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .clap_plugin_scan
         .plugins
         .iter()
+        .filter(|plugin| {
+            if picking_instrument {
+                plugin.is_instrument()
+            } else {
+                plugin.is_audio_effect()
+            }
+        })
         .filter(|plugin| matches_query(plugin, &query))
         .collect::<Vec<_>>();
+
+    let current_instrument = target_track_id
+        .and_then(|track_id| {
+            app.project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)
+        })
+        .and_then(|track| track.instrument())
+        .map(|instrument| {
+            app.clap_plugin_scan
+                .plugins
+                .iter()
+                .find(|plugin| plugin.plugin_id == instrument.plugin_id())
+                .map_or_else(
+                    || instrument.plugin_id().to_owned(),
+                    |plugin| plugin.name.clone(),
+                )
+        })
+        .unwrap_or_else(|| "None".to_owned());
 
     let mut entries = column![].spacing(2);
     for plugin in plugins.iter().copied() {
         let plugin_id = plugin.plugin_id.clone();
         let vendor = plugin.vendor.as_deref().unwrap_or("Unknown vendor");
+        let action = if picking_instrument {
+            Message::SelectScannedInstrument(plugin_id)
+        } else {
+            Message::AddScannedPlugin(plugin_id)
+        };
+        let button_label = if picking_instrument { "Assign" } else { "Add" };
         entries = entries
             .push(
                 row![
@@ -41,9 +79,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     ]
                     .spacing(2)
                     .width(Length::Fill),
-                    button("Add")
-                        .style(button::primary)
-                        .on_press(Message::AddScannedPlugin(plugin_id)),
+                    button(button_label).style(button::primary).on_press(action),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center)
@@ -55,7 +91,25 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         let empty_text = if app.clap_plugin_scan_busy {
             "Scanning configured CLAP paths…"
         } else if app.clap_plugin_scan.plugins.is_empty() {
-            "No scanned plugins are available. Scan a CLAP path in Settings."
+            if picking_instrument {
+                "No scanned instruments are available. Scan a CLAP path in Settings."
+            } else {
+                "No scanned plugins are available. Scan a CLAP path in Settings."
+            }
+        } else if !app.clap_plugin_scan.plugins.iter().any(|plugin| {
+            if picking_instrument {
+                plugin.is_instrument()
+            } else {
+                plugin.is_audio_effect()
+            }
+        }) {
+            if picking_instrument {
+                "No scanned CLAP instruments are available."
+            } else {
+                "No scanned CLAP effects are available."
+            }
+        } else if picking_instrument {
+            "No scanned instruments match this search."
         } else {
             "No scanned plugins match this search."
         };
@@ -69,12 +123,26 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     } else if app.clap_plugin_scan_busy {
         "Scanning; the latest completed results are shown"
     } else {
-        "Choose an entry to add it to the track FX chain"
+        if picking_instrument {
+            "Choose an instrument to render this track's MIDI items"
+        } else {
+            "Choose an entry to add it to the track FX chain"
+        }
     };
     let contents = column![
         column![
-            text("Add plugin").size(16),
-            text(format!("To: {track_name}")).size(11)
+            text(if picking_instrument {
+                "Assign instrument"
+            } else {
+                "Add plugin"
+            })
+            .size(16),
+            text(format!("To: {track_name}")).size(11),
+            if picking_instrument {
+                text(format!("Current: {current_instrument}")).size(10)
+            } else {
+                text("FX chain").size(10)
+            }
         ]
         .spacing(2),
         text_input(

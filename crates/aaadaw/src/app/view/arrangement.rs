@@ -164,6 +164,26 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         Message::Timeline(TimelineEvent::SelectTrack(track_id)),
     ),]
     .spacing(super::tokens::ROW_GAP);
+    let instrument_label = track.instrument().map_or("None", |instrument| {
+        app.clap_plugin_scan
+            .plugins
+            .iter()
+            .find(|plugin| plugin.plugin_id == instrument.plugin_id())
+            .map_or(instrument.plugin_id(), |plugin| plugin.name.as_str())
+    });
+    actions = actions
+        .push(text(format!("Instrument: {instrument_label}")).size(11))
+        .push(action_button(
+            "Set instrument…",
+            Message::OpenTrackInstrumentPicker(track_id),
+        ));
+    if track.instrument().is_some() {
+        actions = actions.push(action_button(
+            "Clear instrument",
+            Message::ClearTrackInstrument(track_id),
+        ));
+    }
+    actions = actions.push(iced::widget::rule::horizontal(1));
     for entry in commands::for_track_context(app, track_id) {
         if entry.separator_before {
             actions = actions.push(iced::widget::rule::horizontal(1));

@@ -146,6 +146,7 @@ impl PreparedAudioPlayback {
             output,
             feeders,
             retired_feeders: None,
+            retired_instrument_processors: Vec::new(),
             retired_fx_processors: Vec::new(),
             is_playing: false,
         })
@@ -172,6 +173,7 @@ impl PreparedAudioPlayback {
             output,
             feeders,
             retired_feeders: None,
+            retired_instrument_processors: Vec::new(),
             retired_fx_processors: Vec::new(),
             is_playing: false,
         })
@@ -216,6 +218,7 @@ pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
+    retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
     retired_fx_processors: Vec<StoppedTrackFxProcessor>,
     is_playing: bool,
 }
@@ -316,6 +319,8 @@ impl RunningAudioPlayback {
         };
         let collected = !retired.is_empty();
         for graph in &mut retired {
+            self.retired_instrument_processors
+                .append(&mut graph.take_stopped_instruments());
             self.retired_fx_processors
                 .append(&mut graph.take_stopped_fx_processors());
         }
@@ -333,9 +338,25 @@ impl RunningAudioPlayback {
         std::mem::take(&mut self.retired_fx_processors)
     }
 
-    /// Stops playback, shuts down the backend, and returns stopped effect processors for teardown.
-    pub fn shutdown(mut self) -> Result<Vec<StoppedTrackFxProcessor>, PlaybackBuildError> {
+    /// Returns stopped instrument processors collected from retired graphs.
+    pub fn take_retired_instrument_processors(
+        &mut self,
+    ) -> Vec<aaadaw_engine::StoppedTrackInstrument> {
+        std::mem::take(&mut self.retired_instrument_processors)
+    }
+
+    /// Stops playback and returns all stopped plugin processors for control-thread teardown.
+    pub fn shutdown(
+        mut self,
+    ) -> Result<
+        (
+            Vec<aaadaw_engine::StoppedTrackInstrument>,
+            Vec<StoppedTrackFxProcessor>,
+        ),
+        PlaybackBuildError,
+    > {
         self.collect_retired_graphs();
+        let mut instruments = std::mem::take(&mut self.retired_instrument_processors);
         let mut stopped = std::mem::take(&mut self.retired_fx_processors);
         let mut graphs = match self.output {
             #[cfg(feature = "jack-backend")]
@@ -348,12 +369,13 @@ impl RunningAudioPlayback {
             }
         };
         for graph in &mut graphs {
+            instruments.append(&mut graph.take_stopped_instruments());
             stopped.append(&mut graph.take_stopped_fx_processors());
         }
         drop(graphs);
         drop(self.feeders);
         drop(self.retired_feeders.take());
-        Ok(stopped)
+        Ok((instruments, stopped))
     }
 
     pub fn stats(&self) -> PlaybackStats {
@@ -405,6 +427,7 @@ pub struct RunningJackPlayback {
     output: JackAudioOutput,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
+    retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
     retired_fx_processors: Vec<StoppedTrackFxProcessor>,
     is_playing: bool,
 }
@@ -477,6 +500,8 @@ impl RunningJackPlayback {
         let mut retired = self.output.take_retired_graphs();
         let collected = !retired.is_empty();
         for graph in &mut retired {
+            self.retired_instrument_processors
+                .append(&mut graph.take_stopped_instruments());
             self.retired_fx_processors
                 .append(&mut graph.take_stopped_fx_processors());
         }
@@ -494,18 +519,35 @@ impl RunningJackPlayback {
         std::mem::take(&mut self.retired_fx_processors)
     }
 
-    /// Shuts down JACK and returns every stopped effect processor for owner teardown.
-    pub fn shutdown(mut self) -> Result<Vec<StoppedTrackFxProcessor>, PlaybackBuildError> {
+    /// Returns stopped instrument processors collected from retired graphs.
+    pub fn take_retired_instrument_processors(
+        &mut self,
+    ) -> Vec<aaadaw_engine::StoppedTrackInstrument> {
+        std::mem::take(&mut self.retired_instrument_processors)
+    }
+
+    /// Stops JACK and returns all stopped plugin processors for control-thread teardown.
+    pub fn shutdown(
+        mut self,
+    ) -> Result<
+        (
+            Vec<aaadaw_engine::StoppedTrackInstrument>,
+            Vec<StoppedTrackFxProcessor>,
+        ),
+        PlaybackBuildError,
+    > {
         self.collect_retired_graphs();
+        let mut instruments = std::mem::take(&mut self.retired_instrument_processors);
         let mut stopped = std::mem::take(&mut self.retired_fx_processors);
         let mut graphs = self.output.shutdown().map_err(PlaybackBuildError::Jack)?;
         for graph in &mut graphs {
+            instruments.append(&mut graph.take_stopped_instruments());
             stopped.append(&mut graph.take_stopped_fx_processors());
         }
         drop(graphs);
         drop(self.feeders);
         drop(self.retired_feeders.take());
-        Ok(stopped)
+        Ok((instruments, stopped))
     }
 
     /// Returns lock-free callback counters.

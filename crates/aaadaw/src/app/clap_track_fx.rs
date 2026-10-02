@@ -186,6 +186,7 @@ impl App {
             return Task::none();
         }
         self.plugin_picker_track_id = Some(track_id);
+        self.plugin_picker_instrument_track_id = None;
         self.plugin_picker_search.clear();
         if self.plugin_picker_window_id.is_some() {
             return Task::none();
@@ -250,6 +251,7 @@ impl App {
         self.fx_chain_track_id = Some(track_id);
         self.fx_chain_selected_index = Some(selected_index);
         self.plugin_picker_track_id = None;
+        self.plugin_picker_instrument_track_id = None;
         self.plugin_picker_search.clear();
         let close_picker: Task<Message> = self
             .plugin_picker_window_id

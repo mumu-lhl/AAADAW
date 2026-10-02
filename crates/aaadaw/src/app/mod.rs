@@ -15,9 +15,9 @@ use aaadaw_app::{
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-use aaadaw_engine::ClapEffectOwner;
 use aaadaw_engine::ClapPluginGuiOwner;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -34,6 +34,7 @@ mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
 mod clap_track_fx;
+mod clap_track_instrument;
 mod commands;
 mod config_paths;
 mod keyboard_config;
@@ -60,6 +61,10 @@ pub(crate) fn run() -> iced::Result {
 struct ClapEffectOwners(HashMap<u64, ClapEffectOwner>);
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Default)]
+struct ClapInstrumentOwners(HashMap<u64, ClapInstrumentOwner>);
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 impl Deref for ClapEffectOwners {
     type Target = HashMap<u64, ClapEffectOwner>;
 
@@ -77,6 +82,31 @@ impl DerefMut for ClapEffectOwners {
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 impl Drop for ClapEffectOwners {
+    fn drop(&mut self) {
+        for owner in self.0.values_mut() {
+            let _ = owner.try_deactivate_unused();
+        }
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl Deref for ClapInstrumentOwners {
+    type Target = HashMap<u64, ClapInstrumentOwner>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl DerefMut for ClapInstrumentOwners {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl Drop for ClapInstrumentOwners {
     fn drop(&mut self) {
         for owner in self.0.values_mut() {
             let _ = owner.try_deactivate_unused();
@@ -111,6 +141,7 @@ struct App {
     fx_chain_editor_status: String,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
+    plugin_picker_instrument_track_id: Option<TrackId>,
     plugin_picker_search: String,
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
@@ -160,6 +191,8 @@ struct App {
     playback_backend: PlaybackBackend,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_owners: ClapEffectOwners,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_instrument_owners: ClapInstrumentOwners,
 }
 
 struct PendingAudioImport {
@@ -385,6 +418,7 @@ impl App {
             &message,
             Message::OpenSettings
                 | Message::OpenTrackFxChain(_)
+                | Message::OpenTrackInstrumentPicker(_)
                 | Message::OpenPluginPicker
                 | Message::CloseTrackFxChain
                 | Message::ClosePluginPicker
@@ -541,6 +575,8 @@ impl App {
                         | Message::AdjustVolume(..)
                         | Message::AdjustPan(..)
                         | Message::AddScannedPlugin(_)
+                        | Message::ClearTrackInstrument(_)
+                        | Message::SelectScannedInstrument(_)
                         | Message::ToggleFxChainPlugin(_)
                         | Message::RemoveSelectedFxPlugin
                         | Message::FxChainWindowNativeHandle(..)
@@ -595,12 +631,14 @@ impl App {
                     self.fx_chain_selected_index = None;
                     if let Some(picker_window_id) = self.plugin_picker_window_id.take() {
                         self.plugin_picker_track_id = None;
+                        self.plugin_picker_instrument_track_id = None;
                         self.plugin_picker_search.clear();
                         task = iced::window::close(picker_window_id);
                     }
                 } else if self.plugin_picker_window_id == Some(window_id) {
                     self.plugin_picker_window_id = None;
                     self.plugin_picker_track_id = None;
+                    self.plugin_picker_instrument_track_id = None;
                     self.plugin_picker_search.clear();
                 } else if self.main_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
@@ -615,6 +653,10 @@ impl App {
                 }
             }
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
+            Message::OpenTrackInstrumentPicker(track_id) => {
+                task = self.open_track_instrument_picker(track_id)
+            }
+            Message::ClearTrackInstrument(track_id) => self.clear_track_instrument(track_id),
             Message::OpenPluginPicker => task = self.open_plugin_picker(),
             Message::CloseTrackFxChain => {
                 self.close_fx_editor_resources();
@@ -632,6 +674,7 @@ impl App {
                 self.fx_chain_track_id = None;
                 self.fx_chain_selected_index = None;
                 self.plugin_picker_track_id = None;
+                self.plugin_picker_instrument_track_id = None;
                 self.plugin_picker_search.clear();
             }
             Message::ClosePluginPicker => {
@@ -639,10 +682,14 @@ impl App {
                     task = iced::window::close(window_id);
                 }
                 self.plugin_picker_track_id = None;
+                self.plugin_picker_instrument_track_id = None;
                 self.plugin_picker_search.clear();
             }
             Message::PluginPickerSearchChanged(query) => self.plugin_picker_search = query,
             Message::AddScannedPlugin(plugin_id) => task = self.add_scanned_plugin(&plugin_id),
+            Message::SelectScannedInstrument(plugin_id) => {
+                task = self.select_scanned_instrument(&plugin_id)
+            }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
             Message::ToggleFxChainPlugin(index) => self.toggle_fx_chain_plugin(index),
             Message::RemoveSelectedFxPlugin => task = self.remove_selected_fx_plugin(),
@@ -1272,11 +1319,25 @@ impl App {
         let mut shutdown_error = None;
         if let Some(playback) = self.playback.take() {
             match playback.shutdown() {
-                Ok(processors) => self.deactivate_stopped_effects(processors),
+                Ok((instruments, effects)) => {
+                    self.deactivate_stopped_instruments(instruments);
+                    self.deactivate_stopped_effects(effects);
+                }
                 Err(error) => {
                     shutdown_error = Some(error.to_string());
                     let owner_ids = self.clap_effect_owners.keys().copied().collect::<Vec<_>>();
                     if let Some(cleanup_error) = self.discard_unused_effect_owners(&owner_ids) {
+                        shutdown_error = Some(match shutdown_error.take() {
+                            Some(error) => format!("{error}; {cleanup_error}"),
+                            None => cleanup_error,
+                        });
+                    }
+                    let owner_ids = self
+                        .clap_instrument_owners
+                        .keys()
+                        .copied()
+                        .collect::<Vec<_>>();
+                    if let Some(cleanup_error) = self.discard_unused_instrument_owners(&owner_ids) {
                         shutdown_error = Some(match shutdown_error.take() {
                             Some(error) => format!("{error}; {cleanup_error}"),
                             None => cleanup_error,
@@ -1347,7 +1408,7 @@ impl App {
             }
         };
 
-        let fx_owner_ids = match self.install_track_fx_processors(&mut prepared) {
+        let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
             Err(error) => {
                 self.status = format!("Playback preparation failed: {error}");
@@ -1355,14 +1416,32 @@ impl App {
             }
         };
 
+        let fx_owner_ids = match self.install_track_fx_processors(&mut prepared) {
+            Ok(ids) => ids,
+            Err(error) => {
+                drop(prepared);
+                let cleanup_error = self.discard_unused_instrument_owners(&instrument_owner_ids);
+                self.status = format!("Playback preparation failed: {error}");
+                if let Some(cleanup_error) = cleanup_error {
+                    self.status.push_str(&format!("; {cleanup_error}"));
+                }
+                return;
+            }
+        };
+
         if self.playback.is_some() {
-            let (result, retired_processors) = {
+            let (result, retired_instruments, retired_effects) = {
                 let playback = self.playback.as_mut().expect("playback exists");
                 let result = playback.replace_graph(prepared);
                 playback.collect_retired_graphs();
-                (result, playback.take_retired_fx_processors())
+                (
+                    result,
+                    playback.take_retired_instrument_processors(),
+                    playback.take_retired_fx_processors(),
+                )
             };
-            self.deactivate_stopped_effects(retired_processors);
+            self.deactivate_stopped_instruments(retired_instruments);
+            self.deactivate_stopped_effects(retired_effects);
             match result {
                 Ok(()) => {
                     self.playhead_sample = target_sample;
@@ -1370,7 +1449,15 @@ impl App {
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
                 Err(error) => {
-                    let cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
+                    let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
+                    if let Some(instrument_error) =
+                        self.discard_unused_instrument_owners(&instrument_owner_ids)
+                    {
+                        cleanup_error = Some(match cleanup_error {
+                            Some(error) => format!("{error}; {instrument_error}"),
+                            None => instrument_error,
+                        });
+                    }
                     self.status =
                         format!("{} graph replacement failed: {error}", self.playback_name());
                     if let Some(cleanup_error) = cleanup_error {
@@ -1384,7 +1471,15 @@ impl App {
         let mut playback = match prepared.into_output(self.selected_playback_backend()) {
             Ok(playback) => playback,
             Err(error) => {
-                let cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
+                let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
+                if let Some(instrument_error) =
+                    self.discard_unused_instrument_owners(&instrument_owner_ids)
+                {
+                    cleanup_error = Some(match cleanup_error {
+                        Some(error) => format!("{error}; {instrument_error}"),
+                        None => instrument_error,
+                    });
+                }
                 self.status = format!("{} output setup failed: {error}", self.playback_name());
                 if let Some(cleanup_error) = cleanup_error {
                     self.status.push_str(&format!("; {cleanup_error}"));
@@ -1414,14 +1509,19 @@ impl App {
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn update_playback_stats(&mut self) {
-        let retired_processors = if let Some(playback) = self.playback.as_mut() {
+        let (retired_instruments, retired_effects) = if let Some(playback) = self.playback.as_mut()
+        {
             self.playhead_sample = playback.stats().playhead_sample;
             playback.collect_retired_graphs();
-            playback.take_retired_fx_processors()
+            (
+                playback.take_retired_instrument_processors(),
+                playback.take_retired_fx_processors(),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
-        self.deactivate_stopped_effects(retired_processors);
+        self.deactivate_stopped_instruments(retired_instruments);
+        self.deactivate_stopped_effects(retired_effects);
     }
 
     fn add_track(&mut self) {
