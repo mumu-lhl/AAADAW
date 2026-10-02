@@ -6,6 +6,7 @@
 
 use crate::{MidiEventKind, ScheduledMidiEvent};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_host::events::Pckn;
 use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent};
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
@@ -64,8 +65,17 @@ pub struct ClapInstrumentProcessor {
     right: Vec<f32>,
     event_scratch: Vec<ScheduledMidiEvent>,
     input_events: EventBuffer,
+    active_notes: Vec<ActiveNote>,
+    active_note_scratch: Vec<ActiveNote>,
+    input_note_port: u16,
     max_block_frames: usize,
     max_events: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ActiveNote {
+    note_id: u32,
+    pitch: u8,
 }
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
@@ -161,7 +171,7 @@ impl ClapInstrumentOwner {
                     ClapInstrumentError::new(format!("Could not create CLAP instrument: {error}"))
                 },
             )?;
-        validate_stereo_synth_ports(&mut instance)?;
+        let input_note_port = validate_stereo_synth_ports(&mut instance)?;
 
         let processor = instance
             .activate(
@@ -186,6 +196,9 @@ impl ClapInstrumentOwner {
                 right: vec![0.0; max_block_frames],
                 event_scratch: Vec::with_capacity(max_events),
                 input_events: EventBuffer::with_capacity(max_events),
+                active_notes: Vec::with_capacity(max_events),
+                active_note_scratch: Vec::with_capacity(max_events),
+                input_note_port,
                 max_block_frames,
                 max_events,
             },
@@ -252,6 +265,43 @@ impl ClapInstrumentProcessor {
             )
         });
 
+        self.active_note_scratch.clear();
+        self.active_note_scratch
+            .extend_from_slice(&self.active_notes);
+        for event in &self.event_scratch {
+            let note_id = u32::try_from(event.note_id.value())
+                .ok()
+                .filter(|id| *id <= i32::MAX as u32)
+                .ok_or_else(|| {
+                    ClapInstrumentError::new("MIDI note ID exceeds the CLAP note-ID range")
+                })?;
+            let active_note = ActiveNote {
+                note_id,
+                pitch: event.pitch,
+            };
+            match event.kind {
+                MidiEventKind::NoteOn => {
+                    if !self.active_note_scratch.contains(&active_note) {
+                        if self.active_note_scratch.len() == self.max_events {
+                            return Err(ClapInstrumentError::new(
+                                "active CLAP notes exceed the preallocated note capacity",
+                            ));
+                        }
+                        self.active_note_scratch.push(active_note);
+                    }
+                }
+                MidiEventKind::NoteOff => {
+                    if let Some(index) = self
+                        .active_note_scratch
+                        .iter()
+                        .position(|active| *active == active_note)
+                    {
+                        self.active_note_scratch.swap_remove(index);
+                    }
+                }
+            }
+        }
+
         self.input_events.clear();
         for event in &self.event_scratch {
             let note_id = u32::try_from(event.note_id.value())
@@ -260,7 +310,7 @@ impl ClapInstrumentProcessor {
                 .ok_or_else(|| {
                     ClapInstrumentError::new("MIDI note ID exceeds the CLAP note-ID range")
                 })?;
-            let pckn = Pckn::new(0_u16, 0_u16, u16::from(event.pitch), note_id);
+            let pckn = Pckn::new(self.input_note_port, 0_u16, u16::from(event.pitch), note_id);
             let sample_offset = u32::try_from(event.sample_offset).map_err(|_| {
                 ClapInstrumentError::new("MIDI event offset exceeds the CLAP range")
             })?;
@@ -277,6 +327,40 @@ impl ClapInstrumentProcessor {
             }
         }
         output.fill([0.0, 0.0]);
+        let result = self.process_prepared_events(output);
+        std::mem::swap(&mut self.active_notes, &mut self.active_note_scratch);
+        self.active_note_scratch.clear();
+        result
+    }
+
+    /// Sends note-offs for every currently held note without advancing the project transport.
+    pub(crate) fn all_notes_off(&mut self) -> Result<(), ClapInstrumentError> {
+        if self.active_notes.is_empty() {
+            return Ok(());
+        }
+        self.input_events.clear();
+        for note in &self.active_notes {
+            self.input_events.push(&NoteOffEvent::new(
+                0,
+                Pckn::new(
+                    self.input_note_port,
+                    0_u16,
+                    u16::from(note.pitch),
+                    note.note_id,
+                ),
+                0.0,
+            ));
+        }
+        let mut discarded_audio = [[0.0, 0.0]];
+        self.process_prepared_events(&mut discarded_audio)?;
+        self.active_notes.clear();
+        Ok(())
+    }
+
+    fn process_prepared_events(
+        &mut self,
+        output: &mut [[f32; 2]],
+    ) -> Result<(), ClapInstrumentError> {
         self.left[..output.len()].fill(0.0);
         self.right[..output.len()].fill(0.0);
 
@@ -323,9 +407,23 @@ impl ClapInstrumentProcessor {
 
     /// Stops processing on the audio thread and returns the processor for control-thread teardown.
     pub fn stop(self) -> StoppedClapInstrumentProcessor {
-        StoppedClapInstrumentProcessor {
+        self.stop_with_status().0
+    }
+
+    pub(crate) fn stop_with_status(mut self) -> (StoppedClapInstrumentProcessor, bool) {
+        let released = self.all_notes_off().is_ok();
+        let stopped = StoppedClapInstrumentProcessor {
             processor: self.processor.into_stopped(),
-        }
+        };
+        (stopped, released)
+    }
+
+    pub(crate) fn max_block_frames(&self) -> usize {
+        self.max_block_frames
+    }
+
+    pub(crate) fn max_events(&self) -> usize {
+        self.max_events
     }
 }
 
@@ -368,7 +466,7 @@ pub unsafe fn inspect_clap_instrument_entry(
 
 fn validate_stereo_synth_ports(
     instance: &mut PluginInstance<()>,
-) -> Result<(), ClapInstrumentError> {
+) -> Result<u16, ClapInstrumentError> {
     let plugin = instance.plugin_handle();
     let ports = plugin
         .get_extension::<PluginAudioPorts>()
@@ -398,15 +496,37 @@ fn validate_stereo_synth_ports(
             "CLAP instrument does not expose its stereo output as the main bus",
         ));
     }
-    Ok(())
+    let note_ports = plugin
+        .get_extension::<PluginNotePorts>()
+        .ok_or_else(|| ClapInstrumentError::new("CLAP instrument does not expose note ports"))?;
+    let mut note_buffer = NotePortInfoBuffer::new();
+    let mut input_note_port = None;
+    for index in 0..note_ports.count(&plugin, true) {
+        let Some(note_port) = note_ports.get(&plugin, index, true, &mut note_buffer) else {
+            continue;
+        };
+        if note_port.supported_dialects.supports(NoteDialect::Clap) {
+            input_note_port = Some(u16::try_from(index).map_err(|_| {
+                ClapInstrumentError::new("CLAP instrument has too many note input ports")
+            })?);
+            break;
+        }
+    }
+    input_note_port.ok_or_else(|| {
+        ClapInstrumentError::new("CLAP instrument has no note input port supporting CLAP events")
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AudioItemStream, AudioRenderGraph, TrackInstrumentProcessor, pcm_stream};
     use aaadaw_core::{DawAction, MidiNoteData, NoteId, Project, TrackId};
     use clack_extensions::audio_ports::{
         AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPortsImpl,
+    };
+    use clack_extensions::note_ports::{
+        NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePortsImpl,
     };
     use clack_plugin::entry::{DefaultPluginFactory, SinglePluginEntry};
     use clack_plugin::events::spaces::CoreEventSpace;
@@ -423,7 +543,7 @@ mod tests {
     const MONO_PLUGIN_ID: &str = "org.aaadaw.test.mono-synth";
     const EFFECT_PLUGIN_ID: &str = "org.aaadaw.test.effect";
 
-    fn test_ids() -> (TrackId, NoteId) {
+    fn test_project(note_duration: u64) -> (Project, TrackId, NoteId) {
         let mut project = Project::new();
         project
             .apply(DawAction::CreateTrack {
@@ -446,12 +566,18 @@ mod tests {
                 notes: vec![MidiNoteData {
                     pitch: 64,
                     tick: 0,
-                    duration: 120,
+                    duration: note_duration,
                     velocity: 127,
                 }],
             })
             .expect("MIDI note insertion");
-        (track_id, project.midi_items()[0].notes()[0].id())
+        let note_id = project.midi_items()[0].notes()[0].id();
+        (project, track_id, note_id)
+    }
+
+    fn test_ids() -> (TrackId, NoteId) {
+        let (_, track_id, note_id) = test_project(120);
+        (track_id, note_id)
     }
 
     struct TestInstrument<const IS_INSTRUMENT: bool, const CHANNEL_COUNT: u32>;
@@ -479,6 +605,7 @@ mod tests {
             _shared: Option<&Self::Shared<'_>>,
         ) {
             builder.register::<clack_extensions::audio_ports::PluginAudioPorts>();
+            builder.register::<clack_extensions::note_ports::PluginNotePorts>();
         }
     }
 
@@ -535,6 +662,23 @@ mod tests {
         }
     }
 
+    impl<const CHANNEL_COUNT: u32> PluginNotePortsImpl for TestInstrumentMainThread<CHANNEL_COUNT> {
+        fn count(&self, is_input: bool) -> u32 {
+            u32::from(is_input)
+        }
+
+        fn get(&self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter<'_>) {
+            if index == 0 && is_input {
+                writer.set(&NotePortInfo {
+                    id: ClapId::new(1),
+                    name: b"MIDI In",
+                    supported_dialects: NoteDialects::CLAP,
+                    preferred_dialect: Some(NoteDialect::Clap),
+                });
+            }
+        }
+    }
+
     impl<'a, const CHANNEL_COUNT: u32>
         ClackPluginAudioProcessor<'a, (), TestInstrumentMainThread<CHANNEL_COUNT>>
         for TestInstrumentAudioProcessor
@@ -582,7 +726,7 @@ mod tests {
                 }
                 let level = f32::from(self.active_pitch.unwrap_or(0)) / 127.0;
                 left[frame] = level;
-                right[frame] = level;
+                right[frame] = level * 0.5;
             }
             Ok(ProcessStatus::Continue)
         }
@@ -644,7 +788,7 @@ mod tests {
         for (index, frame) in rendered.iter().enumerate() {
             let expected = if (3..7).contains(&index) { level } else { 0.0 };
             assert!((frame[0] - expected).abs() < 0.0001);
-            assert!((frame[1] - expected).abs() < 0.0001);
+            assert!((frame[1] - expected * 0.5).abs() < 0.0001);
         }
         owner.deactivate(stopped);
     }
@@ -701,5 +845,110 @@ mod tests {
         .err()
         .expect("mono instrument must be rejected");
         assert!(mono_error.to_string().contains("needs two channels"));
+    }
+
+    #[test]
+    fn render_graph_mixes_sample_accurate_stereo_instrument_output_with_pcm() {
+        let (mut project, track_id, _) = test_project(1);
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://test".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 32,
+            })
+            .expect("test audio item should be valid");
+        let item_id = project.audio_items()[0].id();
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            32,
+            2,
+        )
+        .expect("test synth should load");
+        let (mut producer, consumer) = pcm_stream(32).expect("stream capacity is valid");
+        assert_eq!(producer.push_samples(&[0.1; 32]), 32);
+        let mut instruments = vec![TrackInstrumentProcessor::new(track_id, processor)];
+        let mut graph = AudioRenderGraph::new_for_audio_items_with_instruments(
+            &project,
+            vec![AudioItemStream::new(item_id, consumer)],
+            &mut instruments,
+            32,
+        )
+        .expect("streams and instrument should build a graph");
+        assert!(instruments.is_empty());
+        graph.transport_mut().start();
+
+        let mut output = [[0.0; 2]; 32];
+        let stats = graph
+            .render_into(&mut output)
+            .expect("instrument graph should render");
+
+        assert_eq!(stats.midi_event_count, 2);
+        assert_eq!(stats.underrun_samples, 0);
+        let midi_level = 64.0 / 127.0;
+        let pcm_level = 0.1 * std::f32::consts::FRAC_1_SQRT_2;
+        for (frame_index, frame) in output.iter().enumerate() {
+            let instrument_level = if frame_index < 25 { midi_level } else { 0.0 };
+            assert!((frame[0] - pcm_level - instrument_level).abs() < 0.0001);
+            assert!((frame[1] - pcm_level - instrument_level * 0.5).abs() < 0.0001);
+        }
+        let stopped = graph.stop_instruments();
+        assert_eq!(stopped, 0);
+        let mut retired = graph.take_stopped_instruments();
+        assert_eq!(retired.len(), 1);
+        let (_, processor) = retired.pop().expect("stopped route exists").into_parts();
+        owner.deactivate(processor);
+        drop(producer);
+    }
+
+    #[test]
+    fn transport_stop_releases_held_notes_and_retirement_returns_processor_to_owner() {
+        let (project, track_id, _) = test_project(120);
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            32,
+            2,
+        )
+        .expect("test synth should load");
+        let mut instruments = vec![TrackInstrumentProcessor::new(track_id, processor)];
+        let mut graph = AudioRenderGraph::new_for_audio_items_with_instruments(
+            &project,
+            Vec::new(),
+            &mut instruments,
+            32,
+        )
+        .expect("test graph should build");
+        graph.transport_mut().start();
+
+        let mut output = [[0.0; 2]; 8];
+        graph
+            .render_into(&mut output)
+            .expect("first note block should render");
+        assert!(output[0][0] > 0.0);
+        assert_eq!(graph.release_midi_notes(), 0);
+        graph.transport_mut().stop();
+        graph
+            .render_into(&mut output)
+            .expect("stopped block should render silence");
+        assert_eq!(output, [[0.0; 2]; 8]);
+
+        graph.transport_mut().start();
+        graph
+            .render_into(&mut output)
+            .expect("playback can resume after note release");
+        assert_eq!(output, [[0.0; 2]; 8]);
+
+        assert_eq!(graph.stop_instruments(), 0);
+        let mut retired = graph.take_stopped_instruments();
+        let (_, stopped) = retired
+            .pop()
+            .expect("retired processor exists")
+            .into_parts();
+        owner.deactivate(stopped);
     }
 }

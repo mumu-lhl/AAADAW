@@ -1,8 +1,8 @@
 //! Realtime-oriented audio processing primitives.
 //!
 //! This crate provides a fixed-topology, allocation-free streaming mixer,
-//! transport, MIDI scheduling primitives, and an optional Linux JACK backend.
-//! Project AudioItem integration remains a follow-up work item.
+//! transport, MIDI scheduling, CLAP instrument processing, and optional Linux audio backends.
+//! Project-to-plugin assignment remains an application-layer responsibility.
 
 mod clap_instrument;
 #[cfg(feature = "jack-backend")]
@@ -27,7 +27,7 @@ pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutp
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 
-use aaadaw_core::{ItemId, Track};
+use aaadaw_core::{ItemId, Track, TrackId};
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 
@@ -43,6 +43,8 @@ pub struct MixerPlan {
 struct TrackGains {
     left: f32,
     right: f32,
+    stereo_left: f32,
+    stereo_right: f32,
     muted: bool,
     solo: bool,
 }
@@ -139,9 +141,16 @@ impl MixerPlan {
                     (angle.cos() as f32 * gain, angle.sin() as f32 * gain)
                 }
             };
+            let (stereo_left, stereo_right) = if track.pan() < 0.0 {
+                (gain, (1.0 + track.pan()) * gain)
+            } else {
+                ((1.0 - track.pan()) * gain, gain)
+            };
             compiled.push(TrackGains {
                 left,
                 right,
+                stereo_left,
+                stereo_right,
                 muted: track.is_muted(),
                 solo: track.is_solo(),
             });
@@ -201,6 +210,22 @@ impl MixerPlan {
             frame[1] += sample * track.right;
         }
     }
+
+    fn mix_stereo_track_unchecked(
+        &self,
+        track_index: usize,
+        input: &[[f32; 2]],
+        output: &mut [[f32; 2]],
+    ) {
+        let track = self.tracks[track_index];
+        if track.muted || (self.has_solo && !track.solo) {
+            return;
+        }
+        for (frame, sample) in output.iter_mut().zip(input.iter()) {
+            frame[0] += sample[0] * track.stereo_left;
+            frame[1] += sample[1] * track.stereo_right;
+        }
+    }
 }
 
 /// Construction failure for a streaming graph.
@@ -208,10 +233,38 @@ impl MixerPlan {
 pub enum AudioGraphBuildError {
     MixerPlan(MixerPlanError),
     MidiSchedule(MidiScheduleError),
-    TrackStreamCountMismatch { tracks: usize, streams: usize },
-    AudioItemStreamCountMismatch { items: usize, streams: usize },
-    AudioItemStreamOrderMismatch { expected: ItemId, found: ItemId },
-    AudioItemStreamStartOutOfRange { item_id: ItemId, start_sample: u64 },
+    TrackStreamCountMismatch {
+        tracks: usize,
+        streams: usize,
+    },
+    AudioItemStreamCountMismatch {
+        items: usize,
+        streams: usize,
+    },
+    AudioItemStreamOrderMismatch {
+        expected: ItemId,
+        found: ItemId,
+    },
+    AudioItemStreamStartOutOfRange {
+        item_id: ItemId,
+        start_sample: u64,
+    },
+    MissingInstrumentTrack {
+        track_id: u64,
+    },
+    DuplicateTrackInstrument {
+        track_id: u64,
+    },
+    InstrumentBlockCapacity {
+        track_id: u64,
+        required: usize,
+        available: usize,
+    },
+    InstrumentEventCapacity {
+        track_id: u64,
+        required: usize,
+        available: usize,
+    },
 }
 
 impl fmt::Display for AudioGraphBuildError {
@@ -241,6 +294,34 @@ impl fmt::Display for AudioGraphBuildError {
                 "audio stream for item {} starts at sample {start_sample}, outside its timeline range",
                 item_id.value()
             ),
+            Self::MissingInstrumentTrack { track_id } => {
+                write!(
+                    formatter,
+                    "CLAP instrument targets missing track {track_id}"
+                )
+            }
+            Self::DuplicateTrackInstrument { track_id } => {
+                write!(
+                    formatter,
+                    "track {track_id} has more than one CLAP instrument"
+                )
+            }
+            Self::InstrumentBlockCapacity {
+                track_id,
+                required,
+                available,
+            } => write!(
+                formatter,
+                "CLAP instrument on track {track_id} supports {available} frames; playback needs {required}"
+            ),
+            Self::InstrumentEventCapacity {
+                track_id,
+                required,
+                available,
+            } => write!(
+                formatter,
+                "CLAP instrument on track {track_id} supports {available} MIDI events per block; playback may need {required}"
+            ),
         }
     }
 }
@@ -253,17 +334,33 @@ impl std::error::Error for AudioGraphBuildError {
             Self::TrackStreamCountMismatch { .. }
             | Self::AudioItemStreamCountMismatch { .. }
             | Self::AudioItemStreamOrderMismatch { .. }
-            | Self::AudioItemStreamStartOutOfRange { .. } => None,
+            | Self::AudioItemStreamStartOutOfRange { .. }
+            | Self::MissingInstrumentTrack { .. }
+            | Self::DuplicateTrackInstrument { .. }
+            | Self::InstrumentBlockCapacity { .. }
+            | Self::InstrumentEventCapacity { .. } => None,
         }
     }
 }
 
 /// A streaming render callback failed before it could render a block.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioGraphError {
-    BlockTooLarge { requested: usize, maximum: usize },
+    BlockTooLarge {
+        requested: usize,
+        maximum: usize,
+    },
     MidiSchedule(MidiScheduleError),
-    AudioItemSeekRequiresRefill { item_id: ItemId },
+    InstrumentEventBufferFull {
+        track_id: TrackId,
+    },
+    InstrumentProcess {
+        track_id: TrackId,
+        error: ClapInstrumentError,
+    },
+    AudioItemSeekRequiresRefill {
+        item_id: ItemId,
+    },
     TransportPositionOverflow,
 }
 
@@ -277,6 +374,16 @@ impl fmt::Display for AudioGraphError {
                 )
             }
             Self::MidiSchedule(error) => write!(formatter, "MIDI scheduling failed: {error}"),
+            Self::InstrumentEventBufferFull { track_id } => write!(
+                formatter,
+                "MIDI event buffer for track {} is too small",
+                track_id.value()
+            ),
+            Self::InstrumentProcess { track_id, error } => write!(
+                formatter,
+                "CLAP instrument on track {} failed to process MIDI/audio: {error}",
+                track_id.value()
+            ),
             Self::AudioItemSeekRequiresRefill { item_id } => write!(
                 formatter,
                 "seeking into audio item {} requires refilling its PCM stream",
@@ -293,6 +400,7 @@ impl std::error::Error for AudioGraphError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::MidiSchedule(error) => Some(error),
+            Self::InstrumentProcess { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -313,6 +421,67 @@ pub struct AudioItemStream {
     item_id: ItemId,
     consumer: PcmStreamConsumer,
     source_start_sample: Option<u64>,
+}
+
+/// A prepared CLAP processor associated with one project track.
+pub struct TrackInstrumentProcessor {
+    track_id: TrackId,
+    processor: ClapInstrumentProcessor,
+}
+
+impl TrackInstrumentProcessor {
+    /// Associates an activated processor with the track whose MIDI it will render.
+    pub fn new(track_id: TrackId, processor: ClapInstrumentProcessor) -> Self {
+        Self {
+            track_id,
+            processor,
+        }
+    }
+
+    /// Returns the target track ID.
+    pub fn track_id(&self) -> TrackId {
+        self.track_id
+    }
+
+    /// Returns the ID and processor if graph construction fails.
+    pub fn into_parts(self) -> (TrackId, ClapInstrumentProcessor) {
+        (self.track_id, self.processor)
+    }
+}
+
+/// A CLAP processor stopped on the audio thread and ready for control-thread deactivation.
+pub struct StoppedTrackInstrument {
+    track_id: TrackId,
+    processor: StoppedClapInstrumentProcessor,
+}
+
+impl StoppedTrackInstrument {
+    /// Returns the track whose processor was stopped.
+    pub fn track_id(&self) -> TrackId {
+        self.track_id
+    }
+
+    /// Returns the stopped processor for its matching control-thread owner.
+    pub fn into_parts(self) -> (TrackId, StoppedClapInstrumentProcessor) {
+        (self.track_id, self.processor)
+    }
+}
+
+struct InstrumentRoute {
+    track_id: TrackId,
+    track_index: usize,
+    processor: Option<ClapInstrumentProcessor>,
+    stopped_processor: Option<StoppedClapInstrumentProcessor>,
+    midi_events: Vec<ScheduledMidiEvent>,
+    audio: Vec<[f32; 2]>,
+}
+
+struct RenderGraphSources {
+    streams: Vec<PcmStreamConsumer>,
+    track_indices: Vec<usize>,
+    ranges: Vec<Option<(u64, u64)>>,
+    cursors: Vec<Option<u64>>,
+    item_ids: Vec<Option<ItemId>>,
 }
 
 impl AudioItemStream {
@@ -348,6 +517,8 @@ impl AudioItemStream {
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
     midi_plan: MidiEventPlan,
+    midi_scratch: Vec<Option<ScheduledMidiEvent>>,
+    instruments: Vec<InstrumentRoute>,
     sample_rate: u32,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
@@ -371,25 +542,41 @@ impl AudioRenderGraph {
                 streams: streams.len(),
             });
         }
-        let stream_track_indices = (0..streams.len()).collect();
-        let source_ranges = vec![None; streams.len()];
-        let source_cursors = vec![None; streams.len()];
-        let source_item_ids = vec![None; streams.len()];
-        Self::build(
-            project,
+        let sources = RenderGraphSources {
+            track_indices: (0..streams.len()).collect(),
+            ranges: vec![None; streams.len()],
+            cursors: vec![None; streams.len()],
+            item_ids: vec![None; streams.len()],
             streams,
-            stream_track_indices,
-            source_ranges,
-            source_cursors,
-            source_item_ids,
-            max_block_frames,
-        )
+        };
+        let mut instruments = Vec::new();
+        Self::build(project, sources, &mut instruments, max_block_frames)
     }
 
     /// Compiles one PCM consumer per AudioItem, preserving and validating project item order.
     pub fn new_for_audio_items(
         project: &aaadaw_core::Project,
         item_streams: Vec<AudioItemStream>,
+        max_block_frames: usize,
+    ) -> Result<Self, AudioGraphBuildError> {
+        let mut instruments = Vec::new();
+        Self::new_for_audio_items_with_instruments(
+            project,
+            item_streams,
+            &mut instruments,
+            max_block_frames,
+        )
+    }
+
+    /// Compiles AudioItem streams and track-associated CLAP processors into a render graph.
+    ///
+    /// Each processor must have been activated off the audio thread with enough event and frame
+    /// capacity for its track. Its owner remains on the control thread. On error, `instruments`
+    /// is left intact so the caller can stop and deactivate its processors.
+    pub fn new_for_audio_items_with_instruments(
+        project: &aaadaw_core::Project,
+        item_streams: Vec<AudioItemStream>,
+        instruments: &mut Vec<TrackInstrumentProcessor>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
         if item_streams.len() != project.audio_items().len() {
@@ -399,11 +586,13 @@ impl AudioRenderGraph {
             });
         }
 
-        let mut streams = Vec::with_capacity(item_streams.len());
-        let mut stream_track_indices = Vec::with_capacity(item_streams.len());
-        let mut source_ranges = Vec::with_capacity(item_streams.len());
-        let mut source_cursors = Vec::with_capacity(item_streams.len());
-        let mut source_item_ids = Vec::with_capacity(item_streams.len());
+        let mut sources = RenderGraphSources {
+            streams: Vec::with_capacity(item_streams.len()),
+            track_indices: Vec::with_capacity(item_streams.len()),
+            ranges: Vec::with_capacity(item_streams.len()),
+            cursors: Vec::with_capacity(item_streams.len()),
+            item_ids: Vec::with_capacity(item_streams.len()),
+        };
         for (item, stream) in project.audio_items().iter().zip(item_streams) {
             if item.id() != stream.item_id {
                 return Err(AudioGraphBuildError::AudioItemStreamOrderMismatch {
@@ -425,50 +614,95 @@ impl AudioRenderGraph {
                 .iter()
                 .position(|track| track.id() == item.track_id())
                 .expect("Project guarantees every AudioItem has an existing track");
-            streams.push(stream.consumer);
-            stream_track_indices.push(track_index);
-            source_ranges.push(Some((item.start_sample(), item.end_sample())));
-            source_cursors.push(Some(source_start_sample));
-            source_item_ids.push(Some(item.id()));
+            sources.streams.push(stream.consumer);
+            sources.track_indices.push(track_index);
+            sources
+                .ranges
+                .push(Some((item.start_sample(), item.end_sample())));
+            sources.cursors.push(Some(source_start_sample));
+            sources.item_ids.push(Some(item.id()));
         }
 
-        Self::build(
-            project,
-            streams,
-            stream_track_indices,
-            source_ranges,
-            source_cursors,
-            source_item_ids,
-            max_block_frames,
-        )
+        Self::build(project, sources, instruments, max_block_frames)
     }
 
     fn build(
         project: &aaadaw_core::Project,
-        streams: Vec<PcmStreamConsumer>,
-        stream_track_indices: Vec<usize>,
-        source_ranges: Vec<Option<(u64, u64)>>,
-        source_cursors: Vec<Option<u64>>,
-        source_item_ids: Vec<Option<ItemId>>,
+        sources: RenderGraphSources,
+        instrument_processors: &mut Vec<TrackInstrumentProcessor>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
         let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
             .map_err(AudioGraphBuildError::MixerPlan)?;
         let midi_plan =
             MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
-        let scratch = (0..streams.len())
+        let mut instrument_routes = Vec::with_capacity(instrument_processors.len());
+        let mut has_instrument = vec![false; project.tracks().len()];
+        for instrument in instrument_processors.iter() {
+            let track_index = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == instrument.track_id)
+                .ok_or(AudioGraphBuildError::MissingInstrumentTrack {
+                    track_id: instrument.track_id.value(),
+                })?;
+            if std::mem::replace(&mut has_instrument[track_index], true) {
+                return Err(AudioGraphBuildError::DuplicateTrackInstrument {
+                    track_id: instrument.track_id.value(),
+                });
+            }
+            let available_block_frames = instrument.processor.max_block_frames();
+            if available_block_frames < max_block_frames {
+                return Err(AudioGraphBuildError::InstrumentBlockCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: max_block_frames,
+                    available: available_block_frames,
+                });
+            }
+            let required_events = midi_plan.event_count_for_track(instrument.track_id);
+            let available_events = instrument.processor.max_events();
+            if available_events < required_events {
+                return Err(AudioGraphBuildError::InstrumentEventCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: required_events,
+                    available: available_events,
+                });
+            }
+            instrument_routes.push(InstrumentRoute {
+                track_id: instrument.track_id,
+                track_index,
+                midi_events: Vec::with_capacity(available_events),
+                audio: vec![[0.0, 0.0]; max_block_frames],
+                processor: None,
+                stopped_processor: None,
+            });
+        }
+        let scratch = (0..sources.streams.len())
             .map(|_| vec![0.0; max_block_frames])
             .collect();
+        let midi_scratch = if instrument_routes.is_empty() {
+            Vec::new()
+        } else {
+            vec![None; midi_plan.len()]
+        };
+        for (route, instrument) in instrument_routes
+            .iter_mut()
+            .zip(instrument_processors.drain(..))
+        {
+            route.processor = Some(instrument.processor);
+        }
         Ok(Self {
             mixer,
             midi_plan,
+            midi_scratch,
+            instruments: instrument_routes,
             sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
-            streams,
-            stream_track_indices,
-            source_ranges,
-            source_cursors,
-            source_item_ids,
+            streams: sources.streams,
+            stream_track_indices: sources.track_indices,
+            source_ranges: sources.ranges,
+            source_cursors: sources.cursors,
+            source_item_ids: sources.item_ids,
             scratch,
         })
     }
@@ -486,6 +720,57 @@ impl AudioRenderGraph {
     /// Returns the callback-owned transport for start/stop/seek control.
     pub fn transport_mut(&mut self) -> &mut Transport {
         &mut self.transport
+    }
+
+    /// Returns the number of prepared track instruments.
+    pub fn instrument_count(&self) -> usize {
+        self.instruments.len()
+    }
+
+    /// Stops held MIDI voices on the audio thread without changing the transport state.
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    pub(crate) fn release_midi_notes(&mut self) -> usize {
+        let mut failures = 0;
+        for route in &mut self.instruments {
+            if route
+                .processor
+                .as_mut()
+                .is_some_and(|processor| processor.all_notes_off().is_err())
+            {
+                failures += 1;
+            }
+        }
+        failures
+    }
+
+    /// Stops processors on the audio thread before their graph moves to the retirement queue.
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    pub(crate) fn stop_instruments(&mut self) -> usize {
+        let mut failures = 0;
+        for route in &mut self.instruments {
+            if let Some(processor) = route.processor.take() {
+                let (stopped, released) = processor.stop_with_status();
+                failures += usize::from(!released);
+                route.stopped_processor = Some(stopped);
+            }
+        }
+        failures
+    }
+
+    /// Moves stopped processors out after the retired graph reaches a control thread.
+    pub fn take_stopped_instruments(&mut self) -> Vec<StoppedTrackInstrument> {
+        self.instruments
+            .iter_mut()
+            .filter_map(|route| {
+                route
+                    .stopped_processor
+                    .take()
+                    .map(|processor| StoppedTrackInstrument {
+                        track_id: route.track_id,
+                        processor,
+                    })
+            })
+            .collect()
     }
 
     /// Renders one block into caller-owned interleaved stereo memory.
@@ -545,10 +830,36 @@ impl AudioRenderGraph {
             }
         }
 
-        let midi_event_count = if self.transport.is_playing() && include_midi {
-            self.midi_plan
-                .events_for_block(block_start_sample, output.len(), midi_output)
-                .map_err(AudioGraphError::MidiSchedule)?
+        let midi_event_count = if self.transport.is_playing() {
+            if self.instruments.is_empty() {
+                if include_midi {
+                    self.midi_plan
+                        .events_for_block(block_start_sample, output.len(), midi_output)
+                        .map_err(AudioGraphError::MidiSchedule)?
+                } else {
+                    0
+                }
+            } else {
+                let count = self
+                    .midi_plan
+                    .events_for_block(block_start_sample, output.len(), &mut self.midi_scratch)
+                    .map_err(AudioGraphError::MidiSchedule)?;
+                if include_midi {
+                    if midi_output.len() < count {
+                        return Err(AudioGraphError::MidiSchedule(
+                            MidiScheduleError::OutputBufferTooSmall {
+                                required: count,
+                                available: midi_output.len(),
+                            },
+                        ));
+                    }
+                    midi_output
+                        .iter_mut()
+                        .zip(self.midi_scratch.iter().take(count))
+                        .for_each(|(destination, source)| *destination = *source);
+                }
+                count
+            }
         } else {
             0
         };
@@ -593,6 +904,35 @@ impl AudioRenderGraph {
             }
             self.mixer
                 .mix_track_unchecked(self.stream_track_indices[stream_index], input, output);
+        }
+        let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
+        for route in &mut self.instruments {
+            route.midi_events.clear();
+            for event in scheduled_events.clone().flatten() {
+                if event.track_id == route.track_id {
+                    if route.midi_events.len() == route.midi_events.capacity() {
+                        return Err(AudioGraphError::InstrumentEventBufferFull {
+                            track_id: route.track_id,
+                        });
+                    }
+                    route.midi_events.push(*event);
+                }
+            }
+            let processor = route
+                .processor
+                .as_mut()
+                .expect("active render graphs retain their instrument processors");
+            processor
+                .process(&route.midi_events, &mut route.audio[..output.len()])
+                .map_err(|error| AudioGraphError::InstrumentProcess {
+                    track_id: route.track_id,
+                    error,
+                })?;
+            self.mixer.mix_stereo_track_unchecked(
+                route.track_index,
+                &route.audio[..output.len()],
+                output,
+            );
         }
         Ok(AudioRenderStats {
             block,

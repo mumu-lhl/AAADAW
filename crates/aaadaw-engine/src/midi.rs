@@ -151,6 +151,13 @@ impl MidiEventPlan {
         self.events.is_empty()
     }
 
+    pub(crate) fn event_count_for_track(&self, track_id: TrackId) -> usize {
+        self.events
+            .iter()
+            .filter(|event| event.track_id == track_id)
+            .count()
+    }
+
     /// Copies the events in `[start_sample, start_sample + frame_count)` into
     /// the caller's preallocated slice. On error the output is not modified.
     pub fn events_for_block(

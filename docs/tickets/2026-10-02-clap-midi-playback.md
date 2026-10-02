@@ -34,4 +34,4 @@ Inspect the track instrument controls in the real application at 1280×800 and 9
 
 ## Status
 
-Planned; blocked by the realtime render graph ticket.
+In progress; the realtime render graph ticket is complete.

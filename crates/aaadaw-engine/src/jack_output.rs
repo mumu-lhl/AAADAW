@@ -41,7 +41,13 @@ impl JackProcessHandler {
         while let Ok(command) = self.commands.pop() {
             match command {
                 TransportCommand::Play => self.graph.transport_mut().start(),
-                TransportCommand::Stop => self.graph.transport_mut().stop(),
+                TransportCommand::Stop => {
+                    let failures = self.graph.release_midi_notes();
+                    self.counters
+                        .callback_errors
+                        .fetch_add(failures as u64, Ordering::Relaxed);
+                    self.graph.transport_mut().stop();
+                }
                 TransportCommand::ReplaceGraph {
                     mut graph,
                     start_playing,
@@ -51,6 +57,10 @@ impl JackProcessHandler {
                     } else {
                         graph.transport_mut().stop();
                     }
+                    let failures = self.graph.stop_instruments();
+                    self.counters
+                        .callback_errors
+                        .fetch_add(failures as u64, Ordering::Relaxed);
                     let retired = std::mem::replace(&mut self.graph, graph);
                     match self.retired_graphs.push(retired) {
                         Ok(()) => {}
@@ -287,15 +297,22 @@ impl JackAudioOutput {
 
     /// Reclaims graphs retired by the callback. Call only from a non-realtime thread.
     pub fn collect_retired_graphs(&mut self) -> usize {
-        let mut collected = 0;
+        let retired = self.take_retired_graphs();
+        let count = retired.len();
+        drop(retired);
+        count
+    }
+
+    /// Returns retired graphs to the control thread so their stopped processors can be deactivated.
+    pub fn take_retired_graphs(&mut self) -> Vec<AudioRenderGraph> {
+        let mut retired_graphs = Vec::new();
         while let Ok(graph) = self.retired_graphs.pop() {
-            drop(graph);
-            collected += 1;
+            retired_graphs.push(*graph);
         }
-        if collected > 0 {
+        if !retired_graphs.is_empty() {
             self.replacement_pending = false;
         }
-        collected
+        retired_graphs
     }
 
     /// Reads callback counters without blocking the audio thread.

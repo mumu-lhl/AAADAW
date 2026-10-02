@@ -29,4 +29,4 @@ Use a Clack test instrument through `AudioRenderGraph`; run `cargo xtest`, stric
 
 ## Status
 
-In progress.
+Complete. `cargo xtest -p aaadaw-engine` passed all 171 workspace tests; strict workspace Clippy and JACK/PipeWire feature checks passed. The Clack test instrument verifies sample-accurate stereo mixing, PCM summing, transport note release, and stopped-processor retirement.

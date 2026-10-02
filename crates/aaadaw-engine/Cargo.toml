@@ -13,12 +13,12 @@ pipewire-backend = ["dep:pipewire"]
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
 clack-host = "0.2.0"
-clack-extensions = { version = "0.2.0", default-features = false, features = ["audio-ports", "clack-host"] }
+clack-extensions = { version = "0.2.0", default-features = false, features = ["audio-ports", "clack-host", "note-ports"] }
 jack = { version = "0.13.5", optional = true }
 pipewire = { version = "0.10", optional = true }
 rtrb = "0.4.0"
 
 [dev-dependencies]
 clack-host = { version = "0.2.0", features = ["clack-plugin"] }
-clack-extensions = { version = "0.2.0", default-features = false, features = ["audio-ports", "clack-plugin"] }
+clack-extensions = { version = "0.2.0", default-features = false, features = ["audio-ports", "clack-plugin", "note-ports"] }
 clack-plugin = "0.2.0"
