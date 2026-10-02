@@ -33,13 +33,15 @@ impl App {
                         .set_file_name("project.aaadaw")
                         .add_filter("AAADAW project", &["aaadaw"])
                         .save_file(),
-                    PathPickerTarget::ImportAudio => rfd::FileDialog::new()
-                        .set_title("Choose audio to import")
-                        .add_filter(
-                            "Audio files",
-                            &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
-                        )
-                        .pick_file(),
+                    PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
+                        rfd::FileDialog::new()
+                            .set_title("Choose audio to import")
+                            .add_filter(
+                                "Audio files",
+                                &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
+                            )
+                            .pick_file()
+                    }
                     PathPickerTarget::RelinkAudio => rfd::FileDialog::new()
                         .set_title("Choose replacement audio")
                         .add_filter(
@@ -75,6 +77,10 @@ impl App {
                 PathPickerTarget::ImportAudio => {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();
                     Task::none()
+                }
+                PathPickerTarget::ImportAudioToProject => {
+                    self.audio_file_path_query = path.to_string_lossy().into_owned();
+                    self.start_audio_import()
                 }
                 PathPickerTarget::RelinkAudio => {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();

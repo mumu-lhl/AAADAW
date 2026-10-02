@@ -214,7 +214,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 | P1 — 阻塞轨道扩展 | Layout / density / interaction | TCP/Arrange 已可调宽度并按同一垂直滚动对齐轨道，但 TCP 控件仍较密：名称编辑、重排和删除入口靠得近；Mute/Solo 是 compact toggle，Volume/Pan 仍用离散步进。没有 Arm、连续 fader/pan、Meter、FX、Routing 或 Folder。 | 继续验证窄窗口布局；将高频控制与低频轨道操作分组，再按领域能力接入录音、Meter、FX、Routing 和 Folder。 |
 | P1 — 阻塞 Mixer 一致性 | Information architecture / consistency | 当前没有 Mixer。未来若从零另造 mixer 控件，容易与 TCP 的音量、Mute/Solo、选择等操作产生两套状态/命令。 | 先在共享 track-view model 和 Action 层明确 track status，再做与 TCP 同源的 MCP；未有 routing/FX domain model 前不应假装它们已完整实现。 |
 | P1 — 高风险的列表布局 | Density / scrolling | Arrangement 已按时间视口显示全部 Items，主视图没有 200 条上限；Inspector 仍用长控件行编辑 MIDI notes，窄布局下控件密度仍需检查。 | 保持空间视口裁剪和无固定 Item 上限；后续缩短/分组 Inspector 的低频编辑控件。 |
-| P2 — 命令发现不完整 | Information architecture / interaction | File/Edit/Track 是按钮展开面板，不是完整 menu bar；没有 View 菜单、主 toolbar、命令 Action 注册表和对象 context menu。快捷键仅覆盖 undo/redo/save/open，JACK 构建加 Space；Project 中的 Action search 只识别 add track、undo、redo。 | 随着 Item、Mixer、FX、automation 增加，功能会散落在页面或找不到。应在主要空间编辑前建立一致的命令命名、Action 搜索和上下文入口；快捷键需注册、冲突检查和可配置。 |
+| P2 — 命令发现仍不完整 | Information architecture / interaction | 已有 File/Edit/View/Insert/Item/Track/Actions 菜单栏、可搜索的现有命令和 Track 右键菜单；Item context menu、主 toolbar、可配置 Action 注册表/快捷键仍未实现。快捷键仅覆盖 undo/redo/save/open，JACK 构建加 Space。 | 菜单与 Actions 搜索提供基础命令入口。随着 Item、Mixer、FX、automation 增加，继续为对象补充上下文入口，并建立完整 Action 注册、快捷键冲突检查和配置。 |
 | P2 — Transport 是占位条 | Hierarchy / interaction | 底部条位置常驻，值得保留；非 JACK 构建只显示 `JACK: enable jack-backend`。JACK 构建显示 play/stop/restart、sample 输入/seek 和状态；当前没有 Pause、Record、Loop、bars/beats 时钟、Tempo 或 Time Signature。 | 固定位置正确但控制完整性低。按 Transport contract 渐进填入已支持的状态，明确不可用项，并让时间/工程节奏信息有稳定读数。 |
 | P2 — 无统一视觉系统 | Visual hierarchy / consistency | 当前主要使用 Iced 默认控件与主题，没有 AAADAW 的状态色、meter/record 语言、字号层级或间距 token；view 中散布 padding/spacing 数值。菜单和 Transport 用 `rounded_box`，其它工作区没有一致的 panel/分隔规范。 | 新增控件会各自决定高度、间距和激活色。先定义 token 与状态规则，再逐面板应用；不用为了统一而一次性重画已有 utility 页。 |
 | P3 — 工作区边界 | IA / implementation debt | Arrangement、Media、Project 分为独立 workspace tab。Media 的导入/扫描/pack/relink 是合理的工程级维护功能；Project 的通用 Action search 目前很浅。切离 Arrangement 后仍保留底部 Transport，是现有优点。 | 保留 Media/Project 的可达性和后台进度；后续把高频 Media/FX/MIDI 工具转为可 dock 面板，避免频繁离开主编排区。纯 utility 内容可以保留独立页面。 |
@@ -225,7 +225,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 1. **[x] 重构 Arrangement/TCP 主工作面**：已提供可 resize splitter、共享轨道行、时间 ruler、水平缩放/平移、垂直滚动、游标、基础 track/item selection 与按时间绘制；Item 拖动、时间选区、波形和完整 drag-edit 留待后续。精确 sample/tick 编辑保留在 Inspector。
 2. **完成 TCP 控件布局与状态反馈**：增加 compact/normal 布局和统一选择模型；依次接入连续 Volume/Pan、Mute/Solo、Meter、Arm 状态，再按 domain/model 可用性接入 FX、Routing、Folder。验证多选和 undo 行为。
-3. **建立命令与 Transport 基线**：统一 menu、toolbar、context menu、Action 搜索和快捷键的命令定义；补充配置/帮助入口。将 Transport 的项目时间读数、tempo/meter、播放状态和已有 JACK 控制收敛到固定优先级，并只呈现已支持的操作。
+3. **建立命令与 Transport 基线**：已建立紧凑 menu bar、支持命令的 Actions 搜索和 Track context menu；继续统一 toolbar、Item context menu 与快捷键的命令定义，并补充配置/帮助入口。将 Transport 的项目时间读数、tempo/meter、播放状态和已有 JACK 控制收敛到固定优先级，并只呈现已支持的操作。
 4. **增加 Mixer 并验证状态同源**：实现稳定 channel strip 和 Master strip；测试从 TCP 与 Mixer 改变同一控制的双向即时反映。再扩展 FX inserts、Sends 摘要和 meter 视图。
 5. **增加 Docking 和常用工具面板**：先实现 Mixer、FX/Media browser、MIDI editor 的 dock/float、resize、hide/show 和布局恢复；保持主窗口可在 panel 隐藏时正常编辑。
 6. **扩展编辑器和主题配置**：接入 envelope lanes、Audio waveform、MIDI piano roll/CC lanes、更多 Item 手势；完善 track/mixer layouts、Action map 和主题配置。每种功能依赖领域 Action、数据模型、缓存和实时/撤销语义就绪，不将 UI 外壳当作功能完成。

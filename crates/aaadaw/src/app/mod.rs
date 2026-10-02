@@ -166,11 +166,18 @@ impl App {
         ) {
             self.timeline.context_track = None;
         }
+        if !matches!(
+            &message,
+            Message::ToggleMainMenu(_) | Message::DismissMainMenu | Message::ActionQueryChanged(_)
+        ) {
+            self.active_menu = None;
+        }
         let allowed_during_io = matches!(
             &message,
             Message::ProjectLoaded(..)
                 | Message::ProjectSaved(..)
                 | Message::ToggleMainMenu(_)
+                | Message::DismissMainMenu
                 | Message::SelectWorkspace(_)
                 | Message::Timeline(_)
                 | Message::TcpScrolled { .. }
@@ -204,6 +211,7 @@ impl App {
                 &message,
                 Message::PathPicked(..)
                     | Message::ToggleMainMenu(_)
+                    | Message::DismissMainMenu
                     | Message::SelectWorkspace(_)
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
@@ -236,6 +244,7 @@ impl App {
             && !matches!(
                 &message,
                 Message::ToggleMainMenu(_)
+                    | Message::DismissMainMenu
                     | Message::SelectWorkspace(_)
                     | Message::Timeline(_)
                     | Message::TcpScrolled { .. }
@@ -256,6 +265,7 @@ impl App {
                     &message,
                     Message::PlaybackPrepared { .. }
                         | Message::ToggleMainMenu(_)
+                        | Message::DismissMainMenu
                         | Message::SelectWorkspace(_)
                         | Message::BackgroundTick
                 )
@@ -290,6 +300,7 @@ impl App {
                         | Message::CommitAudioItemStartSample(_)
                         | Message::CancelAudioItemStartSampleEdit(_)
                         | Message::DeleteAudioItem(_)
+                        | Message::DeleteSelectedItems
                         | Message::DuplicateAudioItem(_)
                         | Message::Undo
                         | Message::Redo
@@ -313,6 +324,7 @@ impl App {
             Message::ToggleMainMenu(menu) => {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
+            Message::DismissMainMenu => self.active_menu = None,
             Message::SelectWorkspace(page) => self.active_workspace = page,
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
@@ -321,23 +333,7 @@ impl App {
                 self.status = "Item drag cancelled".to_owned();
             }
             Message::Timeline(event) => self.timeline.handle(event),
-            Message::BeginTrackNameEdit(track_id) => {
-                if let Some(track) = self
-                    .project
-                    .tracks()
-                    .iter()
-                    .find(|track| track.id() == track_id)
-                {
-                    self.track_name_edits
-                        .insert(track_id, track.name().to_owned());
-                    self.timeline.selected_track = Some(track_id);
-                    let input_id = messages::track_name_input_id(track_id);
-                    task = Task::batch([
-                        iced::widget::operation::focus(input_id.clone()),
-                        iced::widget::operation::move_cursor_to_end(input_id),
-                    ]);
-                }
-            }
+            Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
                 let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
                 self.timeline.vertical_scroll = offset;
@@ -498,6 +494,7 @@ impl App {
                 self.audio_item_start_edits.remove(&item_id);
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
+            Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
@@ -511,23 +508,12 @@ impl App {
                 self.redo();
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
-            Message::RunActionQuery => self.run_action_query(),
-            Message::ProjectPathChanged(path) => {
-                if self.io_busy {
-                    self.status = "Wait for current project operation to finish".to_owned();
-                } else {
-                    self.project_path_query = path;
-                }
-            }
+            Message::RunActionQuery => task = self.run_action_query(),
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
-            Message::OpenProject => {
-                self.active_menu = None;
-                task = project_io::open_project(self);
-            }
+            Message::OpenProject => task = self.open_project_command(),
             Message::SaveProject => {
-                self.active_menu = None;
-                task = project_io::save_project(self, None);
+                task = self.save_project_command();
             }
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ImportAudio => task = self.start_audio_import(),
@@ -1116,13 +1102,178 @@ impl App {
         };
     }
 
-    fn run_action_query(&mut self) {
-        match self.action_query.trim().to_ascii_lowercase().as_str() {
-            "add track" | "create track" => self.add_track(),
-            "undo" => self.undo(),
-            "redo" => self.redo(),
-            _ => self.status = "Unknown action. Try add track, undo, or redo.".to_owned(),
+    fn run_action_query(&mut self) -> Task<Message> {
+        let query = self.action_query.trim().to_ascii_lowercase();
+        let action = match query.as_str() {
+            "add track" | "create track" => Some(Message::AddTrack),
+            "insert midi item" | "add midi item" | "midi item" => Some(Message::AddMidiItem),
+            "import audio" | "import audio…" | "audio file" => {
+                Some(Message::PickPath(PathPickerTarget::ImportAudioToProject))
+            }
+            "open project" | "open project…" => Some(Message::OpenProject),
+            "save project" | "save" => Some(Message::SaveProject),
+            "save project as" | "save project as…" | "save as" | "save as…" => {
+                Some(Message::PickPath(PathPickerTarget::SaveProject))
+            }
+            "delete selected item" | "delete selected items" | "delete items" => {
+                Some(Message::DeleteSelectedItems)
+            }
+            "duplicate selected audio item" => self
+                .timeline
+                .selected_item
+                .filter(|item_id| {
+                    self.timeline.selected_items.len() == 1
+                        && self
+                            .project
+                            .audio_items()
+                            .iter()
+                            .any(|item| item.id() == *item_id)
+                })
+                .map(Message::DuplicateAudioItem),
+            "undo" => Some(Message::Undo),
+            "redo" => Some(Message::Redo),
+            "arrangement" | "view arrangement" => {
+                Some(Message::SelectWorkspace(WorkspacePage::Arrangement))
+            }
+            "media" | "view media" => Some(Message::SelectWorkspace(WorkspacePage::Media)),
+            "project" | "view project" => Some(Message::SelectWorkspace(WorkspacePage::Project)),
+            "rename selected track" | "rename selected track…" => {
+                self.selected_track_id().map(Message::BeginTrackNameEdit)
+            }
+            "mute selected track" | "unmute selected track" => {
+                self.selected_track_id().map(Message::ToggleMute)
+            }
+            "solo selected track" | "unsolo selected track" => {
+                self.selected_track_id().map(Message::ToggleSolo)
+            }
+            "move selected track up" => self
+                .selected_track_id()
+                .map(|track_id| Message::MoveTrack(track_id, -1)),
+            "move selected track down" => self
+                .selected_track_id()
+                .map(|track_id| Message::MoveTrack(track_id, 1)),
+            "delete selected track" => self.selected_track_id().map(Message::DeleteTrack),
+            _ => None,
+        };
+        if let Some(action) = action {
+            self.update(action)
+        } else {
+            self.status = match query.as_str() {
+                "duplicate selected audio item" => "Select one audio item to duplicate".to_owned(),
+                "rename selected track"
+                | "rename selected track…"
+                | "mute selected track"
+                | "unmute selected track"
+                | "solo selected track"
+                | "unsolo selected track"
+                | "move selected track up"
+                | "move selected track down"
+                | "delete selected track" => "Select a track first".to_owned(),
+                _ => "Unknown action. Search for a command or choose one from the Actions menu."
+                    .to_owned(),
+            };
+            Task::none()
         }
+    }
+
+    fn selected_track_id(&self) -> Option<TrackId> {
+        self.timeline.selected_track.filter(|track_id| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == *track_id)
+        })
+    }
+
+    fn begin_track_name_edit(&mut self, track_id: TrackId) -> Task<Message> {
+        let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+        else {
+            return Task::none();
+        };
+        self.track_name_edits
+            .insert(track_id, track.name().to_owned());
+        self.timeline.selected_track = Some(track_id);
+        let input_id = messages::track_name_input_id(track_id);
+        Task::batch([
+            iced::widget::operation::focus(input_id.clone()),
+            iced::widget::operation::move_cursor_to_end(input_id),
+        ])
+    }
+
+    fn delete_selected_items(&mut self) {
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        if item_ids.is_empty() {
+            self.status = "Select one or more items to delete".to_owned();
+            return;
+        }
+
+        let mut actions = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            if self
+                .project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                self.audio_item_start_edits.remove(&item_id);
+                actions.push(DawAction::DeleteAudioItem { item_id });
+            } else if self
+                .project
+                .midi_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                actions.push(DawAction::DeleteMidiItem { item_id });
+            }
+        }
+        if actions.is_empty() {
+            self.status = "Selected items no longer exist".to_owned();
+            return;
+        }
+        let action = if actions.len() == 1 {
+            actions.pop().expect("single delete action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected items deleted");
+    }
+
+    fn save_project_command(&mut self) -> Task<Message> {
+        if self.project_path.is_none() {
+            self.pick_path(PathPickerTarget::SaveProject)
+        } else {
+            project_io::save_project(self, None)
+        }
+    }
+
+    fn open_project_command(&mut self) -> Task<Message> {
+        #[cfg(feature = "jack-backend")]
+        if self.playback.is_some() {
+            self.status = "Close JACK output before opening another project".to_owned();
+            return Task::none();
+        }
+        if self.io_busy {
+            self.status = "Wait for current project operation to finish".to_owned();
+            return Task::none();
+        }
+        if self.is_dirty() {
+            self.status = "Save current project before opening another".to_owned();
+            return Task::none();
+        }
+        self.pick_path(PathPickerTarget::OpenProject)
     }
 }
 
@@ -1205,7 +1356,16 @@ fn keyboard_shortcut_event(
     status: iced::event::Status,
     _window: iced::window::Id,
 ) -> Option<Message> {
-    if status != iced::event::Status::Ignored {
+    let is_escape = matches!(
+        &event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            modifiers: iced::keyboard::Modifiers::NONE,
+            repeat: false,
+            ..
+        })
+    );
+    if status != iced::event::Status::Ignored && !is_escape {
         return None;
     }
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -1243,6 +1403,7 @@ fn shortcut_message(
     }
     if modifiers == Modifiers::NONE {
         return match key {
+            Key::Named(Named::Escape) => Some(Message::DismissMainMenu),
             Key::Named(Named::Space) => {
                 #[cfg(feature = "jack-backend")]
                 {

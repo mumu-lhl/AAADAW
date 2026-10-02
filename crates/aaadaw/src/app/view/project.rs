@@ -4,7 +4,7 @@ use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let action_search = row![
-        text_input("Search actions: add track, undo, redo", &app.action_query)
+        text_input("Search actions…", &app.action_query)
             .on_input(Message::ActionQueryChanged)
             .on_submit(Message::RunActionQuery)
             .width(Length::Fill),

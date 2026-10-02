@@ -1,95 +1,17 @@
-use super::{App, MainMenu, Message, PathPickerTarget, WorkspacePage};
-use iced::widget::{button, column, container, row, text, text_input};
+use super::{App, Message, WorkspacePage};
+#[cfg(feature = "jack-backend")]
+use iced::widget::text_input;
+use iced::widget::{button, column, container, float, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
 mod item_inspector;
 mod media;
+mod menu;
 mod project;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
-    let project_name = app
-        .project_path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map_or_else(
-            || "New project".to_owned(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-    let file_label = if app.active_menu == Some(MainMenu::File) {
-        "File ▴"
-    } else {
-        "File ▾"
-    };
-    let edit_label = if app.active_menu == Some(MainMenu::Edit) {
-        "Edit ▴"
-    } else {
-        "Edit ▾"
-    };
-    let track_label = if app.active_menu == Some(MainMenu::Track) {
-        "Track ▴"
-    } else {
-        "Track ▾"
-    };
-    let toolbar = row![
-        text("AAADAW").size(24),
-        button(file_label)
-            .style(menu_button_style(app.active_menu == Some(MainMenu::File)))
-            .on_press(Message::ToggleMainMenu(MainMenu::File)),
-        button(edit_label)
-            .style(menu_button_style(app.active_menu == Some(MainMenu::Edit)))
-            .on_press(Message::ToggleMainMenu(MainMenu::Edit)),
-        button(track_label)
-            .style(menu_button_style(app.active_menu == Some(MainMenu::Track)))
-            .on_press(Message::ToggleMainMenu(MainMenu::Track)),
-        text(project_name.clone()).width(Length::Fill),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
-
-    let menu_panel: Option<Element<'_, Message>> = match app.active_menu {
-        Some(MainMenu::File) => Some(
-            column![
-                text("Project files").size(16),
-                row![
-                    text_input("Project file path", &app.project_path_query)
-                        .on_input(Message::ProjectPathChanged)
-                        .width(Length::Fill),
-                    utility_button("Open path", Message::OpenProject),
-                    utility_button("Save path", Message::SaveProject),
-                ]
-                .spacing(8),
-                row![
-                    utility_button("Open…", Message::PickPath(PathPickerTarget::OpenProject)),
-                    utility_button("Save as…", Message::PickPath(PathPickerTarget::SaveProject)),
-                    text(if app.is_dirty() {
-                        "Unsaved changes"
-                    } else if app.project_path.is_some() {
-                        "Saved"
-                    } else {
-                        "New project"
-                    }),
-                ]
-                .spacing(8),
-            ]
-            .spacing(8)
-            .into(),
-        ),
-        Some(MainMenu::Edit) => Some(
-            row![
-                utility_button("Undo", Message::Undo),
-                utility_button("Redo", Message::Redo),
-            ]
-            .spacing(8)
-            .into(),
-        ),
-        Some(MainMenu::Track) => Some(
-            row![utility_button("Add track", Message::AddTrack)]
-                .spacing(8)
-                .into(),
-        ),
-        None => None,
-    };
+    let toolbar = menu::bar(app);
 
     let workspace_tabs = row![
         button(if app.active_workspace == WorkspacePage::Arrangement {
@@ -127,28 +49,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         WorkspacePage::Media => media::view(app),
         WorkspacePage::Project => project::view(app),
     };
-    let project_state = if app.is_dirty() {
-        format!("{project_name} · Unsaved changes")
-    } else {
-        project_name
-    };
-    let status_text = if app.status.is_empty() {
-        project_state
-    } else {
-        app.status.clone()
-    };
+    let status_text = app.status.clone();
 
     let mut content = column![toolbar]
         .spacing(12)
         .padding(14)
         .height(Length::Fill);
-    if let Some(menu_panel) = menu_panel {
-        content = content.push(
-            container(menu_panel)
-                .padding(10)
-                .style(iced::widget::container::rounded_box),
-        );
-    }
     let transport = container(
         row![text("Transport").size(14), playback_controls(app)]
             .spacing(12)
@@ -162,20 +68,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .push(workspace)
         .push(text(status_text))
         .push(transport);
-    container(content)
+    let base: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
-}
-
-fn menu_button_style(
-    active: bool,
-) -> fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    if active {
-        iced::widget::button::warning
+        .into();
+    let layered = if let Some(active_menu) = app.active_menu {
+        let anchor_x = menu::anchor_x(active_menu);
+        let popup = float(menu::dropdown(app, active_menu)).translate(move |bounds, viewport| {
+            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+            let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+            let target_x = (viewport.x + anchor_x).clamp(viewport.x, max_x);
+            let target_y = (viewport.y + menu::bar_bottom()).min(max_y);
+            iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+        });
+        stack![base, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     } else {
-        iced::widget::button::secondary
-    }
+        base
+    };
+    mouse_area(layered)
+        .on_press(Message::DismissMainMenu)
+        .into()
 }
 
 fn workspace_button_style(
@@ -186,12 +101,6 @@ fn workspace_button_style(
     } else {
         iced::widget::button::secondary
     }
-}
-
-fn utility_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {
-    button(label)
-        .style(iced::widget::button::secondary)
-        .on_press(message)
 }
 
 #[cfg(feature = "jack-backend")]

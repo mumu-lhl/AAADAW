@@ -23,7 +23,11 @@ pub(crate) enum WorkspacePage {
 pub(crate) enum MainMenu {
     File,
     Edit,
+    View,
+    Insert,
+    Item,
     Track,
+    Actions,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,12 +35,14 @@ pub(crate) enum PathPickerTarget {
     OpenProject,
     SaveProject,
     ImportAudio,
+    ImportAudioToProject,
     RelinkAudio,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
+    DismissMainMenu,
     SelectWorkspace(WorkspacePage),
     Timeline(TimelineEvent),
     TcpScrolled {
@@ -74,12 +80,12 @@ pub(crate) enum Message {
     CommitAudioItemStartSample(ItemId),
     CancelAudioItemStartSampleEdit(ItemId),
     DeleteAudioItem(ItemId),
+    DeleteSelectedItems,
     DuplicateAudioItem(ItemId),
     Undo,
     Redo,
     ActionQueryChanged(String),
     RunActionQuery,
-    ProjectPathChanged(String),
     OpenProject,
     SaveProject,
     AudioFilePathChanged(String),

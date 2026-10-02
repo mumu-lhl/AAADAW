@@ -61,7 +61,42 @@ fn top_menus_toggle_and_workspace_navigation_stays_available_during_jobs() {
     assert_eq!(app.active_workspace, WorkspacePage::Media);
     let _ = app.update(Message::SelectWorkspace(WorkspacePage::Project));
     assert_eq!(app.active_workspace, WorkspacePage::Project);
+    assert_eq!(app.active_menu, None);
     let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+    assert_eq!(app.active_menu, Some(MainMenu::File));
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+    assert_eq!(app.active_menu, None);
+}
+
+#[test]
+fn full_menu_bar_switches_sections_and_escape_dismisses_it() {
+    let mut app = App::default();
+    let menus = [
+        MainMenu::File,
+        MainMenu::Edit,
+        MainMenu::View,
+        MainMenu::Insert,
+        MainMenu::Item,
+        MainMenu::Track,
+        MainMenu::Actions,
+    ];
+    for menu in menus {
+        let _ = app.update(Message::ToggleMainMenu(menu));
+        assert_eq!(app.active_menu, Some(menu));
+        let _ = app.update(Message::ToggleMainMenu(menu));
+        assert_eq!(app.active_menu, None);
+    }
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Edit));
+    assert_eq!(app.active_menu, Some(MainMenu::Edit));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::Escape),
+            Modifiers::NONE
+        ),
+        Some(Message::DismissMainMenu)
+    ));
+    let _ = app.update(Message::DismissMainMenu);
     assert_eq!(app.active_menu, None);
 }
 
@@ -126,6 +161,25 @@ fn native_picker_results_fill_the_requested_path_fields() {
 }
 
 #[test]
+fn insert_menu_audio_picker_runs_the_import_path_and_keeps_save_guard() {
+    let mut app = App {
+        path_picker_busy: true,
+        ..App::default()
+    };
+    let audio_path = std::path::PathBuf::from("/tmp/menu-audio.wav");
+
+    let _ = app.path_picked(
+        PathPickerTarget::ImportAudioToProject,
+        Ok(Some(audio_path.clone())),
+    );
+
+    assert_eq!(app.audio_file_path_query, audio_path.to_string_lossy());
+    assert!(!app.path_picker_busy);
+    assert!(!app.import_busy);
+    assert_eq!(app.status, "Save the project before importing audio");
+}
+
+#[test]
 fn keyboard_shortcuts_route_to_existing_app_messages() {
     assert!(matches!(
         shortcut_message(Key::Character("z"), Modifiers::COMMAND),
@@ -168,6 +222,23 @@ fn keyboard_shortcuts_route_to_existing_app_messages() {
             iced::window::Id::unique()
         ),
         Some(Message::Undo)
+    ));
+    let escape_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::Escape),
+        modified_key: Key::Named(iced::keyboard::key::Named::Escape),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        keyboard_shortcut_event(
+            escape_event,
+            iced::event::Status::Captured,
+            iced::window::Id::unique()
+        ),
+        Some(Message::DismissMainMenu)
     ));
     #[cfg(feature = "jack-backend")]
     assert!(matches!(
@@ -253,6 +324,53 @@ fn action_search_dispatches_supported_commands() {
     let _ = app.update(Message::ActionQueryChanged("undo".to_owned()));
     let _ = app.update(Message::RunActionQuery);
     assert!(app.project.tracks().is_empty());
+
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::ActionQueryChanged("insert MIDI item".to_owned()));
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.project.midi_items().len(), 1);
+    let _ = app.update(Message::ActionQueryChanged("undo".to_owned()));
+    let _ = app.update(Message::RunActionQuery);
+    assert!(app.project.midi_items().is_empty());
+}
+
+#[test]
+fn action_search_routes_track_commands_through_the_existing_messages() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let first_id = app.project.tracks()[0].id();
+    let second_id = app.project.tracks()[1].id();
+    app.timeline.selected_track = Some(second_id);
+
+    let _ = app.update(Message::ActionQueryChanged(
+        "move selected track up".to_owned(),
+    ));
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.project.tracks()[0].id(), second_id);
+
+    let _ = app.update(Message::ActionQueryChanged(
+        "mute selected track".to_owned(),
+    ));
+    let _ = app.update(Message::RunActionQuery);
+    assert!(app.project.tracks()[0].is_muted());
+
+    let _ = app.update(Message::ActionQueryChanged(
+        "delete selected track".to_owned(),
+    ));
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].id(), first_id);
+}
+
+#[test]
+fn saving_an_untitled_project_opens_the_save_dialog() {
+    let mut app = App::default();
+
+    let _ = app.update(Message::SaveProject);
+
+    assert!(app.path_picker_busy);
+    assert_eq!(app.status, "");
 }
 
 #[test]
@@ -705,6 +823,62 @@ fn audio_timeline_delete_is_undoable() {
 }
 
 #[test]
+fn deleting_selected_audio_and_midi_items_is_one_undoable_menu_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://menu-delete".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 64,
+            length_samples: 512,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(audio_id),
+            additive: false,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(midi_id),
+            additive: true,
+            range: false,
+        });
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Item));
+
+    let _ = app.update(Message::DeleteSelectedItems);
+
+    assert!(app.project.audio_items().is_empty());
+    assert!(app.project.midi_items().is_empty());
+    assert_eq!(app.active_menu, None);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].id(), audio_id);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 64);
+    assert_eq!(app.project.midi_items()[0].id(), midi_id);
+    assert_eq!(app.project.midi_items()[0].track_id(), tracks[1]);
+}
+
+#[test]
 fn audio_timeline_nudge_is_undoable_and_cannot_cross_sample_zero() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -813,6 +987,21 @@ fn dirty_project_cannot_be_replaced_by_open() {
     let _ = super::project_io::open_project(&mut app);
 
     assert!(!app.io_busy);
+    assert_eq!(app.status, "Save current project before opening another");
+}
+
+#[test]
+fn dirty_project_open_command_does_not_open_picker() {
+    let mut app = App {
+        project_path_query: "/projects/another.aaadaw".to_owned(),
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::OpenProject);
+
+    assert!(!app.io_busy);
+    assert!(!app.path_picker_busy);
     assert_eq!(app.status, "Save current project before opening another");
 }
 
