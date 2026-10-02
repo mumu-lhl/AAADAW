@@ -3,7 +3,7 @@ use super::commands::{self, CommandId, TrackCommand};
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
 use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
-use aaadaw_core::{DawAction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
@@ -1085,6 +1085,52 @@ fn jack_feature_prepares_offline_graph_without_opening_device() {
     let _ = std::fs::remove_file(&path);
     for suffix in ["-wal", "-shm"] {
         let sidecar = format!("{}{suffix}", path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn clap_fx_activation_failure_is_reported_before_audio_output_starts() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-fx-playback-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let store = ProjectStore::open(&project_path).expect("empty project store should open");
+    store.close().expect("empty project store should close");
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Effects".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("org.example.missing", "/missing/test.clap")
+                    .expect("plugin reference should be valid"),
+            ],
+        })
+        .expect("effect should be assigned");
+
+    let mut prepared =
+        prepare_project_playback_file(project_path.clone(), app.project.snapshot(), 0)
+            .expect("empty media graph should prepare");
+    let error = app
+        .install_track_fx_processors(&mut prepared)
+        .expect_err("missing plugin should block playback preparation");
+    assert!(error.contains("org.example.missing"));
+    assert!(app.clap_effect_owners.is_empty());
+
+    drop(prepared);
+    let _ = std::fs::remove_file(&project_path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
         let _ = std::fs::remove_file(sidecar);
     }
 }

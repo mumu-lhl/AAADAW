@@ -4,9 +4,9 @@ use pw::spa::pod::Pod;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -20,6 +20,7 @@ enum TransportCommand {
         graph: Box<AudioRenderGraph>,
         start_playing: bool,
     },
+    Shutdown,
 }
 
 enum ThreadCommand {
@@ -28,6 +29,7 @@ enum ThreadCommand {
 
 #[derive(Default)]
 struct CallbackCounters {
+    shutdown_acknowledged: AtomicBool,
     rendered_blocks: AtomicU64,
     underrun_samples: AtomicU64,
     callback_errors: AtomicU64,
@@ -35,12 +37,14 @@ struct CallbackCounters {
 }
 
 struct ProcessData {
-    graph: Box<AudioRenderGraph>,
+    graph: Option<Box<AudioRenderGraph>>,
     scratch: Vec<[f32; 2]>,
     commands: Consumer<TransportCommand>,
     retired_graphs: Producer<Box<AudioRenderGraph>>,
     pending_retired_graph: Option<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
+    shutdown_requested: bool,
 }
 
 impl ProcessData {
@@ -48,13 +52,19 @@ impl ProcessData {
         self.flush_retired_graph();
         while let Ok(command) = self.commands.pop() {
             match command {
-                TransportCommand::Play => self.graph.transport_mut().start(),
+                TransportCommand::Play => {
+                    if let Some(graph) = &mut self.graph {
+                        graph.transport_mut().start();
+                    }
+                }
                 TransportCommand::Stop => {
-                    let failures = self.graph.release_midi_notes();
-                    self.counters
-                        .callback_errors
-                        .fetch_add(failures as u64, Ordering::Relaxed);
-                    self.graph.transport_mut().stop();
+                    if let Some(graph) = &mut self.graph {
+                        let failures = graph.release_midi_notes();
+                        self.counters
+                            .callback_errors
+                            .fetch_add(failures as u64, Ordering::Relaxed);
+                        graph.transport_mut().stop();
+                    }
                 }
                 TransportCommand::ReplaceGraph {
                     mut graph,
@@ -65,16 +75,39 @@ impl ProcessData {
                     } else {
                         graph.transport_mut().stop();
                     }
-                    let failures = self.graph.stop_instruments();
-                    let fx_failures = self.graph.stop_fx_processors();
-                    self.counters.callback_errors.fetch_add(
-                        failures.saturating_add(fx_failures) as u64,
-                        Ordering::Relaxed,
-                    );
-                    let retired = std::mem::replace(&mut self.graph, graph);
-                    if let Err(PushError::Full(retired)) = self.retired_graphs.push(retired) {
-                        self.pending_retired_graph = Some(retired);
+                    if let Some(active) = &mut self.graph {
+                        let failures = active.stop_instruments();
+                        let fx_failures = active.stop_fx_processors();
+                        self.counters.callback_errors.fetch_add(
+                            failures.saturating_add(fx_failures) as u64,
+                            Ordering::Relaxed,
+                        );
                     }
+                    let retired = self.graph.replace(graph);
+                    if let Some(retired) = retired {
+                        if let Err(PushError::Full(retired)) = self.retired_graphs.push(retired) {
+                            self.pending_retired_graph = Some(retired);
+                        }
+                    }
+                }
+                TransportCommand::Shutdown => {
+                    if let Some(graph) = &mut self.graph {
+                        let note_failures = graph.release_midi_notes();
+                        let instrument_failures = graph.stop_instruments();
+                        let fx_failures = graph.stop_fx_processors();
+                        self.counters.callback_errors.fetch_add(
+                            note_failures
+                                .saturating_add(instrument_failures)
+                                .saturating_add(fx_failures) as u64,
+                            Ordering::Relaxed,
+                        );
+                        graph.transport_mut().stop();
+                    }
+                    self.shutdown_requested = true;
+                    self.counters
+                        .shutdown_acknowledged
+                        .store(true, Ordering::Release);
+                    break;
                 }
             }
         }
@@ -91,6 +124,14 @@ impl ProcessData {
 
     fn process_bytes(&mut self, output: &mut [u8]) -> usize {
         self.apply_commands();
+        if self.shutdown_requested {
+            output.fill(0);
+            return 0;
+        }
+        let Some(graph) = &mut self.graph else {
+            output.fill(0);
+            return 0;
+        };
         const FRAME_BYTES: usize = 2 * std::mem::size_of::<f32>();
         let frame_count = output.len() / FRAME_BYTES;
         if output.len() % FRAME_BYTES != 0 || frame_count > self.scratch.len() {
@@ -101,7 +142,7 @@ impl ProcessData {
             return 0;
         }
 
-        match self.graph.render_into(&mut self.scratch[..frame_count]) {
+        match graph.render_into(&mut self.scratch[..frame_count]) {
             Ok(stats) => {
                 for (frame, bytes) in self.scratch[..frame_count]
                     .iter()
@@ -116,10 +157,9 @@ impl ProcessData {
                 self.counters
                     .rendered_blocks
                     .fetch_add(1, Ordering::Relaxed);
-                self.counters.playhead_sample.store(
-                    self.graph.transport_mut().position_samples(),
-                    Ordering::Relaxed,
-                );
+                self.counters
+                    .playhead_sample
+                    .store(graph.transport_mut().position_samples(), Ordering::Relaxed);
                 frame_count
             }
             Err(_) => {
@@ -129,6 +169,21 @@ impl ProcessData {
                     .fetch_add(1, Ordering::Relaxed);
                 0
             }
+        }
+    }
+}
+
+impl Drop for ProcessData {
+    fn drop(&mut self) {
+        let mut graphs = self
+            .shutdown_graphs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(graph) = self.graph.take() {
+            graphs.push(*graph);
+        }
+        if let Some(graph) = self.pending_retired_graph.take() {
+            graphs.push(*graph);
         }
     }
 }
@@ -143,6 +198,7 @@ pub enum PipeWireOutputError {
     RenderCapacityUnsupported { frames: usize },
     ControlQueueFull,
     GraphReplacementInFlight,
+    ShutdownTimedOut,
 }
 
 impl fmt::Display for PipeWireOutputError {
@@ -167,6 +223,9 @@ impl fmt::Display for PipeWireOutputError {
             }
             Self::GraphReplacementInFlight => {
                 formatter.write_str("previous PipeWire render graph replacement is not collected")
+            }
+            Self::ShutdownTimedOut => {
+                formatter.write_str("PipeWire callback did not acknowledge playback shutdown")
             }
         }
     }
@@ -203,6 +262,7 @@ pub struct PipeWireAudioOutput {
     commands: Producer<TransportCommand>,
     retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
     device_sample_rate: u32,
     maximum_block_frames: usize,
     replacement_pending: bool,
@@ -226,9 +286,11 @@ impl PipeWireAudioOutput {
         let maximum_block_frames = graph.max_block_frames();
         let (thread_command, shutdown) = mpsc::channel();
         let (setup_tx, setup_rx) = mpsc::sync_channel(1);
+        let shutdown_graphs = Arc::new(Mutex::new(Vec::new()));
+        let thread_shutdown_graphs = Arc::clone(&shutdown_graphs);
         let thread = thread::Builder::new()
             .name("aaadaw-pipewire".to_owned())
-            .spawn(move || pipewire_thread(graph, shutdown, setup_tx))
+            .spawn(move || pipewire_thread(graph, shutdown, setup_tx, thread_shutdown_graphs))
             .map_err(|error| PipeWireOutputError::Thread(error.to_string()))?;
         let parts = match setup_rx.recv() {
             Ok(Ok(parts)) => parts,
@@ -247,6 +309,7 @@ impl PipeWireAudioOutput {
             commands: parts.commands,
             retired_graphs: parts.retired_graphs,
             counters: parts.counters,
+            shutdown_graphs,
             device_sample_rate: sample_rate,
             maximum_block_frames,
             replacement_pending: false,
@@ -296,6 +359,35 @@ impl PipeWireAudioOutput {
         count
     }
 
+    /// Stops processors from the PipeWire callback and returns all retired render graphs.
+    pub fn shutdown(&mut self) -> Result<Vec<AudioRenderGraph>, PipeWireOutputError> {
+        if self.thread.is_none() {
+            return Ok(Vec::new());
+        }
+        self.enqueue(TransportCommand::Shutdown)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !self.counters.shutdown_acknowledged.load(Ordering::Acquire) {
+            if std::time::Instant::now() >= deadline {
+                return Err(PipeWireOutputError::ShutdownTimedOut);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let _ = self.thread_command.send(ThreadCommand::Shutdown);
+        if let Some(thread) = self.thread.take() {
+            thread
+                .join()
+                .map_err(|_| PipeWireOutputError::Thread("PipeWire worker panicked".to_owned()))?;
+        }
+        let mut graphs = self.take_retired_graphs();
+        graphs.append(
+            &mut self
+                .shutdown_graphs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        Ok(graphs)
+    }
+
     /// Returns retired graphs to the control thread so their stopped processors can be deactivated.
     pub fn take_retired_graphs(&mut self) -> Vec<AudioRenderGraph> {
         let mut retired_graphs = Vec::new();
@@ -327,6 +419,7 @@ impl PipeWireAudioOutput {
 
 impl Drop for PipeWireAudioOutput {
     fn drop(&mut self) {
+        let _ = self.shutdown();
         let _ = self.thread_command.send(ThreadCommand::Shutdown);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -338,11 +431,12 @@ fn pipewire_thread(
     graph: AudioRenderGraph,
     shutdown: Receiver<ThreadCommand>,
     setup: mpsc::SyncSender<Result<PipeWireParts, String>>,
+    shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
 ) {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(pw::init);
 
-    if let Err(error) = setup_pipewire_stream(graph, shutdown, &setup) {
+    if let Err(error) = setup_pipewire_stream(graph, shutdown, &setup, shutdown_graphs) {
         let _ = setup.send(Err(error));
     }
 }
@@ -351,6 +445,7 @@ fn setup_pipewire_stream(
     graph: AudioRenderGraph,
     shutdown: Receiver<ThreadCommand>,
     setup: &mpsc::SyncSender<Result<PipeWireParts, String>>,
+    shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
 ) -> Result<(), String> {
     let sample_rate = graph.sample_rate();
     let max_block_frames = graph.max_block_frames();
@@ -375,12 +470,14 @@ fn setup_pipewire_stream(
     let (retired_graphs, retired_graph_consumer) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
     let counters = Arc::new(CallbackCounters::default());
     let process_data = ProcessData {
-        graph: Box::new(graph),
+        graph: Some(Box::new(graph)),
         scratch: vec![[0.0; 2]; max_block_frames],
         commands: command_consumer,
         retired_graphs,
         pending_retired_graph: None,
         counters: Arc::clone(&counters),
+        shutdown_graphs,
+        shutdown_requested: false,
     };
     let listener = stream
         .add_local_listener_with_user_data(process_data)
@@ -529,12 +626,14 @@ mod tests {
             .push(TransportCommand::Play)
             .expect("play command should fit");
         let mut data = ProcessData {
-            graph: Box::new(graph(8)),
+            graph: Some(Box::new(graph(8))),
             scratch: vec![[0.0; 2]; 8],
             commands: command_consumer,
             retired_graphs: RingBuffer::new(1).0,
             pending_retired_graph: None,
             counters: Arc::new(CallbackCounters::default()),
+            shutdown_graphs: Arc::new(Mutex::new(Vec::new())),
+            shutdown_requested: false,
         };
         let mut bytes = vec![0xff; 4 * 2 * std::mem::size_of::<f32>()];
         assert_eq!(data.process_bytes(&mut bytes), 4);
@@ -550,18 +649,27 @@ mod tests {
             .push(TransportCommand::Play)
             .expect("play command should fit");
         let mut data = ProcessData {
-            graph: Box::new(graph(2)),
+            graph: Some(Box::new(graph(2))),
             scratch: vec![[0.0; 2]; 2],
             commands: command_consumer,
             retired_graphs: RingBuffer::new(1).0,
             pending_retired_graph: None,
             counters: Arc::new(CallbackCounters::default()),
+            shutdown_graphs: Arc::new(Mutex::new(Vec::new())),
+            shutdown_requested: false,
         };
         let mut bytes = vec![0xff; 3 * 2 * std::mem::size_of::<f32>()];
         assert_eq!(data.process_bytes(&mut bytes), 0);
         assert_eq!(bytes, vec![0; bytes.len()]);
         assert_eq!(data.counters.callback_errors.load(Ordering::Relaxed), 1);
-        assert_eq!(data.graph.transport_mut().position_samples(), 0);
+        assert_eq!(
+            data.graph
+                .as_mut()
+                .expect("graph remains installed")
+                .transport_mut()
+                .position_samples(),
+            0
+        );
     }
 
     #[test]
@@ -575,17 +683,57 @@ mod tests {
             })
             .expect("graph replacement should fit");
         let mut data = ProcessData {
-            graph: Box::new(graph(8)),
+            graph: Some(Box::new(graph(8))),
             scratch: vec![[0.0; 2]; 8],
             commands: command_consumer,
             retired_graphs: retired_producer,
             pending_retired_graph: None,
             counters: Arc::new(CallbackCounters::default()),
+            shutdown_graphs: Arc::new(Mutex::new(Vec::new())),
+            shutdown_requested: false,
         };
         let mut bytes = vec![0; 2 * std::mem::size_of::<f32>()];
 
         assert_eq!(data.process_bytes(&mut bytes), 1);
         assert!(retired_consumer.pop().is_ok());
-        assert_eq!(data.graph.transport_mut().position_samples(), 1);
+        assert_eq!(
+            data.graph
+                .as_mut()
+                .expect("graph remains installed")
+                .transport_mut()
+                .position_samples(),
+            1
+        );
+    }
+
+    #[test]
+    fn shutdown_stops_callback_and_returns_the_graph_after_thread_teardown() {
+        let (mut command_producer, command_consumer) = RingBuffer::new(2);
+        command_producer
+            .push(TransportCommand::Shutdown)
+            .expect("shutdown command should fit");
+        let shutdown_graphs = Arc::new(Mutex::new(Vec::new()));
+        let counters = Arc::new(CallbackCounters::default());
+        let mut data = ProcessData {
+            graph: Some(Box::new(graph(8))),
+            scratch: vec![[0.0; 2]; 8],
+            commands: command_consumer,
+            retired_graphs: RingBuffer::new(1).0,
+            pending_retired_graph: None,
+            counters: Arc::clone(&counters),
+            shutdown_graphs: Arc::clone(&shutdown_graphs),
+            shutdown_requested: false,
+        };
+        let mut bytes = vec![0xff; 4 * 2 * std::mem::size_of::<f32>()];
+
+        assert_eq!(data.process_bytes(&mut bytes), 0);
+        assert_eq!(bytes, vec![0; bytes.len()]);
+        assert!(counters.shutdown_acknowledged.load(Ordering::Acquire));
+        drop(data);
+
+        let graphs = shutdown_graphs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(graphs.len(), 1);
     }
 }

@@ -15,12 +15,16 @@ use aaadaw_app::{
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::ClapEffectOwner;
 use aaadaw_engine::ClapPluginGuiOwner;
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -49,6 +53,35 @@ pub(crate) fn run() -> iced::Result {
         .theme(|_: &App, _| iced::Theme::Dark)
         .subscription(App::subscription)
         .run()
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Default)]
+struct ClapEffectOwners(HashMap<u64, ClapEffectOwner>);
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl Deref for ClapEffectOwners {
+    type Target = HashMap<u64, ClapEffectOwner>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl DerefMut for ClapEffectOwners {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl Drop for ClapEffectOwners {
+    fn drop(&mut self) {
+        for owner in self.0.values_mut() {
+            let _ = owner.try_deactivate_unused();
+        }
+    }
 }
 
 #[derive(Default)]
@@ -125,6 +158,8 @@ struct App {
     seek_sample_query: String,
     #[cfg(all(feature = "pipewire-backend", feature = "jack-backend"))]
     playback_backend: PlaybackBackend,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_effect_owners: ClapEffectOwners,
 }
 
 struct PendingAudioImport {
@@ -1234,11 +1269,29 @@ impl App {
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn close_playback(&mut self) {
-        self.playback.take();
+        let mut shutdown_error = None;
+        if let Some(playback) = self.playback.take() {
+            match playback.shutdown() {
+                Ok(processors) => self.deactivate_stopped_effects(processors),
+                Err(error) => {
+                    shutdown_error = Some(error.to_string());
+                    let owner_ids = self.clap_effect_owners.keys().copied().collect::<Vec<_>>();
+                    if let Some(cleanup_error) = self.discard_unused_effect_owners(&owner_ids) {
+                        shutdown_error = Some(match shutdown_error.take() {
+                            Some(error) => format!("{error}; {cleanup_error}"),
+                            None => cleanup_error,
+                        });
+                    }
+                }
+            }
+        }
         self.playback_playing = false;
         self.playhead_sample = 0;
         self.seek_sample_query = "0".to_owned();
-        self.status = format!("{} output closed", self.playback_name());
+        self.status = shutdown_error.map_or_else(
+            || format!("{} output closed", self.playback_name()),
+            |error| format!("{} shutdown failed: {error}", self.playback_name()),
+        );
     }
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1282,7 +1335,7 @@ impl App {
     ) {
         self.playback_busy = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
-        let prepared = match result {
+        let mut prepared = match result {
             Some(Ok(prepared)) => prepared,
             Some(Err(error)) => {
                 self.status = format!("Playback preparation failed: {error}");
@@ -1294,16 +1347,35 @@ impl App {
             }
         };
 
-        if let Some(playback) = self.playback.as_mut() {
-            match playback.replace_graph(prepared) {
+        let fx_owner_ids = match self.install_track_fx_processors(&mut prepared) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.status = format!("Playback preparation failed: {error}");
+                return;
+            }
+        };
+
+        if self.playback.is_some() {
+            let (result, retired_processors) = {
+                let playback = self.playback.as_mut().expect("playback exists");
+                let result = playback.replace_graph(prepared);
+                playback.collect_retired_graphs();
+                (result, playback.take_retired_fx_processors())
+            };
+            self.deactivate_stopped_effects(retired_processors);
+            match result {
                 Ok(()) => {
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
                 Err(error) => {
+                    let cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
                     self.status =
-                        format!("{} graph replacement failed: {error}", self.playback_name())
+                        format!("{} graph replacement failed: {error}", self.playback_name());
+                    if let Some(cleanup_error) = cleanup_error {
+                        self.status.push_str(&format!("; {cleanup_error}"));
+                    }
                 }
             }
             return;
@@ -1312,20 +1384,27 @@ impl App {
         let mut playback = match prepared.into_output(self.selected_playback_backend()) {
             Ok(playback) => playback,
             Err(error) => {
+                let cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
                 self.status = format!("{} output setup failed: {error}", self.playback_name());
+                if let Some(cleanup_error) = cleanup_error {
+                    self.status.push_str(&format!("; {cleanup_error}"));
+                }
                 return;
             }
         };
-        if start_when_ready {
-            if let Err(error) = playback.play() {
-                self.status = format!("{} play failed: {error}", self.playback_name());
-                return;
-            }
-        }
+        let play_error = if start_when_ready {
+            playback.play().err()
+        } else {
+            None
+        };
         self.playback = Some(playback);
-        self.playback_playing = start_when_ready;
+        self.playback_playing = start_when_ready && play_error.is_none();
         self.playhead_sample = target_sample;
         self.seek_sample_query = target_sample.to_string();
+        if let Some(error) = play_error {
+            self.status = format!("{} play failed: {error}", self.playback_name());
+            return;
+        }
         self.status = if start_when_ready {
             "Playback started".to_owned()
         } else {
@@ -1335,10 +1414,14 @@ impl App {
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn update_playback_stats(&mut self) {
-        if let Some(playback) = self.playback.as_mut() {
+        let retired_processors = if let Some(playback) = self.playback.as_mut() {
             self.playhead_sample = playback.stats().playhead_sample;
             playback.collect_retired_graphs();
-        }
+            playback.take_retired_fx_processors()
+        } else {
+            Vec::new()
+        };
+        self.deactivate_stopped_effects(retired_processors);
     }
 
     fn add_track(&mut self) {

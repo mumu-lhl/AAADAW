@@ -499,6 +499,7 @@ pub struct TrackFxProcessor {
     track_id: TrackId,
     chain_index: usize,
     plugin_id: String,
+    instance_id: u64,
     processor: ClapEffectProcessor,
 }
 
@@ -514,8 +515,25 @@ impl TrackFxProcessor {
             track_id,
             chain_index,
             plugin_id: plugin_id.into(),
+            instance_id: processor.instance_id(),
             processor,
         }
+    }
+
+    /// Returns the matching control-thread owner's identity.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
+    /// Returns the owner identity and activated processor if graph setup fails.
+    pub fn into_parts(self) -> (u64, TrackId, usize, String, ClapEffectProcessor) {
+        (
+            self.instance_id,
+            self.track_id,
+            self.chain_index,
+            self.plugin_id,
+            self.processor,
+        )
     }
 }
 
@@ -562,6 +580,7 @@ pub struct StoppedTrackFxProcessor {
     track_id: TrackId,
     chain_index: usize,
     plugin_id: String,
+    instance_id: u64,
     processor: StoppedClapEffectProcessor,
 }
 
@@ -574,6 +593,11 @@ impl StoppedTrackFxProcessor {
     /// Returns the effect plugin ID.
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
+    }
+
+    /// Returns the identity of the effect owner that must receive this processor.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Returns the identity and stopped processor for its matching owner.
@@ -601,9 +625,12 @@ struct FxRoute {
     track_index: usize,
     chain_index: usize,
     plugin_id: String,
+    instance_id: u64,
     processor: Option<ClapEffectProcessor>,
     stopped_processor: Option<StoppedClapEffectProcessor>,
 }
+
+type TrackEffectBuffers = Vec<Option<Vec<[f32; 2]>>>;
 
 struct RenderGraphSources {
     streams: Vec<PcmStreamConsumer>,
@@ -611,6 +638,103 @@ struct RenderGraphSources {
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
     item_ids: Vec<Option<ItemId>>,
+}
+
+fn compile_fx_routes(
+    project: &aaadaw_core::Project,
+    effects: &mut Vec<TrackFxProcessor>,
+    existing: &[FxRoute],
+    max_block_frames: usize,
+) -> Result<(Vec<FxRoute>, TrackEffectBuffers), AudioGraphBuildError> {
+    let mut seen_effect_slots: Vec<Vec<bool>> = project
+        .tracks()
+        .iter()
+        .map(|track| vec![false; track.fx_chain().len()])
+        .collect();
+    for route in existing {
+        if let Some(track_slots) = project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == route.track_id)
+            .and_then(|track_index| seen_effect_slots.get_mut(track_index))
+            && let Some(slot) = track_slots.get_mut(route.chain_index)
+        {
+            *slot = true;
+        }
+    }
+
+    let mut routes = Vec::with_capacity(effects.len());
+    for effect in effects.iter() {
+        let track_index = project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == effect.track_id)
+            .ok_or(AudioGraphBuildError::MissingFxTrack {
+                track_id: effect.track_id.value(),
+            })?;
+        if !project.tracks()[track_index]
+            .fx_chain()
+            .get(effect.chain_index)
+            .is_some_and(|slot| slot.is_enabled() && slot.plugin_id() == effect.plugin_id)
+        {
+            return Err(AudioGraphBuildError::FxChainSlotMismatch {
+                track_id: effect.track_id.value(),
+                chain_index: effect.chain_index,
+            });
+        }
+        if std::mem::replace(
+            &mut seen_effect_slots[track_index][effect.chain_index],
+            true,
+        ) {
+            return Err(AudioGraphBuildError::DuplicateTrackFxProcessor {
+                track_id: effect.track_id.value(),
+                chain_index: effect.chain_index,
+            });
+        }
+        let available_block_frames = effect.processor.max_block_frames();
+        if available_block_frames < max_block_frames {
+            return Err(AudioGraphBuildError::FxProcessorBlockCapacity {
+                track_id: effect.track_id.value(),
+                chain_index: effect.chain_index,
+                required: max_block_frames,
+                available: available_block_frames,
+            });
+        }
+        routes.push(FxRoute {
+            track_id: effect.track_id,
+            track_index,
+            chain_index: effect.chain_index,
+            plugin_id: effect.plugin_id.clone(),
+            instance_id: effect.instance_id,
+            processor: None,
+            stopped_processor: None,
+        });
+    }
+
+    routes.sort_by_key(|route| (route.track_index, route.chain_index));
+    effects.sort_by_key(|effect| {
+        (
+            project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == effect.track_id)
+                .expect("validated effect track remains present"),
+            effect.chain_index,
+        )
+    });
+    for (route, effect) in routes.iter_mut().zip(effects.drain(..)) {
+        route.processor = Some(effect.processor);
+    }
+
+    let mut track_has_effects = vec![false; project.tracks().len()];
+    for route in existing.iter().chain(&routes) {
+        track_has_effects[route.track_index] = true;
+    }
+    let track_effect_buffers = track_has_effects
+        .iter()
+        .map(|has_effect| has_effect.then(|| vec![[0.0; 2]; max_block_frames]))
+        .collect();
+    Ok((routes, track_effect_buffers))
 }
 
 impl AudioItemStream {
@@ -649,7 +773,7 @@ pub struct AudioRenderGraph {
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
     instruments: Vec<InstrumentRoute>,
     effects: Vec<FxRoute>,
-    track_effect_buffers: Vec<Option<Vec<[f32; 2]>>>,
+    track_effect_buffers: TrackEffectBuffers,
     sample_rate: u32,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
@@ -837,76 +961,8 @@ impl AudioRenderGraph {
                 stopped_processor: None,
             });
         }
-        let mut effect_routes = Vec::with_capacity(effect_processors.len());
-        let mut seen_effect_slots: Vec<Vec<bool>> = project
-            .tracks()
-            .iter()
-            .map(|track| vec![false; track.fx_chain().len()])
-            .collect();
-        for effect in effect_processors.iter() {
-            let track_index = project
-                .tracks()
-                .iter()
-                .position(|track| track.id() == effect.track_id)
-                .ok_or(AudioGraphBuildError::MissingFxTrack {
-                    track_id: effect.track_id.value(),
-                })?;
-            if !project.tracks()[track_index]
-                .fx_chain()
-                .get(effect.chain_index)
-                .is_some_and(|slot| slot.is_enabled() && slot.plugin_id() == effect.plugin_id)
-            {
-                return Err(AudioGraphBuildError::FxChainSlotMismatch {
-                    track_id: effect.track_id.value(),
-                    chain_index: effect.chain_index,
-                });
-            }
-            if std::mem::replace(
-                &mut seen_effect_slots[track_index][effect.chain_index],
-                true,
-            ) {
-                return Err(AudioGraphBuildError::DuplicateTrackFxProcessor {
-                    track_id: effect.track_id.value(),
-                    chain_index: effect.chain_index,
-                });
-            }
-            let available_block_frames = effect.processor.max_block_frames();
-            if available_block_frames < max_block_frames {
-                return Err(AudioGraphBuildError::FxProcessorBlockCapacity {
-                    track_id: effect.track_id.value(),
-                    chain_index: effect.chain_index,
-                    required: max_block_frames,
-                    available: available_block_frames,
-                });
-            }
-            effect_routes.push(FxRoute {
-                track_id: effect.track_id,
-                track_index,
-                chain_index: effect.chain_index,
-                plugin_id: effect.plugin_id.clone(),
-                processor: None,
-                stopped_processor: None,
-            });
-        }
-        effect_routes.sort_by_key(|route| (route.track_index, route.chain_index));
-        effect_processors.sort_by_key(|effect| {
-            (
-                project
-                    .tracks()
-                    .iter()
-                    .position(|track| track.id() == effect.track_id)
-                    .expect("validated effect track remains present"),
-                effect.chain_index,
-            )
-        });
-        let mut track_has_effects = vec![false; project.tracks().len()];
-        for route in &effect_routes {
-            track_has_effects[route.track_index] = true;
-        }
-        let track_effect_buffers = track_has_effects
-            .iter()
-            .map(|has_effect| has_effect.then(|| vec![[0.0; 2]; max_block_frames]))
-            .collect();
+        let (effect_routes, track_effect_buffers) =
+            compile_fx_routes(project, effect_processors, &[], max_block_frames)?;
         let scratch = (0..sources.streams.len())
             .map(|_| vec![0.0; max_block_frames])
             .collect();
@@ -920,9 +976,6 @@ impl AudioRenderGraph {
             .zip(instrument_processors.drain(..))
         {
             route.processor = Some(instrument.processor);
-        }
-        for (route, effect) in effect_routes.iter_mut().zip(effect_processors.drain(..)) {
-            route.processor = Some(effect.processor);
         }
         Ok(Self {
             mixer,
@@ -960,6 +1013,27 @@ impl AudioRenderGraph {
     /// Returns the number of prepared track instruments.
     pub fn instrument_count(&self) -> usize {
         self.instruments.len()
+    }
+
+    /// Installs pre-activated track effects before the graph enters an audio callback.
+    ///
+    /// `project` must be the same project snapshot used to compile this graph. On validation
+    /// failure, `effects` remains intact so its matching owners can stop and deactivate them.
+    pub fn install_fx_processors(
+        &mut self,
+        project: &aaadaw_core::Project,
+        effects: &mut Vec<TrackFxProcessor>,
+    ) -> Result<(), AudioGraphBuildError> {
+        if effects.is_empty() {
+            return Ok(());
+        }
+        let (mut routes, buffers) =
+            compile_fx_routes(project, effects, &self.effects, self.max_block_frames())?;
+        self.effects.append(&mut routes);
+        self.effects
+            .sort_by_key(|route| (route.track_index, route.chain_index));
+        self.track_effect_buffers = buffers;
+        Ok(())
     }
 
     /// Stops held MIDI voices on the audio thread without changing the transport state.
@@ -1034,6 +1108,7 @@ impl AudioRenderGraph {
                         track_id: route.track_id,
                         chain_index: route.chain_index,
                         plugin_id: route.plugin_id.clone(),
+                        instance_id: route.instance_id,
                         processor,
                     })
             })

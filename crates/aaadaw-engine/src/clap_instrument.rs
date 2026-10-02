@@ -18,6 +18,9 @@ use clack_host::prelude::{
 use std::ffi::CString;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_CLAP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A CLAP instrument available in a single plugin entry file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,10 +118,12 @@ pub struct StoppedClapInstrumentProcessor {
 /// Control-thread ownership required to deactivate and destroy one CLAP audio effect.
 pub struct ClapEffectOwner {
     instance: Option<PluginInstance<()>>,
+    instance_id: u64,
 }
 
 /// A stereo CLAP effect processor with preallocated input and output buffers.
 pub struct ClapEffectProcessor {
+    instance_id: u64,
     processor: PluginAudioProcessor<()>,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
@@ -132,6 +137,7 @@ pub struct ClapEffectProcessor {
 
 /// A stereo CLAP effect stopped on the audio thread and ready for control-thread deactivation.
 pub struct StoppedClapEffectProcessor {
+    instance_id: u64,
     processor: clack_host::prelude::StoppedPluginAudioProcessor<()>,
 }
 
@@ -355,11 +361,15 @@ impl ClapEffectOwner {
                 ClapInstrumentError::new(format!("Could not activate CLAP effect: {error}"))
             })?;
 
+        let instance_id = NEXT_CLAP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
+
         Ok((
             Self {
                 instance: Some(instance),
+                instance_id,
             },
             ClapEffectProcessor {
+                instance_id,
                 processor: processor.into(),
                 input_ports: AudioPorts::with_capacity(2, 1),
                 output_ports: AudioPorts::with_capacity(2, 1),
@@ -375,12 +385,37 @@ impl ClapEffectOwner {
 
     /// Deactivates and destroys the effect on the calling control thread.
     pub fn deactivate(mut self, processor: StoppedClapEffectProcessor) {
+        assert_eq!(
+            self.instance_id, processor.instance_id,
+            "CLAP effect processor must return to its matching owner"
+        );
         let instance = self
             .instance
             .as_mut()
             .expect("CLAP effect owner is deactivated once");
         instance.deactivate(processor.processor);
         self.instance.take();
+    }
+
+    /// Returns the identity paired with this owner's activated processor.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
+    /// Deactivates an effect whose graph was discarded before audio processing began.
+    ///
+    /// The processor handle must already have been dropped. Use [`Self::deactivate`] when the
+    /// graph returned a stopped processor after realtime processing.
+    pub fn try_deactivate_unused(&mut self) -> Result<(), ClapInstrumentError> {
+        let instance = self
+            .instance
+            .as_mut()
+            .expect("CLAP effect owner is deactivated once");
+        instance.try_deactivate().map_err(|error| {
+            ClapInstrumentError::new(format!("Could not deactivate CLAP effect: {error}"))
+        })?;
+        self.instance.take();
+        Ok(())
     }
 }
 
@@ -462,9 +497,14 @@ impl ClapEffectProcessor {
         Ok(())
     }
 
+    pub(crate) fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
     /// Stops processing on the audio thread and returns a handle for control-thread teardown.
     pub fn stop(self) -> StoppedClapEffectProcessor {
         StoppedClapEffectProcessor {
+            instance_id: self.instance_id,
             processor: self.processor.into_stopped(),
         }
     }
@@ -1220,6 +1260,18 @@ mod tests {
     }
 
     #[test]
+    fn unused_effect_owner_can_deactivate_after_its_processor_handle_is_dropped() {
+        let (mut owner, processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        drop(processor);
+
+        owner
+            .try_deactivate_unused()
+            .expect("an unprocessed effect can be deactivated after its graph is discarded");
+    }
+
+    #[test]
     fn effect_loader_rejects_instruments_and_wrong_buffer_sizes() {
         let instrument_error =
             ClapEffectOwner::load_from_entry(test_plugin_entry::<true, 2>(), PLUGIN_ID, 48_000, 16)
@@ -1286,19 +1338,19 @@ mod tests {
         let (last_owner, last_processor) =
             ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
                 .unwrap();
-        let mut instruments = Vec::new();
         let mut effects = vec![
             TrackFxProcessor::new(track_id, 0, EFFECT_PLUGIN_ID, first_processor),
             TrackFxProcessor::new(track_id, 2, EFFECT_PLUGIN_ID, last_processor),
         ];
-        let mut graph = AudioRenderGraph::new_for_audio_items_with_processors(
+        let mut graph = AudioRenderGraph::new_for_audio_items(
             &project,
             vec![AudioItemStream::new(item_id, consumer)],
-            &mut instruments,
-            &mut effects,
             4,
         )
-        .expect("enabled effect processors should match their chain slots");
+        .expect("audio graph should compile before effect activation");
+        graph
+            .install_fx_processors(&project, &mut effects)
+            .expect("enabled effect processors should match their chain slots");
         assert!(effects.is_empty());
         graph.transport_mut().start();
         let (retired, output) = std::thread::spawn(move || {
@@ -1318,12 +1370,19 @@ mod tests {
         let mut first_stopped = None;
         let mut last_stopped = None;
         for processor in retired {
+            let instance_id = processor.instance_id();
             let (stopped_track, chain_index, plugin_id, stopped) = processor.into_parts();
             assert_eq!(stopped_track, track_id);
             assert_eq!(plugin_id, EFFECT_PLUGIN_ID);
             match chain_index {
-                0 => first_stopped = Some(stopped),
-                2 => last_stopped = Some(stopped),
+                0 => {
+                    assert_eq!(instance_id, first_owner.instance_id());
+                    first_stopped = Some(stopped);
+                }
+                2 => {
+                    assert_eq!(instance_id, last_owner.instance_id());
+                    last_stopped = Some(stopped);
+                }
                 _ => panic!("unexpected FX slot {chain_index}"),
             }
         }

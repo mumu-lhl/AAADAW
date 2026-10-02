@@ -34,6 +34,8 @@ pub use midi_editing::{
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
 use aaadaw_core::Project;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::StoppedTrackFxProcessor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
 };
@@ -144,6 +146,7 @@ impl PreparedAudioPlayback {
             output,
             feeders,
             retired_feeders: None,
+            retired_fx_processors: Vec::new(),
             is_playing: false,
         })
     }
@@ -169,6 +172,7 @@ impl PreparedAudioPlayback {
             output,
             feeders,
             retired_feeders: None,
+            retired_fx_processors: Vec::new(),
             is_playing: false,
         })
     }
@@ -212,6 +216,7 @@ pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
+    retired_fx_processors: Vec<StoppedTrackFxProcessor>,
     is_playing: bool,
 }
 
@@ -303,18 +308,52 @@ impl RunningAudioPlayback {
     }
 
     pub fn collect_retired_graphs(&mut self) -> bool {
-        let collected = match &mut self.output {
+        let mut retired = match &mut self.output {
             #[cfg(feature = "jack-backend")]
-            DeviceAudioOutput::Jack(output) => output.collect_retired_graphs(),
+            DeviceAudioOutput::Jack(output) => output.take_retired_graphs(),
             #[cfg(feature = "pipewire-backend")]
-            DeviceAudioOutput::PipeWire(output) => output.collect_retired_graphs(),
+            DeviceAudioOutput::PipeWire(output) => output.take_retired_graphs(),
         };
-        if collected > 0 {
+        let collected = !retired.is_empty();
+        for graph in &mut retired {
+            self.retired_fx_processors
+                .append(&mut graph.take_stopped_fx_processors());
+        }
+        drop(retired);
+        if collected {
             drop(self.retired_feeders.take());
             true
         } else {
             false
         }
+    }
+
+    /// Returns stopped effect processors collected from retired graphs.
+    pub fn take_retired_fx_processors(&mut self) -> Vec<StoppedTrackFxProcessor> {
+        std::mem::take(&mut self.retired_fx_processors)
+    }
+
+    /// Stops playback, shuts down the backend, and returns stopped effect processors for teardown.
+    pub fn shutdown(mut self) -> Result<Vec<StoppedTrackFxProcessor>, PlaybackBuildError> {
+        self.collect_retired_graphs();
+        let mut stopped = std::mem::take(&mut self.retired_fx_processors);
+        let mut graphs = match self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(mut output) => {
+                output.shutdown().map_err(PlaybackBuildError::Jack)?
+            }
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(mut output) => {
+                output.shutdown().map_err(PlaybackBuildError::PipeWire)?
+            }
+        };
+        for graph in &mut graphs {
+            stopped.append(&mut graph.take_stopped_fx_processors());
+        }
+        drop(graphs);
+        drop(self.feeders);
+        drop(self.retired_feeders.take());
+        Ok(stopped)
     }
 
     pub fn stats(&self) -> PlaybackStats {
@@ -366,6 +405,7 @@ pub struct RunningJackPlayback {
     output: JackAudioOutput,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
+    retired_fx_processors: Vec<StoppedTrackFxProcessor>,
     is_playing: bool,
 }
 
@@ -434,13 +474,38 @@ impl RunningJackPlayback {
 
     /// Reclaims replaced graphs and stops their feeder workers after the callback swap.
     pub fn collect_retired_graphs(&mut self) -> bool {
-        let collected = self.output.collect_retired_graphs();
-        if collected > 0 {
+        let mut retired = self.output.take_retired_graphs();
+        let collected = !retired.is_empty();
+        for graph in &mut retired {
+            self.retired_fx_processors
+                .append(&mut graph.take_stopped_fx_processors());
+        }
+        drop(retired);
+        if collected {
             drop(self.retired_feeders.take());
             true
         } else {
             false
         }
+    }
+
+    /// Returns stopped effect processors collected from retired graphs.
+    pub fn take_retired_fx_processors(&mut self) -> Vec<StoppedTrackFxProcessor> {
+        std::mem::take(&mut self.retired_fx_processors)
+    }
+
+    /// Shuts down JACK and returns every stopped effect processor for owner teardown.
+    pub fn shutdown(mut self) -> Result<Vec<StoppedTrackFxProcessor>, PlaybackBuildError> {
+        self.collect_retired_graphs();
+        let mut stopped = std::mem::take(&mut self.retired_fx_processors);
+        let mut graphs = self.output.shutdown().map_err(PlaybackBuildError::Jack)?;
+        for graph in &mut graphs {
+            stopped.append(&mut graph.take_stopped_fx_processors());
+        }
+        drop(graphs);
+        drop(self.feeders);
+        drop(self.retired_feeders.take());
+        Ok(stopped)
     }
 
     /// Returns lock-free callback counters.

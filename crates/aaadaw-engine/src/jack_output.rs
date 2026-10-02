@@ -4,7 +4,9 @@ use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const TRANSPORT_COMMAND_CAPACITY: usize = 16;
 
@@ -15,9 +17,11 @@ enum TransportCommand {
         graph: Box<AudioRenderGraph>,
         start_playing: bool,
     },
+    Shutdown,
 }
 
 struct CallbackCounters {
+    shutdown_acknowledged: AtomicBool,
     rendered_blocks: AtomicU64,
     underrun_samples: AtomicU64,
     callback_errors: AtomicU64,
@@ -33,6 +37,7 @@ struct JackProcessHandler {
     retired_graphs: Producer<Box<AudioRenderGraph>>,
     pending_retired_graph: Option<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    shutdown_requested: bool,
 }
 
 impl JackProcessHandler {
@@ -71,6 +76,22 @@ impl JackProcessHandler {
                         }
                     }
                 }
+                TransportCommand::Shutdown => {
+                    let failures = self.graph.release_midi_notes();
+                    let instrument_failures = self.graph.stop_instruments();
+                    let fx_failures = self.graph.stop_fx_processors();
+                    self.counters.callback_errors.fetch_add(
+                        failures
+                            .saturating_add(instrument_failures)
+                            .saturating_add(fx_failures) as u64,
+                        Ordering::Relaxed,
+                    );
+                    self.graph.transport_mut().stop();
+                    self.shutdown_requested = true;
+                    self.counters
+                        .shutdown_acknowledged
+                        .store(true, Ordering::Release);
+                }
             }
         }
     }
@@ -100,6 +121,12 @@ impl ProcessHandler for JackProcessHandler {
             self.counters
                 .callback_errors
                 .fetch_add(1, Ordering::Relaxed);
+            return Control::Continue;
+        }
+
+        if self.shutdown_requested {
+            left.fill(0.0);
+            right.fill(0.0);
             return Control::Continue;
         }
 
@@ -142,6 +169,7 @@ pub enum JackOutputError {
     DeviceBlockTooLarge { device: usize, maximum: usize },
     ControlQueueFull,
     GraphReplacementInFlight,
+    ShutdownTimedOut,
 }
 
 impl fmt::Display for JackOutputError {
@@ -159,6 +187,9 @@ impl fmt::Display for JackOutputError {
             Self::ControlQueueFull => formatter.write_str("JACK transport command queue is full"),
             Self::GraphReplacementInFlight => {
                 formatter.write_str("previous JACK render graph replacement is not collected")
+            }
+            Self::ShutdownTimedOut => {
+                formatter.write_str("JACK callback did not acknowledge playback shutdown")
             }
         }
     }
@@ -185,7 +216,7 @@ impl From<jack::Error> for JackOutputError {
 /// atomics, and the render graph. Replaced graphs return through a second SPSC
 /// queue and are reclaimed by the control thread.
 pub struct JackAudioOutput {
-    _active: jack::AsyncClient<(), JackProcessHandler>,
+    _active: Option<jack::AsyncClient<(), JackProcessHandler>>,
     commands: Producer<TransportCommand>,
     retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
@@ -228,6 +259,7 @@ impl JackAudioOutput {
         let (commands, command_consumer) = RingBuffer::new(TRANSPORT_COMMAND_CAPACITY);
         let (retired_graphs, retired_graph_consumer) = RingBuffer::new(1);
         let counters = Arc::new(CallbackCounters {
+            shutdown_acknowledged: AtomicBool::new(false),
             rendered_blocks: AtomicU64::new(0),
             underrun_samples: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
@@ -242,10 +274,11 @@ impl JackAudioOutput {
             retired_graphs,
             pending_retired_graph: None,
             counters: Arc::clone(&counters),
+            shutdown_requested: false,
         };
         let active = client.activate_async((), process_handler)?;
         Ok(Self {
-            _active: active,
+            _active: Some(active),
             commands,
             retired_graphs: retired_graph_consumer,
             counters,
@@ -305,6 +338,36 @@ impl JackAudioOutput {
         count
     }
 
+    /// Stops the active graph on JACK's callback thread and returns all retired graphs.
+    pub fn shutdown(&mut self) -> Result<Vec<AudioRenderGraph>, JackOutputError> {
+        if self._active.is_none() {
+            return Ok(Vec::new());
+        }
+        if !self.counters.shutdown_acknowledged.load(Ordering::Acquire) {
+            self.enqueue(TransportCommand::Shutdown)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !self.counters.shutdown_acknowledged.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return Err(JackOutputError::ShutdownTimedOut);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        let active = self._active.take().expect("JACK output is active");
+        let (_client, _notification, mut handler) =
+            active.deactivate().map_err(JackOutputError::Jack)?;
+        let mut graphs = Vec::new();
+        while let Ok(graph) = self.retired_graphs.pop() {
+            graphs.push(*graph);
+        }
+        if let Some(graph) = handler.pending_retired_graph.take() {
+            graphs.push(*graph);
+        }
+        graphs.push(*handler.graph);
+        Ok(graphs)
+    }
+
     /// Returns retired graphs to the control thread so their stopped processors can be deactivated.
     pub fn take_retired_graphs(&mut self) -> Vec<AudioRenderGraph> {
         let mut retired_graphs = Vec::new();
@@ -332,5 +395,11 @@ impl JackAudioOutput {
             Ok(()) => Ok(()),
             Err(PushError::Full(_)) => Err(JackOutputError::ControlQueueFull),
         }
+    }
+}
+
+impl Drop for JackAudioOutput {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
     }
 }

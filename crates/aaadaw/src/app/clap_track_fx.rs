@@ -1,13 +1,134 @@
 use super::{App, Message};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackFxPlugin, TrackId};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::TrackFxProcessor;
 use iced::Task;
 use iced::window::raw_window_handle::RawWindowHandle;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use std::path::Path;
 
 #[allow(clippy::useless_conversion)]
 fn x11_window_id(handle: RawWindowHandle) -> Option<u64> {
     match handle {
         RawWindowHandle::Xlib(handle) => Some(u64::from(handle.window)),
         _ => None,
+    }
+}
+
+impl App {
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pub(super) fn install_track_fx_processors(
+        &mut self,
+        prepared: &mut PreparedAudioPlayback,
+    ) -> Result<Vec<u64>, String> {
+        let mut owners = Vec::new();
+        let mut processors = Vec::new();
+        let sample_rate = self.project.settings().sample_rate();
+        let max_block_frames = prepared.graph().max_block_frames();
+
+        for track in self.project.tracks() {
+            for (chain_index, plugin) in track.fx_chain().iter().enumerate() {
+                if !plugin.is_enabled() {
+                    continue;
+                }
+                // SAFETY: this project plugin was explicitly added from the user's scanned CLAP
+                // catalog; in-process CLAP plugins are documented as trusted native code.
+                let loaded = unsafe {
+                    aaadaw_engine::ClapEffectOwner::load(
+                        Path::new(plugin.bundle_path()),
+                        plugin.plugin_id(),
+                        sample_rate,
+                        max_block_frames,
+                    )
+                };
+                match loaded {
+                    Ok((owner, processor)) => {
+                        owners.push((owner.instance_id(), owner));
+                        processors.push(TrackFxProcessor::new(
+                            track.id(),
+                            chain_index,
+                            plugin.plugin_id(),
+                            processor,
+                        ));
+                    }
+                    Err(error) => {
+                        let message = format!("Could not activate {}: {error}", plugin.plugin_id());
+                        deactivate_uninstalled_fx(owners, processors);
+                        return Err(message);
+                    }
+                }
+            }
+        }
+
+        if let Err(error) = prepared
+            .graph_mut()
+            .install_fx_processors(&self.project, &mut processors)
+        {
+            deactivate_uninstalled_fx(owners, processors);
+            return Err(format!("Could not prepare track CLAP effects: {error}"));
+        }
+
+        let ids = owners.iter().map(|(instance_id, _)| *instance_id).collect();
+        for (instance_id, owner) in owners {
+            self.clap_effect_owners.insert(instance_id, owner);
+        }
+        Ok(ids)
+    }
+
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pub(super) fn discard_unused_effect_owners(&mut self, ids: &[u64]) -> Option<String> {
+        let mut error_message = None;
+        for id in ids {
+            let result = self
+                .clap_effect_owners
+                .get_mut(id)
+                .map(|owner| owner.try_deactivate_unused());
+            match result {
+                Some(Ok(())) => {
+                    self.clap_effect_owners.remove(id);
+                }
+                Some(Err(error)) => {
+                    error_message = Some(format!(
+                        "Could not deactivate unused CLAP instance {id}: {error}"
+                    ));
+                }
+                None => {}
+            }
+        }
+        error_message
+    }
+
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pub(super) fn deactivate_stopped_effects(
+        &mut self,
+        processors: Vec<aaadaw_engine::StoppedTrackFxProcessor>,
+    ) {
+        for stopped in processors {
+            let instance_id = stopped.instance_id();
+            if let Some(owner) = self.clap_effect_owners.remove(&instance_id) {
+                let (_, _, _, processor) = stopped.into_parts();
+                owner.deactivate(processor);
+            } else {
+                self.status = format!(
+                    "Stopped CLAP instance {instance_id} has no matching owner; plugin cleanup was skipped"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+fn deactivate_uninstalled_fx(
+    owners: Vec<(u64, aaadaw_engine::ClapEffectOwner)>,
+    processors: Vec<TrackFxProcessor>,
+) {
+    debug_assert_eq!(owners.len(), processors.len());
+    for ((owner_id, owner), effect) in owners.into_iter().zip(processors) {
+        let (processor_id, _, _, _, processor) = effect.into_parts();
+        debug_assert_eq!(owner_id, processor_id);
+        owner.deactivate(processor.stop());
     }
 }
 
