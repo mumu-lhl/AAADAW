@@ -88,6 +88,18 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("solo change should succeed");
     project
+        .apply(DawAction::SetTrackInstrument {
+            track_id,
+            instrument: Some(
+                aaadaw_core::TrackInstrument::new(
+                    "org.example.piano",
+                    "/home/user/.clap/piano.clap",
+                )
+                .expect("a plugin ID and bundle path make a valid instrument reference"),
+            ),
+        })
+        .expect("instrument assignment should succeed");
+    project
         .apply(DawAction::InsertAudioItem {
             track_id,
             media_ref: "asset://room-tone".to_owned(),
@@ -167,6 +179,75 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
     copy.close().expect("copied project should close cleanly");
     remove_database(&path);
     remove_database(&copy_path);
+}
+
+#[test]
+fn schema_two_tracks_migrate_without_an_instrument_assignment() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy".to_owned(),
+        })
+        .expect("legacy track should be created");
+    let mut store = ProjectStore::open(&path).expect("new project should open");
+    store.save(&project).expect("legacy state should save");
+    store.close().expect("project should close");
+
+    let connection = Connection::open(&path).expect("project should be SQLite");
+    connection
+        .execute_batch(
+            "ALTER TABLE tracks DROP COLUMN instrument_path; \
+             ALTER TABLE tracks DROP COLUMN instrument_id; \
+             PRAGMA user_version = 2;",
+        )
+        .expect("remove v3 columns to represent a v2 project");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("v2 project should migrate to v3");
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let migrated = store.load().expect("migrated project should load");
+    assert_eq!(migrated.tracks()[0].name(), "Legacy");
+    assert_eq!(migrated.tracks()[0].instrument(), None);
+    store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn mismatched_stored_track_instrument_fields_are_rejected() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Broken".to_owned(),
+        })
+        .expect("track should be created");
+    let mut store = ProjectStore::open(&path).expect("project should open");
+    store.save(&project).expect("project should save");
+    store.close().expect("project should close");
+
+    let connection = Connection::open(&path).expect("project should remain a SQLite file");
+    connection
+        .execute(
+            "UPDATE tracks SET instrument_id = ?1 WHERE id = 0",
+            ["org.example.broken"],
+        )
+        .expect("simulate a partial instrument reference");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("project database should open");
+    assert!(matches!(
+        store.load(),
+        Err(StorageError::InvalidStoredData(
+            "track instrument reference"
+        ))
+    ));
+    store
+        .close()
+        .expect("project should close after a read error");
+    remove_database(&path);
 }
 
 #[test]

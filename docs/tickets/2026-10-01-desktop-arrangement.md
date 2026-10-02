@@ -37,7 +37,7 @@ Scope: continue Phase 1.3 from the current code, following the UI audit in `DESI
 - **Goal:** Make edited MIDI audible through a real instrument path.
 - **Scope:** Load and process one CLAP instrument, route scheduled MIDI through it into the engine, and complete a minimal end-to-end playback slice. The default instrument must be redistributable or clearly supplied by the user.
 - **Out of scope:** Full CLAP browser/management UI, plugin state restore, and non-JACK backends.
-- **Dependencies:** Existing MIDI scheduler and visible MIDI placement in A1; Phase 0 choice is recorded in ADR 0005.
+- **Dependencies:** Existing MIDI scheduler and visible MIDI placement in A1; per-track instrument assignment is tracked in [`2026-10-02-track-instrument-assignment.md`](2026-10-02-track-instrument-assignment.md). Phase 0 choice is recorded in ADR 0005.
 - **Acceptance:** A saved MIDI Item produces audible notes during playback; mute/solo and stop/seek behavior are defined and tested; real-time callback work meets the audio-thread constraints.
 - **Verification:** Engine/app tests, JACK-feature checks, `cargo xtest -p aaadaw --features jack-backend`, and an audio smoke test when a JACK device is available.
 - **Status:** Planned; CLAP instrument hosting is the accepted product direction.

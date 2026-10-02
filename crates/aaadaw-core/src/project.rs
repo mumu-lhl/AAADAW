@@ -5,7 +5,7 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId,
-    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackId,
+    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackId, TrackInstrument,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -72,6 +72,11 @@ enum ProjectEvent {
         track_id: TrackId,
         before: bool,
         after: bool,
+    },
+    TrackInstrumentChanged {
+        track_id: TrackId,
+        before: Option<TrackInstrument>,
+        after: Option<TrackInstrument>,
     },
     TrackRenamed {
         track_id: TrackId,
@@ -216,6 +221,15 @@ impl ProjectEvent {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
+            },
+            Self::TrackInstrumentChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackInstrumentChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::TrackRenamed {
                 track_id,
@@ -452,6 +466,12 @@ impl Project {
                     pan: track.pan,
                     muted: track.muted,
                     solo: track.solo,
+                    instrument: track.instrument.as_ref().map(|instrument| {
+                        crate::TrackInstrumentSnapshot {
+                            plugin_id: instrument.plugin_id().to_owned(),
+                            bundle_path: instrument.bundle_path().to_owned(),
+                        }
+                    }),
                 })
                 .collect(),
             audio_items: self
@@ -562,6 +582,13 @@ impl Project {
         let mut tracks = Vec::with_capacity(snapshot.tracks.len());
         let mut max_track_id = None;
         for track in snapshot.tracks {
+            let instrument = match track.instrument {
+                Some(instrument) => Some(
+                    TrackInstrument::new(instrument.plugin_id, instrument.bundle_path)
+                        .ok_or(SnapshotError::InvalidProjectData)?,
+                ),
+                None => None,
+            };
             if !track_ids.insert(track.id)
                 || !track.volume_db.is_finite()
                 || !track.pan.is_finite()
@@ -577,6 +604,7 @@ impl Project {
                 pan: track.pan,
                 muted: track.muted,
                 solo: track.solo,
+                instrument,
             });
         }
 
@@ -701,6 +729,7 @@ impl Project {
                     pan: 0.0,
                     muted: false,
                     solo: false,
+                    instrument: None,
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -812,6 +841,26 @@ impl Project {
                     track_id,
                     before: track.solo,
                     after: solo,
+                }
+            }
+            DawAction::SetTrackInstrument {
+                track_id,
+                instrument,
+            } => {
+                if instrument.as_ref().is_some_and(|value| {
+                    value.plugin_id().trim().is_empty() || value.bundle_path().trim().is_empty()
+                }) {
+                    return Err(ActionError::InvalidTrackInstrument);
+                }
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackInstrumentChanged {
+                    track_id,
+                    before: track.instrument.clone(),
+                    after: instrument,
                 }
             }
             DawAction::SetTrackName { track_id, name } => {
@@ -1468,6 +1517,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.solo = *after;
+            }
+            ProjectEvent::TrackInstrumentChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.instrument != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.instrument = after.clone();
             }
             ProjectEvent::TrackRenamed {
                 track_id,

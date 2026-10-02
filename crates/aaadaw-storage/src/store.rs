@@ -1,7 +1,7 @@
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
     Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
-    TrackSnapshot,
+    TrackInstrumentSnapshot, TrackSnapshot,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -80,6 +80,13 @@ CREATE TABLE meter_points (
 const MIGRATION_2: &str = r#"
 ALTER TABLE tempo_points
 ADD COLUMN curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 1));
+"#;
+
+const MIGRATION_3: &str = r#"
+ALTER TABLE tracks ADD COLUMN instrument_id TEXT
+    CHECK (instrument_id IS NULL OR length(trim(instrument_id)) > 0);
+ALTER TABLE tracks ADD COLUMN instrument_path TEXT
+    CHECK (instrument_path IS NULL OR length(trim(instrument_path)) > 0);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1660,6 +1667,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         match next_version {
             1 => transaction.execute_batch(MIGRATION_1)?,
             2 => transaction.execute_batch(MIGRATION_2)?,
+            3 => transaction.execute_batch(MIGRATION_3)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1697,8 +1705,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -1706,7 +1714,9 @@ fn write_snapshot(
                 f64::from(track.volume_db),
                 f64::from(track.pan),
                 track.muted,
-                track.solo
+                track.solo,
+                track.instrument.as_ref().map(|instrument| &instrument.plugin_id),
+                track.instrument.as_ref().map(|instrument| &instrument.bundle_path)
             ],
         )?;
     }
@@ -1781,7 +1791,8 @@ fn write_snapshot(
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo FROM tracks ORDER BY position",
+        "SELECT id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path \
+         FROM tracks ORDER BY position",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -1793,21 +1804,42 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, f64>(4)?,
                 row.get::<_, bool>(5)?,
                 row.get::<_, bool>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, position, name, volume_db, pan, muted, solo)| {
-            let _ = from_sql_u64(position)?;
-            Ok(TrackSnapshot {
-                id: from_sql_u64(id)?,
-                name,
-                volume_db: volume_db as f32,
-                pan: pan as f32,
-                muted,
-                solo,
-            })
-        })
+        .map(
+            |(id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path)| {
+                let _ = from_sql_u64(position)?;
+                let instrument = match (instrument_id, instrument_path) {
+                    (None, None) => None,
+                    (Some(plugin_id), Some(bundle_path))
+                        if !plugin_id.trim().is_empty() && !bundle_path.trim().is_empty() =>
+                    {
+                        Some(TrackInstrumentSnapshot {
+                            plugin_id,
+                            bundle_path,
+                        })
+                    }
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "track instrument reference",
+                        ));
+                    }
+                };
+                Ok(TrackSnapshot {
+                    id: from_sql_u64(id)?,
+                    name,
+                    volume_db: volume_db as f32,
+                    pan: pan as f32,
+                    muted,
+                    solo,
+                    instrument,
+                })
+            },
+        )
         .collect()
 }
 

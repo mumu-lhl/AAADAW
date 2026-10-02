@@ -1,4 +1,6 @@
-use crate::{GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackId};
+use crate::{
+    GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackId, TrackInstrument,
+};
 
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +24,11 @@ pub enum DawAction {
     SetTrackMute { track_id: TrackId, muted: bool },
     /// Solo or unsolo a track.
     SetTrackSolo { track_id: TrackId, solo: bool },
+    /// Assign or clear a track's CLAP instrument reference.
+    SetTrackInstrument {
+        track_id: TrackId,
+        instrument: Option<TrackInstrument>,
+    },
     /// Rename a track.
     SetTrackName { track_id: TrackId, name: String },
     /// Move a track to a final position in the ordered track list.

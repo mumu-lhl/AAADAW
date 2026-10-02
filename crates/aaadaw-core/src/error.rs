@@ -5,17 +5,25 @@ use std::fmt;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActionError {
     /// The requested track insertion index is beyond the end of the track list.
-    TrackIndexOutOfBounds { index: usize, track_count: usize },
+    TrackIndexOutOfBounds {
+        index: usize,
+        track_count: usize,
+    },
     /// The requested track does not exist in the project.
-    TrackNotFound { track_id: TrackId },
+    TrackNotFound {
+        track_id: TrackId,
+    },
     /// A track volume must be a finite decibel value.
     InvalidVolumeDb,
+    InvalidTrackInstrument,
     /// A tempo must be finite and greater than zero.
     InvalidTempoBpm,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
     /// The requested tempo point does not exist.
-    TempoPointNotFound { start_tick: u64 },
+    TempoPointNotFound {
+        start_tick: u64,
+    },
     /// The time signature is invalid or cannot be represented at this PPQ.
     InvalidTimeSignature,
     /// A time-signature change must occur on a bar line.
@@ -29,19 +37,28 @@ pub enum ActionError {
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
-    AudioItemNotFound { item_id: ItemId },
+    AudioItemNotFound {
+        item_id: ItemId,
+    },
     /// A MIDI item must have a positive length.
     InvalidMidiItemLength,
     /// A MIDI item's start and length exceed the supported tick range.
     InvalidMidiItemPosition,
     /// The requested MIDI item does not exist in the project.
-    MidiItemNotFound { item_id: ItemId },
+    MidiItemNotFound {
+        item_id: ItemId,
+    },
     /// The requested audio or MIDI item does not exist in the project.
-    ItemNotFound { item_id: ItemId },
+    ItemNotFound {
+        item_id: ItemId,
+    },
     /// A MIDI note must have a valid pitch, velocity, and in-item duration.
     InvalidMidiNote,
     /// The requested MIDI note does not exist in the given item.
-    MidiNoteNotFound { item_id: ItemId, note_id: NoteId },
+    MidiNoteNotFound {
+        item_id: ItemId,
+        note_id: NoteId,
+    },
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -69,6 +86,8 @@ impl fmt::Display for ActionError {
                 write!(formatter, "track {} does not exist", track_id.value())
             }
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
+            Self::InvalidTrackInstrument => formatter
+                .write_str("track instrument reference must have a plugin ID and bundle path"),
             Self::InvalidTempoBpm => {
                 formatter.write_str("tempo must be finite and greater than zero")
             }

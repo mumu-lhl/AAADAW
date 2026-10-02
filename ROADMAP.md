@@ -52,7 +52,7 @@
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1/v2、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v3、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [ ] 扩展 schema 支持自动化和插件状态，并按工程规模优化全量快照写入；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储，不提升 schema 版本。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [ ] 验收磁盘空间不足时的保存与恢复行为。
@@ -120,6 +120,7 @@
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
 - [x] 实现 MIDI Item 移动/调整长度 Action；收缩 Item 时拒绝裁掉已有音符，并支持撤销/重做。
 - [ ] 实现钢琴卷帘、音符选择 UI 和可听的 MIDI 播放工作流；当前仅有列表式音符编辑，尚无 MIDI 发声路径。按 Phase 0 决策通过 CLAP 乐器打通播放；插件管理 UI 和完整状态恢复仍留在 Phase 5。
+- [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
 - [ ] 实现录音准备、输入监听和虚拟键盘基础路径；录音不得在音频回调中进行文件操作。
 
 **退出标准**：可导入音频、录制麦克风素材、编辑并播放 MIDI；模拟异常退出后录音仍能按既定恢复策略读取；基础编辑无爆音/咔哒声回归问题。

@@ -20,10 +20,10 @@ pub use midi::{ItemId, MidiItem, MidiNote, MidiNoteData, NoteId};
 pub use project::Project;
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
 };
 pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,
     ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
-pub use track::{Track, TrackId};
+pub use track::{Track, TrackId, TrackInstrument};
