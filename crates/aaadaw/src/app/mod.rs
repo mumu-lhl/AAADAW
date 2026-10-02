@@ -23,6 +23,7 @@ use std::thread;
 use std::time::Duration;
 
 mod commands;
+mod keyboard_config;
 mod media;
 mod messages;
 mod project_io;
@@ -45,6 +46,8 @@ pub(crate) fn run() -> iced::Result {
 struct App {
     project: Project,
     action_query: String,
+    shortcut_bindings: Arc<std::sync::RwLock<commands::ShortcutBindings>>,
+    shortcut_binding_edits: commands::ShortcutBindings,
     project_path_query: String,
     project_path: Option<PathBuf>,
     track_name_edits: HashMap<TrackId, String>,
@@ -126,6 +129,22 @@ impl std::fmt::Debug for SharedPreparedPlayback {
 impl App {
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
+        match keyboard_config::load() {
+            Ok(bindings) => {
+                if let Ok(bindings) = commands::validate_bindings(&bindings) {
+                    app.shortcut_binding_edits = bindings.clone();
+                    *app.shortcut_bindings
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings;
+                } else {
+                    app.status =
+                        "Keyboard shortcut config has conflicts; using defaults".to_owned();
+                }
+            }
+            Err(error) => {
+                app.status = format!("Keyboard shortcut config unavailable: {error}");
+            }
+        }
         let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
             return (app, Task::none());
         };
@@ -559,6 +578,28 @@ impl App {
                 self.redo();
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
+            Message::ShortcutPressed(key, modifiers) => {
+                let key = if key == " " {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Space)
+                } else {
+                    iced::keyboard::Key::Character(key.as_str())
+                };
+                let shortcut = {
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    commands::from_shortcut(&key, modifiers, &bindings).map(Message::ExecuteCommand)
+                };
+                if let Some(message) = shortcut {
+                    task = self.update(message);
+                }
+            }
+            Message::ShortcutBindingChanged(id, binding) => {
+                self.shortcut_binding_edits.insert(id, binding);
+            }
+            Message::SaveShortcutBindings => self.save_shortcut_bindings(),
+            Message::ResetShortcutBindings => self.reset_shortcut_bindings(),
             Message::RunActionQuery => task = self.run_action_query(),
             Message::ExecuteCommand(command) => task = commands::dispatch(self, command),
             Message::PickPath(target) => task = self.pick_path(target),
@@ -1168,6 +1209,43 @@ impl App {
         }
     }
 
+    fn save_shortcut_bindings(&mut self) {
+        let bindings = match commands::validate_bindings(&self.shortcut_binding_edits) {
+            Ok(bindings) => bindings,
+            Err(error) => {
+                self.status = format!("Shortcut bindings not saved: {error}");
+                return;
+            }
+        };
+        match keyboard_config::save(&bindings) {
+            Ok(()) => {
+                *self
+                    .shortcut_bindings
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings.clone();
+                self.shortcut_binding_edits = bindings;
+                self.status = "Keyboard shortcuts saved".to_owned();
+            }
+            Err(error) => self.status = format!("Keyboard shortcuts could not be saved: {error}"),
+        }
+    }
+
+    fn reset_shortcut_bindings(&mut self) {
+        match keyboard_config::reset() {
+            Ok(()) => {
+                self.shortcut_binding_edits.clear();
+                self.shortcut_bindings
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clear();
+                self.status = "Keyboard shortcuts restored to defaults".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("Keyboard shortcuts could not be reset: {error}");
+            }
+        }
+    }
+
     fn selected_track_id(&self) -> Option<TrackId> {
         self.timeline.selected_track.filter(|track_id| {
             self.project
@@ -1698,17 +1776,28 @@ fn keyboard_shortcut_event(
     else {
         return None;
     };
-    shortcut_message(key.as_ref(), modifiers)
+    match key.as_ref() {
+        iced::keyboard::Key::Character(character) => {
+            Some(Message::ShortcutPressed(character.to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
+            Some(Message::ShortcutPressed(" ".to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
+        _ => None,
+    }
 }
 
+#[cfg(test)]
 fn shortcut_message(
     key: iced::keyboard::Key<&str>,
     modifiers: iced::keyboard::Modifiers,
+    bindings: &commands::ShortcutBindings,
 ) -> Option<Message> {
     if modifiers == iced::keyboard::Modifiers::NONE
         && key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
     {
         return Some(Message::Escape);
     }
-    commands::from_shortcut(&key, modifiers).map(Message::ExecuteCommand)
+    commands::from_shortcut(&key, modifiers, bindings).map(Message::ExecuteCommand)
 }

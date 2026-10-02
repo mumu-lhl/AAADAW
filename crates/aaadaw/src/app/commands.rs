@@ -4,6 +4,9 @@ use iced::Task;
 #[cfg(feature = "jack-backend")]
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
+use std::collections::HashMap;
+
+pub(crate) type ShortcutBindings = HashMap<String, String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandId {
@@ -82,17 +85,51 @@ enum Shortcut {
 }
 
 impl Shortcut {
-    fn label(self) -> &'static str {
+    fn config_label(self) -> String {
         match self {
-            Self::Command('o') => "Ctrl/Cmd+O",
-            Self::Command('s') => "Ctrl/Cmd+S",
-            Self::Command('z') => "Ctrl/Cmd+Z",
-            Self::Command('y') => "Ctrl/Cmd+Y",
-            Self::CommandShift('z') => "Ctrl/Cmd+Shift+Z",
+            Self::Command(key) => format!("Mod+{}", key.to_ascii_uppercase()),
+            Self::CommandShift(key) => {
+                format!("Mod+Shift+{}", key.to_ascii_uppercase())
+            }
             #[cfg(feature = "jack-backend")]
-            Self::Space => "Space",
-            Self::Command(_) | Self::CommandShift(_) => "",
+            Self::Space => "Space".to_owned(),
         }
+    }
+
+    fn parse(value: &str) -> Result<Option<Self>, String> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        #[cfg(feature = "jack-backend")]
+        if value.eq_ignore_ascii_case("space") {
+            return Ok(Some(Self::Space));
+        }
+        let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
+        if !(2..=3).contains(&parts.len()) {
+            return Err("Use Mod+key, Mod+Shift+key, or Space".to_owned());
+        }
+        let has_mod = matches!(
+            parts[0].to_ascii_lowercase().as_str(),
+            "mod" | "ctrl" | "cmd"
+        );
+        let shifted = parts.len() == 3 && parts[1].eq_ignore_ascii_case("shift");
+        if !has_mod || (parts.len() == 3 && !shifted) {
+            return Err("Use Mod+key, Mod+Shift+key, or Space".to_owned());
+        }
+        let key = parts.last().copied().unwrap_or_default();
+        let mut characters = key.chars();
+        let Some(character) = characters.next() else {
+            return Err("Shortcut key must be one letter".to_owned());
+        };
+        if !character.is_ascii_alphabetic() || characters.next().is_some() {
+            return Err("Shortcut key must be one letter".to_owned());
+        }
+        Ok(Some(if shifted {
+            Self::CommandShift(character.to_ascii_lowercase())
+        } else {
+            Self::Command(character.to_ascii_lowercase())
+        }))
     }
 
     fn matches(self, key: &Key<&str>, modifiers: Modifiers) -> bool {
@@ -380,6 +417,13 @@ pub(super) struct CommandEntry {
     aliases: &'static [&'static str],
 }
 
+pub(super) struct ShortcutEntry {
+    pub(super) id: &'static str,
+    pub(super) label: &'static str,
+    pub(super) category: &'static str,
+    pub(super) binding: String,
+}
+
 impl CommandEntry {
     pub(super) fn matches_query(&self, query: &str) -> bool {
         self.label.to_ascii_lowercase().contains(query)
@@ -404,6 +448,70 @@ pub(super) fn for_actions_menu(app: &App) -> Vec<CommandEntry> {
         .into_iter()
         .map(|entry| entry.command)
         .collect()
+}
+
+pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
+    COMMANDS
+        .iter()
+        .map(|definition| {
+            let id = command_kind_id(definition.kind);
+            ShortcutEntry {
+                id,
+                label: definition.label,
+                category: definition.category,
+                binding: app
+                    .shortcut_binding_edits
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts)),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutBindings, String> {
+    for id in bindings.keys() {
+        if !COMMANDS
+            .iter()
+            .any(|definition| command_kind_id(definition.kind) == id)
+        {
+            return Err(format!("unknown action ID: {id}"));
+        }
+    }
+    let mut resolved = HashMap::<String, String>::new();
+    let mut normalized_bindings = ShortcutBindings::new();
+    for definition in COMMANDS {
+        let id = command_kind_id(definition.kind);
+        let Some(value) = bindings.get(id) else {
+            continue;
+        };
+        if !value.trim().is_empty() {
+            let shortcut = Shortcut::parse(value)?
+                .ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
+            let normalized = shortcut.config_label();
+            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
+                return Err(format!("{normalized} is already assigned to {other_id}"));
+            }
+            normalized_bindings.insert(id.to_owned(), normalized);
+        } else {
+            normalized_bindings.insert(id.to_owned(), String::new());
+        }
+    }
+    for definition in COMMANDS {
+        let id = command_kind_id(definition.kind);
+        if bindings.contains_key(id) {
+            continue;
+        }
+        for shortcut in definition.shortcuts {
+            let normalized = shortcut.config_label();
+            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
+                if other_id != id {
+                    return Err(format!("{normalized} conflicts with {other_id}"));
+                }
+            }
+        }
+    }
+    Ok(normalized_bindings)
 }
 
 pub(super) fn for_track_context(app: &App, track_id: TrackId) -> Vec<CommandEntry> {
@@ -465,14 +573,74 @@ pub(super) fn find(app: &App, query: &str) -> Option<CommandId> {
         .map(|entry| entry.command.id)
 }
 
-pub(super) fn from_shortcut(key: &Key<&str>, modifiers: Modifiers) -> Option<CommandId> {
+pub(super) fn from_shortcut(
+    key: &Key<&str>,
+    modifiers: Modifiers,
+    bindings: &ShortcutBindings,
+) -> Option<CommandId> {
     COMMANDS.iter().find_map(|definition| {
-        definition
-            .shortcuts
-            .iter()
-            .any(|shortcut| shortcut.matches(key, modifiers))
-            .then(|| command_id(definition.kind))
+        let id = command_kind_id(definition.kind);
+        let custom = bindings
+            .get(id)
+            .and_then(|binding| Shortcut::parse(binding).ok().flatten());
+        match custom {
+            Some(shortcut) => shortcut.matches(key, modifiers),
+            None if bindings.contains_key(id) => false,
+            None => definition
+                .shortcuts
+                .iter()
+                .any(|shortcut| shortcut.matches(key, modifiers)),
+        }
+        .then(|| command_id(definition.kind))
     })
+}
+
+fn binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
+    config_binding_for(app, id, defaults).replace("Mod+", "Ctrl/Cmd+")
+}
+
+fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
+    let custom = app
+        .shortcut_bindings
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(binding) = custom.get(id) {
+        return binding.clone();
+    }
+    defaults
+        .iter()
+        .map(|shortcut| shortcut.config_label())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn command_kind_id(kind: CommandKind) -> &'static str {
+    match kind {
+        CommandKind::OpenProject => "file.open-project",
+        CommandKind::SaveProject => "file.save-project",
+        CommandKind::SaveProjectAs => "file.save-project-as",
+        CommandKind::Undo => "edit.undo",
+        CommandKind::Redo => "edit.redo",
+        CommandKind::Workspace(WorkspacePage::Arrangement) => "view.arrangement",
+        CommandKind::Workspace(WorkspacePage::Media) => "view.media",
+        CommandKind::Workspace(WorkspacePage::Project) => "view.project",
+        CommandKind::AddMidiItem => "insert.midi-item",
+        CommandKind::ImportAudio => "insert.import-audio",
+        CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
+        CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
+        CommandKind::DeleteSelectedItems => "item.delete-selected",
+        CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
+        CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
+        CommandKind::AddTrack => "track.add",
+        CommandKind::Track(TrackCommand::Rename) => "track.rename",
+        CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
+        CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
+        CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
+        CommandKind::Track(TrackCommand::MoveDown) => "track.move-down",
+        CommandKind::Track(TrackCommand::Delete) => "track.delete",
+        #[cfg(feature = "jack-backend")]
+        CommandKind::TogglePlayback => "transport.toggle-playback",
+    }
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
@@ -596,18 +764,12 @@ fn entry_for(
         (CommandKind::Track(TrackCommand::ToggleSolo), Some(track)) if track.solo => "Unsolo track",
         _ => definition.label,
     };
+    let binding = binding_for(app, command_kind_id(definition.kind), definition.shortcuts);
     CommandEntry {
         id,
         category: definition.category,
         label: label.to_owned(),
-        shortcut: (!definition.shortcuts.is_empty()).then(|| {
-            definition
-                .shortcuts
-                .iter()
-                .map(|shortcut| shortcut.label())
-                .collect::<Vec<_>>()
-                .join(", ")
-        }),
+        shortcut: (!binding.is_empty()).then_some(binding),
         enabled: command_enabled(app, definition.kind, track),
         destructive: definition.destructive,
         separator_before: definition.separator_before,

@@ -9,6 +9,7 @@ use super::{
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
@@ -96,7 +97,8 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
     assert!(matches!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Escape),
-            Modifiers::NONE
+            Modifiers::NONE,
+            &HashMap::new(),
         ),
         Some(Message::Escape)
     ));
@@ -224,22 +226,26 @@ fn insert_menu_audio_picker_runs_the_import_path_and_keeps_save_guard() {
 #[test]
 fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     assert!(matches!(
-        shortcut_message(Key::Character("z"), Modifiers::COMMAND),
+        shortcut_message(Key::Character("z"), Modifiers::COMMAND, &HashMap::new()),
         Some(Message::ExecuteCommand(CommandId::Undo))
     ));
     assert!(matches!(
-        shortcut_message(Key::Character("z"), Modifiers::COMMAND | Modifiers::SHIFT),
+        shortcut_message(
+            Key::Character("z"),
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            &HashMap::new(),
+        ),
         Some(Message::ExecuteCommand(CommandId::Redo))
     ));
     assert!(matches!(
-        shortcut_message(Key::Character("s"), Modifiers::COMMAND),
+        shortcut_message(Key::Character("s"), Modifiers::COMMAND, &HashMap::new()),
         Some(Message::ExecuteCommand(CommandId::SaveProject))
     ));
     assert!(matches!(
-        shortcut_message(Key::Character("o"), Modifiers::COMMAND),
+        shortcut_message(Key::Character("o"), Modifiers::COMMAND, &HashMap::new()),
         Some(Message::ExecuteCommand(CommandId::OpenProject))
     ));
-    assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND).is_none());
+    assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND, &HashMap::new()).is_none());
     let undo_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Character("z".into()),
         modified_key: Key::Character("z".into()),
@@ -253,7 +259,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         keyboard_shortcut_event(
             undo_event.clone(),
             iced::event::Status::Captured,
-            iced::window::Id::unique()
+            iced::window::Id::unique(),
         )
         .is_none()
     );
@@ -261,9 +267,10 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         keyboard_shortcut_event(
             undo_event,
             iced::event::Status::Ignored,
-            iced::window::Id::unique()
+            iced::window::Id::unique(),
         ),
-        Some(Message::ExecuteCommand(CommandId::Undo))
+        Some(Message::ShortcutPressed(key, modifiers))
+            if key == "z" && modifiers == Modifiers::COMMAND
     ));
     let app = App::default();
     let undo = commands::for_menu(&app, MainMenu::Edit)
@@ -292,7 +299,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         keyboard_shortcut_event(
             escape_event,
             iced::event::Status::Captured,
-            iced::window::Id::unique()
+            iced::window::Id::unique(),
         ),
         Some(Message::Escape)
     ));
@@ -300,7 +307,8 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     assert!(matches!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
-            Modifiers::NONE
+            Modifiers::NONE,
+            &HashMap::new(),
         ),
         Some(Message::ExecuteCommand(CommandId::TogglePlayback))
     ));
@@ -308,9 +316,55 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     assert!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
-            Modifiers::NONE
+            Modifiers::NONE,
+            &HashMap::new(),
         )
         .is_none()
+    );
+}
+
+#[test]
+fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
+    let bindings = HashMap::from([
+        ("edit.undo".to_owned(), "Ctrl+U".to_owned()),
+        ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
+    ]);
+    let bindings = commands::validate_bindings(&bindings).unwrap();
+    assert_eq!(bindings.get("edit.undo").map(String::as_str), Some("Mod+U"));
+    assert!(matches!(
+        shortcut_message(Key::Character("u"), Modifiers::COMMAND, &bindings),
+        Some(Message::ExecuteCommand(CommandId::Undo))
+    ));
+    assert!(shortcut_message(Key::Character("z"), Modifiers::COMMAND, &bindings).is_none());
+
+    let app = App::default();
+    *app.shortcut_bindings
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings;
+    let undo = commands::for_menu(&app, MainMenu::Edit)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::Undo)
+        .unwrap();
+    assert_eq!(undo.shortcut.as_deref(), Some("Ctrl/Cmd+U"));
+
+    let conflicting = HashMap::from([
+        ("edit.undo".to_owned(), "Mod+X".to_owned()),
+        ("file.save-project".to_owned(), "Mod+X".to_owned()),
+    ]);
+    assert!(commands::validate_bindings(&conflicting).is_err());
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "file.typo".to_owned(),
+            "Mod+T".to_owned()
+        )]))
+        .is_err()
+    );
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "Mod+Nope".to_owned()
+        )]))
+        .is_err()
     );
 }
 
