@@ -30,4 +30,4 @@ Focused host tests, `cargo xtest -p aaadaw-engine`, and strict workspace Clippy.
 
 ## Status
 
-In progress.
+Complete. Verified with `cargo xtest -p aaadaw-engine` (169 workspace tests passed) and strict workspace Clippy. The host tests cover plugin validation, sample-offset ordering, stereo output, and returning a stopped processor for control-thread teardown.

@@ -4,6 +4,7 @@
 //! transport, MIDI scheduling primitives, and an optional Linux JACK backend.
 //! Project AudioItem integration remains a follow-up work item.
 
+mod clap_instrument;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
 mod midi;
@@ -13,6 +14,10 @@ mod pipewire_output;
 mod stream;
 mod transport;
 
+pub use clap_instrument::{
+    ClapInstrumentDescriptor, ClapInstrumentError, ClapInstrumentOwner, ClapInstrumentProcessor,
+    StoppedClapInstrumentProcessor, inspect_clap_instrument_entry,
+};
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
