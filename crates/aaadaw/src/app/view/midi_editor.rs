@@ -1,4 +1,5 @@
 use super::super::{App, Message};
+use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
 use aaadaw_core::{ItemId, MidiItem, MidiNoteData, NoteId, Project};
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
@@ -12,8 +13,6 @@ const KEY_WIDTH: f32 = 56.0;
 const HEADER_HEIGHT: f32 = 28.0;
 const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
-const TICKS_PER_BEAT: u64 = 960;
-const GRID_TICKS: u64 = TICKS_PER_BEAT / 4;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
@@ -59,10 +58,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     app.midi_editor_selected_notes.iter().copied().collect(),
                 )
             ))
-            .padding([2, 5]),
+            .padding([SPACING_XS / 2.0, SPACING_XS]),
         roll_button("×", Message::CloseMidiEditor),
     ]
-    .spacing(5)
+    .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
     let canvas = canvas_widget::Canvas::new(PianoRoll {
         project: &app.project,
@@ -72,14 +71,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         origin_tick: app.midi_editor_origin_tick,
         high_pitch: app.midi_editor_high_pitch,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat: u64::from(app.project.settings().ppq()),
     })
     .width(Length::Fill)
     .height(Length::Fixed(
         HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
     ));
     column![toolbar, scrollable(canvas).height(Length::Fill)]
-        .spacing(6)
-        .padding(8)
+        .spacing(ROW_GAP)
+        .padding(PANEL_PADDING)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -89,13 +89,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 struct RollMapping {
     origin_tick: u64,
     pixels_per_beat: f32,
+    ticks_per_beat: u64,
     high_pitch: u8,
 }
 
 impl RollMapping {
+    fn grid_ticks(self) -> u64 {
+        (self.ticks_per_beat / 4).max(1)
+    }
+
     fn tick_at_x(self, x: f32) -> u64 {
         let ticks = (f64::from(x.max(0.0)) / f64::from(self.pixels_per_beat)
-            * TICKS_PER_BEAT as f64)
+            * self.ticks_per_beat as f64)
             .round() as u64;
         self.origin_tick.saturating_add(ticks)
     }
@@ -106,7 +111,8 @@ impl RollMapping {
     }
 
     fn x_at_tick(self, tick: u64) -> f32 {
-        (i128::from(tick) - i128::from(self.origin_tick)) as f32 / TICKS_PER_BEAT as f32
+        (i128::from(tick) - i128::from(self.origin_tick)) as f32
+            / self.ticks_per_beat as f32
             * self.pixels_per_beat
     }
 
@@ -123,6 +129,7 @@ struct PianoRoll<'a> {
     origin_tick: u64,
     high_pitch: u8,
     pixels_per_beat: f32,
+    ticks_per_beat: u64,
 }
 
 #[derive(Default)]
@@ -189,11 +196,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 });
                 let Some(note) = hit else {
                     let pitch = mapping.pitch_at_y(point.y);
-                    let tick = snap_tick(mapping.tick_at_x(point.x));
+                    let tick = snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks());
                     let data = MidiNoteData {
                         pitch,
                         tick,
-                        duration: GRID_TICKS,
+                        duration: mapping.grid_ticks(),
                         velocity: 96,
                     };
                     if data.tick.saturating_add(data.duration) > self.item.length_ticks() {
@@ -204,17 +211,15 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         data,
                     )));
                 };
-                let mut selected = if self.selected.contains(&note.id()) {
-                    self.selected.clone()
-                } else {
-                    HashSet::new()
-                };
+                let selected = selection_after_click(
+                    self.selected,
+                    note.id(),
+                    state.modifiers.command() || state.modifiers.control(),
+                );
                 if state.modifiers.command() || state.modifiers.control() {
-                    if !selected.remove(&note.id()) {
-                        selected.insert(note.id());
-                    }
-                } else if selected.is_empty() {
-                    selected.insert(note.id());
+                    return Some(
+                        canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture(),
+                    );
                 }
                 let resize =
                     mapping.x_at_tick(note.tick().saturating_add(note.duration())) - point.x < 9.0;
@@ -256,10 +261,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     return None;
                 };
                 let ticks = (f64::from(point.x - drag.start.x) / f64::from(self.pixels_per_beat)
-                    * TICKS_PER_BEAT as f64)
+                    * self.ticks_per_beat as f64)
                     .round() as i64;
+                let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
                 drag.delta_tick =
-                    (ticks as f64 / GRID_TICKS as f64).round() as i64 * GRID_TICKS as i64;
+                    (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
                 drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
                 Some(canvas::Action::request_redraw())
             }
@@ -340,8 +346,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             Color::from_rgb8(37, 42, 45),
         );
         let end_tick = mapping.tick_at_x((bounds.width - KEY_WIDTH).max(0.0));
-        let mut tick = self.origin_tick / GRID_TICKS.max(1) * GRID_TICKS.max(1);
-        while tick <= end_tick.saturating_add(GRID_TICKS) {
+        let grid_ticks = mapping.grid_ticks();
+        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
+        while tick <= end_tick.saturating_add(grid_ticks) {
             let x = grid_left + mapping.x_at_tick(tick);
             if x >= grid_left && x <= bounds.width {
                 let project_tick = self.item.start_tick().saturating_add(tick);
@@ -388,7 +395,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     });
                 }
             }
-            let next = tick.saturating_add(GRID_TICKS.max(1));
+            let next = tick.saturating_add(grid_ticks);
             if next <= tick {
                 break;
             }
@@ -460,8 +467,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             }
             let x = grid_left + mapping.x_at_tick(note.tick());
             let y = grid_top + mapping.y_at_pitch(note.pitch());
-            let width =
-                (note.duration() as f32 / TICKS_PER_BEAT as f32 * self.pixels_per_beat).max(3.0);
+            let width = (note.duration() as f32 / self.ticks_per_beat as f32
+                * self.pixels_per_beat)
+                .max(3.0);
             let rect = canvas::Path::rectangle(
                 Point::new(x, y + 2.0),
                 Size::new(width, NOTE_ROW_HEIGHT - 4.0),
@@ -479,7 +487,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             {
                 frame.fill_rectangle(
                     Point::new(
-                        x + drag.delta_tick as f32 / TICKS_PER_BEAT as f32 * self.pixels_per_beat,
+                        x + drag.delta_tick as f32 / self.ticks_per_beat as f32
+                            * self.pixels_per_beat,
                         y + 2.0 - f32::from(drag.delta_pitch) * NOTE_ROW_HEIGHT,
                     ),
                     Size::new(width, NOTE_ROW_HEIGHT - 4.0),
@@ -509,20 +518,39 @@ impl PianoRoll<'_> {
         RollMapping {
             origin_tick: self.origin_tick,
             pixels_per_beat: self.pixels_per_beat.max(16.0),
+            ticks_per_beat: self.ticks_per_beat,
             high_pitch: self.high_pitch,
         }
     }
 }
 
-fn snap_tick(tick: u64) -> u64 {
-    (tick.saturating_add(GRID_TICKS / 2) / GRID_TICKS) * GRID_TICKS
+fn snap_tick(tick: u64, grid_ticks: u64) -> u64 {
+    (tick.saturating_add(grid_ticks / 2) / grid_ticks) * grid_ticks
+}
+
+fn selection_after_click<T: Copy + Eq + std::hash::Hash>(
+    selected: &HashSet<T>,
+    note_id: T,
+    toggle: bool,
+) -> HashSet<T> {
+    if toggle {
+        let mut next = selected.clone();
+        if !next.remove(&note_id) {
+            next.insert(note_id);
+        }
+        next
+    } else if selected.contains(&note_id) {
+        selected.clone()
+    } else {
+        HashSet::from([note_id])
+    }
 }
 
 fn roll_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {
     button(label)
         .style(iced::widget::button::secondary)
         .on_press(message)
-        .padding([2, 5])
+        .padding([SPACING_XS / 2.0, SPACING_XS])
 }
 
 fn pitch_name(pitch: u8) -> String {
@@ -545,6 +573,7 @@ mod tests {
         let mapping = RollMapping {
             origin_tick: 1_920,
             pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
             high_pitch: 84,
         };
         assert_eq!(mapping.tick_at_x(48.0), 2_400);
@@ -557,9 +586,35 @@ mod tests {
 
     #[test]
     fn insertion_grid_rounds_to_nearest_sixteenth() {
-        assert_eq!(snap_tick(100), 0);
-        assert_eq!(snap_tick(140), 240);
-        assert_eq!(snap_tick(500), 480);
-        assert_eq!(snap_tick(u64::MAX), u64::MAX / GRID_TICKS * GRID_TICKS);
+        assert_eq!(snap_tick(100, 240), 0);
+        assert_eq!(snap_tick(140, 240), 240);
+        assert_eq!(snap_tick(500, 240), 480);
+        assert_eq!(snap_tick(u64::MAX, 240), u64::MAX / 240 * 240);
+    }
+
+    #[test]
+    fn mapping_and_sixteenth_grid_follow_project_ppq() {
+        let mapping = RollMapping {
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 480,
+            high_pitch: 60,
+        };
+        assert_eq!(mapping.tick_at_x(24.0), 120);
+        assert_eq!(mapping.x_at_tick(120), 24.0);
+        assert_eq!(mapping.grid_ticks(), 120);
+        assert_eq!(snap_tick(70, mapping.grid_ticks()), 120);
+    }
+
+    #[test]
+    fn modifier_click_adds_or_removes_one_note_from_selection() {
+        let first = 1;
+        let second = 2;
+        let selected = HashSet::from([first]);
+        assert_eq!(
+            selection_after_click(&selected, second, true),
+            HashSet::from([first, second])
+        );
+        assert_eq!(selection_after_click(&selected, first, true), HashSet::new());
     }
 }
