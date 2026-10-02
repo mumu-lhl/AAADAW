@@ -88,7 +88,8 @@
 - [x] 按 `DESIGN.md` 将展开式命令面板重做为紧凑的 REAPER 式 File/Edit/View/Insert/Item/Track/Actions 菜单栏；菜单只列出现有可执行命令。基础 Actions 搜索与菜单操作已接入，完整可配置 Action 注册表仍待后续实现。
 - [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
-- [ ] 建立可停靠面板骨架；扩展 transport 至其他设备后端。
+- [x] 建立首个可停靠面板 Media Browser（[`docs/tickets/2026-10-02-dock-media-browser.md`](docs/tickets/2026-10-02-dock-media-browser.md)）。
+- [ ] 扩展 transport 至其他设备后端。
 - [x] 建立空间化 Arrangement：Audio/MIDI Item 按轨道和音乐时间显示；拍号感知标尺、水平缩放/平移、轨道/item 选择、edit cursor、垂直轨道滚动、可调 TCP 分割和 Inspector。AudioItem 保留 sample-clock 精确输入、撤销微调、复制/删除及 JACK 定位；MIDI 保留 Item/音符列表与可撤销编辑和 1/16 量化。
 - [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；内容、来源偏移和无效放置保护均已验证。
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。

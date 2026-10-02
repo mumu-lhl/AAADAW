@@ -16,6 +16,7 @@ use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
+use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,7 @@ struct App {
     action_query: String,
     shortcut_bindings: Arc<std::sync::RwLock<commands::ShortcutBindings>>,
     shortcut_binding_edits: commands::ShortcutBindings,
+    media_panel_dock: MediaPanelDock,
     project_path_query: String,
     project_path: Option<PathBuf>,
     track_name_edits: HashMap<TrackId, String>,
@@ -91,6 +93,54 @@ struct App {
 
 struct PendingAudioImport {
     worker: AudioItemImportWorker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainPane {
+    Arrangement,
+    MediaBrowser,
+}
+
+struct MediaPanelDock {
+    panes: Option<pane_grid::State<MainPane>>,
+    split: Option<Split>,
+    open: bool,
+    main_ratio: f32,
+}
+
+impl Default for MediaPanelDock {
+    fn default() -> Self {
+        Self {
+            panes: None,
+            split: None,
+            open: false,
+            main_ratio: 0.72,
+        }
+    }
+}
+
+impl MediaPanelDock {
+    fn toggle(&mut self) {
+        if self.panes.is_none() {
+            let (mut panes, arrangement) = pane_grid::State::new(MainPane::Arrangement);
+            let (_, split) = panes
+                .split(Axis::Vertical, arrangement, MainPane::MediaBrowser)
+                .expect("the arrangement pane is present");
+            panes.resize(split, self.main_ratio);
+            self.panes = Some(panes);
+            self.split = Some(split);
+        }
+        self.open = !self.open;
+    }
+
+    fn resize(&mut self, split: Split, ratio: f32) {
+        if self.split == Some(split) && ratio.is_finite() {
+            self.main_ratio = ratio.clamp(0.55, 0.86);
+            if let Some(panes) = &mut self.panes {
+                panes.resize(split, self.main_ratio);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -602,6 +652,10 @@ impl App {
             Message::ResetShortcutBindings => self.reset_shortcut_bindings(),
             Message::RunActionQuery => task = self.run_action_query(),
             Message::ExecuteCommand(command) => task = commands::dispatch(self, command),
+            Message::ToggleMediaBrowserPanel => self.media_panel_dock.toggle(),
+            Message::MediaPanelResized(split, ratio) => {
+                self.media_panel_dock.resize(split, ratio);
+            }
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
             Message::OpenProject => task = self.open_project_command(),

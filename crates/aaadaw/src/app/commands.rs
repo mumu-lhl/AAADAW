@@ -16,6 +16,7 @@ pub(crate) enum CommandId {
     Undo,
     Redo,
     Workspace(WorkspacePage),
+    ToggleMediaBrowserPanel,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
@@ -51,6 +52,7 @@ enum CommandKind {
     Undo,
     Redo,
     Workspace(WorkspacePage),
+    ToggleMediaBrowserPanel,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
@@ -234,6 +236,20 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleMediaBrowserPanel,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Toggle Media Browser",
+        aliases: &[
+            "show media browser",
+            "hide media browser",
+            "toggle media panel",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::AddMidiItem,
@@ -624,6 +640,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Workspace(WorkspacePage::Arrangement) => "view.arrangement",
         CommandKind::Workspace(WorkspacePage::Media) => "view.media",
         CommandKind::Workspace(WorkspacePage::Project) => "view.project",
+        CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
@@ -651,6 +668,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::Workspace(page) => Message::SelectWorkspace(page),
+        CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::DuplicateSelectedAudioItem => {
@@ -785,6 +803,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app)
         }
         CommandKind::Workspace(_) => true,
+        CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
@@ -858,6 +877,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::Workspace(page) => CommandId::Workspace(page),
+        CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,

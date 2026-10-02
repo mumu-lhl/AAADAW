@@ -46,6 +46,8 @@ pub(crate) enum Message {
     DismissMainMenu,
     Escape,
     SelectWorkspace(WorkspacePage),
+    ToggleMediaBrowserPanel,
+    MediaPanelResized(iced::widget::pane_grid::Split, f32),
     Timeline(TimelineEvent),
     TcpScrolled {
         offset: f32,

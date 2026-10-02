@@ -369,6 +369,40 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
 }
 
 #[test]
+fn media_browser_dock_toggles_resizes_and_survives_workspace_changes() {
+    let mut app = App::default();
+    assert!(!app.media_panel_dock.open);
+    assert!(app.media_panel_dock.panes.is_none());
+    let toggle = CommandId::ToggleMediaBrowserPanel;
+    assert!(commands::is_enabled(&app, toggle));
+    assert!(
+        commands::for_menu(&app, MainMenu::View)
+            .iter()
+            .any(|entry| entry.id == toggle)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(toggle));
+    assert!(app.media_panel_dock.open);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
+    let split = app.media_panel_dock.split.unwrap();
+    let _ = app.update(Message::MediaPanelResized(split, 0.63));
+    assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
+        WorkspacePage::Media,
+    )));
+    assert!(app.media_panel_dock.open);
+    let _ = app.update(Message::ExecuteCommand(CommandId::Workspace(
+        WorkspacePage::Arrangement,
+    )));
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    assert!(!app.media_panel_dock.open);
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    assert!(app.media_panel_dock.open);
+    assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
+}
+
+#[test]
 fn track_controls_and_undo_change_project_only_through_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

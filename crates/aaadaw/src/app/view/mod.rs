@@ -2,7 +2,7 @@ use super::commands::CommandId;
 use super::{App, Message, WorkspacePage};
 #[cfg(feature = "jack-backend")]
 use iced::widget::text_input;
-use iced::widget::{button, column, container, float, mouse_area, row, stack, text};
+use iced::widget::{button, column, container, float, mouse_area, pane_grid, row, stack, text};
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
@@ -53,7 +53,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .spacing(tokens::SPACING_MD);
 
     let workspace: Element<'_, Message> = match app.active_workspace {
-        WorkspacePage::Arrangement => arrangement::view(app),
+        WorkspacePage::Arrangement => {
+            if app.media_panel_dock.open {
+                docked_arrangement(app)
+            } else {
+                arrangement::view(app)
+            }
+        }
         WorkspacePage::Media => media::view(app),
         WorkspacePage::Project => project::view(app),
     };
@@ -104,6 +110,28 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)
         .into()
+}
+
+fn docked_arrangement(app: &App) -> Element<'_, Message> {
+    let panes = app
+        .media_panel_dock
+        .panes
+        .as_ref()
+        .expect("the Media Browser dock initializes its pane grid before opening");
+    pane_grid(panes, |_pane, content, _is_maximized| {
+        let body: Element<'_, Message> = match content {
+            super::MainPane::Arrangement => arrangement::view(app),
+            super::MainPane::MediaBrowser => media::dock_view(app),
+        };
+        pane_grid::Content::new(body)
+    })
+    .spacing(3)
+    .on_resize(10, |event| {
+        Message::MediaPanelResized(event.split, event.ratio)
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn time_selection_readout(app: &App) -> Element<'_, Message> {
