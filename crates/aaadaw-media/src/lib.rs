@@ -11,6 +11,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 mod stream;
+mod waveform;
 pub use stream::{
     AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
@@ -21,6 +22,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
+pub use waveform::{AudioWaveform, WaveformPeak};
 
 /// One decoded, interleaved floating-point PCM packet.
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +85,7 @@ pub enum MediaError {
     MissingAudioCodecParameters,
     InvalidDecodedAudioSpec,
     InvalidOutputSampleRate,
+    InvalidWaveformBinSize,
     InvalidAudioItemLength,
     InvalidAudioItemSeek {
         requested: u64,
@@ -95,6 +98,7 @@ pub enum MediaError {
         output: u32,
     },
     AudioTooLong,
+    WorkerCancelled,
     ThreadSpawn(std::io::Error),
     WorkerPanicked,
     WorkerStartupFailed {
@@ -122,6 +126,9 @@ impl fmt::Display for MediaError {
             Self::InvalidOutputSampleRate => {
                 formatter.write_str("output sample rate must be positive")
             }
+            Self::InvalidWaveformBinSize => {
+                formatter.write_str("waveform bin size must be positive")
+            }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item output length must be positive")
             }
@@ -141,6 +148,7 @@ impl fmt::Display for MediaError {
                 "resampling ratio from {input} Hz to {output} Hz exceeds the supported limit"
             ),
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
+            Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),
             Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),
             Self::WorkerPanicked => formatter.write_str("audio decoding worker panicked"),
             Self::WorkerStartupFailed { message, .. } => {

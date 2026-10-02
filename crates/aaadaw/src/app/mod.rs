@@ -1,9 +1,10 @@
 use crate::timeline::{self, TimelineState};
 use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementWorker, AudioAssetSourceStatusEntry,
-    AudioItemImportWorker, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
-    create_four_beat_midi_item, delete_midi_note, duplicate_audio_item, move_midi_item_by_beat,
-    move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth, set_audio_item_start_sample,
+    AudioItemImportWorker, AudioWaveformResult, AudioWaveformWorker, add_quarter_note,
+    adjust_midi_note_pitch, adjust_midi_note_velocity, create_four_beat_midi_item,
+    delete_midi_note, duplicate_audio_item, move_midi_item_by_beat, move_midi_note_by_sixteenth,
+    quantize_midi_item_to_sixteenth, set_audio_item_start_sample,
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_app::{
@@ -12,6 +13,7 @@ use aaadaw_app::{
 #[cfg(feature = "jack-backend")]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
+use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::{HashMap, HashSet};
@@ -58,6 +60,8 @@ struct App {
     audio_asset_management_cancel_requested: bool,
     audio_asset_management_operation: Option<AudioAssetManagementOperation>,
     audio_asset_management_status: String,
+    audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
+    audio_waveform_worker: Option<AudioWaveformWorker>,
     relink_source_path_query: String,
     revision: u64,
     saved_revision: u64,
@@ -144,12 +148,15 @@ impl App {
         #[cfg(not(feature = "jack-backend"))]
         let playback_active = false;
 
-        let background_ticks =
-            if self.import_busy || playback_active || self.audio_asset_management_busy {
-                iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
-            } else {
-                iced::Subscription::none()
-            };
+        let background_ticks = if self.import_busy
+            || playback_active
+            || self.audio_asset_management_busy
+            || self.audio_waveform_worker.is_some()
+        {
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
+        } else {
+            iced::Subscription::none()
+        };
         iced::Subscription::batch([
             iced::event::listen_with(keyboard_shortcut_event),
             background_ticks,
@@ -583,6 +590,7 @@ impl App {
             Message::BackgroundTick => {
                 #[cfg(feature = "jack-backend")]
                 self.update_playback_stats();
+                self.update_audio_waveforms();
                 task = Task::batch([
                     self.update_audio_import(),
                     self.update_audio_asset_management(),
@@ -610,6 +618,7 @@ impl App {
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
+                        self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
                         self.status = format!("Opened {}", path.display());
@@ -1322,6 +1331,71 @@ impl App {
         metadata_result?;
         close_result?;
         Ok(rates)
+    }
+
+    fn start_audio_waveform_scan(&mut self, reset: bool) {
+        if let Some(worker) = self.audio_waveform_worker.take() {
+            worker.cancel();
+        }
+        if reset {
+            self.audio_waveforms.clear();
+            self.timeline
+                .set_audio_waveforms(&self.project, HashMap::new());
+        }
+        let Some(path) = self.project_path.as_deref().filter(|path| path.is_file()) else {
+            return;
+        };
+        let media_refs = self
+            .project
+            .audio_items()
+            .iter()
+            .map(|item| item.media_ref().to_owned())
+            .filter(|media_ref| !self.audio_waveforms.contains_key(media_ref))
+            .collect::<Vec<_>>();
+        if media_refs.is_empty() {
+            return;
+        }
+        match AudioWaveformWorker::start(path.to_owned(), media_refs) {
+            Ok(worker) => self.audio_waveform_worker = Some(worker),
+            Err(error) => self.status = format!("Waveform scan could not start: {error}"),
+        }
+    }
+
+    fn update_audio_waveforms(&mut self) {
+        let Some(worker) = &self.audio_waveform_worker else {
+            return;
+        };
+        let results = worker.results();
+        let finished = worker.is_finished();
+        let mut changed = false;
+        for AudioWaveformResult {
+            media_ref,
+            waveform,
+        } in results
+        {
+            match waveform {
+                Ok(waveform) => {
+                    self.audio_waveforms.insert(media_ref, waveform);
+                    changed = true;
+                }
+                Err(error) => {
+                    self.status = format!("Waveform unavailable: {error}");
+                }
+            }
+        }
+        if changed {
+            self.timeline
+                .set_audio_waveforms(&self.project, self.audio_waveforms.clone());
+        }
+        if finished {
+            let worker = self
+                .audio_waveform_worker
+                .take()
+                .expect("finished waveform worker is present");
+            if let Err(error) = worker.join() {
+                self.status = format!("Waveform scan failed: {error}");
+            }
+        }
     }
 
     fn split_selected_items(&mut self, use_time_selection: bool) {

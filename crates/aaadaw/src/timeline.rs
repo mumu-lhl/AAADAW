@@ -1,6 +1,7 @@
 mod renderer;
 
 use aaadaw_core::{ItemId, Project, TrackId};
+use aaadaw_media::AudioWaveform;
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas;
 use iced::widget::canvas::Text;
@@ -106,6 +107,19 @@ struct TimelineItem {
     end_tick: u64,
     kind: ItemKind,
     label: String,
+    media_ref: Option<String>,
+    start_sample: u64,
+    length_samples: u64,
+    source_offset_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct WaveformBinGeometry {
+    pub(super) start_tick: u64,
+    pub(super) end_tick: u64,
+    pub(super) track_index: usize,
+    pub(super) min: f32,
+    pub(super) max: f32,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -115,10 +129,11 @@ struct TimelineCache {
     item_indices: HashMap<ItemId, usize>,
     track_ids: Arc<[TrackId]>,
     sixteenth_ticks: Option<u64>,
+    waveform_bins: Arc<[WaveformBinGeometry]>,
 }
 
 impl TimelineCache {
-    fn rebuild(&mut self, project: &Project) {
+    fn rebuild(&mut self, project: &Project, waveforms: &HashMap<String, Arc<AudioWaveform>>) {
         let track_ids = project
             .tracks()
             .iter()
@@ -150,6 +165,10 @@ impl TimelineCache {
                 end_tick: end_tick.max(start_tick),
                 kind: ItemKind::Audio,
                 label: media_label(item.media_ref()),
+                media_ref: Some(item.media_ref().to_owned()),
+                start_sample: item.start_sample(),
+                length_samples: item.length_samples(),
+                source_offset_samples: item.source_offset_samples(),
             });
         }
 
@@ -165,6 +184,10 @@ impl TimelineCache {
                 end_tick: item.start_tick().saturating_add(item.length_ticks()),
                 kind: ItemKind::Midi,
                 label: "MIDI".to_owned(),
+                media_ref: None,
+                start_sample: 0,
+                length_samples: 0,
+                source_offset_samples: 0,
             });
         }
 
@@ -180,6 +203,90 @@ impl TimelineCache {
         let sixteenth_numerator = u64::from(project.settings().ppq()).checked_mul(4);
         self.sixteenth_ticks = sixteenth_numerator
             .and_then(|numerator| (numerator % 16 == 0).then_some(numerator / 16));
+        self.rebuild_waveform_geometry(project, waveforms);
+    }
+
+    fn rebuild_waveform_geometry(
+        &mut self,
+        project: &Project,
+        waveforms: &HashMap<String, Arc<AudioWaveform>>,
+    ) {
+        let project_rate = u128::from(project.settings().sample_rate());
+        let mut bins = Vec::new();
+        for item in self
+            .items
+            .iter()
+            .filter(|item| item.kind == ItemKind::Audio)
+        {
+            let Some(waveform) = item
+                .media_ref
+                .as_ref()
+                .and_then(|media_ref| waveforms.get(media_ref))
+            else {
+                continue;
+            };
+            let source_rate = u128::from(waveform.sample_rate());
+            let frames_per_peak = u64::from(waveform.frames_per_peak());
+            if source_rate == 0 || frames_per_peak == 0 || project_rate == 0 {
+                continue;
+            }
+            let source_length =
+                (u128::from(item.length_samples) * source_rate + project_rate / 2) / project_rate;
+            let Some(source_end) =
+                u64::try_from(u128::from(item.source_offset_samples) + source_length).ok()
+            else {
+                continue;
+            };
+            let first_peak = item.source_offset_samples / frames_per_peak;
+            let last_peak = source_end.div_ceil(frames_per_peak);
+            for peak_index in first_peak..last_peak.min(waveform.peaks().len() as u64) {
+                let peak = waveform.peaks()[peak_index as usize];
+                let peak_start = peak_index.saturating_mul(frames_per_peak);
+                let peak_end = peak_start
+                    .saturating_add(frames_per_peak)
+                    .min(waveform.frame_count());
+                let overlap_start = peak_start.max(item.source_offset_samples);
+                let overlap_end = peak_end.min(source_end);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+                let start_delta = (u128::from(overlap_start - item.source_offset_samples)
+                    * project_rate)
+                    / source_rate;
+                let end_delta = (u128::from(overlap_end - item.source_offset_samples)
+                    * project_rate)
+                    .div_ceil(source_rate);
+                let Some(start_sample) =
+                    u64::try_from(u128::from(item.start_sample) + start_delta).ok()
+                else {
+                    continue;
+                };
+                let Some(end_sample) =
+                    u64::try_from(u128::from(item.start_sample) + end_delta).ok()
+                else {
+                    continue;
+                };
+                let start_sample = start_sample.min(item.start_sample + item.length_samples);
+                let end_sample = end_sample.min(item.start_sample + item.length_samples);
+                if start_sample >= end_sample {
+                    continue;
+                }
+                let (Ok(start_tick), Ok(end_tick)) = (
+                    project.tick_at_sample(start_sample),
+                    project.tick_at_sample(end_sample),
+                ) else {
+                    continue;
+                };
+                bins.push(WaveformBinGeometry {
+                    start_tick,
+                    end_tick,
+                    track_index: item.track_index,
+                    min: peak.min,
+                    max: peak.max,
+                });
+            }
+        }
+        self.waveform_bins = bins.into();
     }
 
     fn item_at(&self, track_index: usize, tick: u64) -> Option<&TimelineItem> {
@@ -202,6 +309,7 @@ pub(crate) struct TimelineState {
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
     pub(crate) context_item_position: Option<(f32, f32)>,
+    audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
     pub(crate) snap_to_sixteenth: bool,
     pub(crate) edit_cursor_tick: u64,
     pub(crate) origin_tick: u64,
@@ -250,6 +358,7 @@ impl Default for TimelineState {
             context_track: None,
             context_item: None,
             context_item_position: None,
+            audio_waveforms: HashMap::new(),
             snap_to_sixteenth: true,
             edit_cursor_tick: 0,
             origin_tick: 0,
@@ -264,7 +373,7 @@ impl Default for TimelineState {
 
 impl TimelineState {
     pub(crate) fn rebuild(&mut self, project: &Project) {
-        self.cache.rebuild(project);
+        self.cache.rebuild(project, &self.audio_waveforms);
         if self.cache.sixteenth_ticks.is_none() {
             self.snap_to_sixteenth = false;
         }
@@ -301,6 +410,17 @@ impl TimelineState {
             self.context_item = None;
             self.context_item_position = None;
         }
+    }
+
+    pub(crate) fn set_audio_waveforms(
+        &mut self,
+        project: &Project,
+        waveforms: HashMap<String, Arc<AudioWaveform>>,
+    ) {
+        self.audio_waveforms = waveforms;
+        self.cache
+            .rebuild_waveform_geometry(project, &self.audio_waveforms);
+        self.cache.generation = self.cache.generation.wrapping_add(1);
     }
 
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
@@ -946,6 +1066,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
+            waveform_bins: Arc::clone(&self.cache.waveform_bins),
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,
             selected_track_index: track_index,
@@ -1221,7 +1342,14 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 content: item.label.clone(),
                 position: Point::new(
                     (left.max(0.0) + 5.0) as f32,
-                    track_index as f32 * TIMELINE_ROW_HEIGHT + TIMELINE_ROW_HEIGHT / 2.0,
+                    track_index as f32 * TIMELINE_ROW_HEIGHT
+                        + if item.media_ref.as_ref().is_some_and(|media_ref| {
+                            self.state.audio_waveforms.contains_key(media_ref)
+                        }) {
+                            16.0
+                        } else {
+                            TIMELINE_ROW_HEIGHT / 2.0
+                        },
                 ),
                 max_width: (width - 10.0).min(220.0) as f32,
                 color: Color::from_rgb8(229, 233, 235),
@@ -1276,7 +1404,7 @@ fn media_label(media_ref: &str) -> String {
     let file_name = std::path::Path::new(media_ref)
         .file_name()
         .map_or(media_ref, |name| name.to_str().unwrap_or(media_ref));
-    format!("Audio · {file_name}")
+    file_name.to_owned()
 }
 
 #[cfg(test)]
@@ -1286,6 +1414,10 @@ mod tests {
         TimelineEvent, TimelineState, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TimeSignature};
+    use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
+    use std::collections::HashMap;
+    use std::io::Cursor;
+    use std::sync::Arc;
 
     fn project_with_items() -> (Project, [aaadaw_core::TrackId; 3], [aaadaw_core::ItemId; 3]) {
         let mut project = Project::new();
@@ -1357,17 +1489,91 @@ mod tests {
             .unwrap();
 
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project);
+        cache.rebuild(&project, &std::collections::HashMap::new());
         assert_eq!(cache.items.len(), 2);
         assert_eq!(cache.items[0].track_index, 0);
         assert_eq!(cache.items[0].start_tick, 960);
         assert_eq!(cache.items[0].end_tick, 1920);
         assert!(matches!(cache.items[0].kind, ItemKind::Audio));
-        assert_eq!(cache.items[0].label, "Audio · kick.wav");
+        assert_eq!(cache.items[0].label, "kick.wav");
         assert_eq!(cache.items[1].track_index, 1);
         assert_eq!(cache.items[1].start_tick, 1920);
         assert_eq!(cache.items[1].end_tick, 5760);
         assert!(matches!(cache.items[1].kind, ItemKind::Midi));
+    }
+
+    #[test]
+    fn waveform_geometry_clips_to_audio_source_offset_and_item_duration() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://waveform".to_owned(),
+                start_sample: 1_000,
+                source_offset_samples: 256,
+                length_samples: 512,
+            })
+            .unwrap();
+        let samples = [
+            vec![-16_384; 256],
+            vec![8_192; 256],
+            vec![16_384; 256],
+            vec![0; 256],
+        ]
+        .concat();
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://waveform".to_owned(), waveform)]);
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, &waveforms);
+
+        assert_eq!(cache.waveform_bins.len(), 2);
+        let waveform = &cache.waveform_bins;
+        assert_eq!(waveform[0].track_index, 0);
+        assert!((waveform[0].min - 0.25).abs() < 1.0e-6);
+        assert!((waveform[0].max - 0.25).abs() < 1.0e-6);
+        assert!((waveform[1].min - 0.5).abs() < 1.0e-6);
+        assert!((waveform[1].max - 0.5).abs() < 1.0e-6);
+        assert_eq!(
+            waveform[0].start_tick,
+            project.tick_at_sample(1_000).unwrap()
+        );
+        assert_eq!(waveform[1].end_tick, project.tick_at_sample(1_512).unwrap());
+    }
+
+    fn waveform_test_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
+        let data_len = u32::try_from(samples.len() * 2).unwrap();
+        let mut bytes = Vec::with_capacity(44 + data_len as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        bytes
     }
 
     #[test]

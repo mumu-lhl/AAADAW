@@ -8,6 +8,7 @@ mod asset_management;
 mod audio_editing;
 mod audio_import;
 mod midi_editing;
+mod waveform;
 
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
@@ -24,6 +25,7 @@ pub use midi_editing::{
     create_four_beat_midi_item, delete_midi_note, move_midi_item_by_beat,
     move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
 };
+pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
 use aaadaw_core::Project;
 use aaadaw_engine::{

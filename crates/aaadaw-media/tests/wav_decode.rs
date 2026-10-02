@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
 use aaadaw_media::{
-    AudioStreamDecoder, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    AudioStreamDecoder, AudioWaveform, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
 };
 use aaadaw_storage::ProjectStore;
@@ -75,6 +75,31 @@ fn decodes_wav_packets_as_interleaved_f32() {
     assert!((decoded_samples[2] - 0.5).abs() < 1.0e-6);
     assert!(decoded_samples[3] < 1.0 && decoded_samples[3] > 0.999);
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn waveform_peaks_keep_bin_boundaries_across_decoder_packets() {
+    let samples = [vec![-16_384; 4_096], vec![16_384; 4_096], vec![0]].concat();
+    let bytes = pcm_wav(&samples, 48_000);
+    let mut decoder = AudioStreamDecoder::from_reader(
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+    )
+    .expect("fixture should open");
+    let waveform = AudioWaveform::decode(&mut decoder, 4_096)
+        .expect("waveform should decode without retaining PCM");
+
+    assert_eq!(waveform.sample_rate(), 48_000);
+    assert_eq!(waveform.frame_count(), 8_193);
+    assert_eq!(waveform.frames_per_peak(), 4_096);
+    assert_eq!(waveform.peaks().len(), 3);
+    assert!((waveform.peaks()[0].min + 0.5).abs() < 1.0e-6);
+    assert!((waveform.peaks()[0].max + 0.5).abs() < 1.0e-6);
+    assert!((waveform.peaks()[1].min - 0.5).abs() < 1.0e-6);
+    assert!((waveform.peaks()[1].max - 0.5).abs() < 1.0e-6);
+    assert_eq!(waveform.peaks()[2].min, 0.0);
+    assert_eq!(waveform.peaks()[2].max, 0.0);
 }
 
 #[test]

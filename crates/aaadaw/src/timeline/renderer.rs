@@ -1,4 +1,7 @@
-use super::{ItemDragPreview, ItemKind, SelectedItemGeometry, TimeSelection, TimelineItem};
+use super::{
+    ItemDragPreview, ItemKind, SelectedItemGeometry, TimeSelection, TimelineItem,
+    WaveformBinGeometry,
+};
 use bytemuck::{Pod, Zeroable, cast_slice};
 use iced::Rectangle;
 use iced::wgpu;
@@ -17,6 +20,7 @@ const SELECTED_ITEM: u32 = 7;
 const DROP_TARGET: u32 = 8;
 const TIME_SELECTION_FILL: u32 = 9;
 const TIME_SELECTION_EDGE: u32 = 10;
+const AUDIO_WAVEFORM: u32 = 11;
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
@@ -29,6 +33,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) edit_cursor_tick: u64,
     pub(super) playhead_tick: Option<u64>,
     pub(super) selected_items: Vec<SelectedItemGeometry>,
+    pub(super) waveform_bins: Arc<[WaveformBinGeometry]>,
     pub(super) time_selection: Option<TimeSelection>,
     pub(super) drag_preview: Option<ItemDragPreview>,
     pub(super) selected_track_index: u32,
@@ -221,7 +226,9 @@ impl Primitive for TimelinePrimitive {
     ) {
         if pipeline.static_generation != Some(self.generation) {
             pipeline.previewed_indices.clear();
-            let mut instances = Vec::with_capacity(self.track_count as usize + self.items.len());
+            let mut instances = Vec::with_capacity(
+                self.track_count as usize + self.items.len() + self.waveform_bins.len(),
+            );
             for track_index in 0..self.track_count {
                 let color = if track_index % 2 == 0 {
                     [34, 39, 43, 255]
@@ -253,6 +260,22 @@ impl Primitive for TimelinePrimitive {
                     item.id.value(),
                     item.track_index as u32,
                     kind,
+                ));
+            }
+            for bin in self.waveform_bins.iter() {
+                let height = (self.row_height * 0.56).max(1.0);
+                let center = bin.track_index as f32 * self.row_height + self.row_height * 0.62;
+                let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
+                let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
+                instances.push(GpuRect::new(
+                    bin.start_tick,
+                    bin.end_tick,
+                    top.min(bottom),
+                    (bottom - top).abs().max(1.0),
+                    [150, 177, 190, 255],
+                    0,
+                    bin.track_index as u32,
+                    AUDIO_WAVEFORM,
                 ));
             }
             ensure_capacity(

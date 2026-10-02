@@ -75,6 +75,11 @@ fn vs_main(
         if corner.x > 0.5 {
             x += select(1.0, 2.0, kind == 5u || kind == 6u);
         }
+    } else if kind == 11u {
+        let bin_width = width;
+        let gutter = min(bin_width * 0.18, 0.6);
+        x = start_x * uniforms.view.w + gutter + corner.x * max(bin_width - gutter * 2.0, 0.25);
+        width = max(bin_width - gutter * 2.0, 0.25);
     } else {
         width = max(width, 3.0);
     }

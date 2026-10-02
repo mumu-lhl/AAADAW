@@ -431,6 +431,9 @@ impl App {
                     .find(|item| item.id() == item_id)
                     .map(|item| item.media_ref().to_owned())
                 {
+                    self.audio_waveforms.remove(&media_ref);
+                    self.timeline
+                        .set_audio_waveforms(&self.project, self.audio_waveforms.clone());
                     self.audio_asset_source_statuses.insert(
                         media_ref.clone(),
                         AudioAssetSourceStatusEntry {
@@ -439,6 +442,7 @@ impl App {
                             is_external_link: true,
                         },
                     );
+                    self.start_audio_waveform_scan(false);
                 }
                 self.status = "External audio source relinked".to_owned();
             }
@@ -484,7 +488,8 @@ impl App {
         self.import_cancel_requested = false;
         match result {
             Ok(action) => {
-                self.apply_action(action, "Audio imported and appended to the first track")
+                self.apply_action(action, "Audio imported and appended to the first track");
+                self.start_audio_waveform_scan(false);
             }
             Err(error) => self.status = format!("Audio import could not be finalized: {error}"),
         }

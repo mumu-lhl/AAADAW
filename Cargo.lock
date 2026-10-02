@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "aaadaw-app",
  "aaadaw-core",
+ "aaadaw-media",
  "aaadaw-storage",
  "bytemuck",
  "iced",
