@@ -1,6 +1,8 @@
 use super::commands::CommandId;
 use super::{App, Message, WorkspacePage};
-#[cfg(feature = "jack-backend")]
+#[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_app::PlaybackBackend;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::widget::text_input;
 use iced::widget::{button, column, container, float, mouse_area, pane_grid, row, stack, text};
 use iced::{Alignment, Element, Length};
@@ -170,24 +172,34 @@ fn workspace_button_style(
     }
 }
 
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 fn playback_controls(app: &App) -> Element<'_, Message> {
+    let backend_name = app.selected_playback_backend().name();
     let playback_state = if app.playback_busy {
-        "Preparing JACK…".to_owned()
+        format!("Preparing {backend_name}…")
     } else if app.playback.is_none() {
-        "JACK closed".to_owned()
+        format!("{backend_name} closed")
     } else {
         let seconds = app.playhead_sample as f64 / app.project.settings().sample_rate() as f64;
+        let callback_errors = app
+            .playback
+            .as_ref()
+            .map_or(0, |playback| playback.stats().callback_errors);
         format!(
-            "{} · {seconds:.2}s",
+            "{} · {seconds:.2}s{}",
             if app.playback_playing {
                 "Playing"
             } else {
                 "Stopped"
-            }
+            },
+            if callback_errors > 0 {
+                format!(" · {backend_name} errors: {callback_errors}")
+            } else {
+                String::new()
+            },
         )
     };
-    row![
+    let controls = row![
         button("Play").on_press(Message::StartPlayback),
         button("Stop").on_press(Message::StopPlayback),
         button("Restart").on_press(Message::RestartPlayback),
@@ -195,15 +207,35 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             .on_input(Message::SeekSampleChanged)
             .width(100),
         button("Seek").on_press(Message::SeekToSample),
-        button("Close JACK").on_press(Message::ClosePlayback),
+        button(text(format!("Close {backend_name}"))).on_press(Message::ClosePlayback),
         text(playback_state),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center)
-    .into()
+    ];
+    #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+    let controls = controls
+        .push(
+            button(
+                if app.selected_playback_backend() == PlaybackBackend::Jack {
+                    "● JACK"
+                } else {
+                    "JACK"
+                },
+            )
+            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Jack)),
+        )
+        .push(
+            button(
+                if app.selected_playback_backend() == PlaybackBackend::PipeWire {
+                    "● PipeWire"
+                } else {
+                    "PipeWire"
+                },
+            )
+            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
+        );
+    controls.spacing(8).align_y(Alignment::Center).into()
 }
 
-#[cfg(not(feature = "jack-backend"))]
+#[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
 fn playback_controls(_app: &App) -> Element<'_, Message> {
-    text("JACK: enable jack-backend").into()
+    text("Enable jack-backend or pipewire-backend for audio output").into()
 }

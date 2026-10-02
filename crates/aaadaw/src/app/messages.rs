@@ -1,4 +1,4 @@
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use super::SharedPreparedPlayback;
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
@@ -115,26 +115,28 @@ pub(crate) enum Message {
     BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StartPlayback,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StopPlayback,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     RestartPlayback,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     SeekSampleChanged(String),
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     SeekToItem(u64),
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     SeekToSample,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     ClosePlayback,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     PlaybackPrepared {
         target_sample: u64,
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     },
+    #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+    SelectPlaybackBackend(aaadaw_app::PlaybackBackend),
 }

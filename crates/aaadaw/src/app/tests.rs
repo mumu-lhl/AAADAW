@@ -1,5 +1,5 @@
 use super::commands::{self, CommandId, TrackCommand};
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
 use super::{
@@ -303,7 +303,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         ),
         Some(Message::Escape)
     ));
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     assert!(matches!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
@@ -312,7 +312,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         ),
         Some(Message::ExecuteCommand(CommandId::TogglePlayback))
     ));
-    #[cfg(not(feature = "jack-backend"))]
+    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
     assert!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
@@ -423,7 +423,7 @@ fn track_controls_and_undo_change_project_only_through_actions() {
 fn item_drag_obeys_project_busy_and_jack_edit_guards() {
     assert_eq!(
         super::item_drag_edit_guard_status(false, false, false, false, true, false),
-        Some("Close JACK output before editing the project")
+        Some("Close audio output before editing the project")
     );
 
     let mut app = App::default();
@@ -540,12 +540,12 @@ fn opening_missing_path_does_not_create_a_project_file() {
     let _ = std::fs::remove_file(&path);
 
     assert!(load_project_file(path.clone()).is_err());
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     assert!(prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0).is_err());
     assert!(!path.exists());
 }
 
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
 fn jack_feature_prepares_offline_graph_without_opening_device() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);

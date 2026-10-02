@@ -6,9 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub(super) fn open_project(app: &mut App) -> Task<Message> {
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     if app.playback.is_some() {
-        app.status = "Close JACK output before opening another project".to_owned();
+        app.status = format!(
+            "Close {} output before opening another project",
+            app.playback_name()
+        );
         return Task::none();
     }
     if app.io_busy {

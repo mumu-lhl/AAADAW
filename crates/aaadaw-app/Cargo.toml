@@ -7,6 +7,7 @@ license.workspace = true
 
 [features]
 jack-backend = ["aaadaw-engine/jack-backend"]
+pipewire-backend = ["aaadaw-engine/pipewire-backend"]
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }

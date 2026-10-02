@@ -8,6 +8,8 @@
 mod jack_output;
 mod midi;
 mod pcm;
+#[cfg(feature = "pipewire-backend")]
+mod pipewire_output;
 mod stream;
 mod transport;
 
@@ -15,6 +17,8 @@ mod transport;
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
+#[cfg(feature = "pipewire-backend")]
+pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 

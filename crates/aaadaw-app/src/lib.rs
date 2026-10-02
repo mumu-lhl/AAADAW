@@ -33,6 +33,8 @@ use aaadaw_engine::{
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
+#[cfg(feature = "pipewire-backend")]
+use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
@@ -52,6 +54,8 @@ pub enum PlaybackBuildError {
     AudioGraph(AudioGraphBuildError),
     #[cfg(feature = "jack-backend")]
     Jack(JackOutputError),
+    #[cfg(feature = "pipewire-backend")]
+    PipeWire(PipeWireOutputError),
     ExternalSourceUnavailable {
         media_ref: String,
     },
@@ -66,6 +70,8 @@ impl fmt::Display for PlaybackBuildError {
             Self::AudioGraph(error) => write!(formatter, "render graph setup failed: {error}"),
             #[cfg(feature = "jack-backend")]
             Self::Jack(error) => write!(formatter, "JACK output setup failed: {error}"),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(error) => write!(formatter, "PipeWire output setup failed: {error}"),
             Self::ExternalSourceUnavailable { media_ref } => {
                 write!(
                     formatter,
@@ -85,6 +91,8 @@ impl StdError for PlaybackBuildError {
             Self::AudioGraph(error) => Some(error),
             #[cfg(feature = "jack-backend")]
             Self::Jack(error) => Some(error),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(error) => Some(error),
             Self::ExternalSourceUnavailable { .. } => None,
         }
     }
@@ -132,6 +140,217 @@ impl PreparedAudioPlayback {
             retired_feeders: None,
             is_playing: false,
         })
+    }
+
+    /// Opens the selected device output and retains feeder workers for its lifetime.
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pub fn into_output(
+        self,
+        backend: PlaybackBackend,
+    ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
+        let (graph, feeders) = self.into_parts();
+        let output = match backend {
+            #[cfg(feature = "jack-backend")]
+            PlaybackBackend::Jack => DeviceAudioOutput::Jack(
+                JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?,
+            ),
+            #[cfg(feature = "pipewire-backend")]
+            PlaybackBackend::PipeWire => DeviceAudioOutput::PipeWire(
+                PipeWireAudioOutput::open(graph).map_err(PlaybackBuildError::PipeWire)?,
+            ),
+        };
+        Ok(RunningAudioPlayback {
+            output,
+            feeders,
+            retired_feeders: None,
+            is_playing: false,
+        })
+    }
+}
+
+/// Available native output backends in this build.
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PlaybackBackend {
+    #[cfg(feature = "jack-backend")]
+    #[cfg_attr(feature = "jack-backend", default)]
+    Jack,
+    #[cfg(feature = "pipewire-backend")]
+    #[cfg_attr(not(feature = "jack-backend"), default)]
+    PipeWire,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl PlaybackBackend {
+    pub fn name(self) -> &'static str {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack => "JACK",
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire => "PipeWire",
+        }
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+enum DeviceAudioOutput {
+    #[cfg(feature = "jack-backend")]
+    Jack(JackAudioOutput),
+    #[cfg(feature = "pipewire-backend")]
+    PipeWire(PipeWireAudioOutput),
+}
+
+/// Active device playback and its source feeder workers.
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+pub struct RunningAudioPlayback {
+    output: DeviceAudioOutput,
+    feeders: Vec<AudioFeedWorker>,
+    retired_feeders: Option<Vec<AudioFeedWorker>>,
+    is_playing: bool,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl RunningAudioPlayback {
+    pub fn backend(&self) -> PlaybackBackend {
+        match self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => PlaybackBackend::Jack,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(_) => PlaybackBackend::PipeWire,
+        }
+    }
+
+    pub fn play(&mut self) -> Result<(), PlaybackBuildError> {
+        match &mut self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => output.play().map_err(PlaybackBuildError::Jack),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => {
+                output.play().map_err(PlaybackBuildError::PipeWire)
+            }
+        }?;
+        self.is_playing = true;
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> Result<(), PlaybackBuildError> {
+        match &mut self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => output.stop().map_err(PlaybackBuildError::Jack),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => {
+                output.stop().map_err(PlaybackBuildError::PipeWire)
+            }
+        }?;
+        self.is_playing = false;
+        Ok(())
+    }
+
+    pub fn replace_graph(
+        &mut self,
+        prepared: PreparedAudioPlayback,
+    ) -> Result<(), PlaybackBuildError> {
+        self.collect_retired_graphs();
+        if self.retired_feeders.is_some() {
+            return Err(match self.backend() {
+                #[cfg(feature = "jack-backend")]
+                PlaybackBackend::Jack => {
+                    PlaybackBuildError::Jack(JackOutputError::GraphReplacementInFlight)
+                }
+                #[cfg(feature = "pipewire-backend")]
+                PlaybackBackend::PipeWire => {
+                    PlaybackBuildError::PipeWire(PipeWireOutputError::GraphReplacementInFlight)
+                }
+            });
+        }
+        let (graph, feeders) = prepared.into_parts();
+        match &mut self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => output
+                .replace_graph(graph, self.is_playing)
+                .map_err(PlaybackBuildError::Jack)?,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => output
+                .replace_graph(graph, self.is_playing)
+                .map_err(PlaybackBuildError::PipeWire)?,
+        }
+        self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
+        Ok(())
+    }
+
+    pub fn seek_to_sample(
+        &mut self,
+        project: &Project,
+        store: &ProjectStore,
+        timeline_sample: u64,
+        queue_capacity_samples: usize,
+        max_block_frames: usize,
+    ) -> Result<(), PlaybackBuildError> {
+        let prepared = prepare_audio_playback_at(
+            project,
+            store,
+            timeline_sample,
+            queue_capacity_samples,
+            max_block_frames,
+        )?;
+        self.replace_graph(prepared)
+    }
+
+    pub fn collect_retired_graphs(&mut self) -> bool {
+        let collected = match &mut self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => output.collect_retired_graphs(),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => output.collect_retired_graphs(),
+        };
+        if collected > 0 {
+            drop(self.retired_feeders.take());
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn stats(&self) -> PlaybackStats {
+        match &self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => output.stats().into(),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => output.stats().into(),
+        }
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlaybackStats {
+    pub rendered_blocks: u64,
+    pub underrun_samples: u64,
+    pub callback_errors: u64,
+    pub playhead_sample: u64,
+}
+
+#[cfg(feature = "jack-backend")]
+impl From<JackOutputStats> for PlaybackStats {
+    fn from(stats: JackOutputStats) -> Self {
+        Self {
+            rendered_blocks: stats.rendered_blocks,
+            underrun_samples: stats.underrun_samples,
+            callback_errors: stats.callback_errors,
+            playhead_sample: stats.playhead_sample,
+        }
+    }
+}
+
+#[cfg(feature = "pipewire-backend")]
+impl From<PipeWireOutputStats> for PlaybackStats {
+    fn from(stats: PipeWireOutputStats) -> Self {
+        Self {
+            rendered_blocks: stats.rendered_blocks,
+            underrun_samples: stats.underrun_samples,
+            callback_errors: stats.callback_errors,
+            playhead_sample: stats.playhead_sample,
+        }
     }
 }
 

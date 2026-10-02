@@ -186,11 +186,11 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
 
 fn timeline_content(app: &App) -> Element<'_, Message> {
     let playhead_sample = {
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             app.playback.as_ref().map(|_| app.playhead_sample)
         }
-        #[cfg(not(feature = "jack-backend"))]
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         {
             None
         }

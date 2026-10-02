@@ -1,7 +1,7 @@
 use super::{App, MainMenu, Message, PathPickerTarget, WorkspacePage};
 use aaadaw_core::TrackId;
 use iced::Task;
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ pub(crate) enum CommandId {
         track_id: TrackId,
         command: TrackCommand,
     },
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
 }
 
@@ -62,7 +62,7 @@ enum CommandKind {
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
     Track(TrackCommand),
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
 }
 
@@ -82,7 +82,7 @@ struct CommandDefinition {
 enum Shortcut {
     Command(char),
     CommandShift(char),
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     Space,
 }
 
@@ -93,7 +93,7 @@ impl Shortcut {
             Self::CommandShift(key) => {
                 format!("Mod+Shift+{}", key.to_ascii_uppercase())
             }
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Self::Space => "Space".to_owned(),
         }
     }
@@ -103,7 +103,7 @@ impl Shortcut {
         if value.is_empty() {
             return Ok(None);
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if value.eq_ignore_ascii_case("space") {
             return Ok(Some(Self::Space));
         }
@@ -143,7 +143,7 @@ impl Shortcut {
                 modifiers == (Modifiers::COMMAND | Modifiers::SHIFT)
                     && key_matches_character(key, character)
             }
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
         }
     }
@@ -153,7 +153,7 @@ const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::Command('o')];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
 const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
 
 const COMMANDS: &[CommandDefinition] = &[
@@ -409,7 +409,7 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: true,
         separator_before: false,
     },
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     CommandDefinition {
         kind: CommandKind::TogglePlayback,
         menu: None,
@@ -655,7 +655,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
         CommandKind::Track(TrackCommand::MoveDown) => "track.move-down",
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => "transport.toggle-playback",
     }
 }
@@ -731,7 +731,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 TrackCommand::Delete => Message::DeleteTrack(track_id),
             }
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandId::TogglePlayback => Message::TogglePlayback,
     };
     app.update(message)
@@ -851,7 +851,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     TrackCommand::MoveDown => track.index + 1 < app.project.tracks().len(),
                 })
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => true,
     }
 }
@@ -889,7 +889,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         }
         CommandKind::AddTrack => CommandId::AddTrack,
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
     }
 }

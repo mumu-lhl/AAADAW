@@ -100,9 +100,12 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if self.playback.is_some() {
-            self.status = "Close JACK output before importing audio".to_owned();
+            self.status = format!(
+                "Close {} output before importing audio",
+                self.playback_name()
+            );
             return Task::none();
         }
         let Some(project_path) = self.project_path.clone() else {
@@ -203,9 +206,12 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if self.playback.is_some() {
-            self.status = "Close JACK output before maintaining audio assets".to_owned();
+            self.status = format!(
+                "Close {} output before maintaining audio assets",
+                self.playback_name()
+            );
             return Task::none();
         }
         if self.is_dirty() {
@@ -383,9 +389,12 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if self.playback.is_some() {
-            self.status = "Close JACK output before relinking audio".to_owned();
+            self.status = format!(
+                "Close {} output before relinking audio",
+                self.playback_name()
+            );
             return Task::none();
         }
         if self.is_dirty() {

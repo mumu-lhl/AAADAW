@@ -6,11 +6,12 @@ use aaadaw_app::{
     delete_midi_note, duplicate_audio_item, move_midi_item_by_beat, move_midi_note_by_sixteenth,
     quantize_midi_item_to_sixteenth, set_audio_item_start_sample,
 };
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::{
-    PlaybackBuildError, PreparedAudioPlayback, RunningJackPlayback, prepare_audio_playback_at,
+    PlaybackBackend, PlaybackBuildError, PreparedAudioPlayback, RunningAudioPlayback,
+    prepare_audio_playback_at,
 };
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
 use aaadaw_media::AudioWaveform;
@@ -79,16 +80,18 @@ struct App {
     import_bytes: u64,
     import_total_bytes: Option<u64>,
     status: String,
-    #[cfg(feature = "jack-backend")]
-    playback: Option<RunningJackPlayback>,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    playback: Option<RunningAudioPlayback>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback_busy: bool,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback_playing: bool,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playhead_sample: u64,
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     seek_sample_query: String,
+    #[cfg(all(feature = "pipewire-backend", feature = "jack-backend"))]
+    playback_backend: PlaybackBackend,
 }
 
 struct PendingAudioImport {
@@ -165,11 +168,11 @@ impl std::fmt::Debug for SharedAudioAssetManagementWorker {
     }
 }
 
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[derive(Clone)]
 pub(crate) struct SharedPreparedPlayback(Arc<Mutex<Option<Result<PreparedAudioPlayback, String>>>>);
 
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 impl std::fmt::Debug for SharedPreparedPlayback {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedPreparedPlayback(..)")
@@ -212,9 +215,9 @@ impl App {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         let playback_active = self.playback.is_some();
-        #[cfg(not(feature = "jack-backend"))]
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         let playback_active = false;
 
         let background_ticks = if self.import_busy
@@ -353,7 +356,7 @@ impl App {
             self.status = "Wait for audio asset maintenance to finish or cancel it".to_owned();
             return Task::none();
         }
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             if self.playback_busy
                 && !matches!(
@@ -411,7 +414,10 @@ impl App {
                         | Message::RelinkAudioItem(_)
                 )
             {
-                self.status = "Close JACK output before editing the project".to_owned();
+                self.status = format!(
+                    "Close {} output before editing the project",
+                    self.playback_name()
+                );
                 return Task::none();
             }
         }
@@ -462,7 +468,7 @@ impl App {
                     task = scroll_arrangement_to(timeline::TCP_SCROLL_ID, offset);
                 }
             }
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::TogglePlayback => {
                 if self.playback_playing {
                     self.stop_playback();
@@ -683,7 +689,7 @@ impl App {
                 self.finish_audio_item_relink(item_id, result);
             }
             Message::BackgroundTick => {
-                #[cfg(feature = "jack-backend")]
+                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 self.update_playback_stats();
                 self.update_audio_waveforms();
                 task = Task::batch([
@@ -738,29 +744,38 @@ impl App {
                     Err(error) => self.status = format!("Save failed: {error}"),
                 }
             }
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StartPlayback => task = self.start_playback(),
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StopPlayback => self.stop_playback(),
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::RestartPlayback => task = self.restart_playback(),
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::SeekSampleChanged(sample) => self.seek_sample_query = sample,
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::SeekToItem(sample) => {
                 self.seek_sample_query = sample.to_string();
                 task = self.prepare_playback(sample, self.playback_playing);
             }
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::SeekToSample => task = self.seek_to_sample(),
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::ClosePlayback => self.close_playback(),
-            #[cfg(feature = "jack-backend")]
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::PlaybackPrepared {
                 target_sample,
                 start_when_ready,
                 result,
             } => self.finish_playback_preparation(target_sample, start_when_ready, result),
+            #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::SelectPlaybackBackend(backend) => {
+                if self.playback.is_some() {
+                    self.status = "Close the current output before switching backends".to_owned();
+                } else {
+                    self.playback_backend = backend;
+                    self.status = format!("{} selected for playback", backend.name());
+                }
+            }
         }
         task
     }
@@ -769,7 +784,28 @@ impl App {
         self.revision != self.saved_revision
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    fn selected_playback_backend(&self) -> PlaybackBackend {
+        #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+        {
+            self.playback_backend
+        }
+        #[cfg(all(feature = "jack-backend", not(feature = "pipewire-backend")))]
+        {
+            PlaybackBackend::Jack
+        }
+        #[cfg(all(feature = "pipewire-backend", not(feature = "jack-backend")))]
+        {
+            PlaybackBackend::PipeWire
+        }
+    }
+
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    fn playback_name(&self) -> &'static str {
+        self.selected_playback_backend().name()
+    }
+
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn start_playback(&mut self) -> Task<Message> {
         if let Some(playback) = self.playback.as_mut() {
             return match playback.play() {
@@ -779,7 +815,7 @@ impl App {
                     Task::none()
                 }
                 Err(error) => {
-                    self.status = format!("JACK play failed: {error}");
+                    self.status = format!("{} play failed: {error}", self.playback_name());
                     Task::none()
                 }
             };
@@ -787,10 +823,10 @@ impl App {
         self.prepare_playback(self.playhead_sample, true)
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn stop_playback(&mut self) {
         let Some(playback) = self.playback.as_mut() else {
-            self.status = "JACK output is not open".to_owned();
+            self.status = format!("{} output is not open", self.playback_name());
             return;
         };
         match playback.stop() {
@@ -798,17 +834,17 @@ impl App {
                 self.playback_playing = false;
                 self.status = "Playback stopped".to_owned();
             }
-            Err(error) => self.status = format!("JACK stop failed: {error}"),
+            Err(error) => self.status = format!("{} stop failed: {error}", self.playback_name()),
         }
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn restart_playback(&mut self) -> Task<Message> {
         let start_when_ready = self.playback.is_none() || self.playback_playing;
         self.prepare_playback(0, start_when_ready)
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn seek_to_sample(&mut self) -> Task<Message> {
         match self.seek_sample_query.trim().parse::<u64>() {
             Ok(target_sample) => self.prepare_playback(target_sample, self.playback_playing),
@@ -819,16 +855,16 @@ impl App {
         }
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn close_playback(&mut self) {
         self.playback.take();
         self.playback_playing = false;
         self.playhead_sample = 0;
         self.seek_sample_query = "0".to_owned();
-        self.status = "JACK output closed".to_owned();
+        self.status = format!("{} output closed", self.playback_name());
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn prepare_playback(&mut self, target_sample: u64, start_when_ready: bool) -> Task<Message> {
         if self.playback_busy || self.io_busy {
             self.status = "Wait for current operation to finish".to_owned();
@@ -860,7 +896,7 @@ impl App {
         )
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn finish_playback_preparation(
         &mut self,
         target_sample: u64,
@@ -888,21 +924,24 @@ impl App {
                     self.seek_sample_query = target_sample.to_string();
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
-                Err(error) => self.status = format!("JACK graph replacement failed: {error}"),
+                Err(error) => {
+                    self.status =
+                        format!("{} graph replacement failed: {error}", self.playback_name())
+                }
             }
             return;
         }
 
-        let mut playback = match prepared.into_jack_output() {
+        let mut playback = match prepared.into_output(self.selected_playback_backend()) {
             Ok(playback) => playback,
             Err(error) => {
-                self.status = format!("JACK output setup failed: {error}");
+                self.status = format!("{} output setup failed: {error}", self.playback_name());
                 return;
             }
         };
         if start_when_ready {
             if let Err(error) = playback.play() {
-                self.status = format!("JACK play failed: {error}");
+                self.status = format!("{} play failed: {error}", self.playback_name());
                 return;
             }
         }
@@ -913,11 +952,11 @@ impl App {
         self.status = if start_when_ready {
             "Playback started".to_owned()
         } else {
-            "JACK output ready".to_owned()
+            format!("{} output ready", self.playback_name())
         };
     }
 
-    #[cfg(feature = "jack-backend")]
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn update_playback_stats(&mut self) {
         if let Some(playback) = self.playback.as_mut() {
             self.playhead_sample = playback.stats().playhead_sample;
@@ -972,22 +1011,22 @@ impl App {
     }
 
     fn playback_busy(&self) -> bool {
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             self.playback_busy
         }
-        #[cfg(not(feature = "jack-backend"))]
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         {
             false
         }
     }
 
     fn playback_active(&self) -> bool {
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             self.playback.is_some()
         }
-        #[cfg(not(feature = "jack-backend"))]
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         {
             false
         }
@@ -1631,9 +1670,12 @@ impl App {
     }
 
     fn open_project_command(&mut self) -> Task<Message> {
-        #[cfg(feature = "jack-backend")]
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if self.playback.is_some() {
-            self.status = "Close JACK output before opening another project".to_owned();
+            self.status = format!(
+                "Close {} output before opening another project",
+                self.playback_name()
+            );
             return Task::none();
         }
         if self.io_busy {
@@ -1747,7 +1789,7 @@ fn item_drag_edit_guard_status(
     } else if playback_busy {
         Some("Wait for playback preparation to finish")
     } else if playback_active {
-        Some("Close JACK output before editing the project")
+        Some("Close audio output before editing the project")
     } else if io_busy {
         Some("Wait for current project operation to finish")
     } else {
@@ -1785,7 +1827,7 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|_| format!("{name} worker panicked"))?
 }
 
-#[cfg(feature = "jack-backend")]
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 fn prepare_project_playback_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
