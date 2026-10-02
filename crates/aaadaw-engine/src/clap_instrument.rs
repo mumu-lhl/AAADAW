@@ -12,7 +12,7 @@ use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent};
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
 use clack_host::plugin::features;
 use clack_host::prelude::{
-    AudioPortBuffer, AudioPortBufferType, AudioPorts, HostInfo, InputAudioBuffers,
+    AudioPortBuffer, AudioPortBufferType, AudioPorts, HostInfo, InputAudioBuffers, InputChannel,
     PluginAudioConfiguration, PluginAudioProcessor, PluginEntry, PluginInstance,
 };
 use std::ffi::CString;
@@ -109,6 +109,29 @@ struct ActiveNote {
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
 pub struct StoppedClapInstrumentProcessor {
+    processor: clack_host::prelude::StoppedPluginAudioProcessor<()>,
+}
+
+/// Control-thread ownership required to deactivate and destroy one CLAP audio effect.
+pub struct ClapEffectOwner {
+    instance: Option<PluginInstance<()>>,
+}
+
+/// A stereo CLAP effect processor with preallocated input and output buffers.
+pub struct ClapEffectProcessor {
+    processor: PluginAudioProcessor<()>,
+    input_ports: AudioPorts,
+    output_ports: AudioPorts,
+    input_left: Vec<f32>,
+    input_right: Vec<f32>,
+    output_left: Vec<f32>,
+    output_right: Vec<f32>,
+    input_events: EventBuffer,
+    max_block_frames: usize,
+}
+
+/// A stereo CLAP effect stopped on the audio thread and ready for control-thread deactivation.
+pub struct StoppedClapEffectProcessor {
     processor: clack_host::prelude::StoppedPluginAudioProcessor<()>,
 }
 
@@ -242,6 +265,212 @@ impl ClapInstrumentOwner {
             .expect("CLAP instrument owner is deactivated once");
         instance.deactivate(processor.processor);
         self.instance.take();
+    }
+}
+
+impl ClapEffectOwner {
+    /// Loads and activates a stereo-in/stereo-out CLAP audio effect.
+    ///
+    /// Loading executes third-party native code in this process. Call only for a plugin the user
+    /// selected and trusts; plugins are not crash-isolated.
+    ///
+    /// # Safety
+    ///
+    /// `entry_path` must be a valid, trusted CLAP library.
+    pub unsafe fn load(
+        entry_path: &Path,
+        plugin_id: &str,
+        sample_rate: u32,
+        max_block_frames: usize,
+    ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
+        // SAFETY: the caller guarantees the selected library is valid and trusted.
+        let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
+            ClapInstrumentError::new(format!("Could not load CLAP entry: {error}"))
+        })?;
+        Self::load_from_entry(entry, plugin_id, sample_rate, max_block_frames)
+    }
+
+    fn load_from_entry(
+        entry: PluginEntry,
+        plugin_id: &str,
+        sample_rate: u32,
+        max_block_frames: usize,
+    ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
+        if sample_rate == 0 || max_block_frames == 0 {
+            return Err(ClapInstrumentError::new(
+                "CLAP sample rate and maximum block size must be positive",
+            ));
+        }
+        let max_block_frames_u32 = u32::try_from(max_block_frames).map_err(|_| {
+            ClapInstrumentError::new("CLAP maximum block size exceeds the supported range")
+        })?;
+        let c_plugin_id = CString::new(plugin_id)
+            .map_err(|_| ClapInstrumentError::new("CLAP plugin ID contains a null byte"))?;
+        let factory = entry
+            .get_plugin_factory()
+            .ok_or_else(|| ClapInstrumentError::new("CLAP entry has no plugin factory"))?;
+        let descriptor = factory
+            .plugin_descriptors()
+            .find(|descriptor| {
+                descriptor
+                    .id()
+                    .is_some_and(|id| id.to_bytes() == plugin_id.as_bytes())
+            })
+            .ok_or_else(|| {
+                ClapInstrumentError::new(format!("CLAP plugin {plugin_id:?} was not found"))
+            })?;
+        if !descriptor
+            .features()
+            .any(|feature| feature == features::AUDIO_EFFECT)
+        {
+            return Err(ClapInstrumentError::new(format!(
+                "CLAP plugin {plugin_id:?} is not marked as an audio effect"
+            )));
+        }
+
+        let host_info = HostInfo::new(
+            "AAADAW",
+            "AAADAW",
+            "https://github.com/mumu-lhl/AAADAW",
+            "0.1.0",
+        )
+        .map_err(|error| {
+            ClapInstrumentError::new(format!("Invalid CLAP host metadata: {error}"))
+        })?;
+        let mut instance =
+            PluginInstance::<()>::new(|_| (), |_| (), &entry, &c_plugin_id, &host_info).map_err(
+                |error| ClapInstrumentError::new(format!("Could not create CLAP effect: {error}")),
+            )?;
+        validate_stereo_effect_ports(&mut instance)?;
+        let processor = instance
+            .activate(
+                |_, _| (),
+                PluginAudioConfiguration {
+                    sample_rate: f64::from(sample_rate),
+                    min_frames_count: 1,
+                    max_frames_count: max_block_frames_u32,
+                },
+            )
+            .map_err(|error| {
+                ClapInstrumentError::new(format!("Could not activate CLAP effect: {error}"))
+            })?;
+
+        Ok((
+            Self {
+                instance: Some(instance),
+            },
+            ClapEffectProcessor {
+                processor: processor.into(),
+                input_ports: AudioPorts::with_capacity(2, 1),
+                output_ports: AudioPorts::with_capacity(2, 1),
+                input_left: vec![0.0; max_block_frames],
+                input_right: vec![0.0; max_block_frames],
+                output_left: vec![0.0; max_block_frames],
+                output_right: vec![0.0; max_block_frames],
+                input_events: EventBuffer::with_capacity(1),
+                max_block_frames,
+            },
+        ))
+    }
+
+    /// Deactivates and destroys the effect on the calling control thread.
+    pub fn deactivate(mut self, processor: StoppedClapEffectProcessor) {
+        let instance = self
+            .instance
+            .as_mut()
+            .expect("CLAP effect owner is deactivated once");
+        instance.deactivate(processor.processor);
+        self.instance.take();
+    }
+}
+
+impl ClapEffectProcessor {
+    /// Runs one interleaved stereo block through the effect.
+    pub fn process(&mut self, audio: &mut [[f32; 2]]) -> Result<(), ClapInstrumentError> {
+        if audio.len() > self.max_block_frames {
+            return Err(ClapInstrumentError::new(format!(
+                "CLAP block has {} frames; maximum is {}",
+                audio.len(),
+                self.max_block_frames
+            )));
+        }
+        if audio.is_empty() {
+            return Ok(());
+        }
+        for (frame, (left, right)) in audio.iter().zip(
+            self.input_left[..audio.len()]
+                .iter_mut()
+                .zip(self.input_right[..audio.len()].iter_mut()),
+        ) {
+            *left = frame[0];
+            *right = frame[1];
+        }
+        self.output_left[..audio.len()].fill(0.0);
+        self.output_right[..audio.len()].fill(0.0);
+
+        let input_events = InputEvents::from_buffer(&self.input_events);
+        let mut plugin_output_events = DiscardPluginOutputEvents;
+        let mut output_events = OutputEvents::from_buffer(&mut plugin_output_events);
+        let input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
+            latency: 0,
+            channels: AudioPortBufferType::f32_input_only(
+                [
+                    InputChannel::variable(&mut self.input_left[..audio.len()]),
+                    InputChannel::variable(&mut self.input_right[..audio.len()]),
+                ]
+                .into_iter(),
+            ),
+        }]);
+        let mut output_audio = self.output_ports.with_output_buffers([AudioPortBuffer {
+            latency: 0,
+            channels: AudioPortBufferType::f32_output_only(
+                [
+                    self.output_left[..audio.len()].as_mut(),
+                    self.output_right[..audio.len()].as_mut(),
+                ]
+                .into_iter(),
+            ),
+        }]);
+        let audio_processor = self
+            .processor
+            .ensure_processing_started()
+            .map_err(|error| {
+                ClapInstrumentError::new(format!("Could not start CLAP processing: {error}"))
+            })?;
+        audio_processor
+            .process(
+                &input_audio,
+                &mut output_audio,
+                &input_events,
+                &mut output_events,
+                None,
+                None,
+            )
+            .map_err(|error| {
+                ClapInstrumentError::new(format!("CLAP effect processing failed: {error}"))
+            })?;
+
+        let frame_count = audio.len();
+        for (frame, (left, right)) in audio.iter_mut().zip(
+            self.output_left[..frame_count]
+                .iter()
+                .copied()
+                .zip(self.output_right[..frame_count].iter().copied()),
+        ) {
+            *frame = [left, right];
+        }
+        Ok(())
+    }
+
+    /// Stops processing on the audio thread and returns a handle for control-thread teardown.
+    pub fn stop(self) -> StoppedClapEffectProcessor {
+        StoppedClapEffectProcessor {
+            processor: self.processor.into_stopped(),
+        }
+    }
+
+    pub(crate) fn max_block_frames(&self) -> usize {
+        self.max_block_frames
     }
 }
 
@@ -578,11 +807,55 @@ fn validate_stereo_synth_ports(
     })
 }
 
+fn validate_stereo_effect_ports(
+    instance: &mut PluginInstance<()>,
+) -> Result<(), ClapInstrumentError> {
+    let plugin = instance.plugin_handle();
+    let ports = plugin
+        .get_extension::<PluginAudioPorts>()
+        .ok_or_else(|| ClapInstrumentError::new("CLAP effect does not expose audio ports"))?;
+    let input_count = ports.count(&plugin, true);
+    let output_count = ports.count(&plugin, false);
+    if input_count != 1 || output_count != 1 {
+        return Err(ClapInstrumentError::new(format!(
+            "CLAP effect needs one input and one output bus; found {input_count} inputs and {output_count} outputs"
+        )));
+    }
+    let mut buffer = AudioPortInfoBuffer::new();
+    let input = ports
+        .get(&plugin, 0, true, &mut buffer)
+        .ok_or_else(|| ClapInstrumentError::new("CLAP effect input bus could not be read"))?;
+    if input.channel_count != 2
+        || !input
+            .flags
+            .contains(clack_extensions::audio_ports::AudioPortFlags::IS_MAIN)
+    {
+        return Err(ClapInstrumentError::new(
+            "CLAP effect needs a stereo main input bus",
+        ));
+    }
+    let output = ports
+        .get(&plugin, 0, false, &mut buffer)
+        .ok_or_else(|| ClapInstrumentError::new("CLAP effect output bus could not be read"))?;
+    if output.channel_count != 2
+        || !output
+            .flags
+            .contains(clack_extensions::audio_ports::AudioPortFlags::IS_MAIN)
+    {
+        return Err(ClapInstrumentError::new(
+            "CLAP effect needs a stereo main output bus",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AudioItemStream, AudioRenderGraph, TrackInstrumentProcessor, pcm_stream};
-    use aaadaw_core::{DawAction, MidiNoteData, NoteId, Project, TrackId};
+    use crate::{
+        AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor, pcm_stream,
+    };
+    use aaadaw_core::{DawAction, MidiNoteData, NoteId, Project, TrackFxPlugin, TrackId};
     use clack_extensions::audio_ports::{
         AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPortsImpl,
     };
@@ -598,6 +871,7 @@ mod tests {
         PluginAudioProcessor as ClackPluginAudioProcessor, PluginError, PluginExtensions, Process,
         ProcessStatus,
     };
+    use clack_plugin::process::audio::ChannelPair;
     use clack_plugin::utils::ClapId;
 
     const PLUGIN_ID: &str = "org.aaadaw.test.synth";
@@ -800,6 +1074,114 @@ mod tests {
         .expect("static test plugin entry")
     }
 
+    struct TestEffect;
+    struct TestEffectMainThread;
+    struct TestEffectAudioProcessor;
+
+    impl PluginMainThread<'_, ()> for TestEffectMainThread {}
+
+    impl Plugin for TestEffect {
+        type AudioProcessor<'a> = TestEffectAudioProcessor;
+        type Shared<'a> = ();
+        type MainThread<'a> = TestEffectMainThread;
+
+        fn declare_extensions(
+            builder: &mut PluginExtensions<Self>,
+            _shared: Option<&Self::Shared<'_>>,
+        ) {
+            builder.register::<clack_extensions::audio_ports::PluginAudioPorts>();
+        }
+    }
+
+    impl DefaultPluginFactory for TestEffect {
+        fn get_descriptor() -> PluginDescriptor {
+            PluginDescriptor::new(EFFECT_PLUGIN_ID, "AAADAW Test Effect")
+                .with_features([plugin_features::AUDIO_EFFECT])
+        }
+
+        fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
+            Ok(())
+        }
+
+        fn new_main_thread<'a>(
+            _host: HostMainThreadHandle<'a>,
+            _shared: &'a Self::Shared<'a>,
+        ) -> Result<Self::MainThread<'a>, PluginError> {
+            Ok(TestEffectMainThread)
+        }
+    }
+
+    impl PluginAudioPortsImpl for TestEffectMainThread {
+        fn count(&self, _is_input: bool) -> u32 {
+            1
+        }
+
+        fn get(&self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
+            if index == 0 {
+                writer.set(&AudioPortInfo {
+                    id: ClapId::new(u32::from(!is_input)),
+                    name: if is_input {
+                        b"Stereo In"
+                    } else {
+                        b"Stereo Out"
+                    },
+                    channel_count: 2,
+                    flags: AudioPortFlags::IS_MAIN,
+                    port_type: Some(AudioPortType::STEREO),
+                    in_place_pair: None,
+                });
+            }
+        }
+    }
+
+    impl<'a> ClackPluginAudioProcessor<'a, (), TestEffectMainThread> for TestEffectAudioProcessor {
+        fn activate(
+            _host: HostAudioProcessorHandle<'a>,
+            _main_thread: &TestEffectMainThread,
+            _shared: &'a (),
+            _audio_config: clack_plugin::prelude::PluginAudioConfiguration,
+        ) -> Result<Self, PluginError> {
+            Ok(Self)
+        }
+
+        fn process(
+            &mut self,
+            _process: Process,
+            mut audio: Audio,
+            _events: clack_plugin::process::Events,
+        ) -> Result<ProcessStatus, PluginError> {
+            for mut port in &mut audio {
+                let channels = port
+                    .channels()
+                    .expect("valid stereo effect buffers")
+                    .into_f32()
+                    .expect("host supplies f32 buffers");
+                for channel in channels {
+                    match channel {
+                        ChannelPair::InputOutput(input, output) => {
+                            for (input, output) in input.iter().zip(output) {
+                                *output = input * 0.5;
+                            }
+                        }
+                        ChannelPair::InPlace(buffer) => {
+                            for sample in buffer {
+                                *sample *= 0.5;
+                            }
+                        }
+                        ChannelPair::InputOnly(_) => {}
+                        ChannelPair::OutputOnly(output) => output.fill(0.0),
+                    }
+                }
+            }
+            Ok(ProcessStatus::Continue)
+        }
+    }
+
+    fn test_effect_entry() -> PluginEntry {
+        PluginEntry::load_from_clack::<SinglePluginEntry<TestEffect>>(c"test")
+            .expect("static test effect entry")
+    }
+
     #[test]
     fn plugin_inspection_includes_instruments_and_effects() {
         let instrument = test_plugin_entry::<true, 2>();
@@ -814,6 +1196,139 @@ mod tests {
         assert_eq!(effects.len(), 1);
         assert!(effects[0].is_audio_effect());
         assert!(!effects[0].is_instrument());
+    }
+
+    #[test]
+    fn effect_processor_runs_stereo_audio_and_stops_on_control_thread() {
+        let (owner, processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let mut input = [[0.8, -0.4], [0.2, -0.1]];
+
+        let (stopped, output) = std::thread::spawn(move || {
+            let mut processor = processor;
+            processor
+                .process(&mut input)
+                .expect("effect should process");
+            (processor.stop(), input)
+        })
+        .join()
+        .expect("effect processor thread");
+
+        assert_eq!(output, [[0.4, -0.2], [0.1, -0.05]]);
+        owner.deactivate(stopped);
+    }
+
+    #[test]
+    fn effect_loader_rejects_instruments_and_wrong_buffer_sizes() {
+        let instrument_error =
+            ClapEffectOwner::load_from_entry(test_plugin_entry::<true, 2>(), PLUGIN_ID, 48_000, 16)
+                .err()
+                .expect("an instrument cannot load as an audio effect");
+        assert!(
+            instrument_error
+                .to_string()
+                .contains("not marked as an audio effect")
+        );
+
+        let (owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 1)
+                .expect("test effect should load");
+        let mut input = [[1.0, -1.0]; 2];
+        assert!(
+            processor
+                .process(&mut input)
+                .expect_err("oversized block should fail")
+                .to_string()
+                .contains("maximum is 1")
+        );
+        assert_eq!(input, [[1.0, -1.0]; 2]);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn render_graph_processes_enabled_track_effect_slots_in_chain_order() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Guitar".to_owned(),
+            })
+            .expect("track creation");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![
+                    TrackFxPlugin::new(EFFECT_PLUGIN_ID, "first.clap").unwrap(),
+                    TrackFxPlugin::new("org.example.bypassed", "bypassed.clap")
+                        .unwrap()
+                        .with_enabled(false),
+                    TrackFxPlugin::new(EFFECT_PLUGIN_ID, "last.clap").unwrap(),
+                ],
+            })
+            .expect("FX chain should be valid");
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://guitar".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4,
+            })
+            .expect("audio item should be valid");
+        let item_id = project.audio_items()[0].id();
+        let (mut producer, consumer) = pcm_stream(4).unwrap();
+        assert_eq!(producer.push_samples(&[0.8, -0.4, 0.2, -0.1]), 4);
+        let (first_owner, first_processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
+                .unwrap();
+        let (last_owner, last_processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
+                .unwrap();
+        let mut instruments = Vec::new();
+        let mut effects = vec![
+            TrackFxProcessor::new(track_id, 0, EFFECT_PLUGIN_ID, first_processor),
+            TrackFxProcessor::new(track_id, 2, EFFECT_PLUGIN_ID, last_processor),
+        ];
+        let mut graph = AudioRenderGraph::new_for_audio_items_with_processors(
+            &project,
+            vec![AudioItemStream::new(item_id, consumer)],
+            &mut instruments,
+            &mut effects,
+            4,
+        )
+        .expect("enabled effect processors should match their chain slots");
+        assert!(effects.is_empty());
+        graph.transport_mut().start();
+        let (retired, output) = std::thread::spawn(move || {
+            let mut output = [[0.0; 2]; 4];
+            graph.render_into(&mut output).unwrap();
+            graph.stop_fx_processors();
+            (graph.take_stopped_fx_processors(), output)
+        })
+        .join()
+        .expect("graph processing thread");
+
+        assert_eq!(
+            output,
+            [[0.2, 0.2], [-0.1, -0.1], [0.05, 0.05], [-0.025, -0.025]]
+        );
+        assert_eq!(retired.len(), 2);
+        let mut first_stopped = None;
+        let mut last_stopped = None;
+        for processor in retired {
+            let (stopped_track, chain_index, plugin_id, stopped) = processor.into_parts();
+            assert_eq!(stopped_track, track_id);
+            assert_eq!(plugin_id, EFFECT_PLUGIN_ID);
+            match chain_index {
+                0 => first_stopped = Some(stopped),
+                2 => last_stopped = Some(stopped),
+                _ => panic!("unexpected FX slot {chain_index}"),
+            }
+        }
+        first_owner.deactivate(first_stopped.expect("first effect was retired"));
+        last_owner.deactivate(last_stopped.expect("last effect was retired"));
     }
 
     #[test]

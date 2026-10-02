@@ -66,9 +66,11 @@ impl ProcessData {
                         graph.transport_mut().stop();
                     }
                     let failures = self.graph.stop_instruments();
-                    self.counters
-                        .callback_errors
-                        .fetch_add(failures as u64, Ordering::Relaxed);
+                    let fx_failures = self.graph.stop_fx_processors();
+                    self.counters.callback_errors.fetch_add(
+                        failures.saturating_add(fx_failures) as u64,
+                        Ordering::Relaxed,
+                    );
                     let retired = std::mem::replace(&mut self.graph, graph);
                     if let Err(PushError::Full(retired)) = self.retired_graphs.push(retired) {
                         self.pending_retired_graph = Some(retired);

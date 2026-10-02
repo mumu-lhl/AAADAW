@@ -25,4 +25,4 @@ Engine processing and lifecycle tests, workspace tests, and JACK/PipeWire featur
 
 ## Status
 
-Blocked by the project model ticket.
+Complete. Stereo CLAP effects load and process through preallocated buffers in ordered enabled chain slots; retired processors return to their matching owner. `cargo xtest` passed 184 workspace tests, and `cargo check -p aaadaw-engine --all-features` passed.

@@ -15,9 +15,9 @@ mod stream;
 mod transport;
 
 pub use clap_instrument::{
-    ClapInstrumentDescriptor, ClapInstrumentError, ClapInstrumentOwner, ClapInstrumentProcessor,
-    ClapPluginDescriptor, StoppedClapInstrumentProcessor, inspect_clap_instrument_entry,
-    inspect_clap_plugin_entry,
+    ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
+    ClapInstrumentOwner, ClapInstrumentProcessor, ClapPluginDescriptor, StoppedClapEffectProcessor,
+    StoppedClapInstrumentProcessor, inspect_clap_instrument_entry, inspect_clap_plugin_entry,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
@@ -250,6 +250,23 @@ pub enum AudioGraphBuildError {
         item_id: ItemId,
         start_sample: u64,
     },
+    MissingFxTrack {
+        track_id: u64,
+    },
+    FxChainSlotMismatch {
+        track_id: u64,
+        chain_index: usize,
+    },
+    DuplicateTrackFxProcessor {
+        track_id: u64,
+        chain_index: usize,
+    },
+    FxProcessorBlockCapacity {
+        track_id: u64,
+        chain_index: usize,
+        required: usize,
+        available: usize,
+    },
     MissingInstrumentTrack {
         track_id: u64,
     },
@@ -295,6 +312,32 @@ impl fmt::Display for AudioGraphBuildError {
                 "audio stream for item {} starts at sample {start_sample}, outside its timeline range",
                 item_id.value()
             ),
+            Self::MissingFxTrack { track_id } => {
+                write!(formatter, "CLAP effect targets missing track {track_id}")
+            }
+            Self::FxChainSlotMismatch {
+                track_id,
+                chain_index,
+            } => write!(
+                formatter,
+                "CLAP effect does not match enabled FX slot {chain_index} on track {track_id}"
+            ),
+            Self::DuplicateTrackFxProcessor {
+                track_id,
+                chain_index,
+            } => write!(
+                formatter,
+                "track {track_id} FX slot {chain_index} has multiple prepared processors"
+            ),
+            Self::FxProcessorBlockCapacity {
+                track_id,
+                chain_index,
+                required,
+                available,
+            } => write!(
+                formatter,
+                "CLAP effect in slot {chain_index} on track {track_id} supports {available} frames; playback needs {required}"
+            ),
             Self::MissingInstrumentTrack { track_id } => {
                 write!(
                     formatter,
@@ -336,6 +379,10 @@ impl std::error::Error for AudioGraphBuildError {
             | Self::AudioItemStreamCountMismatch { .. }
             | Self::AudioItemStreamOrderMismatch { .. }
             | Self::AudioItemStreamStartOutOfRange { .. }
+            | Self::MissingFxTrack { .. }
+            | Self::FxChainSlotMismatch { .. }
+            | Self::DuplicateTrackFxProcessor { .. }
+            | Self::FxProcessorBlockCapacity { .. }
             | Self::MissingInstrumentTrack { .. }
             | Self::DuplicateTrackInstrument { .. }
             | Self::InstrumentBlockCapacity { .. }
@@ -357,6 +404,11 @@ pub enum AudioGraphError {
     },
     InstrumentProcess {
         track_id: TrackId,
+        error: ClapInstrumentError,
+    },
+    FxProcess {
+        track_id: TrackId,
+        chain_index: usize,
         error: ClapInstrumentError,
     },
     AudioItemSeekRequiresRefill {
@@ -385,6 +437,15 @@ impl fmt::Display for AudioGraphError {
                 "CLAP instrument on track {} failed to process MIDI/audio: {error}",
                 track_id.value()
             ),
+            Self::FxProcess {
+                track_id,
+                chain_index,
+                error,
+            } => write!(
+                formatter,
+                "CLAP effect in slot {chain_index} on track {} failed: {error}",
+                track_id.value()
+            ),
             Self::AudioItemSeekRequiresRefill { item_id } => write!(
                 formatter,
                 "seeking into audio item {} requires refilling its PCM stream",
@@ -402,6 +463,7 @@ impl std::error::Error for AudioGraphError {
         match self {
             Self::MidiSchedule(error) => Some(error),
             Self::InstrumentProcess { error, .. } => Some(error),
+            Self::FxProcess { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -428,6 +490,31 @@ pub struct AudioItemStream {
 pub struct TrackInstrumentProcessor {
     track_id: TrackId,
     processor: ClapInstrumentProcessor,
+}
+
+/// A prepared audio effect assigned to one ordered slot in a track's FX chain.
+pub struct TrackFxProcessor {
+    track_id: TrackId,
+    chain_index: usize,
+    plugin_id: String,
+    processor: ClapEffectProcessor,
+}
+
+impl TrackFxProcessor {
+    /// Associates an activated CLAP audio effect with a track chain slot.
+    pub fn new(
+        track_id: TrackId,
+        chain_index: usize,
+        plugin_id: impl Into<String>,
+        processor: ClapEffectProcessor,
+    ) -> Self {
+        Self {
+            track_id,
+            chain_index,
+            plugin_id: plugin_id.into(),
+            processor,
+        }
+    }
 }
 
 impl TrackInstrumentProcessor {
@@ -468,6 +555,36 @@ impl StoppedTrackInstrument {
     }
 }
 
+/// A track effect stopped on the audio thread and ready for control-thread deactivation.
+pub struct StoppedTrackFxProcessor {
+    track_id: TrackId,
+    chain_index: usize,
+    plugin_id: String,
+    processor: StoppedClapEffectProcessor,
+}
+
+impl StoppedTrackFxProcessor {
+    /// Returns the target track and chain slot.
+    pub fn location(&self) -> (TrackId, usize) {
+        (self.track_id, self.chain_index)
+    }
+
+    /// Returns the effect plugin ID.
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
+    /// Returns the identity and stopped processor for its matching owner.
+    pub fn into_parts(self) -> (TrackId, usize, String, StoppedClapEffectProcessor) {
+        (
+            self.track_id,
+            self.chain_index,
+            self.plugin_id,
+            self.processor,
+        )
+    }
+}
+
 struct InstrumentRoute {
     track_id: TrackId,
     track_index: usize,
@@ -475,6 +592,15 @@ struct InstrumentRoute {
     stopped_processor: Option<StoppedClapInstrumentProcessor>,
     midi_events: Vec<ScheduledMidiEvent>,
     audio: Vec<[f32; 2]>,
+}
+
+struct FxRoute {
+    track_id: TrackId,
+    track_index: usize,
+    chain_index: usize,
+    plugin_id: String,
+    processor: Option<ClapEffectProcessor>,
+    stopped_processor: Option<StoppedClapEffectProcessor>,
 }
 
 struct RenderGraphSources {
@@ -520,6 +646,8 @@ pub struct AudioRenderGraph {
     midi_plan: MidiEventPlan,
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
     instruments: Vec<InstrumentRoute>,
+    effects: Vec<FxRoute>,
+    track_effect_buffers: Vec<Option<Vec<[f32; 2]>>>,
     sample_rate: u32,
     transport: Transport,
     streams: Vec<PcmStreamConsumer>,
@@ -551,7 +679,14 @@ impl AudioRenderGraph {
             streams,
         };
         let mut instruments = Vec::new();
-        Self::build(project, sources, &mut instruments, max_block_frames)
+        let mut effects = Vec::new();
+        Self::build(
+            project,
+            sources,
+            &mut instruments,
+            &mut effects,
+            max_block_frames,
+        )
     }
 
     /// Compiles one PCM consumer per AudioItem, preserving and validating project item order.
@@ -578,6 +713,27 @@ impl AudioRenderGraph {
         project: &aaadaw_core::Project,
         item_streams: Vec<AudioItemStream>,
         instruments: &mut Vec<TrackInstrumentProcessor>,
+        max_block_frames: usize,
+    ) -> Result<Self, AudioGraphBuildError> {
+        let mut effects = Vec::new();
+        Self::new_for_audio_items_with_processors(
+            project,
+            item_streams,
+            instruments,
+            &mut effects,
+            max_block_frames,
+        )
+    }
+
+    /// Compiles AudioItem streams, track instruments, and ordered audio effects into one graph.
+    ///
+    /// `instruments` and `effects` remain intact on build failure so their matching owners can
+    /// cleanly stop and deactivate the processors.
+    pub fn new_for_audio_items_with_processors(
+        project: &aaadaw_core::Project,
+        item_streams: Vec<AudioItemStream>,
+        instruments: &mut Vec<TrackInstrumentProcessor>,
+        effects: &mut Vec<TrackFxProcessor>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
         if item_streams.len() != project.audio_items().len() {
@@ -624,13 +780,14 @@ impl AudioRenderGraph {
             sources.item_ids.push(Some(item.id()));
         }
 
-        Self::build(project, sources, instruments, max_block_frames)
+        Self::build(project, sources, instruments, effects, max_block_frames)
     }
 
     fn build(
         project: &aaadaw_core::Project,
         sources: RenderGraphSources,
         instrument_processors: &mut Vec<TrackInstrumentProcessor>,
+        effect_processors: &mut Vec<TrackFxProcessor>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
         let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
@@ -678,6 +835,76 @@ impl AudioRenderGraph {
                 stopped_processor: None,
             });
         }
+        let mut effect_routes = Vec::with_capacity(effect_processors.len());
+        let mut seen_effect_slots: Vec<Vec<bool>> = project
+            .tracks()
+            .iter()
+            .map(|track| vec![false; track.fx_chain().len()])
+            .collect();
+        for effect in effect_processors.iter() {
+            let track_index = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == effect.track_id)
+                .ok_or(AudioGraphBuildError::MissingFxTrack {
+                    track_id: effect.track_id.value(),
+                })?;
+            if !project.tracks()[track_index]
+                .fx_chain()
+                .get(effect.chain_index)
+                .is_some_and(|slot| slot.is_enabled() && slot.plugin_id() == effect.plugin_id)
+            {
+                return Err(AudioGraphBuildError::FxChainSlotMismatch {
+                    track_id: effect.track_id.value(),
+                    chain_index: effect.chain_index,
+                });
+            }
+            if std::mem::replace(
+                &mut seen_effect_slots[track_index][effect.chain_index],
+                true,
+            ) {
+                return Err(AudioGraphBuildError::DuplicateTrackFxProcessor {
+                    track_id: effect.track_id.value(),
+                    chain_index: effect.chain_index,
+                });
+            }
+            let available_block_frames = effect.processor.max_block_frames();
+            if available_block_frames < max_block_frames {
+                return Err(AudioGraphBuildError::FxProcessorBlockCapacity {
+                    track_id: effect.track_id.value(),
+                    chain_index: effect.chain_index,
+                    required: max_block_frames,
+                    available: available_block_frames,
+                });
+            }
+            effect_routes.push(FxRoute {
+                track_id: effect.track_id,
+                track_index,
+                chain_index: effect.chain_index,
+                plugin_id: effect.plugin_id.clone(),
+                processor: None,
+                stopped_processor: None,
+            });
+        }
+        effect_routes.sort_by_key(|route| (route.track_index, route.chain_index));
+        effect_processors.sort_by_key(|effect| {
+            (
+                project
+                    .tracks()
+                    .iter()
+                    .position(|track| track.id() == effect.track_id)
+                    .expect("validated effect track remains present"),
+                effect.chain_index,
+            )
+        });
+        let mut track_has_effects = vec![false; project.tracks().len()];
+        for route in &effect_routes {
+            track_has_effects[route.track_index] = true;
+        }
+        let track_effect_buffers = track_has_effects
+            .iter()
+            .map(|has_effect| has_effect.then(|| vec![[0.0; 2]; max_block_frames]))
+            .collect();
         let scratch = (0..sources.streams.len())
             .map(|_| vec![0.0; max_block_frames])
             .collect();
@@ -692,11 +919,16 @@ impl AudioRenderGraph {
         {
             route.processor = Some(instrument.processor);
         }
+        for (route, effect) in effect_routes.iter_mut().zip(effect_processors.drain(..)) {
+            route.processor = Some(effect.processor);
+        }
         Ok(Self {
             mixer,
             midi_plan,
             midi_scratch,
             instruments: instrument_routes,
+            effects: effect_routes,
+            track_effect_buffers,
             sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
             streams: sources.streams,
@@ -758,6 +990,20 @@ impl AudioRenderGraph {
         failures
     }
 
+    /// Stops track FX processors on the audio thread before graph retirement.
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    pub(crate) fn stop_fx_processors(&mut self) -> usize {
+        let mut failures = 0;
+        for route in &mut self.effects {
+            if let Some(processor) = route.processor.take() {
+                route.stopped_processor = Some(processor.stop());
+            } else {
+                failures += 1;
+            }
+        }
+        failures
+    }
+
     /// Moves stopped processors out after the retired graph reaches a control thread.
     pub fn take_stopped_instruments(&mut self) -> Vec<StoppedTrackInstrument> {
         self.instruments
@@ -768,6 +1014,24 @@ impl AudioRenderGraph {
                     .take()
                     .map(|processor| StoppedTrackInstrument {
                         track_id: route.track_id,
+                        processor,
+                    })
+            })
+            .collect()
+    }
+
+    /// Moves stopped track FX processors out after the retired graph reaches a control thread.
+    pub fn take_stopped_fx_processors(&mut self) -> Vec<StoppedTrackFxProcessor> {
+        self.effects
+            .iter_mut()
+            .filter_map(|route| {
+                route
+                    .stopped_processor
+                    .take()
+                    .map(|processor| StoppedTrackFxProcessor {
+                        track_id: route.track_id,
+                        chain_index: route.chain_index,
+                        plugin_id: route.plugin_id.clone(),
                         processor,
                     })
             })
@@ -878,6 +1142,9 @@ impl AudioRenderGraph {
         }
 
         output.fill([0.0, 0.0]);
+        for buffer in self.track_effect_buffers.iter_mut().flatten() {
+            buffer[..output.len()].fill([0.0, 0.0]);
+        }
         let block_frame_count = u64::try_from(block.frame_count)
             .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
         let block_end_sample = block
@@ -903,8 +1170,18 @@ impl AudioRenderGraph {
                 underrun_samples =
                     underrun_samples.saturating_add(self.streams[stream_index].read_into(input));
             }
-            self.mixer
-                .mix_track_unchecked(self.stream_track_indices[stream_index], input, output);
+            let track_index = self.stream_track_indices[stream_index];
+            if let Some(track_buffer) = self.track_effect_buffers[track_index].as_mut() {
+                for (frame, sample) in track_buffer[..output.len()]
+                    .iter_mut()
+                    .zip(input.iter().copied())
+                {
+                    frame[0] += sample;
+                    frame[1] += sample;
+                }
+            } else {
+                self.mixer.mix_track_unchecked(track_index, input, output);
+            }
         }
         let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
         for route in &mut self.instruments {
@@ -929,11 +1206,45 @@ impl AudioRenderGraph {
                     track_id: route.track_id,
                     error,
                 })?;
-            self.mixer.mix_stereo_track_unchecked(
-                route.track_index,
-                &route.audio[..output.len()],
-                output,
-            );
+            if let Some(track_buffer) = self.track_effect_buffers[route.track_index].as_mut() {
+                for (frame, sample) in track_buffer[..output.len()]
+                    .iter_mut()
+                    .zip(route.audio[..output.len()].iter())
+                {
+                    frame[0] += sample[0];
+                    frame[1] += sample[1];
+                }
+            } else {
+                self.mixer.mix_stereo_track_unchecked(
+                    route.track_index,
+                    &route.audio[..output.len()],
+                    output,
+                );
+            }
+        }
+        for route in &mut self.effects {
+            let track_buffer = self.track_effect_buffers[route.track_index]
+                .as_mut()
+                .expect("active effects have a preallocated track buffer");
+            route
+                .processor
+                .as_mut()
+                .expect("active graphs retain their effect processors")
+                .process(&mut track_buffer[..output.len()])
+                .map_err(|error| AudioGraphError::FxProcess {
+                    track_id: route.track_id,
+                    chain_index: route.chain_index,
+                    error,
+                })?;
+        }
+        for (track_index, track_buffer) in self.track_effect_buffers.iter().enumerate() {
+            if let Some(track_buffer) = track_buffer {
+                self.mixer.mix_stereo_track_unchecked(
+                    track_index,
+                    &track_buffer[..output.len()],
+                    output,
+                );
+            }
         }
         Ok(AudioRenderStats {
             block,
