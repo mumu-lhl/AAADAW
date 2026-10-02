@@ -33,4 +33,11 @@ Inspect the Arrange toolbar at 1280×800 and 900×620 in private Xvfb. The selec
 
 ## Status
 
-In progress.
+Complete.
+
+## Completion notes
+
+- Verified all grid intervals and drag/selection snap behavior, including Shift bypass, with `cargo xtest -p aaadaw` (166 tests passed).
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `cargo build -p aaadaw` passed.
+- Inspected the Snap and Grid controls at 1280×800 and 900×620 in private Xvfb; the selector and full dotted/triplet labels remain readable at both sizes.

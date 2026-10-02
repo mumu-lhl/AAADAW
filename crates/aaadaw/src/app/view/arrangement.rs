@@ -5,8 +5,8 @@ use crate::timeline::{
 };
 use aaadaw_core::Track;
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, row, scrollable, stack, text,
-    text_input,
+    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, stack,
+    text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 
@@ -24,23 +24,30 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 commands::is_enabled(app, CommandId::AddMidiItem)
                     .then_some(Message::ExecuteCommand(CommandId::AddMidiItem)),
             ),
-        button(if !app.timeline.has_sixteenth_grid() {
+        button(if !app.timeline.has_snap_grid() {
             "Snap unavailable"
-        } else if app.timeline.snap_to_sixteenth {
-            "Snap 1/16"
+        } else if app.timeline.snap_enabled {
+            "Snap On"
         } else {
             "Snap Off"
         })
-        .style(if app.timeline.snap_to_sixteenth {
+        .style(if app.timeline.snap_enabled {
             iced::widget::button::warning
         } else {
             iced::widget::button::secondary
         })
         .on_press_maybe(
             app.timeline
-                .has_sixteenth_grid()
-                .then_some(Message::Timeline(TimelineEvent::ToggleSnapToSixteenth,))
+                .has_snap_grid()
+                .then_some(Message::Timeline(TimelineEvent::ToggleSnap))
         ),
+        text("Grid").size(12),
+        pick_list(
+            &timeline::SnapGrid::ALL[..],
+            Some(app.timeline.snap_grid),
+            |grid| Message::Timeline(TimelineEvent::SetSnapGrid(grid)),
+        )
+        .width(Length::Fixed(120.0)),
         text("Zoom").size(12),
         button("−")
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {

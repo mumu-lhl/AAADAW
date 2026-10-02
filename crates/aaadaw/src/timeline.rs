@@ -11,6 +11,7 @@ use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 
 pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 64.0;
@@ -26,6 +27,95 @@ const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
 pub(crate) enum ArrangementPane {
     TrackControls,
     Timeline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapGrid {
+    Whole,
+    Half,
+    Quarter,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    DottedHalf,
+    DottedQuarter,
+    DottedEighth,
+    DottedSixteenth,
+    HalfTriplet,
+    QuarterTriplet,
+    EighthTriplet,
+    SixteenthTriplet,
+    ThirtySecondTriplet,
+}
+
+impl SnapGrid {
+    pub(crate) const ALL: [Self; 15] = [
+        Self::Whole,
+        Self::Half,
+        Self::Quarter,
+        Self::Eighth,
+        Self::Sixteenth,
+        Self::ThirtySecond,
+        Self::DottedHalf,
+        Self::DottedQuarter,
+        Self::DottedEighth,
+        Self::DottedSixteenth,
+        Self::HalfTriplet,
+        Self::QuarterTriplet,
+        Self::EighthTriplet,
+        Self::SixteenthTriplet,
+        Self::ThirtySecondTriplet,
+    ];
+
+    fn ratio(self) -> (u64, u64) {
+        match self {
+            Self::Whole => (4, 1),
+            Self::Half => (2, 1),
+            Self::Quarter => (1, 1),
+            Self::Eighth => (1, 2),
+            Self::Sixteenth => (1, 4),
+            Self::ThirtySecond => (1, 8),
+            Self::DottedHalf => (3, 1),
+            Self::DottedQuarter => (3, 2),
+            Self::DottedEighth => (3, 4),
+            Self::DottedSixteenth => (3, 8),
+            Self::HalfTriplet => (4, 3),
+            Self::QuarterTriplet => (2, 3),
+            Self::EighthTriplet => (1, 3),
+            Self::SixteenthTriplet => (1, 6),
+            Self::ThirtySecondTriplet => (1, 12),
+        }
+    }
+
+    fn tick_interval(self, ppq: u32) -> Option<u64> {
+        let (numerator, denominator) = self.ratio();
+        let ticks = u64::from(ppq).checked_mul(numerator)?;
+        (ticks % denominator == 0)
+            .then_some(ticks / denominator)
+            .filter(|ticks| *ticks > 0)
+    }
+}
+
+impl fmt::Display for SnapGrid {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Whole => "1/1",
+            Self::Half => "1/2",
+            Self::Quarter => "1/4",
+            Self::Eighth => "1/8",
+            Self::Sixteenth => "1/16",
+            Self::ThirtySecond => "1/32",
+            Self::DottedHalf => "1/2 dotted",
+            Self::DottedQuarter => "1/4 dotted",
+            Self::DottedEighth => "1/8 dotted",
+            Self::DottedSixteenth => "1/16 dotted",
+            Self::HalfTriplet => "1/2 triplet",
+            Self::QuarterTriplet => "1/4 triplet",
+            Self::EighthTriplet => "1/8 triplet",
+            Self::SixteenthTriplet => "1/16 triplet",
+            Self::ThirtySecondTriplet => "1/32 triplet",
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +142,8 @@ pub(crate) enum TimelineEvent {
         end_tick: u64,
     },
     ClearTimeSelection,
-    ToggleSnapToSixteenth,
+    ToggleSnap,
+    SetSnapGrid(SnapGrid),
     BeginItemDrag {
         item_id: ItemId,
         pointer_delta_ticks: i128,
@@ -128,12 +219,18 @@ struct TimelineCache {
     items: Arc<[TimelineItem]>,
     item_indices: HashMap<ItemId, usize>,
     track_ids: Arc<[TrackId]>,
-    sixteenth_ticks: Option<u64>,
+    ppq: u32,
+    snap_grid_ticks: Option<u64>,
     waveform_bins: Arc<[WaveformBinGeometry]>,
 }
 
 impl TimelineCache {
-    fn rebuild(&mut self, project: &Project, waveforms: &HashMap<String, Arc<AudioWaveform>>) {
+    fn rebuild(
+        &mut self,
+        project: &Project,
+        waveforms: &HashMap<String, Arc<AudioWaveform>>,
+        snap_grid: SnapGrid,
+    ) {
         let track_ids = project
             .tracks()
             .iter()
@@ -200,9 +297,8 @@ impl TimelineCache {
             .collect();
         self.items = items.into();
         self.track_ids = track_ids.into();
-        let sixteenth_numerator = u64::from(project.settings().ppq()).checked_mul(4);
-        self.sixteenth_ticks = sixteenth_numerator
-            .and_then(|numerator| (numerator % 16 == 0).then_some(numerator / 16));
+        self.ppq = project.settings().ppq();
+        self.snap_grid_ticks = snap_grid.tick_interval(self.ppq);
         self.rebuild_waveform_geometry(project, waveforms);
     }
 
@@ -310,7 +406,8 @@ pub(crate) struct TimelineState {
     pub(crate) context_item: Option<ItemId>,
     pub(crate) context_item_position: Option<(f32, f32)>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
-    pub(crate) snap_to_sixteenth: bool,
+    pub(crate) snap_enabled: bool,
+    pub(crate) snap_grid: SnapGrid,
     pub(crate) edit_cursor_tick: u64,
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
@@ -341,6 +438,9 @@ pub(crate) struct SelectedItemGeometry {
 
 impl Default for TimelineState {
     fn default() -> Self {
+        let project = Project::new();
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, &HashMap::new(), SnapGrid::Sixteenth);
         let (mut panes, track_pane) = pane_grid::State::new(ArrangementPane::TrackControls);
         let (_timeline_pane, split) = panes
             .split(Axis::Vertical, track_pane, ArrangementPane::Timeline)
@@ -359,11 +459,12 @@ impl Default for TimelineState {
             context_item: None,
             context_item_position: None,
             audio_waveforms: HashMap::new(),
-            snap_to_sixteenth: true,
+            snap_enabled: true,
+            snap_grid: SnapGrid::Sixteenth,
             edit_cursor_tick: 0,
             origin_tick: 0,
             pixels_per_tick: 0.065,
-            cache: TimelineCache::default(),
+            cache,
             pan_fractional_tick: 0.0,
             selection_anchor: None,
             drag_preview: None,
@@ -373,9 +474,10 @@ impl Default for TimelineState {
 
 impl TimelineState {
     pub(crate) fn rebuild(&mut self, project: &Project) {
-        self.cache.rebuild(project, &self.audio_waveforms);
-        if self.cache.sixteenth_ticks.is_none() {
-            self.snap_to_sixteenth = false;
+        self.cache
+            .rebuild(project, &self.audio_waveforms, self.snap_grid);
+        if self.cache.snap_grid_ticks.is_none() {
+            self.snap_enabled = false;
         }
         if self
             .selected_track
@@ -473,9 +575,16 @@ impl TimelineState {
                 end_tick,
             } => self.time_selection = TimeSelection::normalized(start_tick, end_tick),
             TimelineEvent::ClearTimeSelection => self.time_selection = None,
-            TimelineEvent::ToggleSnapToSixteenth => {
-                if self.cache.sixteenth_ticks.is_some() {
-                    self.snap_to_sixteenth = !self.snap_to_sixteenth;
+            TimelineEvent::ToggleSnap => {
+                if self.cache.snap_grid_ticks.is_some() {
+                    self.snap_enabled = !self.snap_enabled;
+                }
+            }
+            TimelineEvent::SetSnapGrid(grid) => {
+                self.snap_grid = grid;
+                self.cache.snap_grid_ticks = grid.tick_interval(self.cache.ppq);
+                if self.cache.snap_grid_ticks.is_none() {
+                    self.snap_enabled = false;
                 }
             }
             TimelineEvent::BeginItemDrag {
@@ -607,8 +716,8 @@ impl TimelineState {
         };
         let anchor = &self.cache.items[anchor_index];
         let target_start = i128::from(anchor.start_tick) + pointer_delta_ticks;
-        let snapped_delta = if self.snap_to_sixteenth && !ignore_snap {
-            self.cache.sixteenth_ticks.map(|grid| {
+        let snapped_delta = if self.snap_enabled && !ignore_snap {
+            self.cache.snap_grid_ticks.map(|grid| {
                 let grid = i128::from(grid);
                 if target_start >= 0 {
                     let snapped_start = ((target_start + grid / 2) / grid) * grid;
@@ -650,8 +759,8 @@ impl TimelineState {
         self.drag_preview
     }
 
-    pub(crate) fn has_sixteenth_grid(&self) -> bool {
-        self.cache.sixteenth_ticks.is_some()
+    pub(crate) fn has_snap_grid(&self) -> bool {
+        self.cache.snap_grid_ticks.is_some()
     }
 
     pub(crate) fn selected_item_geometries(&self) -> Vec<SelectedItemGeometry> {
@@ -690,7 +799,7 @@ impl TimelineState {
             playhead_tick,
             selected_items: self.selected_item_geometries(),
             time_selection: self.time_selection,
-            snap_to_sixteenth: self.snap_to_sixteenth,
+            snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
         }
@@ -719,7 +828,7 @@ struct TimelineProgram<'a> {
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
     time_selection: Option<TimeSelection>,
-    snap_to_sixteenth: bool,
+    snap_enabled: bool,
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
 }
@@ -937,8 +1046,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         state.pending_time_selection_drag = Some(drag);
                         let active_tick = snap_tick_to_grid(
                             tick_at_x(self.origin_tick, self.pixels_per_tick, local_x),
-                            self.cache.sixteenth_ticks,
-                            self.snap_to_sixteenth,
+                            self.cache.snap_grid_ticks,
+                            self.snap_enabled,
                             state.modifiers.shift(),
                         );
                         let (start_tick, end_tick) = drag.range_at(active_tick);
@@ -1002,8 +1111,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         anchor_tick: tick,
                         fixed_tick: snap_tick_to_grid(
                             tick,
-                            self.cache.sixteenth_ticks,
-                            self.snap_to_sixteenth,
+                            self.cache.snap_grid_ticks,
+                            self.snap_enabled,
                             state.modifiers.shift(),
                         ),
                         pointer_start_x: position.x,
@@ -1410,8 +1519,9 @@ fn media_label(media_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ItemKind, PendingTimeSelectionDrag, TimeSelection, TimeSelectionDragMode, TimelineCache,
-        TimelineEvent, TimelineState, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+        ItemKind, PendingTimeSelectionDrag, SnapGrid, TimeSelection, TimeSelectionDragMode,
+        TimelineCache, TimelineEvent, TimelineState, snap_tick_to_grid, tick_at_x,
+        time_selection_edge_at_tick,
     };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TimeSignature};
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
@@ -1489,7 +1599,11 @@ mod tests {
             .unwrap();
 
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, &std::collections::HashMap::new());
+        cache.rebuild(
+            &project,
+            &std::collections::HashMap::new(),
+            SnapGrid::Sixteenth,
+        );
         assert_eq!(cache.items.len(), 2);
         assert_eq!(cache.items[0].track_index, 0);
         assert_eq!(cache.items[0].start_tick, 960);
@@ -1539,7 +1653,7 @@ mod tests {
         let waveforms = HashMap::from([("asset://waveform".to_owned(), waveform)]);
 
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, &waveforms);
+        cache.rebuild(&project, &waveforms, SnapGrid::Sixteenth);
 
         assert_eq!(cache.waveform_bins.len(), 2);
         let waveform = &cache.waveform_bins;
@@ -1617,6 +1731,61 @@ mod tests {
     }
 
     #[test]
+    fn snap_grids_use_note_dotted_and_triplet_tick_lengths() {
+        let intervals = [
+            (SnapGrid::Whole, 3_840),
+            (SnapGrid::Half, 1_920),
+            (SnapGrid::Quarter, 960),
+            (SnapGrid::Eighth, 480),
+            (SnapGrid::Sixteenth, 240),
+            (SnapGrid::ThirtySecond, 120),
+            (SnapGrid::DottedHalf, 2_880),
+            (SnapGrid::DottedQuarter, 1_440),
+            (SnapGrid::DottedEighth, 720),
+            (SnapGrid::DottedSixteenth, 360),
+            (SnapGrid::HalfTriplet, 1_280),
+            (SnapGrid::QuarterTriplet, 640),
+            (SnapGrid::EighthTriplet, 320),
+            (SnapGrid::SixteenthTriplet, 160),
+            (SnapGrid::ThirtySecondTriplet, 80),
+        ];
+        for (grid, expected_ticks) in intervals {
+            assert_eq!(grid.tick_interval(960), Some(expected_ticks), "{grid}");
+        }
+        assert_eq!(SnapGrid::Sixteenth.tick_interval(961), None);
+        assert_eq!(SnapGrid::Quarter.tick_interval(961), Some(961));
+    }
+
+    #[test]
+    fn default_snap_grid_is_available_in_a_new_empty_project() {
+        let timeline = TimelineState::default();
+        assert_eq!(timeline.snap_grid, SnapGrid::Sixteenth);
+        assert!(timeline.has_snap_grid());
+        assert!(timeline.snap_enabled);
+    }
+
+    #[test]
+    fn selected_grid_survives_meter_changes_and_does_not_toggle_snap() {
+        let (mut project, _, _) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::QuarterTriplet));
+        assert!(timeline.snap_enabled);
+        assert_eq!(timeline.cache.snap_grid_ticks, Some(640));
+
+        project
+            .apply(DawAction::SetTimeSignature {
+                start_tick: 3_840,
+                signature: TimeSignature::new(7, 8).unwrap(),
+            })
+            .unwrap();
+        timeline.rebuild(&project);
+        assert_eq!(timeline.snap_grid, SnapGrid::QuarterTriplet);
+        assert_eq!(timeline.cache.snap_grid_ticks, Some(640));
+        assert!(timeline.snap_enabled);
+    }
+
+    #[test]
     fn item_selection_supports_additive_and_shift_range_selection() {
         let (project, _, items) = project_with_items();
         let mut timeline = TimelineState::default();
@@ -1690,30 +1859,30 @@ mod tests {
     }
 
     #[test]
-    fn time_selection_snaps_to_sixteenths_and_shift_bypasses_snap() {
+    fn time_selection_snaps_to_selected_grid_and_shift_bypasses_snap() {
         let (project, _, _) = project_with_items();
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
 
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.sixteenth_ticks, true, false),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false),
             480
         );
         assert_eq!(
-            snap_tick_to_grid(359, timeline.cache.sixteenth_ticks, true, false),
+            snap_tick_to_grid(359, timeline.cache.snap_grid_ticks, true, false),
             240
         );
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.sixteenth_ticks, true, true),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, true),
             361
         );
 
-        timeline.handle(TimelineEvent::ToggleSnapToSixteenth);
+        timeline.handle(TimelineEvent::ToggleSnap);
         assert_eq!(
             snap_tick_to_grid(
                 361,
-                timeline.cache.sixteenth_ticks,
-                timeline.snap_to_sixteenth,
+                timeline.cache.snap_grid_ticks,
+                timeline.snap_enabled,
                 false
             ),
             361
@@ -1749,7 +1918,7 @@ mod tests {
     }
 
     #[test]
-    fn item_drag_preview_snaps_to_sixteenths_and_translates_selected_tracks() {
+    fn item_drag_preview_uses_the_selected_grid_and_translates_selected_tracks() {
         let (project, _, items) = project_with_items();
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
@@ -1763,6 +1932,7 @@ mod tests {
             additive: true,
             range: false,
         });
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Eighth));
 
         timeline.handle(TimelineEvent::BeginItemDrag {
             item_id: items[1],
@@ -1772,7 +1942,7 @@ mod tests {
             ignore_snap: false,
         });
         let preview = timeline.drag_preview().unwrap();
-        assert_eq!(preview.delta_ticks, 200);
+        assert_eq!(preview.delta_ticks, -40);
         assert_eq!(preview.track_delta, 1);
         assert_eq!(preview.target_track_index, Some(1));
         assert!(preview.valid);
@@ -1792,7 +1962,7 @@ mod tests {
         let (project, _, items) = project_with_items();
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
-        timeline.handle(TimelineEvent::ToggleSnapToSixteenth);
+        timeline.handle(TimelineEvent::ToggleSnap);
         timeline.handle(TimelineEvent::BeginItemDrag {
             item_id: items[0],
             pointer_delta_ticks: 101,
@@ -1806,9 +1976,14 @@ mod tests {
         let project = Project::with_settings(settings);
         let mut unavailable = TimelineState::default();
         unavailable.rebuild(&project);
-        assert!(!unavailable.snap_to_sixteenth);
-        unavailable.handle(TimelineEvent::ToggleSnapToSixteenth);
-        assert!(!unavailable.snap_to_sixteenth);
+        assert!(!unavailable.snap_enabled);
+        unavailable.handle(TimelineEvent::ToggleSnap);
+        assert!(!unavailable.snap_enabled);
+        unavailable.handle(TimelineEvent::SetSnapGrid(SnapGrid::Quarter));
+        assert!(unavailable.has_snap_grid());
+        assert!(!unavailable.snap_enabled);
+        unavailable.handle(TimelineEvent::ToggleSnap);
+        assert!(unavailable.snap_enabled);
     }
 
     #[test]
