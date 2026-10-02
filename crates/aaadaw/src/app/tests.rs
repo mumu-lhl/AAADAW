@@ -21,6 +21,19 @@ fn default_workspace_is_arrangement() {
 }
 
 #[test]
+fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let first_track_id = app.project.tracks()[0].id();
+    assert_eq!(app.timeline.selected_track, Some(first_track_id));
+
+    app.timeline.selected_track = None;
+    let _ = app.update(Message::AddTrack);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.timeline.selected_track, None);
+}
+
+#[test]
 fn app_entrypoint_has_iced_result_signature() {
     let run: fn() -> iced::Result = crate::app::run;
     let _ = run;

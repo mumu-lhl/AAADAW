@@ -1099,6 +1099,8 @@ impl App {
 
     fn add_track(&mut self) {
         let index = self.project.tracks().len();
+        let was_empty = index == 0;
+        let previous_revision = self.revision;
         self.apply_action(
             DawAction::CreateTrack {
                 index,
@@ -1106,6 +1108,9 @@ impl App {
             },
             "Track created",
         );
+        if was_empty && self.revision != previous_revision {
+            self.timeline.selected_track = self.project.tracks().first().map(|track| track.id());
+        }
     }
 
     fn apply_edit<E: std::fmt::Display>(&mut self, action: Result<DawAction, E>, success: &str) {
