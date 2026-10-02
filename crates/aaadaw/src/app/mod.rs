@@ -49,6 +49,7 @@ struct App {
     action_query: String,
     shortcut_bindings: Arc<std::sync::RwLock<commands::ShortcutBindings>>,
     shortcut_binding_edits: commands::ShortcutBindings,
+    shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
     project_path_query: String,
     project_path: Option<PathBuf>,
@@ -59,6 +60,7 @@ struct App {
     settings_window_id: Option<iced::window::Id>,
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
+    settings_category: String,
     timeline: TimelineState,
     path_picker_busy: bool,
     audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,
@@ -289,6 +291,8 @@ impl App {
                 | Message::WindowClosed(_)
                 | Message::StartShortcutCapture(_)
                 | Message::ClearShortcutBinding(_)
+                | Message::RestoreShortcutDefault(_)
+                | Message::SelectSettingsCategory(_)
                 | Message::CancelShortcutCapture
                 | Message::ShortcutCaptureKey { .. }
                 | Message::SaveShortcutBindings
@@ -477,6 +481,13 @@ impl App {
                 self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();
             }
             Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
+            Message::RestoreShortcutDefault(action_id) => self.restore_shortcut_default(action_id),
+            Message::SelectSettingsCategory(category) => {
+                self.settings_category = category;
+                if self.shortcut_capture_id.take().is_some() {
+                    self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
+                }
+            }
             Message::CancelShortcutCapture => {
                 self.shortcut_capture_id = None;
                 self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
@@ -911,12 +922,35 @@ impl App {
         match commands::validate_bindings(&candidate) {
             Ok(bindings) => {
                 self.shortcut_binding_edits = bindings;
+                self.shortcut_defaults_restored.remove(&action_id);
                 self.shortcut_capture_id = None;
                 self.shortcut_editor_feedback =
                     "Shortcut cleared. Save to apply this change.".to_owned();
             }
             Err(error) => {
                 self.shortcut_editor_feedback = format!("Shortcut could not be cleared: {error}");
+            }
+        }
+    }
+
+    fn restore_shortcut_default(&mut self, action_id: String) {
+        let mut candidate = self.shortcut_binding_edits.clone();
+        candidate.remove(&action_id);
+        match commands::validate_bindings(&candidate) {
+            Ok(bindings) => {
+                self.shortcut_binding_edits = bindings;
+                self.shortcut_defaults_restored.insert(action_id.clone());
+                self.shortcut_capture_id = None;
+                self.shortcut_editor_feedback = format!(
+                    "{} restored to its default. Save to apply this change.",
+                    commands::label_for_id(&action_id).unwrap_or(&action_id)
+                );
+            }
+            Err(error) => {
+                self.shortcut_editor_feedback = format!(
+                    "Default shortcut could not be restored: {}",
+                    commands::friendly_shortcut_error(&error)
+                );
             }
         }
     }
@@ -938,8 +972,10 @@ impl App {
         candidate.insert(action_id, binding.clone());
         match commands::validate_bindings(&candidate) {
             Ok(bindings) => {
+                if let Some(action_id) = self.shortcut_capture_id.take() {
+                    self.shortcut_defaults_restored.remove(&action_id);
+                }
                 self.shortcut_binding_edits = bindings;
-                self.shortcut_capture_id = None;
                 self.shortcut_editor_feedback = format!(
                     "Recorded {}. Save to apply this change.",
                     binding.replace("Mod+", "Ctrl/Cmd+")
@@ -1488,6 +1524,7 @@ impl App {
         match keyboard_config::save(&bindings) {
             Ok(()) => {
                 self.shortcut_capture_id = None;
+                self.shortcut_defaults_restored.clear();
                 *self
                     .shortcut_bindings
                     .write()
@@ -1504,6 +1541,7 @@ impl App {
         match keyboard_config::reset() {
             Ok(()) => {
                 self.shortcut_binding_edits.clear();
+                self.shortcut_defaults_restored.clear();
                 self.shortcut_capture_id = None;
                 self.shortcut_bindings
                     .write()

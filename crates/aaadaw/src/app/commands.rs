@@ -198,7 +198,7 @@ const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
         kind: CommandKind::OpenSettings,
         menu: Some(MainMenu::File),
-        category: "Settings",
+        category: "File",
         label: "Settings…",
         aliases: &["settings", "preferences", "open settings"],
         shortcuts: &[],
@@ -426,6 +426,7 @@ pub(super) struct ShortcutEntry {
     pub(super) label: &'static str,
     pub(super) category: &'static str,
     pub(super) binding: String,
+    pub(super) default_binding: String,
 }
 
 impl CommandEntry {
@@ -463,15 +464,37 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                 id,
                 label: definition.label,
                 category: definition.category,
-                binding: app
-                    .shortcut_binding_edits
-                    .get(id)
-                    .cloned()
-                    .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts))
+                binding: if app.shortcut_defaults_restored.contains(id) {
+                    definition
+                        .shortcuts
+                        .iter()
+                        .map(|shortcut| shortcut.config_label())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else {
+                    app.shortcut_binding_edits
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts))
+                }
+                .replace("Mod+", "Ctrl/Cmd+"),
+                default_binding: definition
+                    .shortcuts
+                    .iter()
+                    .map(|shortcut| shortcut.config_label())
+                    .collect::<Vec<_>>()
+                    .join(", ")
                     .replace("Mod+", "Ctrl/Cmd+"),
             }
         })
         .collect()
+}
+
+pub(super) fn label_for_id(id: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .find(|definition| command_kind_id(definition.kind) == id)
+        .map(|definition| definition.label)
 }
 
 pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutBindings, String> {

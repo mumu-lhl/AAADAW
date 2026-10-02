@@ -43,6 +43,8 @@ pub(crate) enum Message {
     WindowClosed(iced::window::Id),
     StartShortcutCapture(String),
     ClearShortcutBinding(String),
+    RestoreShortcutDefault(String),
+    SelectSettingsCategory(String),
     CancelShortcutCapture,
     ShortcutCaptureKey {
         action_id: String,

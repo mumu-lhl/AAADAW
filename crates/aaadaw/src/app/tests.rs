@@ -531,6 +531,78 @@ fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_
 }
 
 #[test]
+fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() {
+    let mut app = App {
+        shortcut_binding_edits: HashMap::from([
+            ("file.new-project".to_owned(), "Mod+P".to_owned()),
+            ("file.save-project-as".to_owned(), "Mod+A".to_owned()),
+            ("edit.undo".to_owned(), "Mod+U".to_owned()),
+        ]),
+        shortcut_bindings: std::sync::Arc::new(std::sync::RwLock::new(HashMap::from([
+            ("file.new-project".to_owned(), "Mod+P".to_owned()),
+            ("file.save-project-as".to_owned(), "Mod+A".to_owned()),
+            ("edit.undo".to_owned(), "Mod+U".to_owned()),
+        ]))),
+        ..App::default()
+    };
+    let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
+    let _ = app.update(Message::SelectSettingsCategory("Edit".to_owned()));
+    assert_eq!(app.settings_category, "Edit");
+    assert_eq!(
+        app.shortcut_binding_edits.get("file.new-project").unwrap(),
+        "Mod+P"
+    );
+    assert!(app.shortcut_capture_id.is_none());
+
+    let _ = app.update(Message::RestoreShortcutDefault(
+        "file.new-project".to_owned(),
+    ));
+    assert!(!app.shortcut_binding_edits.contains_key("file.new-project"));
+    assert_eq!(
+        app.shortcut_binding_edits
+            .get("file.save-project-as")
+            .unwrap(),
+        "Mod+A"
+    );
+    assert_eq!(
+        app.shortcut_binding_edits.get("edit.undo").unwrap(),
+        "Mod+U"
+    );
+
+    let _ = app.update(Message::RestoreShortcutDefault(
+        "file.save-project-as".to_owned(),
+    ));
+    assert!(
+        !app.shortcut_binding_edits
+            .contains_key("file.save-project-as")
+    );
+    assert_eq!(
+        commands::shortcut_entries(&app)
+            .into_iter()
+            .find(|entry| entry.id == "file.save-project-as")
+            .unwrap()
+            .binding,
+        ""
+    );
+    assert_eq!(
+        commands::shortcut_entries(&app)
+            .into_iter()
+            .find(|entry| entry.id == "file.new-project")
+            .unwrap()
+            .binding,
+        "Ctrl/Cmd+N"
+    );
+    assert_eq!(
+        commands::shortcut_entries(&app)
+            .into_iter()
+            .find(|entry| entry.id == "file.save-project-as")
+            .unwrap()
+            .binding,
+        ""
+    );
+}
+
+#[test]
 fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
     let bindings = HashMap::from([
         ("edit.undo".to_owned(), "Ctrl+U".to_owned()),
