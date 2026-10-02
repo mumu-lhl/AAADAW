@@ -146,6 +146,8 @@ SetTrackPan { track_id: TrackId, pan: f32 },
 InsertMidiItem { track_id: TrackId, start_tick: u64, length_ticks: u64
 },
 
+DuplicateMidiItem { item_id: ItemId },
+
 SplitMidiItem { item_id: ItemId, split_ticks: Vec<u64> },
 
 AddMidiNotes { item_id: ItemId, notes: Vec\<MidiNote\> },

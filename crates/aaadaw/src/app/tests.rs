@@ -1006,6 +1006,56 @@ fn audio_timeline_duplicate_preserves_source_offset_and_is_undoable() {
 }
 
 #[test]
+fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 240,
+            length_ticks: 960,
+        })
+        .expect("source MIDI item should be inserted");
+    let source_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: source_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 90,
+            }],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(source_id);
+    app.timeline.selected_items.insert(source_id);
+
+    let command = CommandId::DuplicateSelectedMidiItem;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "duplicate selected midi item"),
+        Some(command)
+    );
+    assert!(
+        commands::for_menu(&app, MainMenu::Item)
+            .iter()
+            .any(|entry| entry.id == command && entry.enabled)
+    );
+    assert_eq!(app.project.midi_items()[0].start_tick(), 240);
+    let source_note_id = app.project.midi_items()[0].notes()[0].id();
+
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 1_200);
+    assert_ne!(app.project.midi_items()[1].notes()[0].id(), source_note_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
 fn audio_timeline_delete_is_undoable() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

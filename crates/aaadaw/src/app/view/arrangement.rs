@@ -234,6 +234,11 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
         .audio_items()
         .iter()
         .any(|item| item.id() == item_id);
+    let is_midi = app
+        .project
+        .midi_items()
+        .iter()
+        .any(|item| item.id() == item_id);
     let title = if is_audio { "Audio item" } else { "MIDI item" };
     let heading = row![
         text(title).size(12).width(Length::Fill),
@@ -246,6 +251,9 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
     let mut actions = column![];
     for entry in commands::for_menu(app, super::super::MainMenu::Item) {
         if entry.id == CommandId::DuplicateSelectedAudioItem && !is_audio {
+            continue;
+        }
+        if entry.id == CommandId::DuplicateSelectedMidiItem && !is_midi {
             continue;
         }
         if entry.separator_before {
@@ -408,6 +416,7 @@ fn context_menu_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Mes
 fn context_item_command<'a>(mut entry: CommandEntry) -> iced::widget::Button<'a, Message> {
     entry.label = match entry.id {
         CommandId::DuplicateSelectedAudioItem => "Duplicate".to_owned(),
+        CommandId::DuplicateSelectedMidiItem => "Duplicate".to_owned(),
         CommandId::DeleteSelectedItems => "Delete selected items".to_owned(),
         CommandId::SplitSelectedItemsAtCursor => "Split at edit cursor".to_owned(),
         CommandId::SplitSelectedItemsAtTimeSelection => "Split at time selection".to_owned(),

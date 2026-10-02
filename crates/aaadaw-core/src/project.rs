@@ -1008,6 +1008,49 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::DuplicateMidiItem { item_id } => {
+                let original = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let start_tick = original
+                    .start_tick
+                    .checked_add(original.length_ticks)
+                    .ok_or(ActionError::InvalidMidiItemPosition)?;
+                let item_end = start_tick
+                    .checked_add(original.length_ticks)
+                    .ok_or(ActionError::InvalidMidiItemPosition)?;
+                let next_item_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let mut next_note_id = ids.next_note_id;
+                let mut notes = Vec::with_capacity(original.notes.len());
+                for note in original.notes.iter() {
+                    let next_id = next_note_id
+                        .checked_add(1)
+                        .ok_or(ActionError::NoteIdExhausted)?;
+                    notes.push(MidiNote {
+                        id: NoteId::from_raw(next_note_id),
+                        data: note.data,
+                    });
+                    next_note_id = next_id;
+                }
+                let duplicate = MidiItem {
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id: original.track_id,
+                    start_tick,
+                    length_ticks: item_end - start_tick,
+                    notes: Arc::new(notes),
+                };
+                ids.next_item_id = next_item_id;
+                ids.next_note_id = next_note_id;
+                ProjectEvent::MidiItemInserted {
+                    index: state.midi_items.len(),
+                    item: duplicate,
+                }
+            }
             DawAction::SplitMidiItem {
                 item_id,
                 split_ticks,

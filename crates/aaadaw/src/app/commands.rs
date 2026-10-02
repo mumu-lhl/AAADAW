@@ -16,6 +16,7 @@ pub(crate) enum CommandId {
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
+    DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
@@ -50,6 +51,7 @@ enum CommandKind {
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
+    DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
@@ -222,6 +224,16 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Item",
         label: "Duplicate selected audio item",
         aliases: &[],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DuplicateSelectedMidiItem,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Duplicate selected MIDI item",
+        aliases: &["duplicate midi item", "duplicate selected midi item"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -488,6 +500,21 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             };
             Message::DuplicateAudioItem(item_id)
         }
+        CommandId::DuplicateSelectedMidiItem => {
+            let selected_midi = app.timeline.selected_item.filter(|item_id| {
+                app.timeline.selected_items.len() == 1
+                    && app
+                        .project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+            });
+            let Some(item_id) = selected_midi else {
+                app.status = "Select one MIDI item to duplicate".to_owned();
+                return Task::none();
+            };
+            Message::DuplicateMidiItem(item_id)
+        }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
         CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
         CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
@@ -612,6 +639,16 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|item| item.id() == item_id)
                 })
         }
+        CommandKind::DuplicateSelectedMidiItem => {
+            !project_edit_busy(app)
+                && app.timeline.selected_items.len() == 1
+                && app.timeline.selected_item.is_some_and(|item_id| {
+                    app.project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == item_id)
+                })
+        }
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
@@ -662,6 +699,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
+        CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::SplitSelectedItemsAtCursor => CommandId::SplitSelectedItemsAtCursor,
         CommandKind::SplitSelectedItemsAtTimeSelection => {

@@ -323,6 +323,7 @@ impl App {
                         | Message::DeleteAudioItem(_)
                         | Message::DeleteSelectedItems
                         | Message::DuplicateAudioItem(_)
+                        | Message::DuplicateMidiItem(_)
                         | Message::SplitSelectedItemsAtCursor
                         | Message::SplitSelectedItemsAtTimeSelection
                         | Message::Undo
@@ -535,6 +536,12 @@ impl App {
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
+            }
+            Message::DuplicateMidiItem(item_id) => {
+                self.apply_action(
+                    DawAction::DuplicateMidiItem { item_id },
+                    "MIDI item duplicated",
+                );
             }
             Message::Undo => {
                 self.active_menu = None;

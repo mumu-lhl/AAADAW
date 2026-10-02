@@ -93,6 +93,7 @@
 - [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；内容、来源偏移和无效放置保护均已验证。
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 为 Arrange Audio/MIDI Item 增加右键上下文菜单（[`docs/tickets/2026-10-02-arrangement-item-context-menu.md`](docs/tickets/2026-10-02-arrangement-item-context-menu.md)）。
+- [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [ ] 将快捷键映射配置化并直接纳入统一 Action 注册表；增加冲突检查与用户配置基础结构。

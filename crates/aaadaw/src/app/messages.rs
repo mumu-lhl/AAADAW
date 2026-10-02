@@ -84,6 +84,7 @@ pub(crate) enum Message {
     DeleteAudioItem(ItemId),
     DeleteSelectedItems,
     DuplicateAudioItem(ItemId),
+    DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     Undo,
