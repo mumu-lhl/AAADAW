@@ -649,6 +649,53 @@ fn clap_plugin_scan_results_update_settings_without_mutating_project_state() {
 }
 
 #[test]
+fn track_fx_add_button_opens_a_scanned_plugin_picker_and_chain_edits_use_actions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+
+    let _ = app.update(Message::OpenTrackFxChain(track_id));
+    let chain_window_id = app.fx_chain_window_id.expect("FX chain window should open");
+    assert_eq!(app.fx_chain_track_id, Some(track_id));
+    assert_ne!(app.main_window_id, Some(chain_window_id));
+
+    app.clap_plugin_scan.plugins = vec![aaadaw_app::ClapPluginDescriptor {
+        entry_path: std::path::PathBuf::from("/plugins/test.clap"),
+        plugin_id: "org.example.test-effect".to_owned(),
+        name: "Test Effect".to_owned(),
+        vendor: Some("Example".to_owned()),
+        features: vec!["audio-effect".to_owned()],
+    }];
+    let _ = app.update(Message::OpenPluginPicker);
+    let picker_window_id = app
+        .plugin_picker_window_id
+        .expect("Add should open a separate plugin picker");
+    assert_ne!(picker_window_id, chain_window_id);
+    assert_eq!(app.plugin_picker_track_id, Some(track_id));
+
+    let _ = app.update(Message::AddScannedPlugin(
+        "org.example.test-effect".to_owned(),
+    ));
+    let track = app
+        .project
+        .tracks()
+        .iter()
+        .find(|track| track.id() == track_id)
+        .unwrap();
+    assert_eq!(track.fx_chain().len(), 1);
+    assert_eq!(track.fx_chain()[0].plugin_id(), "org.example.test-effect");
+    assert_eq!(track.fx_chain()[0].bundle_path(), "/plugins/test.clap");
+    assert!(track.fx_chain()[0].is_enabled());
+    assert_eq!(app.plugin_picker_window_id, None);
+    assert_eq!(app.fx_chain_selected_index, Some(0));
+
+    let _ = app.update(Message::ToggleFxChainPlugin(0));
+    assert!(!app.project.tracks()[0].fx_chain()[0].is_enabled());
+    let _ = app.update(Message::RemoveSelectedFxPlugin);
+    assert!(app.project.tracks()[0].fx_chain().is_empty());
+}
+
+#[test]
 fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
     let bindings = HashMap::from([
         ("edit.undo".to_owned(), "Ctrl+U".to_owned()),

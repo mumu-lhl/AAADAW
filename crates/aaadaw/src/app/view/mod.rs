@@ -9,15 +9,21 @@ use iced::widget::{column, container, float, mouse_area, pane_grid, row, stack, 
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
+mod fx_chain;
 mod item_inspector;
 mod media;
 mod menu;
+mod plugin_picker;
 mod settings;
 mod tokens;
 
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
     if app.settings_window_id == Some(window_id) {
         settings::view(app)
+    } else if app.fx_chain_window_id == Some(window_id) {
+        fx_chain::view(app)
+    } else if app.plugin_picker_window_id == Some(window_id) {
+        plugin_picker::view(app)
     } else {
         view(app)
     }

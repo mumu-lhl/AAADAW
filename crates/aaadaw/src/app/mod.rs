@@ -27,6 +27,7 @@ use std::time::Duration;
 
 mod clap_plugin_config;
 mod clap_plugin_settings;
+mod clap_track_fx;
 mod commands;
 mod config_paths;
 mod keyboard_config;
@@ -62,6 +63,12 @@ struct App {
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    fx_chain_window_id: Option<iced::window::Id>,
+    fx_chain_track_id: Option<TrackId>,
+    fx_chain_selected_index: Option<usize>,
+    plugin_picker_window_id: Option<iced::window::Id>,
+    plugin_picker_track_id: Option<TrackId>,
+    plugin_picker_search: String,
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
@@ -250,6 +257,18 @@ impl App {
     fn window_title(&self, window_id: iced::window::Id) -> String {
         if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
+        } else if self.fx_chain_window_id == Some(window_id) {
+            self.fx_chain_track_id
+                .and_then(|track_id| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .position(|track| track.id() == track_id)
+                        .map(|index| format!("Track {} FX Chain", index + 1))
+                })
+                .unwrap_or_else(|| "Track FX Chain".to_owned())
+        } else if self.plugin_picker_window_id == Some(window_id) {
+            "Add a CLAP Plugin".to_owned()
         } else {
             "AAADAW".to_owned()
         }
@@ -307,6 +326,12 @@ impl App {
         let window_safe_message = matches!(
             &message,
             Message::OpenSettings
+                | Message::OpenTrackFxChain(_)
+                | Message::OpenPluginPicker
+                | Message::CloseTrackFxChain
+                | Message::ClosePluginPicker
+                | Message::PluginPickerSearchChanged(_)
+                | Message::SelectFxChainPlugin(_)
                 | Message::ExecuteCommand(commands::CommandId::OpenSettings)
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
@@ -456,6 +481,9 @@ impl App {
                         | Message::ToggleSolo(_)
                         | Message::AdjustVolume(..)
                         | Message::AdjustPan(..)
+                        | Message::AddScannedPlugin(_)
+                        | Message::ToggleFxChainPlugin(_)
+                        | Message::RemoveSelectedFxPlugin
                         | Message::NudgeAudioItem(..)
                         | Message::BeginAudioItemStartSampleEdit(_)
                         | Message::AudioItemStartSampleChanged(..)
@@ -498,10 +526,54 @@ impl App {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
+                } else if self.fx_chain_window_id == Some(window_id) {
+                    self.fx_chain_window_id = None;
+                    self.fx_chain_track_id = None;
+                    self.fx_chain_selected_index = None;
+                    if let Some(picker_window_id) = self.plugin_picker_window_id.take() {
+                        self.plugin_picker_track_id = None;
+                        self.plugin_picker_search.clear();
+                        task = iced::window::close(picker_window_id);
+                    }
+                } else if self.plugin_picker_window_id == Some(window_id) {
+                    self.plugin_picker_window_id = None;
+                    self.plugin_picker_track_id = None;
+                    self.plugin_picker_search.clear();
                 } else if self.main_window_id == Some(window_id) {
                     task = iced::exit();
                 }
             }
+            Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
+            Message::OpenPluginPicker => task = self.open_plugin_picker(),
+            Message::CloseTrackFxChain => {
+                let close_chain = self
+                    .fx_chain_window_id
+                    .take()
+                    .map(iced::window::close)
+                    .unwrap_or_else(Task::none);
+                let close_picker = self
+                    .plugin_picker_window_id
+                    .take()
+                    .map(iced::window::close)
+                    .unwrap_or_else(Task::none);
+                task = Task::batch([close_chain, close_picker]);
+                self.fx_chain_track_id = None;
+                self.fx_chain_selected_index = None;
+                self.plugin_picker_track_id = None;
+                self.plugin_picker_search.clear();
+            }
+            Message::ClosePluginPicker => {
+                if let Some(window_id) = self.plugin_picker_window_id.take() {
+                    task = iced::window::close(window_id);
+                }
+                self.plugin_picker_track_id = None;
+                self.plugin_picker_search.clear();
+            }
+            Message::PluginPickerSearchChanged(query) => self.plugin_picker_search = query,
+            Message::AddScannedPlugin(plugin_id) => task = self.add_scanned_plugin(&plugin_id),
+            Message::SelectFxChainPlugin(index) => self.select_fx_chain_plugin(index),
+            Message::ToggleFxChainPlugin(index) => self.toggle_fx_chain_plugin(index),
+            Message::RemoveSelectedFxPlugin => self.remove_selected_fx_plugin(),
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
                 self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();
@@ -529,14 +601,24 @@ impl App {
                 modifiers,
             } => self.capture_shortcut_key(action_id, &key, modifiers),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
-                if let Some(message) = keyboard_shortcut_event(
-                    event,
+                let message = plugin_window_escape_message(
+                    &event,
                     status,
                     window_id,
-                    self.main_window_id,
-                    self.settings_window_id,
-                    self.shortcut_capture_id.as_deref(),
-                ) {
+                    self.fx_chain_window_id,
+                    self.plugin_picker_window_id,
+                )
+                .or_else(|| {
+                    keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        self.main_window_id,
+                        self.settings_window_id,
+                        self.shortcut_capture_id.as_deref(),
+                    )
+                });
+                if let Some(message) = message {
                     task = self.update(message);
                 }
             }
@@ -2102,6 +2184,34 @@ fn runtime_keyboard_event(
 ) -> Option<Message> {
     matches!(event, iced::Event::Keyboard(_))
         .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
+}
+
+fn plugin_window_escape_message(
+    event: &iced::Event,
+    _status: iced::event::Status,
+    window_id: iced::window::Id,
+    fx_chain_window_id: Option<iced::window::Id>,
+    plugin_picker_window_id: Option<iced::window::Id>,
+) -> Option<Message> {
+    let is_escape = matches!(
+        event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            modifiers: iced::keyboard::Modifiers::NONE,
+            repeat: false,
+            ..
+        })
+    );
+    if !is_escape {
+        return None;
+    }
+    if plugin_picker_window_id == Some(window_id) {
+        Some(Message::ClosePluginPicker)
+    } else if fx_chain_window_id == Some(window_id) {
+        Some(Message::CloseTrackFxChain)
+    } else {
+        None
+    }
 }
 
 fn keyboard_shortcut_event(

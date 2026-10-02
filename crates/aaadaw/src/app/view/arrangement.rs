@@ -292,6 +292,24 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .map_or(track.name(), String::as_str);
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let is_selected = app.timeline.selected_track == Some(track_id);
+    let fx_chain = track.fx_chain();
+    let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
+    let fx_button = button(text(if fx_chain.is_empty() {
+        "FX".to_owned()
+    } else if has_bypassed_fx {
+        format!("FX {} B", fx_chain.len())
+    } else {
+        format!("FX {}", fx_chain.len())
+    }))
+    .style(if has_bypassed_fx {
+        iced::widget::button::warning
+    } else if fx_chain.is_empty() {
+        iced::widget::button::secondary
+    } else {
+        iced::widget::button::primary
+    })
+    .on_press(Message::OpenTrackFxChain(track_id))
+    .padding([2, 5]);
     let heading = row![
         button(if is_selected { "●" } else { "○" })
             .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
@@ -307,6 +325,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             .on_submit(Message::CommitTrackName(track_id))
             .padding([2, 4])
             .width(Length::Fill),
+        fx_button,
         button(if has_edit { "✓" } else { "⋯" })
             .on_press(if has_edit {
                 Message::CommitTrackName(track_id)

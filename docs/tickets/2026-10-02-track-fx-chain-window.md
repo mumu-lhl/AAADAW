@@ -25,4 +25,4 @@ App tests and real-app visual inspection in private Xvfb; no window is forced al
 
 ## Status
 
-Blocked by the project model and processing tickets.
+In progress. The project model, persistence, discovery, and stereo effect processing are complete; app-level chain ownership and the chain/picker windows remain.
