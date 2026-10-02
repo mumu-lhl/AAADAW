@@ -21,7 +21,7 @@ Existing command definitions, Project tools workspace, and global keyboard event
 
 ## Acceptance
 
-The Settings command opens a compact independent window without replacing the active workspace. Shortcut bindings are listed there and can only be changed by pressing a key combination; each can be cleared, all defaults can be restored, and conflicts are explained without replacing the existing binding. Updated bindings dispatch the same commands as menus and Actions search, update shortcut hints, survive restart, and do not trigger while text inputs own keyboard focus.
+The Settings command in the File menu opens one compact independent window without replacing the active workspace. Shortcut bindings are listed there and can only be changed by pressing a key combination; each can be cleared, all defaults can be restored, and conflicts are explained without replacing the existing binding. Updated bindings dispatch the same commands as menus and Actions search, update shortcut hints, survive restart, and do not trigger while text inputs own keyboard focus.
 
 ## Verification
 
@@ -33,4 +33,4 @@ Inspect the Settings window at 1280×800 and 900×620 in private Xvfb. It should
 
 ## Status
 
-In progress: persistent bindings and dispatch exist, but the editor still uses text fields in Project tools and does not meet the updated Settings-window and key-capture requirements.
+Complete: shortcut editing is in the File menu's independent Settings window, uses keyboard capture, supports clearing one binding and restoring defaults, reports conflicts, and keeps persistence and command dispatch on the shared definitions.

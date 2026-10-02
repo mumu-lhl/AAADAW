@@ -12,7 +12,16 @@ mod item_inspector;
 mod media;
 mod menu;
 mod project;
+mod settings;
 mod tokens;
+
+pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
+    if app.settings_window_id == Some(window_id) {
+        settings::view(app)
+    } else {
+        view(app)
+    }
+}
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);

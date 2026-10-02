@@ -36,12 +36,11 @@ mod view;
 pub(crate) use messages::{MainMenu, Message, PathPickerTarget, WorkspacePage};
 
 pub(crate) fn run() -> iced::Result {
-    let application = iced::application(App::new, App::update, view::view)
-        .title("AAADAW")
-        .theme(|_: &App| iced::Theme::Dark)
-        .window_size(iced::Size::new(1280.0, 800.0));
-    let application = application.subscription(App::subscription);
-    application.run()
+    iced::daemon(App::new, App::update, view::view_for_window)
+        .title(App::window_title)
+        .theme(|_: &App, _| iced::Theme::Dark)
+        .subscription(App::subscription)
+        .run()
 }
 
 #[derive(Default)]
@@ -57,6 +56,10 @@ struct App {
     audio_item_start_edits: HashMap<ItemId, String>,
     active_workspace: WorkspacePage,
     active_menu: Option<MainMenu>,
+    main_window_id: Option<iced::window::Id>,
+    settings_window_id: Option<iced::window::Id>,
+    shortcut_capture_id: Option<String>,
+    shortcut_editor_feedback: String,
     timeline: TimelineState,
     path_picker_busy: bool,
     audio_asset_source_statuses: HashMap<String, AudioAssetSourceStatusEntry>,
@@ -182,6 +185,13 @@ impl std::fmt::Debug for SharedPreparedPlayback {
 impl App {
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
+        let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(1280.0, 800.0),
+            min_size: Some(iced::Size::new(900.0, 620.0)),
+            ..iced::window::Settings::default()
+        });
+        app.main_window_id = Some(main_window_id);
+        let main_window_task = main_window_task.discard();
         match keyboard_config::load() {
             Ok(bindings) => {
                 if let Ok(bindings) = commands::validate_bindings(&bindings) {
@@ -199,7 +209,7 @@ impl App {
             }
         }
         let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
-            return (app, Task::none());
+            return (app, main_window_task);
         };
         app.project_path_query = path.to_string_lossy().into_owned();
         app.io_busy = true;
@@ -211,7 +221,15 @@ impl App {
             }),
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
-        (app, task)
+        (app, Task::batch([main_window_task, task]))
+    }
+
+    fn window_title(&self, window_id: iced::window::Id) -> String {
+        if self.settings_window_id == Some(window_id) {
+            "AAADAW Settings".to_owned()
+        } else {
+            "AAADAW".to_owned()
+        }
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
@@ -230,7 +248,8 @@ impl App {
             iced::Subscription::none()
         };
         iced::Subscription::batch([
-            iced::event::listen_with(keyboard_shortcut_event),
+            iced::event::listen_with(runtime_keyboard_event),
+            iced::window::close_events().map(Message::WindowClosed),
             background_ticks,
         ])
     }
@@ -262,22 +281,35 @@ impl App {
         ) {
             self.active_menu = None;
         }
-        let allowed_during_io = matches!(
+        let settings_message = matches!(
             &message,
-            Message::ProjectLoaded(..)
-                | Message::ProjectSaved(..)
-                | Message::ToggleMainMenu(_)
-                | Message::DismissMainMenu
-                | Message::Escape
-                | Message::SelectWorkspace(_)
-                | Message::ExecuteCommand(commands::CommandId::Workspace(_))
-                | Message::Timeline(_)
-                | Message::TcpScrolled { .. }
-                | Message::TimelineScrolled { .. }
-                | Message::PathPicked(..)
-                | Message::AudioItemRelinked(..)
-                | Message::BackgroundTick
+            Message::OpenSettings
+                | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                | Message::WindowClosed(_)
+                | Message::StartShortcutCapture(_)
+                | Message::ClearShortcutBinding(_)
+                | Message::CancelShortcutCapture
+                | Message::ShortcutCaptureKey { .. }
+                | Message::SaveShortcutBindings
+                | Message::ResetShortcutBindings
         );
+        let allowed_during_io = settings_message
+            || matches!(
+                &message,
+                Message::ProjectLoaded(..)
+                    | Message::ProjectSaved(..)
+                    | Message::ToggleMainMenu(_)
+                    | Message::DismissMainMenu
+                    | Message::Escape
+                    | Message::SelectWorkspace(_)
+                    | Message::ExecuteCommand(commands::CommandId::Workspace(_))
+                    | Message::Timeline(_)
+                    | Message::TcpScrolled { .. }
+                    | Message::TimelineScrolled { .. }
+                    | Message::PathPicked(..)
+                    | Message::AudioItemRelinked(..)
+                    | Message::BackgroundTick
+            );
         if matches!(
             &message,
             Message::Timeline(
@@ -299,6 +331,7 @@ impl App {
             return Task::none();
         }
         if self.path_picker_busy
+            && !settings_message
             && !matches!(
                 &message,
                 Message::PathPicked(..)
@@ -317,6 +350,7 @@ impl App {
             return Task::none();
         }
         if self.import_busy
+            && !settings_message
             && !matches!(
                 &message,
                 Message::AudioFilePathChanged(_)
@@ -337,6 +371,7 @@ impl App {
             return Task::none();
         }
         if self.audio_asset_management_busy
+            && !settings_message
             && !matches!(
                 &message,
                 Message::ToggleMainMenu(_)
@@ -359,6 +394,7 @@ impl App {
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
             if self.playback_busy
+                && !settings_message
                 && !matches!(
                     &message,
                     Message::PlaybackPrepared { .. }
@@ -429,6 +465,42 @@ impl App {
         match message {
             Message::ToggleMainMenu(menu) => {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
+            }
+            Message::OpenSettings => task = self.open_settings(),
+            Message::WindowClosed(window_id) => {
+                if self.settings_window_id == Some(window_id) {
+                    self.settings_window_id = None;
+                    self.shortcut_capture_id = None;
+                    self.shortcut_editor_feedback.clear();
+                } else if self.main_window_id == Some(window_id) {
+                    task = iced::exit();
+                }
+            }
+            Message::StartShortcutCapture(action_id) => {
+                self.shortcut_capture_id = Some(action_id);
+                self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();
+            }
+            Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
+            Message::CancelShortcutCapture => {
+                self.shortcut_capture_id = None;
+                self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
+            }
+            Message::ShortcutCaptureKey {
+                action_id,
+                key,
+                modifiers,
+            } => self.capture_shortcut_key(action_id, &key, modifiers),
+            Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if let Some(message) = keyboard_shortcut_event(
+                    event,
+                    status,
+                    window_id,
+                    self.main_window_id,
+                    self.settings_window_id,
+                    self.shortcut_capture_id.as_deref(),
+                ) {
+                    task = self.update(message);
+                }
             }
             Message::DismissMainMenu => self.active_menu = None,
             Message::Escape => {
@@ -651,9 +723,6 @@ impl App {
                     task = self.update(message);
                 }
             }
-            Message::ShortcutBindingChanged(id, binding) => {
-                self.shortcut_binding_edits.insert(id, binding);
-            }
             Message::SaveShortcutBindings => self.save_shortcut_bindings(),
             Message::ResetShortcutBindings => self.reset_shortcut_bindings(),
             Message::RunActionQuery => task = self.run_action_query(),
@@ -782,6 +851,68 @@ impl App {
 
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+
+    fn open_settings(&mut self) -> Task<Message> {
+        if let Some(window_id) = self.settings_window_id {
+            return iced::window::gain_focus(window_id);
+        }
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(760.0, 620.0),
+            min_size: Some(iced::Size::new(640.0, 460.0)),
+            ..iced::window::Settings::default()
+        });
+        self.settings_window_id = Some(window_id);
+        task.discard()
+    }
+
+    fn clear_shortcut_binding(&mut self, action_id: String) {
+        let mut candidate = self.shortcut_binding_edits.clone();
+        candidate.insert(action_id.clone(), String::new());
+        match commands::validate_bindings(&candidate) {
+            Ok(bindings) => {
+                self.shortcut_binding_edits = bindings;
+                self.shortcut_capture_id = None;
+                self.shortcut_editor_feedback =
+                    "Shortcut cleared. Save to apply this change.".to_owned();
+            }
+            Err(error) => {
+                self.shortcut_editor_feedback = format!("Shortcut could not be cleared: {error}");
+            }
+        }
+    }
+
+    fn capture_shortcut_key(
+        &mut self,
+        action_id: String,
+        key: &str,
+        modifiers: iced::keyboard::Modifiers,
+    ) {
+        let binding = match commands::capture_binding(key, modifiers) {
+            Ok(binding) => binding,
+            Err(error) => {
+                self.shortcut_editor_feedback = error;
+                return;
+            }
+        };
+        let mut candidate = self.shortcut_binding_edits.clone();
+        candidate.insert(action_id, binding.clone());
+        match commands::validate_bindings(&candidate) {
+            Ok(bindings) => {
+                self.shortcut_binding_edits = bindings;
+                self.shortcut_capture_id = None;
+                self.shortcut_editor_feedback = format!(
+                    "Recorded {}. Save to apply this change.",
+                    binding.replace("Mod+", "Ctrl/Cmd+")
+                );
+            }
+            Err(error) => {
+                self.shortcut_editor_feedback = format!(
+                    "{}; press another key or Escape",
+                    commands::friendly_shortcut_error(&error).replace("Mod+", "Ctrl/Cmd+")
+                );
+            }
+        }
     }
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1312,12 +1443,14 @@ impl App {
         };
         match keyboard_config::save(&bindings) {
             Ok(()) => {
+                self.shortcut_capture_id = None;
                 *self
                     .shortcut_bindings
                     .write()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings.clone();
                 self.shortcut_binding_edits = bindings;
                 self.status = "Keyboard shortcuts saved".to_owned();
+                self.shortcut_editor_feedback = "Keyboard shortcuts saved".to_owned();
             }
             Err(error) => self.status = format!("Keyboard shortcuts could not be saved: {error}"),
         }
@@ -1327,11 +1460,14 @@ impl App {
         match keyboard_config::reset() {
             Ok(()) => {
                 self.shortcut_binding_edits.clear();
+                self.shortcut_capture_id = None;
                 self.shortcut_bindings
                     .write()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clear();
                 self.status = "Keyboard shortcuts restored to defaults".to_owned();
+                self.shortcut_editor_feedback =
+                    "Keyboard shortcuts restored to defaults".to_owned();
             }
             Err(error) => {
                 self.status = format!("Keyboard shortcuts could not be reset: {error}");
@@ -1846,11 +1982,69 @@ fn prepare_project_playback_file(
     Ok(prepared)
 }
 
+fn runtime_keyboard_event(
+    event: iced::Event,
+    status: iced::event::Status,
+    window_id: iced::window::Id,
+) -> Option<Message> {
+    matches!(event, iced::Event::Keyboard(_))
+        .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
+}
+
 fn keyboard_shortcut_event(
     event: iced::Event,
     status: iced::event::Status,
-    _window: iced::window::Id,
+    window_id: iced::window::Id,
+    main_window_id: Option<iced::window::Id>,
+    settings_window_id: Option<iced::window::Id>,
+    shortcut_capture_id: Option<&str>,
 ) -> Option<Message> {
+    if settings_window_id == Some(window_id)
+        && let Some(action_id) = shortcut_capture_id
+    {
+        let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            repeat: false,
+            ..
+        }) = event
+        else {
+            return None;
+        };
+        return match key.as_ref() {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                Some(Message::CancelShortcutCapture)
+            }
+            iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::Backspace | iced::keyboard::key::Named::Delete,
+            ) => Some(Message::ClearShortcutBinding(action_id.to_owned())),
+            iced::keyboard::Key::Character(character) => Some(Message::ShortcutCaptureKey {
+                action_id: action_id.to_owned(),
+                key: character.to_owned(),
+                modifiers,
+            }),
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
+                Some(Message::ShortcutCaptureKey {
+                    action_id: action_id.to_owned(),
+                    key: "Space".to_owned(),
+                    modifiers,
+                })
+            }
+            iced::keyboard::Key::Named(named) => Some(Message::ShortcutCaptureKey {
+                action_id: action_id.to_owned(),
+                key: format!("{named:?}"),
+                modifiers,
+            }),
+            iced::keyboard::Key::Unidentified => Some(Message::ShortcutCaptureKey {
+                action_id: action_id.to_owned(),
+                key: "Unidentified".to_owned(),
+                modifiers,
+            }),
+        };
+    }
+    if main_window_id != Some(window_id) {
+        return None;
+    }
     let is_escape = matches!(
         &event,
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {

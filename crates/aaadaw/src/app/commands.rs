@@ -1,7 +1,6 @@
 use super::{App, MainMenu, Message, PathPickerTarget, WorkspacePage};
 use aaadaw_core::TrackId;
 use iced::Task;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
@@ -13,6 +12,7 @@ pub(crate) enum CommandId {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    OpenSettings,
     Undo,
     Redo,
     Workspace(WorkspacePage),
@@ -49,6 +49,7 @@ enum CommandKind {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    OpenSettings,
     Undo,
     Redo,
     Workspace(WorkspacePage),
@@ -82,7 +83,6 @@ struct CommandDefinition {
 enum Shortcut {
     Command(char),
     CommandShift(char),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     Space,
 }
 
@@ -93,7 +93,6 @@ impl Shortcut {
             Self::CommandShift(key) => {
                 format!("Mod+Shift+{}", key.to_ascii_uppercase())
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Self::Space => "Space".to_owned(),
         }
     }
@@ -103,7 +102,6 @@ impl Shortcut {
         if value.is_empty() {
             return Ok(None);
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         if value.eq_ignore_ascii_case("space") {
             return Ok(Some(Self::Space));
         }
@@ -143,7 +141,6 @@ impl Shortcut {
                 modifiers == (Modifiers::COMMAND | Modifiers::SHIFT)
                     && key_matches_character(key, character)
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
         }
     }
@@ -186,6 +183,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenSettings,
+        menu: Some(MainMenu::File),
+        category: "Settings",
+        label: "Settings…",
+        aliases: &["settings", "preferences", "open settings"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::Undo,
@@ -479,7 +486,8 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                     .shortcut_binding_edits
                     .get(id)
                     .cloned()
-                    .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts)),
+                    .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts))
+                    .replace("Mod+", "Ctrl/Cmd+"),
             }
         })
         .collect()
@@ -506,7 +514,9 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
                 .ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
             let normalized = shortcut.config_label();
             if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
-                return Err(format!("{normalized} is already assigned to {other_id}"));
+                return Err(format!(
+                    "{normalized} is already assigned to both {other_id} and {id}"
+                ));
             }
             normalized_bindings.insert(id.to_owned(), normalized);
         } else {
@@ -522,7 +532,7 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
             let normalized = shortcut.config_label();
             if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
                 if other_id != id {
-                    return Err(format!("{normalized} conflicts with {other_id}"));
+                    return Err(format!("{normalized} conflicts with the default for {id}"));
                 }
             }
         }
@@ -611,6 +621,33 @@ pub(super) fn from_shortcut(
     })
 }
 
+pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
+    let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
+        "Space".to_owned()
+    } else if modifiers == Modifiers::COMMAND {
+        format!("Mod+{key}")
+    } else if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
+        format!("Mod+Shift+{key}")
+    } else {
+        return Err("Use Ctrl/Cmd with a letter, optionally Shift, or press Space".to_owned());
+    };
+    Shortcut::parse(&candidate)?
+        .map(Shortcut::config_label)
+        .ok_or_else(|| "That key cannot be used as a shortcut".to_owned())
+}
+
+pub(super) fn friendly_shortcut_error(error: &str) -> String {
+    let mut definitions = COMMANDS.iter().collect::<Vec<_>>();
+    definitions.sort_unstable_by_key(|definition| {
+        std::cmp::Reverse(command_kind_id(definition.kind).len())
+    });
+    definitions
+        .into_iter()
+        .fold(error.to_owned(), |message, definition| {
+            message.replace(command_kind_id(definition.kind), definition.label)
+        })
+}
+
 fn binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
     config_binding_for(app, id, defaults).replace("Mod+", "Ctrl/Cmd+")
 }
@@ -635,6 +672,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
+        CommandKind::OpenSettings => "file.settings",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
         CommandKind::Workspace(WorkspacePage::Arrangement) => "view.arrangement",
@@ -665,6 +703,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
+        CommandId::OpenSettings => Message::OpenSettings,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::Workspace(page) => Message::SelectWorkspace(page),
@@ -799,6 +838,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
     match kind {
         CommandKind::OpenProject => !project_edit_busy(app) && !app.is_dirty(),
         CommandKind::SaveProject => !project_file_busy(app),
+        CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs | CommandKind::Undo | CommandKind::Redo => {
             !project_edit_busy(app)
         }
@@ -874,6 +914,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
+        CommandKind::OpenSettings => CommandId::OpenSettings,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::Workspace(page) => CommandId::Workspace(page),

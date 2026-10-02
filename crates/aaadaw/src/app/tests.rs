@@ -255,11 +255,15 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         text: None,
         repeat: false,
     });
+    let main_window_id = iced::window::Id::unique();
     assert!(
         keyboard_shortcut_event(
             undo_event.clone(),
             iced::event::Status::Captured,
-            iced::window::Id::unique(),
+            main_window_id,
+            Some(main_window_id),
+            None,
+            None,
         )
         .is_none()
     );
@@ -267,7 +271,10 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         keyboard_shortcut_event(
             undo_event,
             iced::event::Status::Ignored,
-            iced::window::Id::unique(),
+            main_window_id,
+            Some(main_window_id),
+            None,
+            None,
         ),
         Some(Message::ShortcutPressed(key, modifiers))
             if key == "z" && modifiers == Modifiers::COMMAND
@@ -299,7 +306,10 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         keyboard_shortcut_event(
             escape_event,
             iced::event::Status::Captured,
-            iced::window::Id::unique(),
+            main_window_id,
+            Some(main_window_id),
+            None,
+            None,
         ),
         Some(Message::Escape)
     ));
@@ -320,6 +330,154 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             &HashMap::new(),
         )
         .is_none()
+    );
+}
+
+#[test]
+fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
+    assert_eq!(
+        commands::capture_binding("x", Modifiers::COMMAND).unwrap(),
+        "Mod+X"
+    );
+    assert_eq!(
+        commands::capture_binding("z", Modifiers::COMMAND | Modifiers::SHIFT).unwrap(),
+        "Mod+Shift+Z"
+    );
+    assert_eq!(
+        commands::capture_binding("Space", Modifiers::NONE).unwrap(),
+        "Space"
+    );
+    assert!(commands::capture_binding("x", Modifiers::NONE).is_err());
+
+    let main_window_id = iced::window::Id::unique();
+    let settings_window_id = iced::window::Id::unique();
+    let make_key_event = |key: Key, modifiers| {
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyK),
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(Key::Character("k".into()), Modifiers::COMMAND),
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
+            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+    ));
+    for key in [
+        Key::Named(iced::keyboard::key::Named::Backspace),
+        Key::Named(iced::keyboard::key::Named::Delete),
+    ] {
+        assert!(matches!(
+            keyboard_shortcut_event(
+                make_key_event(key, Modifiers::NONE),
+                iced::event::Status::Captured,
+                settings_window_id,
+                Some(main_window_id),
+                Some(settings_window_id),
+                Some("edit.undo"),
+            ),
+            Some(Message::ClearShortcutBinding(action_id)) if action_id == "edit.undo"
+        ));
+    }
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Escape),
+                Modifiers::NONE
+            ),
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::CancelShortcutCapture)
+    ));
+    assert!(
+        keyboard_shortcut_event(
+            make_key_event(Key::Character("k".into()), Modifiers::COMMAND),
+            iced::event::Status::Ignored,
+            main_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        )
+        .is_some()
+    );
+}
+
+#[test]
+fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_binding() {
+    let mut app = App::default();
+    assert!(
+        commands::for_menu(&app, MainMenu::File)
+            .iter()
+            .any(|entry| entry.id == CommandId::OpenSettings)
+    );
+    assert_eq!(
+        commands::find(&app, "settings"),
+        Some(CommandId::OpenSettings)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenSettings));
+    let settings_window_id = app.settings_window_id;
+    assert!(settings_window_id.is_some());
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenSettings));
+    assert_eq!(app.settings_window_id, settings_window_id);
+
+    let original = app.shortcut_binding_edits.get("edit.undo").cloned();
+    let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "edit.undo".to_owned(),
+        key: "s".to_owned(),
+        modifiers: Modifiers::COMMAND,
+    });
+    assert_eq!(
+        app.shortcut_binding_edits.get("edit.undo").cloned(),
+        original
+    );
+    assert!(app.shortcut_capture_id.is_some());
+    assert!(app.shortcut_editor_feedback.contains("Save project"));
+
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "edit.undo".to_owned(),
+        key: "u".to_owned(),
+        modifiers: Modifiers::COMMAND,
+    });
+    assert_eq!(
+        app.shortcut_binding_edits
+            .get("edit.undo")
+            .map(String::as_str),
+        Some("Mod+U")
+    );
+    assert!(app.shortcut_editor_feedback.contains("Ctrl/Cmd+U"));
+
+    let _ = app.update(Message::ClearShortcutBinding("edit.undo".to_owned()));
+    assert!(app.shortcut_capture_id.is_none());
+    assert_eq!(
+        app.shortcut_binding_edits
+            .get("edit.undo")
+            .map(String::as_str),
+        Some("")
+    );
+    assert_eq!(
+        commands::shortcut_entries(&app)
+            .into_iter()
+            .find(|entry| entry.id == "edit.undo")
+            .unwrap()
+            .binding,
+        ""
     );
 }
 

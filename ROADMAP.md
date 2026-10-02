@@ -97,7 +97,7 @@
 - [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
-- [ ] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。映射持久化和命令分发基础已实现。
+- [x] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
 - [x] 实现音频波形的基础显示（[`docs/tickets/2026-10-02-arrangement-audio-waveforms.md`](docs/tickets/2026-10-02-arrangement-audio-waveforms.md)）；缓存、多级降采样和大工程性能优化按后续里程碑推进。
 
 **退出标准**：用户能在 UI 中建立工程、创建轨道、编辑 Item、播放并保存；关键编辑可撤销/重做；缩放和平移不会触发全量工程数据重算。
