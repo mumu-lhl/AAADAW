@@ -6,7 +6,7 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
     AudioAssetSourceStatus, AudioAssetSourceStatusEntry, AudioItemImportProgress,
     relink_external_audio_source, start_audio_asset_management as start_asset_worker,
-    start_audio_item_import,
+    start_audio_item_import, start_audio_item_reimport,
 };
 use aaadaw_core::{DawAction, ItemId, Track};
 use iced::Task;
@@ -146,6 +146,68 @@ impl App {
                     project_sample_rate,
                 )
                 .map_err(|error| error.to_string())
+            }),
+            move |result| {
+                Message::AudioImportStarted(SharedAudioImportWorker(Arc::new(Mutex::new(Some(
+                    result,
+                )))))
+            },
+        )
+    }
+
+    pub(super) fn reimport_audio_item(&mut self, item_id: ItemId) -> Task<Message> {
+        if self.io_busy || self.import_busy || self.audio_asset_management_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if self.playback.is_some() {
+            self.status = format!(
+                "Close {} output before reimporting audio",
+                self.playback_name()
+            );
+            return Task::none();
+        }
+        if self.is_dirty() {
+            self.status = "Save the project before reimporting audio".to_owned();
+            return Task::none();
+        }
+        let Some(project_path) = self.project_path.clone() else {
+            self.status = "Save the project before reimporting audio".to_owned();
+            return Task::none();
+        };
+        let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .cloned()
+        else {
+            self.status = "Audio item no longer exists".to_owned();
+            return Task::none();
+        };
+        if !self
+            .audio_asset_source_statuses
+            .get(item.media_ref())
+            .is_some_and(|entry| {
+                !entry.is_external_link && entry.status == AudioAssetSourceStatus::Changed
+            })
+        {
+            self.status =
+                "Scan sources and select an item with a changed embedded source".to_owned();
+            return Task::none();
+        }
+        let project_sample_rate = self.project.settings().sample_rate();
+        self.import_busy = true;
+        self.import_finalizing = false;
+        self.import_cancel_requested = false;
+        self.import_bytes = 0;
+        self.import_total_bytes = None;
+        self.status = "Reimporting changed source for selected Audio Item…".to_owned();
+        Task::perform(
+            run_blocking("aaadaw-audio-reimport-start", move || {
+                start_audio_item_reimport(project_path, &item, project_sample_rate)
+                    .map_err(|error| error.to_string())
             }),
             move |result| {
                 Message::AudioImportStarted(SharedAudioImportWorker(Arc::new(Mutex::new(Some(
@@ -497,7 +559,28 @@ impl App {
         self.import_cancel_requested = false;
         match result {
             Ok(action) => {
-                self.apply_action(action, "Audio imported and appended to the first track");
+                let new_media_ref = match &action {
+                    DawAction::EditAudioItem { media_ref, .. } => Some(media_ref.clone()),
+                    _ => None,
+                };
+                self.apply_action(
+                    action,
+                    if new_media_ref.is_some() {
+                        "Changed audio source reimported"
+                    } else {
+                        "Audio imported and appended to the first track"
+                    },
+                );
+                if let Some(media_ref) = new_media_ref {
+                    self.audio_asset_source_statuses.insert(
+                        media_ref.clone(),
+                        AudioAssetSourceStatusEntry {
+                            media_ref,
+                            status: AudioAssetSourceStatus::Unchanged,
+                            is_external_link: false,
+                        },
+                    );
+                }
                 self.start_audio_waveform_scan(false);
             }
             Err(error) => self.status = format!("Audio import could not be finalized: {error}"),

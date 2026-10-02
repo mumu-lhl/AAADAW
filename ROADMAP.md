@@ -111,7 +111,8 @@
 - [x] 通过 Symphonia 探测容器/codec、采样率、声道、位深、帧数和时长，并将头部元数据持久化到当前开发 schema。
 - [x] 源文件变化后重新导入会创建新 Asset；用可撤销的 `EditAudioItem` 更新现有放置引用，旧快照保持不变。
 - [x] 增加后台导入的 UI 进度/取消和完成后 placement；目前追加到首条轨道。
-- [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。嵌入快照源变化后的重新导入 UI 仍待实现。
+- [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。
+- [x] 为选中的 Audio Item 提供嵌入快照源变化后的重新导入操作（[`docs/tickets/2026-10-02-reimport-changed-embedded-audio.md`](docs/tickets/2026-10-02-reimport-changed-embedded-audio.md)）。
 - [ ] 实现实时录音链路：设备回调经预分配 SPSC 队列传递 PCM，后台线程写入 RF64（或经 ADR 选定的等效格式），保存可恢复的录音元数据。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。

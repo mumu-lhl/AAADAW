@@ -115,6 +115,7 @@ pub(crate) enum Message {
     CancelAudioImport,
     AudioImportStarted(SharedAudioImportWorker),
     AudioImportFinished(Result<DawAction, String>),
+    ReimportAudioItem(ItemId),
     RunAudioAssetManagement(AudioAssetManagementOperation),
     CancelAudioAssetManagement,
     AudioAssetManagementStarted(SharedAudioAssetManagementWorker),

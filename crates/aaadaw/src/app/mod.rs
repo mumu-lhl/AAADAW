@@ -447,6 +447,7 @@ impl App {
                         | Message::ImportAudio
                         | Message::RunAudioAssetManagement(_)
                         | Message::CancelAudioAssetManagement
+                        | Message::ReimportAudioItem(_)
                         | Message::RelinkAudioItem(_)
                 )
             {
@@ -739,6 +740,7 @@ impl App {
             }
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
             Message::ImportAudio => task = self.start_audio_import(),
+            Message::ReimportAudioItem(item_id) => task = self.reimport_audio_item(item_id),
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
             Message::AudioImportFinished(result) => self.finish_audio_import(result),

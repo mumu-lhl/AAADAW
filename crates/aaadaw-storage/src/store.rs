@@ -1367,6 +1367,23 @@ impl ProjectStore {
         self.audio_asset_source_status_with_cancel(media_ref, || false)
     }
 
+    /// Returns the recorded original path for an embedded asset, when one is available.
+    pub fn audio_asset_source_path(
+        &self,
+        media_ref: &str,
+    ) -> Result<Option<PathBuf>, StorageError> {
+        let source_path = self
+            .connection
+            .query_row(
+                "SELECT source_path FROM audio_assets WHERE media_ref = ?1 AND import_state = 1",
+                [media_ref],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::AudioAssetNotFound(media_ref.to_owned()))?;
+        Ok(source_path.map(PathBuf::from))
+    }
+
     fn audio_asset_references(&self) -> Result<Vec<String>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT media_ref FROM audio_assets WHERE import_state = 1 \

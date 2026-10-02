@@ -1,4 +1,7 @@
-use aaadaw_app::{AudioItemImportError, prepare_audio_playback, start_audio_item_import};
+use aaadaw_app::{
+    AudioItemImportError, prepare_audio_playback, start_audio_item_import,
+    start_audio_item_reimport,
+};
 use aaadaw_core::{DawAction, Project};
 use aaadaw_storage::ProjectStore;
 use std::path::PathBuf;
@@ -116,6 +119,109 @@ fn background_import_produces_metadata_and_an_undoable_placement_action() {
         .expect("imported item should render");
     assert_eq!(stats.underrun_samples, 0);
     assert!(output.iter().any(|frame| frame[0] > 0.0));
+    store.close().expect("project should close");
+    remove_database(&project_path);
+    let _ = std::fs::remove_file(source_path);
+}
+
+#[test]
+fn changed_embedded_source_reimport_preserves_item_geometry_and_is_undoable() {
+    let project_path = unique_path("aaadaw");
+    let source_path = unique_path("wav");
+    std::fs::write(&source_path, pcm_wav(&vec![1_000; 441], 44_100))
+        .expect("source WAV should be written");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    let mut store = ProjectStore::open(&project_path).expect("project should open");
+    store.save(&project).expect("project should save");
+    store.close().expect("project should close");
+
+    let worker = start_audio_item_import(
+        &project_path,
+        &source_path,
+        track_id,
+        128,
+        project.settings().sample_rate(),
+    )
+    .expect("initial audio import should start");
+    while !worker.is_finished() {
+        let _ = worker.progress().try_iter().count();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    project
+        .apply(worker.finish().expect("initial import should finish"))
+        .expect("initial placement should apply");
+    let item = project.audio_items()[0].clone();
+    let old_ref = item.media_ref().to_owned();
+    let mut store = ProjectStore::open(&project_path).expect("project should reopen");
+    store.save(&project).expect("placement should save");
+    assert_eq!(
+        store.audio_asset_source_path(&old_ref).unwrap(),
+        Some(source_path.clone())
+    );
+    store.close().expect("project should close");
+
+    let unchanged_error =
+        match start_audio_item_reimport(&project_path, &item, project.settings().sample_rate()) {
+            Ok(worker) => {
+                drop(worker);
+                panic!("an unchanged source should not be reimported")
+            }
+            Err(error) => error,
+        };
+    assert!(matches!(
+        unchanged_error,
+        AudioItemImportError::AssetSourceNotChanged(_)
+    ));
+
+    std::fs::write(&source_path, pcm_wav(&vec![-2_000; 882], 44_100))
+        .expect("changed source should be written");
+    let worker = start_audio_item_reimport(&project_path, &item, project.settings().sample_rate())
+        .expect("changed embedded source should reimport");
+    while !worker.is_finished() {
+        let _ = worker.progress().try_iter().count();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let action = worker
+        .finish()
+        .expect("reimport should produce an edit action");
+    let new_ref = match &action {
+        DawAction::EditAudioItem {
+            item_id,
+            media_ref,
+            start_sample,
+            source_offset_samples,
+            length_samples,
+        } => {
+            assert_eq!(*item_id, item.id());
+            assert_eq!(*start_sample, item.start_sample());
+            assert_eq!(*source_offset_samples, item.source_offset_samples());
+            assert_eq!(*length_samples, item.length_samples());
+            assert_ne!(media_ref, &old_ref);
+            media_ref.clone()
+        }
+        other => panic!("expected EditAudioItem, got {other:?}"),
+    };
+    project.apply(action).expect("replacement should apply");
+    assert_eq!(project.audio_items()[0].media_ref(), new_ref);
+    assert!(project.undo().expect("replacement should be undoable"));
+    assert_eq!(project.audio_items()[0].media_ref(), old_ref);
+    assert!(project.redo().expect("replacement should be redoable"));
+    assert_eq!(project.audio_items()[0].media_ref(), new_ref);
+
+    let store = ProjectStore::open(&project_path).expect("project should reopen");
+    let metadata = store
+        .audio_asset_metadata(&new_ref)
+        .expect("metadata should be available")
+        .expect("reimport should persist metadata");
+    assert_eq!(metadata.frame_count, Some(882));
+    assert!(store.audio_asset_reader(&old_ref).is_ok());
     store.close().expect("project should close");
     remove_database(&project_path);
     let _ = std::fs::remove_file(source_path);

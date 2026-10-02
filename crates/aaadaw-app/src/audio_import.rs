@@ -1,10 +1,10 @@
 //! Background audio import orchestration and AudioItem action construction.
 
-use aaadaw_core::{DawAction, TrackId};
+use aaadaw_core::{AudioItem, DawAction, ItemId, TrackId};
 use aaadaw_media::{AudioStreamDecoder, MediaError};
 use aaadaw_storage::{
-    AudioAssetImportProgress, AudioAssetImportWorker, AudioAssetMetadata, ProjectStore,
-    ResolvedAudioAsset, StorageError,
+    AudioAssetImportProgress, AudioAssetImportWorker, AudioAssetMetadata, AudioAssetSourceStatus,
+    ProjectStore, ResolvedAudioAsset, StorageError,
 };
 use std::error::Error as StdError;
 use std::fmt;
@@ -25,6 +25,8 @@ pub enum AudioItemImportError {
     DurationOutOfRange,
     ZeroLengthAudio,
     AssetNotEmbedded(String),
+    AssetSourceNotChanged(String),
+    AssetSourcePathUnavailable(String),
 }
 
 impl fmt::Display for AudioItemImportError {
@@ -53,6 +55,15 @@ impl fmt::Display for AudioItemImportError {
                     "newly imported asset {media_ref:?} is not embedded"
                 )
             }
+            Self::AssetSourceNotChanged(media_ref) => {
+                write!(formatter, "audio source {media_ref:?} is no longer changed")
+            }
+            Self::AssetSourcePathUnavailable(media_ref) => {
+                write!(
+                    formatter,
+                    "audio source path for {media_ref:?} is unavailable"
+                )
+            }
         }
     }
 }
@@ -67,7 +78,9 @@ impl StdError for AudioItemImportError {
             | Self::DurationUnavailable
             | Self::DurationOutOfRange
             | Self::ZeroLengthAudio
-            | Self::AssetNotEmbedded(_) => None,
+            | Self::AssetNotEmbedded(_)
+            | Self::AssetSourceNotChanged(_)
+            | Self::AssetSourcePathUnavailable(_) => None,
         }
     }
 }
@@ -92,9 +105,21 @@ impl From<MediaError> for AudioItemImportError {
 pub struct AudioItemImportWorker {
     worker: AudioAssetImportWorker,
     project_path: PathBuf,
-    track_id: TrackId,
-    start_sample: u64,
+    target: AudioItemImportTarget,
     project_sample_rate: u32,
+}
+
+enum AudioItemImportTarget {
+    Insert {
+        track_id: TrackId,
+        start_sample: u64,
+    },
+    Replace {
+        item_id: ItemId,
+        start_sample: u64,
+        source_offset_samples: u64,
+        length_samples: u64,
+    },
 }
 
 impl AudioItemImportWorker {
@@ -124,15 +149,34 @@ impl AudioItemImportWorker {
         let close_result = store.close();
         let metadata = metadata_result?;
         close_result?;
-        let length_samples = audio_item_length_samples(&metadata, self.project_sample_rate)?;
-
-        Ok(DawAction::InsertAudioItem {
-            track_id: self.track_id,
-            media_ref,
-            start_sample: self.start_sample,
-            source_offset_samples: 0,
-            length_samples,
-        })
+        match self.target {
+            AudioItemImportTarget::Insert {
+                track_id,
+                start_sample,
+            } => {
+                let length_samples =
+                    audio_item_length_samples(&metadata, self.project_sample_rate)?;
+                Ok(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref,
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples,
+                })
+            }
+            AudioItemImportTarget::Replace {
+                item_id,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            } => Ok(DawAction::EditAudioItem {
+                item_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            }),
+        }
     }
 }
 
@@ -165,8 +209,54 @@ pub fn start_audio_item_import(
     Ok(AudioItemImportWorker {
         worker,
         project_path,
-        track_id,
-        start_sample,
+        target: AudioItemImportTarget::Insert {
+            track_id,
+            start_sample,
+        },
+        project_sample_rate,
+    })
+}
+
+/// Starts a background import from the changed original source of an embedded item.
+///
+/// The previous immutable snapshot remains available for undo. Finishing returns an
+/// `EditAudioItem` action that preserves the supplied item's timeline placement.
+pub fn start_audio_item_reimport(
+    project_path: impl AsRef<Path>,
+    item: &AudioItem,
+    project_sample_rate: u32,
+) -> Result<AudioItemImportWorker, AudioItemImportError> {
+    if project_sample_rate == 0 {
+        return Err(AudioItemImportError::InvalidProjectSampleRate);
+    }
+    let project_path = project_path.as_ref().to_owned();
+    if !project_path.is_file() {
+        return Err(AudioItemImportError::ProjectFileMissing(project_path));
+    }
+    let store = ProjectStore::open(&project_path)?;
+    let media_ref = item.media_ref();
+    let source_status = store.audio_asset_source_status(media_ref)?;
+    if source_status != AudioAssetSourceStatus::Changed {
+        return Err(AudioItemImportError::AssetSourceNotChanged(
+            media_ref.to_owned(),
+        ));
+    }
+    let source_path = store
+        .audio_asset_source_path(media_ref)?
+        .ok_or_else(|| AudioItemImportError::AssetSourcePathUnavailable(media_ref.to_owned()))?;
+    AudioStreamDecoder::open(&source_path)?;
+    let worker = store.start_audio_asset_import(&source_path)?;
+    drop(store);
+
+    Ok(AudioItemImportWorker {
+        worker,
+        project_path,
+        target: AudioItemImportTarget::Replace {
+            item_id: item.id(),
+            start_sample: item.start_sample(),
+            source_offset_samples: item.source_offset_samples(),
+            length_samples: item.length_samples(),
+        },
         project_sample_rate,
     })
 }

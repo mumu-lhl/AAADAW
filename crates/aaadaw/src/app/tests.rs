@@ -617,6 +617,39 @@ fn item_drag_obeys_project_busy_and_jack_edit_guards() {
 }
 
 #[test]
+fn reimport_requires_a_saved_project_and_changed_embedded_source() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "embedded-source".to_owned(),
+            start_sample: 120,
+            source_offset_samples: 8,
+            length_samples: 1_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.project_path = Some(std::path::PathBuf::from("project.aaadaw"));
+    app.audio_asset_source_statuses.insert(
+        "embedded-source".to_owned(),
+        aaadaw_app::AudioAssetSourceStatusEntry {
+            media_ref: "embedded-source".to_owned(),
+            status: aaadaw_app::AudioAssetSourceStatus::Changed,
+            is_external_link: false,
+        },
+    );
+    assert!(app.is_dirty());
+
+    let _ = app.update(Message::ReimportAudioItem(item_id));
+
+    assert!(!app.import_busy);
+    assert!(app.status.contains("Save the project"));
+    assert_eq!(app.project.audio_items()[0].media_ref(), "embedded-source");
+}
+
+#[test]
 fn action_search_dispatches_supported_commands() {
     let mut app = App::default();
     let _ = app.update(Message::ActionQueryChanged("add track".to_owned()));

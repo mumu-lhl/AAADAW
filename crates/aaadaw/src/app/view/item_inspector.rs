@@ -14,15 +14,17 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(6)
         .into(),
     };
-    container(scrollable(content))
-        .width(Length::Fill)
-        .height(Length::Fixed(156.0))
-        .padding([8, 10])
-        .style(|_| container::Style {
-            background: Some(iced::Color::from_rgb8(30, 34, 37).into()),
-            ..container::Style::default()
-        })
-        .into()
+    container(scrollable(
+        container(content).padding(iced::Padding::default().right(12.0)),
+    ))
+    .width(Length::Fill)
+    .height(Length::Fixed(156.0))
+    .padding([8, 10])
+    .style(|_| container::Style {
+        background: Some(iced::Color::from_rgb8(30, 34, 37).into()),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
@@ -74,15 +76,20 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
         let source = status.map_or_else(String::new, |entry| {
             format!("Source: {}", source_status_label(entry.status))
         });
+        let mut source_status = row![text(source).width(Length::Fill)];
+        if status.is_some_and(can_reimport_source) {
+            source_status = source_status.push(action_button(
+                "Reimport",
+                Message::ReimportAudioItem(item_id),
+            ));
+        }
         column![
             actions,
-            row![
-                text(format!(
-                    "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
-                )),
-                text(source),
-            ]
+            row![text(format!(
+                "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
+            )),]
             .spacing(12),
+            source_status,
             position_controls,
             row![
                 text("Nudge"),
@@ -183,6 +190,10 @@ fn danger_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
 
 fn can_relink_source(entry: &AudioAssetSourceStatusEntry) -> bool {
     entry.is_external_link && entry.status == AudioAssetSourceStatus::Missing
+}
+
+fn can_reimport_source(entry: &AudioAssetSourceStatusEntry) -> bool {
+    !entry.is_external_link && entry.status == AudioAssetSourceStatus::Changed
 }
 
 fn source_status_label(status: AudioAssetSourceStatus) -> &'static str {

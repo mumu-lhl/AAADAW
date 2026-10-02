@@ -19,6 +19,7 @@ pub use asset_management::{
 pub use audio_editing::{AudioEditError, duplicate_audio_item, set_audio_item_start_sample};
 pub use audio_import::{
     AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import,
+    start_audio_item_reimport,
 };
 pub use midi_editing::{
     MidiEditError, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
