@@ -122,7 +122,7 @@
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
 - [x] 实现 MIDI Item 移动/调整长度 Action；收缩 Item 时拒绝裁掉已有音符，并支持撤销/重做。
-- [ ] 实现钢琴卷帘、音符选择 UI 和可听的 MIDI 播放工作流；当前仅有列表式音符编辑，尚无 MIDI 发声路径。先打通单个已安装 CLAP 乐器播放（[`docs/tickets/2026-10-02-clap-midi-playback.md`](docs/tickets/2026-10-02-clap-midi-playback.md)），再完成钢琴卷帘；插件管理 UI 和完整状态恢复仍留在 Phase 5。
+- [ ] 实现钢琴卷帘、音符选择 UI 和可听的 MIDI 播放工作流；当前仅有列表式音符编辑，尚无 MIDI 发声路径。先完成单乐器 CLAP 宿主处理模块（[`docs/tickets/2026-10-02-clap-host-processor.md`](docs/tickets/2026-10-02-clap-host-processor.md)），再接通单轨播放和指派 UI（[`docs/tickets/2026-10-02-clap-midi-playback.md`](docs/tickets/2026-10-02-clap-midi-playback.md)），最后完成钢琴卷帘；完整插件管理 UI 和状态恢复仍留在 Phase 5。
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
 - [ ] 实现录音准备、输入监听和虚拟键盘基础路径；录音不得在音频回调中进行文件操作。
 
