@@ -11,11 +11,10 @@ use aaadaw_app::{
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_core::ProjectSnapshot;
-use aaadaw_core::{DawAction, ItemId, Project, TrackId};
-#[cfg(feature = "jack-backend")]
+use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -316,6 +315,8 @@ impl App {
                         | Message::DeleteAudioItem(_)
                         | Message::DeleteSelectedItems
                         | Message::DuplicateAudioItem(_)
+                        | Message::SplitSelectedItemsAtCursor
+                        | Message::SplitSelectedItemsAtTimeSelection
                         | Message::Undo
                         | Message::Redo
                         | Message::RunActionQuery
@@ -515,6 +516,8 @@ impl App {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
+            Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
+            Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
@@ -1163,6 +1166,188 @@ impl App {
         ])
     }
 
+    pub(super) fn can_split_selected_items_at_cursor(&self) -> bool {
+        self.selected_item_split_action(false, None)
+            .is_ok_and(|action| action.is_some())
+    }
+
+    pub(super) fn can_split_selected_items_at_time_selection(&self) -> bool {
+        self.selected_item_split_action(true, None)
+            .is_ok_and(|action| action.is_some())
+    }
+
+    fn selected_item_split_action(
+        &self,
+        use_time_selection: bool,
+        source_sample_rates: Option<&HashMap<String, u32>>,
+    ) -> Result<Option<DawAction>, String> {
+        let boundaries = if use_time_selection {
+            let Some(selection) = self.timeline.time_selection else {
+                return Ok(None);
+            };
+            vec![selection.start_tick, selection.end_tick]
+        } else {
+            vec![self.timeline.edit_cursor_tick]
+        };
+        let mut selected_item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        selected_item_ids.sort_unstable_by_key(|item_id| item_id.value());
+
+        let mut actions = Vec::new();
+        for item_id in selected_item_ids {
+            if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                let source_sample_rate = source_sample_rates
+                    .and_then(|rates| rates.get(item.media_ref()).copied())
+                    .unwrap_or_else(|| self.project.settings().sample_rate());
+                split_audio_item_actions(
+                    &self.project,
+                    item,
+                    &boundaries,
+                    source_sample_rate,
+                    &mut actions,
+                )?;
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                split_midi_item_actions(item, &boundaries, &mut actions)?;
+            }
+        }
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }))
+        }
+    }
+
+    fn selected_audio_source_sample_rates(
+        &self,
+        use_time_selection: bool,
+    ) -> Result<HashMap<String, u32>, String> {
+        let boundaries = if use_time_selection {
+            let Some(selection) = self.timeline.time_selection else {
+                return Ok(HashMap::new());
+            };
+            vec![selection.start_tick, selection.end_tick]
+        } else {
+            vec![self.timeline.edit_cursor_tick]
+        };
+        let mut media_refs = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .filter(|item| {
+                boundaries.iter().any(|tick| {
+                    self.project.sample_at_tick(*tick).is_ok_and(|sample| {
+                        item.start_sample() < sample && sample < item.end_sample()
+                    })
+                })
+            })
+            .map(|item| item.media_ref().to_owned())
+            .collect::<Vec<_>>();
+        media_refs.sort_unstable();
+        media_refs.dedup();
+        if media_refs.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let path = self
+            .project_path
+            .as_deref()
+            .filter(|path| path.is_file())
+            .ok_or_else(|| "save the project before splitting audio items".to_owned())?;
+        let store = ProjectStore::open(path).map_err(|error| error.to_string())?;
+        let mut rates = HashMap::with_capacity(media_refs.len());
+        let mut metadata_result = Ok(());
+        for media_ref in media_refs {
+            match store.audio_asset_metadata(&media_ref) {
+                Ok(Some(metadata)) => match metadata.sample_rate.filter(|rate| *rate > 0) {
+                    Some(rate) => {
+                        rates.insert(media_ref, rate);
+                    }
+                    None => {
+                        metadata_result =
+                            Err(format!("source sample rate is unavailable for {media_ref}"));
+                        break;
+                    }
+                },
+                Ok(None) => {
+                    metadata_result =
+                        Err(format!("source metadata is unavailable for {media_ref}"));
+                    break;
+                }
+                Err(error) => {
+                    metadata_result = Err(error.to_string());
+                    break;
+                }
+            }
+        }
+        let close_result = store.close().map_err(|error| error.to_string());
+        metadata_result?;
+        close_result?;
+        Ok(rates)
+    }
+
+    fn split_selected_items(&mut self, use_time_selection: bool) {
+        let source_sample_rates = match self.selected_audio_source_sample_rates(use_time_selection)
+        {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let action =
+            match self.selected_item_split_action(use_time_selection, Some(&source_sample_rates)) {
+                Ok(Some(action)) => action,
+                Ok(None) => {
+                    self.status = "No selected item crosses the split point".to_owned();
+                    return;
+                }
+                Err(error) => {
+                    self.status = format!("Split failed: {error}");
+                    return;
+                }
+            };
+        let previous_ids = self
+            .project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .collect::<HashSet<_>>();
+        let previous_revision = self.revision;
+        self.apply_action(action, "Selected items split");
+        if self.revision == previous_revision {
+            return;
+        }
+        let new_ids = self
+            .project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .filter(|item_id| !previous_ids.contains(item_id))
+            .collect::<Vec<_>>();
+        self.timeline.selected_items.extend(new_ids);
+        self.audio_item_start_edits.clear();
+    }
+
     fn delete_selected_items(&mut self) {
         let mut item_ids = self
             .timeline
@@ -1234,6 +1419,88 @@ impl App {
         }
         self.pick_path(PathPickerTarget::OpenProject)
     }
+}
+
+fn split_audio_item_actions(
+    project: &Project,
+    item: &AudioItem,
+    boundaries: &[u64],
+    source_sample_rate: u32,
+    actions: &mut Vec<DawAction>,
+) -> Result<(), String> {
+    let mut cut_samples = boundaries
+        .iter()
+        .filter_map(|tick| project.sample_at_tick(*tick).ok())
+        .filter(|sample| item.start_sample() < *sample && *sample < item.end_sample())
+        .collect::<Vec<_>>();
+    cut_samples.sort_unstable();
+    cut_samples.dedup();
+    if cut_samples.is_empty() {
+        return Ok(());
+    }
+
+    let mut points = Vec::with_capacity(cut_samples.len() + 2);
+    points.push(item.start_sample());
+    points.extend(cut_samples);
+    points.push(item.end_sample());
+    for (index, segment) in points.windows(2).enumerate() {
+        let start_sample = segment[0];
+        let length_samples = segment[1] - segment[0];
+        let project_sample_rate = project.settings().sample_rate();
+        let source_delta = u64::try_from(
+            (u128::from(start_sample - item.start_sample()) * u128::from(source_sample_rate)
+                + u128::from(project_sample_rate) / 2)
+                / u128::from(project_sample_rate),
+        )
+        .map_err(|_| "audio source offset exceeds the supported range".to_owned())?;
+        let source_offset_samples = item
+            .source_offset_samples()
+            .checked_add(source_delta)
+            .ok_or_else(|| "audio source offset exceeds the supported range".to_owned())?;
+        if index == 0 {
+            actions.push(DawAction::EditAudioItem {
+                item_id: item.id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample: item.start_sample(),
+                source_offset_samples,
+                length_samples,
+            });
+        } else {
+            actions.push(DawAction::InsertAudioItem {
+                track_id: item.track_id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn split_midi_item_actions(
+    item: &MidiItem,
+    boundaries: &[u64],
+    actions: &mut Vec<DawAction>,
+) -> Result<(), String> {
+    let item_end = item
+        .start_tick()
+        .checked_add(item.length_ticks())
+        .ok_or_else(|| "MIDI item end exceeds the supported range".to_owned())?;
+    let mut split_ticks = boundaries
+        .iter()
+        .copied()
+        .filter(|tick| item.start_tick() < *tick && *tick < item_end)
+        .collect::<Vec<_>>();
+    split_ticks.sort_unstable();
+    split_ticks.dedup();
+    if !split_ticks.is_empty() {
+        actions.push(DawAction::SplitMidiItem {
+            item_id: item.id(),
+            split_ticks,
+        });
+    }
+    Ok(())
 }
 
 fn item_drag_edit_guard_status(

@@ -7,7 +7,6 @@ use super::{
     shortcut_message,
 };
 use aaadaw_core::{DawAction, MidiNoteData, Project};
-#[cfg(feature = "jack-backend")]
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1162,4 +1161,274 @@ fn project_file_save_and_open_round_trip_core_snapshot() {
         let sidecar = format!("{}{suffix}", path.display());
         let _ = std::fs::remove_file(sidecar);
     }
+}
+
+#[test]
+fn split_item_commands_are_selection_aware_and_share_menu_search_definitions() {
+    let mut app = App::default();
+    let cursor = CommandId::SplitSelectedItemsAtCursor;
+    let time_selection = CommandId::SplitSelectedItemsAtTimeSelection;
+    assert!(!commands::is_enabled(&app, cursor));
+    assert!(!commands::is_enabled(&app, time_selection));
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+    app.timeline.edit_cursor_tick = 960;
+    assert!(commands::is_enabled(&app, cursor));
+    assert!(!commands::is_enabled(&app, time_selection));
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+    assert!(commands::is_enabled(&app, time_selection));
+    let item_menu = commands::for_menu(&app, MainMenu::Item);
+    for command in [cursor, time_selection] {
+        let entry = item_menu
+            .iter()
+            .find(|entry| entry.id == command)
+            .expect("Item menu should list the split command");
+        assert_eq!(entry.enabled, commands::is_enabled(&app, command));
+        assert!(entry.enabled);
+    }
+    assert_eq!(commands::find(&app, "split at cursor"), Some(cursor));
+    assert_eq!(
+        commands::find(&app, "split at time selection"),
+        Some(time_selection)
+    );
+
+    app.timeline.edit_cursor_tick = 0;
+    app.timeline.time_selection = None;
+    assert!(!commands::is_enabled(&app, cursor));
+    app.io_busy = true;
+    app.timeline.edit_cursor_tick = 960;
+    assert!(!commands::is_enabled(&app, cursor));
+}
+
+#[test]
+fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-split-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    let media_ref = "asset://split-test";
+    store
+        .import_audio_asset(media_ref, "split-test.wav", std::io::Cursor::new([0_u8; 4]))
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(44_100),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(100_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test metadata should store");
+    store.close().expect("project store should close");
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let audio_end = app.project.sample_at_tick(3_840).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5_000,
+            length_samples: audio_end,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 1_200,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 1_600,
+                    duration: 1_600,
+                    velocity: 90,
+                },
+            ],
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(midi_id);
+    app.timeline.selected_items.extend([audio_id, midi_id]);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::SplitSelectedItemsAtTimeSelection,
+    ));
+
+    assert_eq!(app.revision, revision + 1);
+    let cut_samples = [
+        app.project.sample_at_tick(960).unwrap(),
+        app.project.sample_at_tick(2_880).unwrap(),
+    ];
+    let audio = app.project.audio_items();
+    assert_eq!(audio.len(), 3);
+    assert_eq!(
+        audio
+            .iter()
+            .map(|item| (
+                item.start_sample(),
+                item.source_offset_samples(),
+                item.length_samples()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (0, 5_000, cut_samples[0]),
+            (
+                cut_samples[0],
+                5_000 + (cut_samples[0] * 44_100 + 24_000) / 48_000,
+                cut_samples[1] - cut_samples[0]
+            ),
+            (
+                cut_samples[1],
+                5_000 + (cut_samples[1] * 44_100 + 24_000) / 48_000,
+                audio_end - cut_samples[1]
+            ),
+        ]
+    );
+    let midi = app.project.midi_items();
+    assert_eq!(
+        midi.iter()
+            .map(|item| (item.start_tick(), item.length_ticks()))
+            .collect::<Vec<_>>(),
+        [(0, 960), (960, 1_920), (2_880, 960)]
+    );
+    assert_eq!(
+        midi.iter()
+            .map(|item| {
+                item.notes()
+                    .iter()
+                    .map(|note| (note.pitch(), note.tick(), note.duration()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        [
+            vec![(60, 0, 960)],
+            vec![(60, 0, 240), (64, 640, 1_280)],
+            vec![(64, 0, 320)],
+        ]
+    );
+    assert_eq!(app.timeline.selected_items.len(), 6);
+    assert_eq!(
+        app.timeline.time_selection,
+        Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        })
+    );
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    let _ = std::fs::remove_file(&project_path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
+#[test]
+fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 480,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 1_440,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+    app.timeline.edit_cursor_tick = 1_440;
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::ActionQueryChanged("split at cursor".to_owned()));
+    let _ = app.update(Message::RunActionQuery);
+
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
+    assert_eq!(app.project.midi_items()[0].notes()[0].duration(), 960);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 1_440);
+    assert_eq!(app.project.midi_items()[1].notes()[0].tick(), 0);
+    assert_eq!(app.project.midi_items()[1].notes()[0].duration(), 480);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+
+    app.timeline.edit_cursor_tick = 480;
+    let before_noop = app.project.snapshot();
+    let revision = app.revision;
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::SplitSelectedItemsAtCursor
+    ));
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+    assert_eq!(app.project.snapshot(), before_noop);
+    assert_eq!(app.revision, revision);
 }

@@ -17,6 +17,8 @@ pub(crate) enum CommandId {
     ImportAudio,
     DuplicateSelectedAudioItem,
     DeleteSelectedItems,
+    SplitSelectedItemsAtCursor,
+    SplitSelectedItemsAtTimeSelection,
     AddTrack,
     SelectedTrack(TrackCommand),
     Track {
@@ -49,6 +51,8 @@ enum CommandKind {
     ImportAudio,
     DuplicateSelectedAudioItem,
     DeleteSelectedItems,
+    SplitSelectedItemsAtCursor,
+    SplitSelectedItemsAtTimeSelection,
     AddTrack,
     Track(TrackCommand),
     #[cfg(feature = "jack-backend")]
@@ -230,6 +234,34 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["delete selected item", "delete items"],
         shortcuts: &[],
         destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SplitSelectedItemsAtCursor,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Split items at edit cursor",
+        aliases: &[
+            "split at cursor",
+            "split items at cursor",
+            "split selected items at edit cursor",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::SplitSelectedItemsAtTimeSelection,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Split items at time selection",
+        aliases: &[
+            "split at time selection",
+            "split items at selection",
+            "split selected items at time selection",
+        ],
+        shortcuts: &[],
+        destructive: false,
         separator_before: false,
     },
     CommandDefinition {
@@ -457,6 +489,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateAudioItem(item_id)
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
+        CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
+        CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
         CommandId::AddTrack => Message::AddTrack,
         CommandId::SelectedTrack(command) => {
             let Some(track_id) = app.selected_track_id() else {
@@ -581,6 +615,12 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
+        CommandKind::SplitSelectedItemsAtCursor => {
+            !project_edit_busy(app) && app.can_split_selected_items_at_cursor()
+        }
+        CommandKind::SplitSelectedItemsAtTimeSelection => {
+            !project_edit_busy(app) && app.can_split_selected_items_at_time_selection()
+        }
         CommandKind::AddTrack => !project_edit_busy(app),
         CommandKind::Track(command) => {
             !project_edit_busy(app)
@@ -623,6 +663,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
+        CommandKind::SplitSelectedItemsAtCursor => CommandId::SplitSelectedItemsAtCursor,
+        CommandKind::SplitSelectedItemsAtTimeSelection => {
+            CommandId::SplitSelectedItemsAtTimeSelection
+        }
         CommandKind::AddTrack => CommandId::AddTrack,
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "jack-backend")]

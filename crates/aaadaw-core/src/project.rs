@@ -122,6 +122,11 @@ enum ProjectEvent {
         before: MidiItem,
         after: MidiItem,
     },
+    MidiItemsReplaced {
+        index: usize,
+        before: Vec<MidiItem>,
+        after: Vec<MidiItem>,
+    },
     MidiNotesAdded {
         item_id: ItemId,
         notes: Vec<(usize, MidiNote)>,
@@ -274,6 +279,15 @@ impl ProjectEvent {
                 item: item.clone(),
             },
             Self::MidiItemChanged { before, after } => Self::MidiItemChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::MidiItemsReplaced {
+                index,
+                before,
+                after,
+            } => Self::MidiItemsReplaced {
+                index: *index,
                 before: after.clone(),
                 after: before.clone(),
             },
@@ -994,6 +1008,104 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::SplitMidiItem {
+                item_id,
+                split_ticks,
+            } => {
+                let index = state
+                    .midi_items
+                    .iter()
+                    .position(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let original = state.midi_items[index].clone();
+                let item_end = original
+                    .start_tick
+                    .checked_add(original.length_ticks)
+                    .ok_or(ActionError::InvalidMidiItemPosition)?;
+                let mut split_ticks = split_ticks
+                    .into_iter()
+                    .filter(|tick| original.start_tick < *tick && *tick < item_end)
+                    .collect::<Vec<_>>();
+                split_ticks.sort_unstable();
+                split_ticks.dedup();
+                if split_ticks.is_empty() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+
+                let mut absolute_points = Vec::with_capacity(split_ticks.len() + 2);
+                absolute_points.push(original.start_tick);
+                absolute_points.extend(split_ticks);
+                absolute_points.push(item_end);
+                let relative_points = absolute_points
+                    .iter()
+                    .map(|tick| tick - original.start_tick)
+                    .collect::<Vec<_>>();
+                let mut segment_notes = vec![Vec::new(); absolute_points.len() - 1];
+                let mut next_note_id = ids.next_note_id;
+                for note in original.notes.iter() {
+                    let note_start = note.data.tick;
+                    let note_end = note_start
+                        .checked_add(note.data.duration)
+                        .ok_or(ActionError::InvalidMidiNote)?;
+                    let mut first_piece = true;
+                    for (segment_index, segment) in relative_points.windows(2).enumerate() {
+                        let overlap_start = note_start.max(segment[0]);
+                        let overlap_end = note_end.min(segment[1]);
+                        if overlap_start >= overlap_end {
+                            continue;
+                        }
+                        let note_id = if first_piece {
+                            first_piece = false;
+                            note.id
+                        } else {
+                            let id = NoteId::from_raw(next_note_id);
+                            next_note_id = next_note_id
+                                .checked_add(1)
+                                .ok_or(ActionError::NoteIdExhausted)?;
+                            id
+                        };
+                        segment_notes[segment_index].push(MidiNote {
+                            id: note_id,
+                            data: crate::MidiNoteData {
+                                pitch: note.data.pitch,
+                                tick: overlap_start - segment[0],
+                                duration: overlap_end - overlap_start,
+                                velocity: note.data.velocity,
+                            },
+                        });
+                    }
+                }
+
+                let mut next_item_id = ids.next_item_id;
+                let mut after = Vec::with_capacity(segment_notes.len());
+                for (index, notes) in segment_notes.into_iter().enumerate() {
+                    let segment_start = absolute_points[index];
+                    let segment_end = absolute_points[index + 1];
+                    let segment_id = if index == 0 {
+                        original.id
+                    } else {
+                        let id = ItemId::from_raw(next_item_id);
+                        next_item_id = next_item_id
+                            .checked_add(1)
+                            .ok_or(ActionError::ItemIdExhausted)?;
+                        id
+                    };
+                    after.push(MidiItem {
+                        id: segment_id,
+                        track_id: original.track_id,
+                        start_tick: segment_start,
+                        length_ticks: segment_end - segment_start,
+                        notes: Arc::new(notes),
+                    });
+                }
+                ids.next_item_id = next_item_id;
+                ids.next_note_id = next_note_id;
+                ProjectEvent::MidiItemsReplaced {
+                    index,
+                    before: vec![original],
+                    after,
+                }
+            }
             DawAction::DeleteMidiItem { item_id } => {
                 let index = state
                     .midi_items
@@ -1459,6 +1571,61 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.midi_items[index] = after.clone();
+            }
+            ProjectEvent::MidiItemsReplaced {
+                index,
+                before,
+                after,
+            } => {
+                let end = index
+                    .checked_add(before.len())
+                    .filter(|end| *end <= state.midi_items.len())
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if before.is_empty() || state.midi_items[*index..end] != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                let mut existing_item_ids = state
+                    .audio_items
+                    .iter()
+                    .map(|item| item.id)
+                    .chain(
+                        state
+                            .midi_items
+                            .iter()
+                            .enumerate()
+                            .filter(|(item_index, _)| !(*index..end).contains(item_index))
+                            .map(|(_, item)| item.id),
+                    )
+                    .collect::<HashSet<_>>();
+                let mut existing_note_ids = state
+                    .midi_items
+                    .iter()
+                    .enumerate()
+                    .filter(|(item_index, _)| !(*index..end).contains(item_index))
+                    .flat_map(|(_, item)| item.notes.iter().map(|note| note.id))
+                    .collect::<HashSet<_>>();
+                if after.is_empty()
+                    || after.iter().any(|item| {
+                        !state.tracks.iter().any(|track| track.id == item.track_id)
+                            || item.length_ticks == 0
+                            || item.start_tick.checked_add(item.length_ticks).is_none()
+                            || !existing_item_ids.insert(item.id)
+                            || item.notes.iter().any(|note| {
+                                note.data.pitch > 127
+                                    || note.data.velocity > 127
+                                    || note.data.duration == 0
+                                    || note
+                                        .data
+                                        .tick
+                                        .checked_add(note.data.duration)
+                                        .is_none_or(|note_end| note_end > item.length_ticks)
+                                    || !existing_note_ids.insert(note.id)
+                            })
+                    })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.midi_items.splice(*index..end, after.clone());
             }
             ProjectEvent::MidiNotesAdded { item_id, notes } => {
                 let item = state

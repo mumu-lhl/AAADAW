@@ -667,9 +667,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
 
         match event {
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let Some(position) = cursor.position_in(bounds) else {
-                    return None;
-                };
+                let position = cursor.position_in(bounds)?;
                 let (x, y) = match delta {
                     mouse::ScrollDelta::Lines { x, y } => (*x * 42.0, *y),
                     mouse::ScrollDelta::Pixels { x, y } => (*x, *y / 80.0),
@@ -795,9 +793,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let Some(position) = cursor.position_in(bounds) else {
-                    return None;
-                };
+                let position = cursor.position_in(bounds)?;
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
                 let hit = self.cache.item_at(track_index, tick);
@@ -1339,9 +1335,11 @@ mod tests {
                 signature: TimeSignature::new(7, 8).unwrap(),
             })
             .unwrap();
-        let mut timeline = TimelineState::default();
-        timeline.origin_tick = 3840;
-        timeline.pixels_per_tick = 0.1;
+        let timeline = TimelineState {
+            origin_tick: 3840,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
         let lines = timeline.ruler_lines(&project, 400.0);
         assert_eq!(lines[0].measure, 2);
         assert!(lines[0].is_measure);

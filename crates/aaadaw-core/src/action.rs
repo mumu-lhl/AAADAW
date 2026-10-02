@@ -58,6 +58,12 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Split a MIDI item at one or more absolute project ticks while preserving its notes.
+    /// Notes crossing a split are continued at the start of the following segment.
+    SplitMidiItem {
+        item_id: ItemId,
+        split_ticks: Vec<u64>,
+    },
     /// Delete a MIDI item and retain it for undo.
     DeleteMidiItem { item_id: ItemId },
     /// Add notes to a MIDI item. Note ticks are relative to the item start.

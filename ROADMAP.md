@@ -91,7 +91,7 @@
 - [ ] 建立可停靠面板骨架；扩展 transport 至其他设备后端。
 - [x] 建立空间化 Arrangement：Audio/MIDI Item 按轨道和音乐时间显示；拍号感知标尺、水平缩放/平移、轨道/item 选择、edit cursor、垂直轨道滚动、可调 TCP 分割和 Inspector。AudioItem 保留 sample-clock 精确输入、撤销微调、复制/删除及 JACK 定位；MIDI 保留 Item/音符列表与可撤销编辑和 1/16 量化。
 - [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；内容、来源偏移和无效放置保护均已验证。
-- [ ] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
+- [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [ ] 将快捷键映射配置化并直接纳入统一 Action 注册表；增加冲突检查与用户配置基础结构。

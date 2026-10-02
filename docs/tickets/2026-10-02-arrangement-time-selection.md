@@ -18,6 +18,6 @@
 - **Out of scope:** Removing the time-selected middle segment, loop points, and item slip/stretch editing.
 - **Dependencies:** A3.1; existing `DawAction` batch transactions and item selection.
 - **Acceptance:** Cursor split creates two segments where the cursor is inside an Item. Time-selection split creates segment boundaries at both range edges, without changing material outside the selected Items. Audio segments preserve source offsets; MIDI notes remain represented in the correct segments. Each invocation is one atomic undo/redo step; invalid or empty splits leave state/history unchanged.
-- **Verification:** Core/app tests for Audio, MIDI, mixed selections, boundary no-ops, and undo/redo; `cargo xtest -p aaadaw`.
+- **Verification:** Core/app tests for Audio, MIDI, mixed selections, source/project sample-rate conversion, boundary no-ops, and undo/redo; `cargo xtest`.
 - **UI acceptance:** Commands stay disabled when no selected Item can be split; command names and availability match between Item menu and Actions search.
-- **Status:** Ready.
+- **Status:** Complete.

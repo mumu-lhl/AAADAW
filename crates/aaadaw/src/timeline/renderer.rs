@@ -324,7 +324,7 @@ impl Primitive for TimelinePrimitive {
             self.grid_lines.len()
                 + 3
                 + self.selected_items.len()
-                + self.time_selection.is_some().then_some(3).unwrap_or(0),
+                + if self.time_selection.is_some() { 3 } else { 0 },
         );
         if let Some(selection) = self.time_selection {
             dynamic.push(GpuRect::new(
