@@ -4,6 +4,7 @@
 //! transport, MIDI scheduling, CLAP instrument processing, and optional Linux audio backends.
 //! Project-to-plugin assignment remains an application-layer responsibility.
 
+mod clap_gui;
 mod clap_instrument;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
@@ -14,6 +15,7 @@ mod pipewire_output;
 mod stream;
 mod transport;
 
+pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{
     ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
     ClapInstrumentOwner, ClapInstrumentProcessor, ClapPluginDescriptor, StoppedClapEffectProcessor,

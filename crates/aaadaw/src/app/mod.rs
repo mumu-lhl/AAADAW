@@ -15,6 +15,7 @@ use aaadaw_app::{
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
+use aaadaw_engine::ClapPluginGuiOwner;
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -37,6 +38,7 @@ mod project_io;
 #[cfg(test)]
 mod tests;
 mod view;
+mod x11_plugin_editor;
 
 pub(crate) use messages::{MainMenu, Message, PathPickerTarget, SettingsCategory};
 
@@ -66,6 +68,13 @@ struct App {
     fx_chain_window_id: Option<iced::window::Id>,
     fx_chain_track_id: Option<TrackId>,
     fx_chain_selected_index: Option<usize>,
+    fx_chain_native_parent: Option<u64>,
+    fx_chain_window_size: iced::Size,
+    fx_chain_window_scale_factor: f32,
+    fx_chain_editor_host: Option<x11_plugin_editor::X11PluginEditorHost>,
+    fx_chain_plugin_gui: Option<ClapPluginGuiOwner>,
+    fx_chain_plugin_gui_identity: Option<(TrackId, usize, String)>,
+    fx_chain_editor_status: String,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
     plugin_picker_search: String,
@@ -230,8 +239,10 @@ impl App {
         app.clap_plugin_paths = default_plugin_paths;
         match clap_plugin_config::load() {
             Ok(paths) => {
-                app.clap_plugin_paths =
-                    clap_plugin_settings::merge_clap_plugin_paths(app.clap_plugin_paths, paths);
+                app.clap_plugin_paths = clap_plugin_settings::merge_clap_plugin_paths(
+                    app.clap_plugin_paths.clone(),
+                    paths,
+                );
             }
             Err(error) => {
                 app.clap_plugin_settings_feedback =
@@ -292,6 +303,9 @@ impl App {
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
             iced::window::close_events().map(Message::WindowClosed),
+            iced::window::close_requests().map(Message::WindowCloseRequested),
+            iced::window::resize_events()
+                .map(|(window_id, size)| Message::FxChainWindowResized(window_id, size)),
             background_ticks,
         ])
     }
@@ -336,6 +350,7 @@ impl App {
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
                 | Message::WindowClosed(_)
+                | Message::WindowCloseRequested(_)
                 | Message::StartShortcutCapture(_)
                 | Message::ClearShortcutBinding(_)
                 | Message::RestoreShortcutDefault(_)
@@ -484,6 +499,9 @@ impl App {
                         | Message::AddScannedPlugin(_)
                         | Message::ToggleFxChainPlugin(_)
                         | Message::RemoveSelectedFxPlugin
+                        | Message::FxChainWindowNativeHandle(..)
+                        | Message::FxChainWindowScaleFactor(..)
+                        | Message::FxChainWindowResized(..)
                         | Message::NudgeAudioItem(..)
                         | Message::BeginAudioItemStartSampleEdit(_)
                         | Message::AudioItemStartSampleChanged(..)
@@ -527,6 +545,7 @@ impl App {
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
                 } else if self.fx_chain_window_id == Some(window_id) {
+                    self.close_fx_editor_resources();
                     self.fx_chain_window_id = None;
                     self.fx_chain_track_id = None;
                     self.fx_chain_selected_index = None;
@@ -540,12 +559,21 @@ impl App {
                     self.plugin_picker_track_id = None;
                     self.plugin_picker_search.clear();
                 } else if self.main_window_id == Some(window_id) {
+                    self.close_fx_editor_resources();
                     task = iced::exit();
+                }
+            }
+            Message::WindowCloseRequested(window_id) => {
+                if self.fx_chain_window_id == Some(window_id)
+                    || self.main_window_id == Some(window_id)
+                {
+                    self.close_fx_editor_resources();
                 }
             }
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
             Message::OpenPluginPicker => task = self.open_plugin_picker(),
             Message::CloseTrackFxChain => {
+                self.close_fx_editor_resources();
                 let close_chain = self
                     .fx_chain_window_id
                     .take()
@@ -571,9 +599,30 @@ impl App {
             }
             Message::PluginPickerSearchChanged(query) => self.plugin_picker_search = query,
             Message::AddScannedPlugin(plugin_id) => task = self.add_scanned_plugin(&plugin_id),
-            Message::SelectFxChainPlugin(index) => self.select_fx_chain_plugin(index),
+            Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
             Message::ToggleFxChainPlugin(index) => self.toggle_fx_chain_plugin(index),
-            Message::RemoveSelectedFxPlugin => self.remove_selected_fx_plugin(),
+            Message::RemoveSelectedFxPlugin => task = self.remove_selected_fx_plugin(),
+            Message::FxChainWindowNativeHandle(window_id, handle) => {
+                if self.fx_chain_window_id == Some(window_id) {
+                    self.fx_chain_native_parent = handle;
+                    task = self.open_selected_fx_plugin_gui();
+                }
+            }
+            Message::FxChainWindowScaleFactor(window_id, scale_factor) => {
+                if self.fx_chain_window_id == Some(window_id)
+                    && scale_factor.is_finite()
+                    && scale_factor > 0.0
+                {
+                    self.fx_chain_window_scale_factor = scale_factor;
+                    self.resize_fx_editor_host();
+                }
+            }
+            Message::FxChainWindowResized(window_id, size) => {
+                if self.fx_chain_window_id == Some(window_id) {
+                    self.fx_chain_window_size = size;
+                    self.resize_fx_editor_host();
+                }
+            }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
                 self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();

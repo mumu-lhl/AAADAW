@@ -70,6 +70,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let selected_plugin = app
         .fx_chain_selected_index
         .and_then(|index| track.fx_chain().get(index));
+    let editor_feedback: Element<'_, Message> = if app.fx_chain_editor_status.is_empty() {
+        iced::widget::Space::new().height(0).into()
+    } else {
+        container(text(app.fx_chain_editor_status.clone()).size(10))
+            .padding([4, 0])
+            .width(Length::Fill)
+            .into()
+    };
     let editor = match selected_plugin {
         Some(plugin) => selected_plugin_details(app, plugin),
         None => column![
@@ -89,6 +97,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
         rule::horizontal(1),
         scrollable(plugin_rows).height(Length::Fill),
+        editor_feedback,
         rule::horizontal(1),
         row![
             button("Add…").on_press(Message::OpenPluginPicker),
@@ -157,16 +166,23 @@ fn selected_plugin_details<'a>(
             (false, false) => "Other CLAP plugin",
         }
     });
+    let editor_state = if app.fx_chain_plugin_gui_identity.is_some() {
+        "Native CLAP editor is attached in this pane."
+    } else if app.fx_chain_editor_status.is_empty() {
+        "Opening the plugin editor…"
+    } else {
+        app.fx_chain_editor_status.as_str()
+    };
     column![
         text(name).size(17),
         text(format!("{vendor} · {kind}")).size(11),
         text(plugin.plugin_id()).size(10),
         text(plugin.bundle_path()).size(10),
         rule::horizontal(1),
-        text(if descriptor.is_some() {
-            "The plugin is selected in this chain. Its native editor is not attached yet."
-        } else {
+        text(if descriptor.is_none() {
             "This reference remains editable, but its plugin is not present in the current scan results."
+        } else {
+            editor_state
         })
         .size(12),
     ]

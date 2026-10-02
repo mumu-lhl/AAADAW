@@ -8,11 +8,13 @@ version = "0.1.0"
 dependencies = [
  "aaadaw-app",
  "aaadaw-core",
+ "aaadaw-engine",
  "aaadaw-media",
  "aaadaw-storage",
  "bytemuck",
  "iced",
  "rfd",
+ "x11rb",
 ]
 
 [[package]]
