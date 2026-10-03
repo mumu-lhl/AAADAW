@@ -8,6 +8,15 @@ permissions:
   contents: read
 
 jobs:
+  windows:
+    name: Check Windows workspace
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+
   rust:
     name: Check and test
     runs-on: ubuntu-latest
