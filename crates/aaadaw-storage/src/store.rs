@@ -297,6 +297,162 @@ impl std::error::Error for StorageError {
     }
 }
 
+#[cfg(test)]
+mod low_disk_save_tests {
+    use super::ProjectStore;
+    use aaadaw_core::{DawAction, Project, TrackFxPlugin};
+    use rusqlite::{Error as SqliteError, ErrorCode};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn project_path() -> PathBuf {
+        let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "aaadaw-storage-full-{}-{id}.aaadaw",
+            std::process::id()
+        ))
+    }
+
+    fn remove_database(path: &PathBuf) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    fn project_with_fx_state(state: Option<Vec<u8>>) -> Project {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .expect("track creation should succeed");
+        let track_id = project.tracks()[0].id();
+        let plugin = TrackFxPlugin::new("org.example.test", "/plugins/test.clap")
+            .expect("valid plugin reference")
+            .with_state(state);
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![plugin],
+            })
+            .expect("FX assignment should succeed");
+        project
+    }
+
+    fn assert_sqlite_full(error: &super::StorageError) {
+        assert!(
+            matches!(error, super::StorageError::Sql(SqliteError::SqliteFailure(code, _)) if code.code == ErrorCode::DiskFull),
+            "expected SQLite SQLITE_FULL, got {error}"
+        );
+    }
+
+    fn restrict_to_one_additional_page(store: &ProjectStore) -> i64 {
+        let page_count: i64 = store
+            .connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))
+            .expect("page count should be readable");
+        store
+            .connection
+            .pragma_update(None, "max_page_count", page_count + 1)
+            .expect("database should accept a restrictive page limit");
+        page_count
+    }
+
+    #[test]
+    fn failed_save_preserves_last_snapshot_and_can_be_retried_after_space_is_freed() {
+        let path = project_path();
+        let original = project_with_fx_state(None);
+        let replacement = project_with_fx_state(Some(vec![0xa5; 1024 * 1024]));
+        let mut store = ProjectStore::open(&path).expect("project should open");
+        store.save(&original).expect("initial snapshot should save");
+
+        let page_count = restrict_to_one_additional_page(&store);
+
+        let error = store
+            .save(&replacement)
+            .expect_err("the larger snapshot should exceed the page limit");
+        assert_sqlite_full(&error);
+        assert_eq!(
+            store
+                .load()
+                .expect("store should remain queryable")
+                .snapshot(),
+            original.snapshot(),
+            "failed save must leave the last committed snapshot intact"
+        );
+
+        store.close().expect("failed save should not prevent close");
+        let mut store = ProjectStore::open(&path).expect("old snapshot should reopen");
+        assert_eq!(
+            store.load().expect("old snapshot should load").snapshot(),
+            original.snapshot(),
+            "rollback must survive close and reopen"
+        );
+
+        store
+            .connection
+            .pragma_update(None, "max_page_count", page_count + 1024)
+            .expect("freeing space should permit growth");
+        store
+            .save(&replacement)
+            .expect("retry should save after capacity is restored");
+        store.close().expect("retried project should close");
+
+        let store = ProjectStore::open(&path).expect("retried snapshot should reopen");
+        assert_eq!(
+            store
+                .load()
+                .expect("retried snapshot should load")
+                .snapshot(),
+            replacement.snapshot()
+        );
+        store.close().expect("reopened project should close");
+        remove_database(&path);
+    }
+
+    #[test]
+    fn failed_save_can_be_retried_on_the_same_open_store() {
+        let path = project_path();
+        let original = project_with_fx_state(None);
+        let replacement = project_with_fx_state(Some(vec![0x5a; 1024 * 1024]));
+        let mut store = ProjectStore::open(&path).expect("project should open");
+        store.save(&original).expect("initial snapshot should save");
+        let page_count = restrict_to_one_additional_page(&store);
+
+        let error = store
+            .save(&replacement)
+            .expect_err("the larger snapshot should exceed the page limit");
+        assert_sqlite_full(&error);
+        assert_eq!(
+            store
+                .load()
+                .expect("store should remain queryable")
+                .snapshot(),
+            original.snapshot()
+        );
+
+        store
+            .connection
+            .pragma_update(None, "max_page_count", page_count + 1024)
+            .expect("freeing space should permit growth");
+        store
+            .save(&replacement)
+            .expect("the failed transaction should allow a retry on this connection");
+        assert_eq!(
+            store
+                .load()
+                .expect("retried snapshot should load")
+                .snapshot(),
+            replacement.snapshot()
+        );
+        store.close().expect("retried project should close");
+        remove_database(&path);
+    }
+}
+
 impl From<rusqlite::Error> for StorageError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sql(error)
