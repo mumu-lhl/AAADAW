@@ -32,6 +32,8 @@ pub(crate) enum CommandId {
     },
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    PanicMidi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +68,8 @@ enum CommandKind {
     Track(TrackCommand),
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    PanicMidi,
 }
 
 #[derive(Clone, Copy)]
@@ -419,6 +423,17 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: false,
         separator_before: false,
     },
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    CommandDefinition {
+        kind: CommandKind::PanicMidi,
+        menu: Some(MainMenu::Actions),
+        category: "Transport",
+        label: "MIDI Panic · release all notes",
+        aliases: &["panic", "midi panic", "all notes off", "stuck notes"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
 ];
 
 pub(super) struct CommandEntry {
@@ -714,6 +729,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => "transport.toggle-playback",
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        CommandKind::PanicMidi => "transport.panic-midi",
     }
 }
 
@@ -792,6 +809,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandId::TogglePlayback => Message::TogglePlayback,
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        CommandId::PanicMidi => Message::PanicMidi,
     };
     app.update(message)
 }
@@ -918,6 +937,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => true,
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        CommandKind::PanicMidi => app.playback.is_some(),
     }
 }
 
@@ -958,6 +979,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        CommandKind::PanicMidi => CommandId::PanicMidi,
     }
 }
 

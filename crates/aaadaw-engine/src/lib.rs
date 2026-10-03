@@ -1179,7 +1179,8 @@ impl AudioRenderGraph {
         Ok(())
     }
 
-    /// Stops held MIDI voices on the audio thread without changing the transport state.
+    /// Releases held MIDI voices and resets controller-capable instruments without
+    /// changing the transport state.
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
     pub(crate) fn release_midi_notes(&mut self) -> usize {
         let mut failures = 0;

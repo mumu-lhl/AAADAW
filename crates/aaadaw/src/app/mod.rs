@@ -1638,6 +1638,8 @@ impl App {
                 }
             }
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::PanicMidi => self.panic_midi(),
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StartRecording => task = self.start_recording(),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StopRecording => task = self.stop_recording(),
@@ -1923,6 +1925,22 @@ impl App {
                 self.status = "Playback stopped".to_owned();
             }
             Err(error) => self.status = format!("{} stop failed: {error}", self.playback_name()),
+        }
+    }
+
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    fn panic_midi(&mut self) {
+        let Some(playback) = self.playback.as_mut() else {
+            self.status = format!("{} output is not open", self.playback_name());
+            return;
+        };
+        match playback.panic_midi() {
+            Ok(()) => {
+                self.status = "MIDI Panic sent: CC resets to MIDI-capable ports, held notes released on all instruments; playhead unchanged".to_owned()
+            }
+            Err(error) => {
+                self.status = format!("{} MIDI Panic failed: {error}", self.playback_name())
+            }
         }
     }
 

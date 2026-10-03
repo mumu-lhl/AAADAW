@@ -316,6 +316,20 @@ impl RunningAudioPlayback {
         Ok(())
     }
 
+    /// Requests an immediate MIDI reset while leaving the transport running.
+    pub fn panic_midi(&mut self) -> Result<(), PlaybackBuildError> {
+        match &mut self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => {
+                output.panic_midi().map_err(PlaybackBuildError::Jack)
+            }
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => {
+                output.panic_midi().map_err(PlaybackBuildError::PipeWire)
+            }
+        }
+    }
+
     pub fn replace_graph(
         &mut self,
         prepared: PreparedAudioPlayback,

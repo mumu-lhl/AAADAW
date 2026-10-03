@@ -379,9 +379,9 @@ impl ClapInstrumentOwner {
                 left: vec![0.0; max_block_frames],
                 right: vec![0.0; max_block_frames],
                 event_scratch: Vec::with_capacity(max_events),
-                // A stop block may need one pedal-off event in addition to every
-                // preallocated active-note release.
-                input_events: EventBuffer::with_capacity(max_events.saturating_add(1)),
+                // A reset block may need CC64/CC123/CC120 on every MIDI channel
+                // in addition to every preallocated active-note release.
+                input_events: EventBuffer::with_capacity(max_events.saturating_add(48)),
                 active_notes: Vec::with_capacity(max_events),
                 active_note_scratch: Vec::with_capacity(max_events),
                 input_note_port,
@@ -982,13 +982,14 @@ impl ClapInstrumentProcessor {
         result
     }
 
-    /// Sends note-offs for every currently held note without advancing the project transport.
+    /// Releases every held note and resets the plugin's MIDI note state.
     pub(crate) fn all_notes_off(&mut self) -> Result<(), ClapInstrumentError> {
         if self.active_notes.is_empty() {
             self.input_events.clear();
             if let Some(port) = self.input_midi_port {
-                self.input_events
-                    .push(&MidiEvent::new(0, port, [0xb0, 64, 0]));
+                self.push_midi_controller_all_channels(port, 64);
+                self.push_midi_controller_all_channels(port, 123);
+                self.push_midi_controller_all_channels(port, 120);
             } else {
                 return Ok(());
             }
@@ -997,10 +998,6 @@ impl ClapInstrumentProcessor {
             return Ok(());
         }
         self.input_events.clear();
-        if let Some(port) = self.input_midi_port {
-            self.input_events
-                .push(&MidiEvent::new(0, port, [0xb0, 64, 0]));
-        }
         for note in &self.active_notes {
             self.input_events.push(&NoteOffEvent::new(
                 0,
@@ -1013,10 +1010,23 @@ impl ClapInstrumentProcessor {
                 0.0,
             ));
         }
+        if let Some(port) = self.input_midi_port {
+            self.push_midi_controller_all_channels(port, 64);
+            self.push_midi_controller_all_channels(port, 123);
+            self.push_midi_controller_all_channels(port, 120);
+        }
         let mut discarded_audio = [[0.0, 0.0]];
         self.process_prepared_events(&mut discarded_audio)?;
         self.active_notes.clear();
         Ok(())
+    }
+
+    fn push_midi_controller_all_channels(&mut self, port: u16, controller: u8) {
+        for channel in 0..16 {
+            let status = 0xb0 | channel;
+            self.input_events
+                .push(&MidiEvent::new(0, port, [status, controller, 0]));
+        }
     }
 
     fn process_prepared_events(
@@ -1593,15 +1603,24 @@ mod tests {
                         }
                         Some(CoreEventSpace::Midi(event)) => {
                             let [status, controller, value] = event.data();
-                            if status & 0xf0 == 0xb0 && controller == 64 {
-                                let sustain = value >= 64;
-                                if self.sustain && !sustain && self.released_while_sustained {
-                                    self.active_pitch = None;
-                                    self.released_while_sustained = false;
+                            if status & 0xf0 == 0xb0 {
+                                match controller {
+                                    1 => self.modulation = f32::from(value) / 127.0,
+                                    64 => {
+                                        let sustain = value >= 64;
+                                        if self.sustain && !sustain && self.released_while_sustained
+                                        {
+                                            self.active_pitch = None;
+                                            self.released_while_sustained = false;
+                                        }
+                                        self.sustain = sustain;
+                                    }
+                                    123 => self.modulation = 0.5 + f32::from(status & 0x0f) / 100.0,
+                                    120 => {
+                                        self.modulation = 0.25 + f32::from(status & 0x0f) / 100.0
+                                    }
+                                    _ => {}
                                 }
-                                self.sustain = sustain;
-                            } else if status & 0xf0 == 0xb0 && controller == 1 {
-                                self.modulation = f32::from(value) / 127.0;
                             }
                         }
                         _ => {}
@@ -2255,7 +2274,25 @@ mod tests {
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
-                sample_offset: 8,
+                sample_offset: 6,
+                track_id,
+                note_id: None,
+                pitch: 64,
+                velocity: 0,
+                controller: Some(123),
+                kind: MidiEventKind::ControllerChange,
+            },
+            ScheduledMidiEvent {
+                sample_offset: 7,
+                track_id,
+                note_id: None,
+                pitch: 64,
+                velocity: 0,
+                controller: Some(120),
+                kind: MidiEventKind::ControllerChange,
+            },
+            ScheduledMidiEvent {
+                sample_offset: 10,
                 track_id,
                 note_id: None,
                 pitch: 64,
@@ -2264,21 +2301,93 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
         ];
-        let mut output = [[0.0; 2]; 10];
+        let mut output = [[0.0; 2]; 12];
         processor
             .process(&events, &mut output)
-            .expect("sustain events should process");
+            .expect("controller events should process");
 
         let level = 64.0 / 127.0;
         for (index, frame) in output.iter().enumerate() {
             let expected = match index {
                 0..4 => level,
-                4..8 => level * (64.0 / 127.0),
+                4..6 => level * (64.0 / 127.0),
+                6 => level * 0.5,
+                7..10 => level * 0.25,
                 _ => 0.0,
             };
             assert!((frame[0] - expected).abs() < 0.0001);
             assert!((frame[1] - expected * 0.5).abs() < 0.0001);
         }
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn controller_reset_covers_all_midi_channels() {
+        let (owner, mut processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            16,
+            1,
+        )
+        .expect("test synth should load");
+        let (track_id, note_id) = test_ids();
+        processor
+            .all_notes_off()
+            .expect("controller-capable plugin should accept reset events");
+
+        let event = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            pitch: 127,
+            velocity: 127,
+            controller: None,
+            kind: MidiEventKind::NoteOn,
+        };
+        let mut output = [[0.0; 2]; 1];
+        processor
+            .process(&[event], &mut output)
+            .expect("test note should render after reset");
+
+        assert!((output[0][0] - 0.4).abs() < 0.0001);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn note_only_plugin_receives_host_tracked_note_off_on_reset() {
+        let (owner, mut processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            16,
+            1,
+        )
+        .expect("test synth should load");
+        processor.input_midi_port = None;
+        let (track_id, note_id) = test_ids();
+        let event = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            pitch: 64,
+            velocity: 127,
+            controller: None,
+            kind: MidiEventKind::NoteOn,
+        };
+        let mut output = [[0.0; 2]; 1];
+        processor
+            .process(&[event], &mut output)
+            .expect("test note should start");
+        assert!(output[0][0] > 0.0);
+
+        processor
+            .all_notes_off()
+            .expect("tracked note-off should be delivered without MIDI controllers");
+        processor
+            .process(&[], &mut output)
+            .expect("silence should render after tracked note-off");
+        assert_eq!(output, [[0.0; 2]; 1]);
         owner.deactivate(processor.stop());
     }
 
@@ -2484,6 +2593,14 @@ mod tests {
             .expect("first note block should render");
         assert!(output[0][0] > 0.0);
         assert_eq!(graph.release_midi_notes(), 0);
+        assert!(graph.transport_mut().is_playing());
+        assert_eq!(graph.transport_mut().position_samples(), 8);
+        graph
+            .render_into(&mut output)
+            .expect("Panic can silence voices while playback remains active");
+        assert_eq!(output, [[0.0; 2]; 8]);
+        assert!(graph.transport_mut().is_playing());
+        assert_eq!(graph.transport_mut().position_samples(), 16);
         graph.transport_mut().stop();
         graph
             .render_into(&mut output)

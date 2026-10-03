@@ -13,6 +13,7 @@ const TRANSPORT_COMMAND_CAPACITY: usize = 16;
 enum TransportCommand {
     Play,
     Stop,
+    PanicMidi,
     ReplaceGraph {
         graph: Box<AudioRenderGraph>,
         start_playing: bool,
@@ -52,6 +53,12 @@ impl JackProcessHandler {
                         .callback_errors
                         .fetch_add(failures as u64, Ordering::Relaxed);
                     self.graph.transport_mut().stop();
+                }
+                TransportCommand::PanicMidi => {
+                    let failures = self.graph.release_midi_notes();
+                    self.counters
+                        .callback_errors
+                        .fetch_add(failures as u64, Ordering::Relaxed);
                 }
                 TransportCommand::ReplaceGraph {
                     mut graph,
@@ -296,6 +303,11 @@ impl JackAudioOutput {
     /// Queues a stop request for the next audio callback.
     pub fn stop(&mut self) -> Result<(), JackOutputError> {
         self.enqueue(TransportCommand::Stop)
+    }
+
+    /// Queues an immediate MIDI note/controller reset without stopping transport.
+    pub fn panic_midi(&mut self) -> Result<(), JackOutputError> {
+        self.enqueue(TransportCommand::PanicMidi)
     }
 
     /// Queues a new render graph and preserves playback state.
