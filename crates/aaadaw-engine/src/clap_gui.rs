@@ -136,8 +136,7 @@ impl ClapPluginGuiOwner {
         entry_path: &Path,
         plugin_id: &str,
         parent_x11_window: u64,
-        requested_width: u32,
-        requested_height: u32,
+        requested_size: (u32, u32),
         scale_factor: f32,
         state: Option<&[u8]>,
         parameter_values: &[(u32, f64)],
@@ -224,8 +223,8 @@ impl ClapPluginGuiOwner {
         let _ = gui.set_scale(&plugin, scale);
         if gui.can_resize(&plugin) {
             let requested_size = clack_extensions::gui::GuiSize {
-                width: requested_width.max(1),
-                height: requested_height.max(1),
+                width: requested_size.0.max(1),
+                height: requested_size.1.max(1),
             };
             let size = gui
                 .adjust_size(&plugin, requested_size)
