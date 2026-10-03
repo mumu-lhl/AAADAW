@@ -260,6 +260,9 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             Message::StopPlayback
         }),
+        button("MIDI Panic")
+            .style(iced::widget::button::danger)
+            .on_press_maybe(app.playback.is_some().then_some(Message::PanicMidi)),
         button(if app.recording_starting {
             "Connecting…"
         } else if app.recording.is_some() {

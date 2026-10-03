@@ -182,6 +182,8 @@ pub(crate) enum Message {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StopPlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    PanicMidi,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StartRecording,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StopRecording,

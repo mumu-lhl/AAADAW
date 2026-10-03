@@ -16,6 +16,7 @@ const RETIRED_GRAPH_CAPACITY: usize = 1;
 enum TransportCommand {
     Play,
     Stop,
+    PanicMidi,
     ReplaceGraph {
         graph: Box<AudioRenderGraph>,
         start_playing: bool,
@@ -64,6 +65,14 @@ impl ProcessData {
                             .callback_errors
                             .fetch_add(failures as u64, Ordering::Relaxed);
                         graph.transport_mut().stop();
+                    }
+                }
+                TransportCommand::PanicMidi => {
+                    if let Some(graph) = &mut self.graph {
+                        let failures = graph.release_midi_notes();
+                        self.counters
+                            .callback_errors
+                            .fetch_add(failures as u64, Ordering::Relaxed);
                     }
                 }
                 TransportCommand::ReplaceGraph {
@@ -322,6 +331,10 @@ impl PipeWireAudioOutput {
 
     pub fn stop(&mut self) -> Result<(), PipeWireOutputError> {
         self.enqueue(TransportCommand::Stop)
+    }
+
+    pub fn panic_midi(&mut self) -> Result<(), PipeWireOutputError> {
+        self.enqueue(TransportCommand::PanicMidi)
     }
 
     pub fn replace_graph(

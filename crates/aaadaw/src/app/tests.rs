@@ -1161,6 +1161,23 @@ fn action_search_dispatches_supported_commands() {
     assert!(app.project.midi_items().is_empty());
 }
 
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn midi_panic_without_an_open_output_reports_the_missing_backend() {
+    let mut app = App::default();
+
+    let panic_command = commands::for_actions_menu(&app)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::PanicMidi)
+        .expect("Actions menu should expose MIDI Panic");
+    assert_eq!(panic_command.label, "MIDI Panic · release all notes");
+    assert!(!panic_command.enabled);
+
+    let _ = app.update(Message::PanicMidi);
+
+    assert!(app.status.contains("output is not open"));
+}
+
 #[test]
 fn action_search_does_not_run_commands_that_are_disabled_in_the_menu() {
     let mut app = App::default();
