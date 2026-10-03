@@ -572,6 +572,7 @@ impl App {
                         | Message::CommitTrackName(_)
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
+                        | Message::ToggleRecordArm(_)
                         | Message::AdjustVolume(..)
                         | Message::AdjustPan(..)
                         | Message::AddScannedPlugin(_)
@@ -882,6 +883,22 @@ impl App {
                             solo: !track.is_solo(),
                         },
                         "Track solo changed",
+                    );
+                }
+            }
+            Message::ToggleRecordArm(track_id) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    self.apply_action(
+                        DawAction::SetTrackRecordArm {
+                            track_id,
+                            armed: !track.is_record_armed(),
+                        },
+                        "Track record arm changed",
                     );
                 }
             }

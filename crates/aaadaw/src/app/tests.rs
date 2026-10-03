@@ -958,12 +958,16 @@ fn track_controls_and_undo_change_project_only_through_actions() {
     let track_id = app.project.tracks()[0].id();
 
     let _ = app.update(Message::ToggleMute(track_id));
+    let _ = app.update(Message::ToggleRecordArm(track_id));
     let _ = app.update(Message::AdjustVolume(track_id, -3.0));
     assert!(app.project.tracks()[0].is_muted());
+    assert!(app.project.tracks()[0].is_record_armed());
     assert_eq!(app.project.tracks()[0].volume_db(), -3.0);
 
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.tracks()[0].is_record_armed());
     let _ = app.update(Message::Undo);
     assert!(!app.project.tracks()[0].is_muted());
 }

@@ -108,6 +108,7 @@ pub(crate) enum Message {
     CommitTrackName(TrackId),
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
+    ToggleRecordArm(TrackId),
     AdjustVolume(TrackId, f32),
     AdjustPan(TrackId, f32),
     NudgeAudioItem(ItemId, i8, u32),
