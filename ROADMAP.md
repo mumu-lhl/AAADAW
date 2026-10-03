@@ -81,7 +81,7 @@
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
 - [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。
 - [x] 为钢琴卷帘增加连续 MIDI Modulation Wheel（CC1）lane；复用通用控制器编辑、存储、sample-accurate 播放和 seek chase（[Issue #28](https://github.com/mumu-lhl/AAADAW/issues/28)）。
-- [ ] 在钢琴卷帘中增加 MIDI Expression（CC11）lane；继续覆盖其他常见控制器（[Issue #32](https://github.com/mumu-lhl/AAADAW/issues/32)）。
+- [x] 在钢琴卷帘中增加 MIDI Expression（CC11）lane（[Issue #32](https://github.com/mumu-lhl/AAADAW/issues/32)）；更多常见控制器继续排期。
 - [x] 停止/seek/graph replacement 时重置 CLAP MIDI 状态，并提供不移动 playhead 的 MIDI Panic 命令（[Issue #30](https://github.com/mumu-lhl/AAADAW/issues/30)）。
 - [ ] 实现 Master 输出安全保护与欠载（XRun）可观测性；明确保护器的算法、延迟和安全边界，不宣传其可替代硬件/听力保护。
 - [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。

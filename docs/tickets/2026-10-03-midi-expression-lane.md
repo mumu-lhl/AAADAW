@@ -19,4 +19,4 @@ Native Iced GUI rendering has not been visually reviewed in this environment.
 
 ## Status
 
-In progress.
+Complete in PR #33.
