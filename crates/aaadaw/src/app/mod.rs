@@ -1834,6 +1834,14 @@ impl App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn start_playback(&mut self) -> Task<Message> {
         self.recording_cancelled_transport_start = false;
+        if self.playback.is_some() && !self.playback_graph_dirty {
+            self.clap_plugin_warnings.clear();
+            if let Err(error) = self.persist_clap_plugin_states() {
+                self.clap_plugin_warnings.push(format!(
+                    "Some plugin state could not be captured; previously saved state was kept ({error})"
+                ));
+            }
+        }
         if self.playback.is_some() && self.playback_graph_dirty {
             return self.prepare_playback(self.playhead_sample, true);
         }
@@ -1842,6 +1850,10 @@ impl App {
                 Ok(()) => {
                     self.playback_playing = true;
                     self.status = "Playback started".to_owned();
+                    if !self.clap_plugin_warnings.is_empty() {
+                        self.status.push_str("; ");
+                        self.status.push_str(&self.clap_plugin_warnings.join("; "));
+                    }
                     Task::none()
                 }
                 Err(error) => {
