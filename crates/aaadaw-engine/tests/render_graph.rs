@@ -426,6 +426,11 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
                     tick: 1200,
                     value: 0,
                 },
+                aaadaw_core::MidiControllerData {
+                    controller: 1,
+                    tick: 240,
+                    value: 80,
+                },
             ],
         })
         .expect("sustain pedal events should be added");
@@ -436,18 +441,31 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
     graph.transport_mut().seek_sample(seek_sample);
     graph.transport_mut().start();
     let mut output = [[0.0_f32, 0.0_f32]; 16];
-    let mut midi_output = [None; 3];
+    let mut midi_output = [None; 4];
 
     let stats = graph
         .render_with_midi(&mut midi_output, &mut output)
         .expect("seeked MIDI block should render");
 
-    assert_eq!(stats.midi_event_count, 2);
+    assert_eq!(stats.midi_event_count, 3);
     let pedal = midi_output[0].expect("sustain state should be chased");
+    let modulation = midi_output[1].expect("modulation state should be chased");
     assert_eq!(pedal.kind, aaadaw_engine::MidiEventKind::ControllerChange);
-    assert_eq!(pedal.controller, Some(64));
-    assert_eq!(pedal.velocity, 127);
-    let note = midi_output[1].expect("sustained note should be chased");
+    assert_eq!(
+        modulation.kind,
+        aaadaw_engine::MidiEventKind::ControllerChange
+    );
+    assert!(
+        [pedal, modulation]
+            .iter()
+            .any(|event| event.controller == Some(64) && event.velocity == 127)
+    );
+    assert!(
+        [pedal, modulation]
+            .iter()
+            .any(|event| event.controller == Some(1) && event.velocity == 80)
+    );
+    let note = midi_output[2].expect("sustained note should be chased");
     assert_eq!(note.kind, aaadaw_engine::MidiEventKind::NoteOn);
     assert_eq!(note.sample_offset, 0);
 }

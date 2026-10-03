@@ -80,6 +80,7 @@
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
 - [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。
+- [x] 为钢琴卷帘增加连续 MIDI Modulation Wheel（CC1）lane；复用通用控制器编辑、存储、sample-accurate 播放和 seek chase（[Issue #28](https://github.com/mumu-lhl/AAADAW/issues/28)）。
 - [ ] 扩展到其他 MIDI CC/控制器数据，并明确全局 controller reset 与 Panic 语义。
 - [ ] 实现 Master 输出安全保护与欠载（XRun）可观测性；明确保护器的算法、延迟和安全边界，不宣传其可替代硬件/听力保护。
 - [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。

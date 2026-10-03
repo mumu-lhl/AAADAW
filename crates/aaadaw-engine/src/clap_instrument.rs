@@ -1442,6 +1442,7 @@ mod tests {
 
     struct TestInstrumentAudioProcessor {
         active_pitch: Option<u8>,
+        modulation: f32,
         sustain: bool,
         released_while_sustained: bool,
     }
@@ -1549,6 +1550,7 @@ mod tests {
         ) -> Result<Self, PluginError> {
             Ok(Self {
                 active_pitch: None,
+                modulation: 1.0,
                 sustain: false,
                 released_while_sustained: false,
             })
@@ -1598,12 +1600,14 @@ mod tests {
                                     self.released_while_sustained = false;
                                 }
                                 self.sustain = sustain;
+                            } else if status & 0xf0 == 0xb0 && controller == 1 {
+                                self.modulation = f32::from(value) / 127.0;
                             }
                         }
                         _ => {}
                     }
                 }
-                let level = f32::from(self.active_pitch.unwrap_or(0)) / 127.0;
+                let level = f32::from(self.active_pitch.unwrap_or(0)) / 127.0 * self.modulation;
                 left[frame] = level;
                 right[frame] = level * 0.5;
             }
@@ -2207,7 +2211,7 @@ mod tests {
     }
 
     #[test]
-    fn processor_delivers_sustain_controller_events_at_their_sample_offsets() {
+    fn processor_delivers_midi_controller_events_at_their_sample_offsets() {
         let entry = test_plugin_entry::<true, 2>();
         let (owner, mut processor) =
             ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 16, 8)
@@ -2230,6 +2234,15 @@ mod tests {
                 pitch: 64,
                 velocity: 127,
                 controller: Some(64),
+                kind: MidiEventKind::ControllerChange,
+            },
+            ScheduledMidiEvent {
+                sample_offset: 4,
+                track_id,
+                note_id: None,
+                pitch: 64,
+                velocity: 64,
+                controller: Some(1),
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2258,7 +2271,11 @@ mod tests {
 
         let level = 64.0 / 127.0;
         for (index, frame) in output.iter().enumerate() {
-            let expected = if index < 8 { level } else { 0.0 };
+            let expected = match index {
+                0..4 => level,
+                4..8 => level * (64.0 / 127.0),
+                _ => 0.0,
+            };
             assert!((frame[0] - expected).abs() < 0.0001);
             assert!((frame[1] - expected * 0.5).abs() < 0.0001);
         }
