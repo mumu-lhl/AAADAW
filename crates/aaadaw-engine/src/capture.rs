@@ -37,6 +37,13 @@ impl AudioCaptureControl {
         self.0.enabled.store(false, Ordering::Release);
     }
 
+    /// Invalidates an active take when a backend drops an input buffer.
+    pub fn fail_if_enabled(&self) {
+        if self.0.enabled.load(Ordering::Acquire) {
+            self.fail();
+        }
+    }
+
     /// Returns whether overflow or an input backend error invalidated the take.
     pub fn has_failed(&self) -> bool {
         self.0.failed.load(Ordering::Acquire)

@@ -150,7 +150,11 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             app.playhead_sample as f64 / app.project.settings().sample_rate() as f64
         )
     } else if app.recording_starting {
-        format!("Connecting {backend_name} input…")
+        if app.pending_recording.is_some() {
+            format!("Starting {backend_name} transport…")
+        } else {
+            format!("Connecting {backend_name} input…")
+        }
     } else if app.recording_stopping {
         "Finalizing take…".to_owned()
     } else if app.playback_busy {

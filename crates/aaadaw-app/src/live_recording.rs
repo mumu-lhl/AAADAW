@@ -108,7 +108,7 @@ impl AudioRecordingWorker {
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("project");
-            let base = format!(".{stem}-take-{}", id);
+            let base = format!(".{stem}-take-{}-{id}", std::process::id());
             let part = directory.join(format!("{base}.wav.part"));
             let final_path = directory.join(format!("{base}.wav"));
             if !part.exists() && !final_path.exists() {
@@ -175,11 +175,14 @@ fn write_take(
     control: AudioCaptureControl,
     commands: Receiver<Command>,
 ) -> Result<PathBuf, AudioRecordingError> {
+    let mut owns_part_file = false;
+    let mut published_final_file = false;
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&part_path)?;
+        owns_part_file = true;
         file.write_all(&[0; WAV_HEADER_SIZE as usize])?;
         let mut frames = [[0.0_f32; 2]; DRAIN_FRAMES];
         let mut bytes = Vec::with_capacity(DRAIN_FRAMES * 6);
@@ -240,13 +243,19 @@ fn write_take(
         write_wav_header(&mut file, sample_rate, riff_size, data_bytes)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&part_path, &final_path)?;
+        fs::hard_link(&part_path, &final_path)?;
+        published_final_file = true;
+        fs::remove_file(&part_path)?;
         Ok(final_path.clone())
     })();
     if result.is_err() {
         control.fail();
-        let _ = fs::remove_file(part_path);
-        let _ = fs::remove_file(final_path);
+        if owns_part_file {
+            let _ = fs::remove_file(part_path);
+        }
+        if published_final_file {
+            let _ = fs::remove_file(final_path);
+        }
     }
     result
 }

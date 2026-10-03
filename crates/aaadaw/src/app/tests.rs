@@ -2019,7 +2019,11 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         std::process::id(),
         NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed)
     ));
-    app.record_import_tracks = Some((vec![first_track, second_track], 96_000, source.clone()));
+    app.record_import_tracks = Some(super::RecordImportTarget {
+        track_ids: vec![first_track, second_track],
+        start_sample: 96_000,
+        source_path: source.clone(),
+    });
     app.import_busy = true;
 
     app.finish_audio_import(Ok(DawAction::InsertAudioItem {

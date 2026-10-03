@@ -243,8 +243,8 @@ impl App {
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-                if let Some((_, _, source_path)) = self.record_import_tracks.take() {
-                    let _ = std::fs::remove_file(source_path);
+                if let Some(target) = self.record_import_tracks.take() {
+                    let _ = std::fs::remove_file(target.source_path);
                 }
                 self.status = format!("Audio import could not start: {error}");
             }
@@ -253,8 +253,8 @@ impl App {
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-                if let Some((_, _, source_path)) = self.record_import_tracks.take() {
-                    let _ = std::fs::remove_file(source_path);
+                if let Some(target) = self.record_import_tracks.take() {
+                    let _ = std::fs::remove_file(target.source_path);
                 }
                 self.status = "Audio import worker result was unavailable".to_owned();
             }
@@ -575,44 +575,44 @@ impl App {
         self.import_finalizing = false;
         self.import_cancel_requested = false;
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-        let (result, success_status) =
-            if let Some((tracks, start_sample, source_path)) = self.record_import_tracks.take() {
-                let _ = std::fs::remove_file(source_path);
-                match result {
-                    Ok(DawAction::InsertAudioItem {
-                        media_ref,
-                        source_offset_samples,
-                        length_samples,
-                        ..
-                    }) => {
-                        let track_count = tracks.len();
-                        let actions = tracks
-                            .into_iter()
-                            .map(|track_id| DawAction::InsertAudioItem {
-                                track_id,
-                                media_ref: media_ref.clone(),
-                                start_sample,
-                                source_offset_samples,
-                                length_samples,
-                            })
-                            .collect();
-                        (
-                            Ok(DawAction::BatchTransaction {
-                                tx_id: self.revision,
-                                actions,
-                            }),
-                            Some(format!("Take recorded onto {track_count} armed track(s)")),
-                        )
-                    }
-                    Ok(_) => (
-                        Err("recorded take import returned an unexpected action".to_owned()),
-                        None,
-                    ),
-                    Err(error) => (Err(error), None),
+        let (result, success_status) = if let Some(target) = self.record_import_tracks.take() {
+            let _ = std::fs::remove_file(target.source_path);
+            match result {
+                Ok(DawAction::InsertAudioItem {
+                    media_ref,
+                    source_offset_samples,
+                    length_samples,
+                    ..
+                }) => {
+                    let track_count = target.track_ids.len();
+                    let actions = target
+                        .track_ids
+                        .into_iter()
+                        .map(|track_id| DawAction::InsertAudioItem {
+                            track_id,
+                            media_ref: media_ref.clone(),
+                            start_sample: target.start_sample,
+                            source_offset_samples,
+                            length_samples,
+                        })
+                        .collect();
+                    (
+                        Ok(DawAction::BatchTransaction {
+                            tx_id: self.revision,
+                            actions,
+                        }),
+                        Some(format!("Take recorded onto {track_count} armed track(s)")),
+                    )
                 }
-            } else {
-                (result, None)
-            };
+                Ok(_) => (
+                    Err("recorded take import returned an unexpected action".to_owned()),
+                    None,
+                ),
+                Err(error) => (Err(error), None),
+            }
+        } else {
+            (result, None)
+        };
         #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         let (result, success_status): (Result<DawAction, String>, Option<String>) = (result, None);
         match result {

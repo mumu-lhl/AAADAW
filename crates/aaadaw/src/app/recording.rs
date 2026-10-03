@@ -1,6 +1,6 @@
 use super::{
-    ActiveRecording, App, Message, SharedAudioImportWorker, SharedRecordingStart,
-    SharedRecordingStop, run_blocking,
+    ActiveRecording, App, Message, RecordImportTarget, SharedAudioImportWorker,
+    SharedRecordingStart, SharedRecordingStop, run_blocking,
 };
 use aaadaw_app::{audio_capture_stream, open_audio_input, start_audio_item_import};
 use iced::Task;
@@ -41,7 +41,6 @@ impl App {
         }
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
-        self.recording_start_sample = self.playhead_sample;
         self.recording_tracks = tracks;
         self.recording_starting = true;
         self.recording_cancel_requested = false;
@@ -58,14 +57,11 @@ impl App {
                 )
                 .map_err(|error| error.to_string())?;
                 match open_audio_input(backend, producer, control.clone(), sample_rate) {
-                    Ok(input) => {
-                        control.start();
-                        Ok(ActiveRecording {
-                            input,
-                            writer,
-                            control,
-                        })
-                    }
+                    Ok(input) => Ok(ActiveRecording {
+                        input,
+                        writer,
+                        control,
+                    }),
                     Err(error) => {
                         writer.cancel();
                         Err(error)
@@ -79,34 +75,47 @@ impl App {
     }
 
     pub(super) fn finish_recording_start(&mut self, result: SharedRecordingStart) -> Task<Message> {
-        self.recording_starting = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
             Some(Ok(recording)) => {
                 if self.recording_cancel_requested {
                     self.recording_cancel_requested = false;
+                    self.recording_starting = false;
                     self.recording_tracks.clear();
-                    recording.control.stop();
-                    recording.input.shutdown();
-                    recording.writer.cancel();
+                    discard_recording(recording);
                     self.status = "Recording setup cancelled".to_owned();
                     return Task::none();
                 }
-                self.recording = Some(recording);
-                self.status = "Recording".to_owned();
-                if self.playback.is_none() || !self.playback_playing {
+                if self.playback.is_none() {
+                    self.pending_recording = Some(recording);
+                    self.status = format!("Starting {} transport…", self.playback_name());
                     self.start_playback()
                 } else {
+                    if !self.playback_playing {
+                        if let Err(error) = self.playback.as_mut().expect("playback exists").play()
+                        {
+                            self.recording_starting = false;
+                            self.recording_tracks.clear();
+                            discard_recording(recording);
+                            self.status =
+                                format!("Playback could not start for recording: {error}");
+                            return Task::none();
+                        }
+                        self.playback_playing = true;
+                    }
+                    self.begin_recording(recording);
                     Task::none()
                 }
             }
             Some(Err(error)) => {
+                self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
                 self.status = format!("Recording could not start: {error}");
                 Task::none()
             }
             None => {
+                self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
                 self.status = "Recording setup result was unavailable".to_owned();
@@ -118,6 +127,15 @@ impl App {
     pub(super) fn stop_recording(&mut self) -> Task<Message> {
         let Some(recording) = self.recording.take() else {
             if self.recording_starting {
+                if let Some(recording) = self.pending_recording.take() {
+                    self.recording_starting = false;
+                    self.recording_cancel_requested = false;
+                    self.recording_cancelled_transport_start = true;
+                    self.recording_tracks.clear();
+                    discard_recording(recording);
+                    self.status = "Recording setup cancelled".to_owned();
+                    return Task::none();
+                }
                 self.recording_cancel_requested = true;
                 self.status = "Cancelling input setup…".to_owned();
             } else {
@@ -160,7 +178,11 @@ impl App {
                     return Task::none();
                 };
                 let sample_rate = self.project.settings().sample_rate();
-                self.record_import_tracks = Some((tracks, start_sample, path.clone()));
+                self.record_import_tracks = Some(RecordImportTarget {
+                    track_ids: tracks,
+                    start_sample,
+                    source_path: path.clone(),
+                });
                 self.import_busy = true;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
@@ -197,4 +219,48 @@ impl App {
             }
         }
     }
+
+    pub(super) fn begin_pending_recording(&mut self) {
+        let Some(recording) = self.pending_recording.take() else {
+            return;
+        };
+        if self.recording_cancel_requested {
+            self.recording_cancel_requested = false;
+            self.recording_starting = false;
+            self.recording_tracks.clear();
+            discard_recording(recording);
+            self.status = "Recording setup cancelled".to_owned();
+            return;
+        }
+        if !self.playback_playing {
+            self.recording_starting = false;
+            self.recording_tracks.clear();
+            discard_recording(recording);
+            self.status = format!(
+                "{} output could not start for recording",
+                self.playback_name()
+            );
+            return;
+        }
+        self.begin_recording(recording);
+    }
+
+    fn begin_recording(&mut self, recording: ActiveRecording) {
+        self.recording_start_sample = self
+            .playback
+            .as_ref()
+            .map_or(self.playhead_sample, |playback| {
+                playback.stats().playhead_sample
+            });
+        recording.control.start();
+        self.recording = Some(recording);
+        self.recording_starting = false;
+        self.status = "Recording".to_owned();
+    }
+}
+
+fn discard_recording(recording: ActiveRecording) {
+    recording.control.stop();
+    recording.input.shutdown();
+    recording.writer.cancel();
 }

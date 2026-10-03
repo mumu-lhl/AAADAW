@@ -189,6 +189,8 @@ struct App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording: Option<ActiveRecording>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pending_recording: Option<ActiveRecording>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording_starting: bool,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording_cancel_requested: bool,
@@ -201,7 +203,7 @@ struct App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording_tracks: Vec<TrackId>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-    record_import_tracks: Option<(Vec<TrackId>, u64, PathBuf)>,
+    record_import_tracks: Option<RecordImportTarget>,
     status: String,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback: Option<RunningAudioPlayback>,
@@ -230,6 +232,13 @@ struct ActiveRecording {
     input: RunningAudioInput,
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+struct RecordImportTarget {
+    track_ids: Vec<TrackId>,
+    start_sample: u64,
+    source_path: PathBuf,
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1315,7 +1324,12 @@ impl App {
                 target_sample,
                 start_when_ready,
                 result,
-            } => self.finish_playback_preparation(target_sample, start_when_ready, result),
+            } => {
+                self.finish_playback_preparation(target_sample, start_when_ready, result);
+                if self.pending_recording.is_some() {
+                    self.begin_pending_recording();
+                }
+            }
             #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::SelectPlaybackBackend(backend) => {
                 if self.playback.is_some() {
