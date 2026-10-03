@@ -9,7 +9,7 @@ use iced::{
 };
 use std::collections::{HashMap, HashSet};
 
-const KEY_WIDTH: f32 = 56.0;
+const KEY_WIDTH: f32 = 84.0;
 const HEADER_HEIGHT: f32 = 28.0;
 const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
@@ -179,7 +179,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fixed(EXPRESSION_LANE_HEIGHT));
     let expression_lane = row![
-        container(text("Expr CC11"))
+        container(text("Expression"))
             .width(Length::Fixed(KEY_WIDTH))
             .height(Length::Fixed(EXPRESSION_LANE_HEIGHT))
             .center_y(Length::Fill)
