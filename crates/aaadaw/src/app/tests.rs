@@ -1414,6 +1414,12 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].notes()[4].velocity(), 90);
     assert_eq!(app.project.midi_items()[0].notes()[5].velocity(), 110);
+    let _ = app.update(Message::Redo);
+    assert!(
+        app.project.midi_items()[0].notes()[4..]
+            .iter()
+            .all(|note| note.velocity() == 100)
+    );
 }
 
 #[test]

@@ -63,7 +63,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         button("Paste")
             .style(iced::widget::button::secondary)
             .on_press_maybe(
-                (!app.midi_note_clipboard.is_empty()).then_some(Message::PasteMidiNotes(item_id))
+                (!app.midi_note_clipboard.notes.is_empty())
+                    .then_some(Message::PasteMidiNotes(item_id))
             )
             .padding([SPACING_XS / 2.0, SPACING_XS]),
         button("Delete notes")
@@ -352,7 +353,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
                 drag.delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
                 if drag.velocity {
-                    drag.delta_velocity = velocity_delta(drag.start.y, point.y);
+                    drag.delta_velocity = velocity_delta_in_lane(
+                        drag.start.y,
+                        point.y,
+                        f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+                    );
                 } else {
                     drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
                 }
@@ -739,9 +744,8 @@ fn velocity_handle_positions(
             .iter()
             .position(|note| note.tick() != tick)
             .map_or(ordered.len(), |offset| group_start + offset);
-        let group_len = group_end - group_start;
         for (index, note) in ordered[group_start..group_end].iter().enumerate() {
-            let offset = (index as f32 - (group_len as f32 - 1.0) / 2.0) * 6.0;
+            let offset = index as f32 * 6.0;
             positions.insert(note.id(), mapping.x_at_tick(tick) + 1.0 + offset);
         }
         group_start = group_end;
@@ -751,6 +755,10 @@ fn velocity_handle_positions(
 
 fn velocity_delta(start_y: f32, current_y: f32) -> i16 {
     ((start_y - current_y) * 127.0 / VELOCITY_LANE_HEIGHT).round() as i16
+}
+
+fn velocity_delta_in_lane(start_lane_y: f32, current_canvas_y: f32, piano_height: f32) -> i16 {
+    velocity_delta(start_lane_y, current_canvas_y - piano_height)
 }
 
 fn apply_velocity_delta(velocity: u8, delta: i16) -> u8 {
@@ -852,7 +860,8 @@ mod tests {
 
     #[test]
     fn velocity_drag_uses_one_delta_and_clamps_each_note_to_midi_range() {
-        let delta = velocity_delta(80.0, 64.0);
+        let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
+        let delta = velocity_delta_in_lane(80.0, piano_height + 64.0, piano_height);
         assert_eq!(delta, 20);
         assert_eq!(apply_velocity_delta(70, delta), 90);
         assert_eq!(apply_velocity_delta(120, delta), 127);
