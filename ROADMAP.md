@@ -55,7 +55,7 @@
 - [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v4、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [ ] 扩展 schema 支持自动化，并按工程规模优化全量快照写入；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
-- [ ] 验收磁盘空间不足时的保存与恢复行为。
+- [x] 验收 SQLite 页数上限触发磁盘满时的原子保存回滚、旧工程恢复和解除限制后的重试（[Issue #24](https://github.com/mumu-lhl/AAADAW/issues/24)）。
 - [x] 验收异常退出后的 WAL 恢复及正常关闭后的单文件复制/迁移（[`docs/tickets/2026-10-02-project-wal-recovery.md`](docs/tickets/2026-10-02-project-wal-recovery.md)）。
 
 **退出标准**：领域层可在无 UI/音频设备环境下测试；Action、批量回滚、撤销/重做、时基换算和数据库迁移均有自动化测试；测试工程可保存并重开且语义一致。
