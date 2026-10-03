@@ -1,9 +1,10 @@
 use aaadaw_core::{NoteId, Project, TimebaseError, Track, TrackId};
 use std::fmt;
 
-/// A MIDI event kind, ordered so note-offs precede note-ons at shared block positions.
+/// A MIDI event kind. Shared-sample ordering also accounts for sustain-on/off semantics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MidiEventKind {
+    ControllerChange,
     NoteOff,
     NoteOn,
 }
@@ -13,20 +14,41 @@ pub enum MidiEventKind {
 pub struct ScheduledMidiEvent {
     pub sample_offset: usize,
     pub track_id: TrackId,
-    pub note_id: NoteId,
+    pub note_id: Option<NoteId>,
     pub pitch: u8,
     pub velocity: u8,
+    pub controller: Option<u8>,
     pub kind: MidiEventKind,
+}
+
+impl ScheduledMidiEvent {
+    pub(crate) fn sort_priority(self) -> u8 {
+        midi_event_priority(self.kind, self.controller, self.velocity)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CompiledMidiEvent {
     absolute_sample: u64,
     track_id: TrackId,
-    note_id: NoteId,
+    note_id: Option<NoteId>,
     pitch: u8,
     velocity: u8,
+    controller: Option<u8>,
     kind: MidiEventKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompiledControllerValue {
+    absolute_sample: u64,
+    value: u8,
+}
+
+#[derive(Clone, Debug)]
+struct ControllerTimeline {
+    track_id: TrackId,
+    controller: u8,
+    values: Vec<CompiledControllerValue>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +79,7 @@ struct ActiveNoteQuery {
 #[derive(Clone, Debug, Default)]
 pub struct MidiEventPlan {
     events: Vec<CompiledMidiEvent>,
+    controller_timelines: Vec<ControllerTimeline>,
     notes: Vec<CompiledMidiNote>,
     note_interval_nodes: Vec<MidiNoteIntervalNode>,
     note_interval_root: Option<usize>,
@@ -114,6 +137,7 @@ impl MidiEventPlan {
         let has_solo = tracks.iter().any(Track::is_solo);
         let mut events = Vec::new();
         let mut notes = Vec::new();
+        let mut controller_timelines = Vec::<ControllerTimeline>::new();
 
         for item in project.midi_items() {
             let track = tracks
@@ -151,31 +175,74 @@ impl MidiEventPlan {
                 events.push(CompiledMidiEvent {
                     absolute_sample: start_sample,
                     track_id: item.track_id(),
-                    note_id: note.id(),
+                    note_id: Some(note.id()),
                     pitch: note.pitch(),
                     velocity: note.velocity(),
+                    controller: None,
                     kind: MidiEventKind::NoteOn,
                 });
                 events.push(CompiledMidiEvent {
                     absolute_sample: end_sample,
                     track_id: item.track_id(),
-                    note_id: note.id(),
+                    note_id: Some(note.id()),
                     pitch: note.pitch(),
                     velocity: 0,
+                    controller: None,
                     kind: MidiEventKind::NoteOff,
+                });
+            }
+            for controller in item.controllers() {
+                let absolute_tick = item
+                    .start_tick()
+                    .checked_add(controller.tick)
+                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
+                let absolute_sample = project
+                    .sample_at_tick(absolute_tick)
+                    .map_err(MidiScheduleError::Timebase)?;
+                let timeline = controller_timelines.iter_mut().find(|timeline| {
+                    timeline.track_id == item.track_id()
+                        && timeline.controller == controller.controller
+                });
+                let timeline = if let Some(timeline) = timeline {
+                    timeline
+                } else {
+                    controller_timelines.push(ControllerTimeline {
+                        track_id: item.track_id(),
+                        controller: controller.controller,
+                        values: Vec::new(),
+                    });
+                    controller_timelines
+                        .last_mut()
+                        .expect("controller timeline was just inserted")
+                };
+                timeline.values.push(CompiledControllerValue {
+                    absolute_sample,
+                    value: controller.value,
+                });
+                events.push(CompiledMidiEvent {
+                    absolute_sample,
+                    track_id: item.track_id(),
+                    note_id: None,
+                    pitch: controller.controller,
+                    velocity: controller.value,
+                    controller: Some(controller.controller),
+                    kind: MidiEventKind::ControllerChange,
                 });
             }
         }
 
-        events.sort_unstable_by_key(|event| {
+        events.sort_by_key(|event| {
             (
                 event.absolute_sample,
-                event.kind,
+                midi_event_priority(event.kind, event.controller, event.velocity),
                 event.track_id.value(),
                 event.pitch,
-                event.note_id.value(),
+                event.note_id.map_or(0, NoteId::value),
             )
         });
+        for timeline in &mut controller_timelines {
+            timeline.values.sort_by_key(|value| value.absolute_sample);
+        }
         notes.sort_unstable_by_key(|note| {
             (
                 note.start_sample,
@@ -186,6 +253,7 @@ impl MidiEventPlan {
         let (note_interval_nodes, note_interval_root) = compile_note_interval_tree(&notes);
         Ok(Self {
             events,
+            controller_timelines,
             notes,
             note_interval_nodes,
             note_interval_root,
@@ -226,6 +294,50 @@ impl MidiEventPlan {
             output,
             &mut written,
         );
+        Ok(written)
+    }
+
+    /// Copies the last controller value before `sample` as a block-offset-zero event per track
+    /// and controller. Controller timelines are compiled and sorted off the audio callback.
+    pub fn active_controllers_at(
+        &self,
+        sample: u64,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, MidiScheduleError> {
+        let active = self
+            .controller_timelines
+            .iter()
+            .filter(|timeline| {
+                timeline
+                    .values
+                    .partition_point(|value| value.absolute_sample < sample)
+                    > 0
+            })
+            .count();
+        if output.len() < active {
+            return Err(MidiScheduleError::OutputBufferTooSmall {
+                required: active,
+                available: output.len(),
+            });
+        }
+        let mut written = 0;
+        for timeline in &self.controller_timelines {
+            let end = timeline
+                .values
+                .partition_point(|value| value.absolute_sample < sample);
+            if let Some(value) = end.checked_sub(1).map(|index| timeline.values[index]) {
+                output[written] = Some(ScheduledMidiEvent {
+                    sample_offset: 0,
+                    track_id: timeline.track_id,
+                    note_id: None,
+                    pitch: timeline.controller,
+                    velocity: value.value,
+                    controller: Some(timeline.controller),
+                    kind: MidiEventKind::ControllerChange,
+                });
+                written += 1;
+            }
+        }
         Ok(written)
     }
 
@@ -294,9 +406,10 @@ impl MidiEventPlan {
             output[*written] = Some(ScheduledMidiEvent {
                 sample_offset: 0,
                 track_id: note.track_id,
-                note_id: note.note_id,
+                note_id: Some(note.note_id),
                 pitch: note.pitch,
                 velocity: note.velocity,
+                controller: None,
                 kind: MidiEventKind::NoteOn,
             });
             *written += 1;
@@ -308,6 +421,15 @@ impl MidiEventPlan {
         self.events
             .iter()
             .filter(|event| event.track_id == track_id)
+            .count()
+    }
+
+    pub(crate) fn controller_event_count_for_track(&self, track_id: TrackId) -> usize {
+        self.events
+            .iter()
+            .filter(|event| {
+                event.track_id == track_id && event.kind == MidiEventKind::ControllerChange
+            })
             .count()
     }
 
@@ -345,6 +467,7 @@ impl MidiEventPlan {
                 note_id: event.note_id,
                 pitch: event.pitch,
                 velocity: event.velocity,
+                controller: event.controller,
                 kind: event.kind,
             });
         }
@@ -401,4 +524,13 @@ fn compile_note_interval_tree(
     let mut nodes = Vec::new();
     let root = build(notes, &note_indices, &mut nodes);
     (nodes, root)
+}
+
+fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -> u8 {
+    match kind {
+        MidiEventKind::ControllerChange if controller == Some(64) && value < 64 => 2,
+        MidiEventKind::ControllerChange => 0,
+        MidiEventKind::NoteOff => 1,
+        MidiEventKind::NoteOn => 3,
+    }
 }

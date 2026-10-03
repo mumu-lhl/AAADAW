@@ -761,6 +761,7 @@ impl App {
                         | Message::AddMidiNoteAt(..)
                         | Message::EditMidiNotes(..)
                         | Message::DeleteMidiNotes(..)
+                        | Message::SetMidiControllers(..)
                         | Message::DeleteMidiItem(_)
                         | Message::NudgeMidiItem(..)
                         | Message::NudgeMidiNote(..)
@@ -1021,6 +1022,15 @@ impl App {
                     );
                     self.midi_editor_selected_notes.clear();
                 }
+            }
+            Message::SetMidiControllers(item_id, controllers) => {
+                self.apply_action(
+                    DawAction::SetMidiControllers {
+                        item_id,
+                        controllers,
+                    },
+                    "MIDI controller lane edited",
+                );
             }
             Message::PianoRollPan(beats) => {
                 let delta = i128::from(beats) * i128::from(self.project.settings().ppq());

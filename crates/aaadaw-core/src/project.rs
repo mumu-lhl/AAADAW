@@ -5,9 +5,9 @@ use crate::snapshot::{
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
-    ActionError, AudioItem, DawAction, ItemId, MidiItem, MidiNote, MusicalPosition, NoteId,
-    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
-    TrackInstrument,
+    ActionError, AudioItem, DawAction, ItemId, MidiControllerData, MidiItem, MidiNote,
+    MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track,
+    TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -175,6 +175,11 @@ enum ProjectEvent {
         item_id: ItemId,
         before: MidiNote,
         after: MidiNote,
+    },
+    MidiControllersChanged {
+        item_id: ItemId,
+        before: Vec<MidiControllerData>,
+        after: Vec<MidiControllerData>,
     },
     MidiNotesQuantized {
         item_id: ItemId,
@@ -384,6 +389,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::MidiNoteChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::MidiControllersChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiControllersChanged {
                 item_id: *item_id,
                 before: after.clone(),
                 after: before.clone(),
@@ -618,6 +632,7 @@ impl Project {
                             data: note.data,
                         })
                         .collect(),
+                    controllers: item.controllers.as_ref().clone(),
                 })
                 .collect(),
             tempo_points: self
@@ -808,12 +823,18 @@ impl Project {
                     data,
                 });
             }
+            let mut controllers = item.controllers;
+            controllers.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+            if !valid_midi_controllers(&controllers, item.length_ticks) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 start_tick: item.start_tick,
                 length_ticks: item.length_ticks,
                 notes: Arc::new(notes),
+                controllers: Arc::new(controllers),
             });
         }
 
@@ -1234,6 +1255,7 @@ impl Project {
                     start_tick,
                     length_ticks,
                     notes: Arc::new(Vec::new()),
+                    controllers: Arc::new(Vec::new()),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::MidiItemInserted {
@@ -1308,6 +1330,7 @@ impl Project {
                     start_tick,
                     length_ticks: item_end - start_tick,
                     notes: Arc::new(notes),
+                    controllers: Arc::clone(&original.controllers),
                 };
                 ids.next_item_id = next_item_id;
                 ids.next_note_id = next_note_id;
@@ -1404,6 +1427,11 @@ impl Project {
                         start_tick: segment_start,
                         length_ticks: segment_end - segment_start,
                         notes: Arc::new(notes),
+                        controllers: Arc::new(controllers_for_segment(
+                            &original.controllers,
+                            relative_points[index],
+                            relative_points[index + 1],
+                        )),
                     });
                 }
                 ids.next_item_id = next_item_id;
@@ -1520,6 +1548,26 @@ impl Project {
                 ProjectEvent::MidiNotesRemoved {
                     item_id,
                     notes: selected,
+                }
+            }
+            DawAction::SetMidiControllers {
+                item_id,
+                mut controllers,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                controllers
+                    .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+                if !valid_midi_controllers(&controllers, item.length_ticks) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                ProjectEvent::MidiControllersChanged {
+                    item_id,
+                    before: item.controllers.as_ref().clone(),
+                    after: controllers,
                 }
             }
             DawAction::QuantizeItem {
@@ -1991,6 +2039,7 @@ impl Project {
                         !state.tracks.iter().any(|track| track.id == item.track_id)
                             || item.length_ticks == 0
                             || item.start_tick.checked_add(item.length_ticks).is_none()
+                            || !valid_midi_controllers(&item.controllers, item.length_ticks)
                             || !existing_item_ids.insert(item.id)
                             || item.notes.iter().any(|note| {
                                 note.data.pitch > 127
@@ -2070,6 +2119,23 @@ impl Project {
                 }
                 *note = after.clone();
             }
+            ProjectEvent::MidiControllersChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.controllers.as_ref() != before
+                    || !valid_midi_controllers(after, item.length_ticks)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.controllers = Arc::new(after.clone());
+            }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
                 let item = state
                     .midi_items
@@ -2133,6 +2199,55 @@ fn valid_audio_item(item: &AudioItem) -> bool {
     !item.media_ref.trim().is_empty()
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
+}
+
+fn valid_midi_controllers(controllers: &[MidiControllerData], length_ticks: u64) -> bool {
+    let mut positions = HashSet::with_capacity(controllers.len());
+    controllers.iter().all(|controller| {
+        controller.controller <= 127
+            && controller.value <= 127
+            && controller.tick < length_ticks
+            && positions.insert((controller.controller, controller.tick))
+    })
+}
+
+fn controllers_for_segment(
+    controllers: &[MidiControllerData],
+    start_tick: u64,
+    end_tick: u64,
+) -> Vec<MidiControllerData> {
+    let mut segment = controllers
+        .iter()
+        .filter(|controller| start_tick <= controller.tick && controller.tick < end_tick)
+        .map(|controller| MidiControllerData {
+            tick: controller.tick - start_tick,
+            ..*controller
+        })
+        .collect::<Vec<_>>();
+    let mut latest_by_controller = std::collections::HashMap::<u8, MidiControllerData>::new();
+    for controller in controllers
+        .iter()
+        .filter(|controller| controller.tick < start_tick)
+    {
+        latest_by_controller
+            .entry(controller.controller)
+            .and_modify(|latest| {
+                if latest.tick < controller.tick {
+                    *latest = *controller;
+                }
+            })
+            .or_insert(*controller);
+    }
+    for (number, latest) in latest_by_controller {
+        if !segment
+            .iter()
+            .any(|controller| controller.controller == number && controller.tick == 0)
+        {
+            segment.push(MidiControllerData { tick: 0, ..latest });
+        }
+    }
+    segment.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+    segment
 }
 
 fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {

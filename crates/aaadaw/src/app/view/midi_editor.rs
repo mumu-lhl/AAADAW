@@ -1,6 +1,6 @@
 use super::super::{App, Message};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
-use aaadaw_core::{ItemId, MidiItem, MidiNoteData, NoteId, Project};
+use aaadaw_core::{ItemId, MidiControllerData, MidiItem, MidiNoteData, NoteId, Project};
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{button, canvas as canvas_widget, column, container, row, scrollable, text};
@@ -14,6 +14,9 @@ const HEADER_HEIGHT: f32 = 28.0;
 const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
+const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
+const SUSTAIN_CONTEXT_WIDTH: f32 = 112.0;
+const SUSTAIN_CONTEXT_HEIGHT: f32 = 24.0;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
@@ -122,17 +125,347 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         velocity_canvas
     ]
     .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
+    let sustain_canvas = canvas_widget::Canvas::new(SustainLane {
+        item,
+        item_id,
+        origin_tick: app.midi_editor_origin_tick,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(SUSTAIN_LANE_HEIGHT));
+    let sustain_lane = row![
+        container(text("Sustain"))
+            .width(Length::Fixed(KEY_WIDTH))
+            .height(Length::Fixed(SUSTAIN_LANE_HEIGHT))
+            .center_y(Length::Fill)
+            .padding(SPACING_XS),
+        sustain_canvas
+    ]
+    .height(Length::Fixed(SUSTAIN_LANE_HEIGHT));
     column![
         edit_toolbar,
         navigation_toolbar,
         scrollable(pitch_canvas).height(Length::Fill),
-        velocity_lane
+        velocity_lane,
+        sustain_lane
     ]
     .spacing(ROW_GAP)
     .padding(PANEL_PADDING)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+struct SustainLane<'a> {
+    item: &'a MidiItem,
+    item_id: ItemId,
+    origin_tick: u64,
+    pixels_per_beat: f32,
+    ticks_per_beat: u64,
+}
+
+#[derive(Default)]
+struct SustainInteraction {
+    drag: Option<SustainDrag>,
+    context_menu: Option<(usize, Point)>,
+}
+
+struct SustainDrag {
+    controllers: Vec<MidiControllerData>,
+    index: Option<usize>,
+    original: Option<MidiControllerData>,
+    current: MidiControllerData,
+}
+
+impl SustainLane<'_> {
+    fn mapping(&self) -> RollMapping {
+        RollMapping {
+            origin_tick: self.origin_tick,
+            pixels_per_beat: self.pixels_per_beat,
+            ticks_per_beat: self.ticks_per_beat,
+            high_pitch: 0,
+        }
+    }
+
+    fn point_data(&self, point: Point) -> MidiControllerData {
+        let mapping = self.mapping();
+        MidiControllerData {
+            controller: 64,
+            tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+                .min(self.item.length_ticks().saturating_sub(1)),
+            value: if point.y < SUSTAIN_LANE_HEIGHT / 2.0 {
+                127
+            } else {
+                0
+            },
+        }
+    }
+
+    fn closest_point(&self, point: Point) -> Option<usize> {
+        let mapping = self.mapping();
+        self.item
+            .controllers()
+            .iter()
+            .enumerate()
+            .filter(|(_, controller)| controller.controller == 64)
+            .filter_map(|(index, controller)| {
+                let x_distance = mapping.x_at_tick(controller.tick) - point.x;
+                let y_distance = sustain_y(controller.value, SUSTAIN_LANE_HEIGHT) - point.y;
+                let distance = x_distance.hypot(y_distance);
+                (distance <= 12.0).then_some((index, distance))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(index, _)| index)
+    }
+}
+
+impl canvas::Program<Message> for SustainLane<'_> {
+    type State = SustainInteraction;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let point = cursor.position_in(bounds)?;
+                if let Some((index, origin)) = state.context_menu.take() {
+                    let menu_bounds = Rectangle::new(
+                        origin,
+                        Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                    );
+                    if menu_bounds.contains(point) {
+                        let mut controllers = self.item.controllers().to_vec();
+                        if index < controllers.len() {
+                            controllers.remove(index);
+                            return Some(canvas::Action::publish(Message::SetMidiControllers(
+                                self.item_id,
+                                controllers,
+                            )));
+                        }
+                    }
+                    return Some(canvas::Action::capture());
+                }
+                if point.x < 0.0 || point.y < 0.0 || self.item.length_ticks() == 0 {
+                    return Some(canvas::Action::capture());
+                }
+                let controllers = self.item.controllers().to_vec();
+                if let Some(index) = self.closest_point(point) {
+                    let original = controllers[index];
+                    state.drag = Some(SustainDrag {
+                        controllers,
+                        index: Some(index),
+                        original: Some(original),
+                        current: original,
+                    });
+                } else {
+                    state.drag = Some(SustainDrag {
+                        controllers,
+                        index: None,
+                        original: None,
+                        current: self.point_data(point),
+                    });
+                }
+                Some(canvas::Action::capture())
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let point = cursor.position_in(bounds)?;
+                let Some(index) = self.closest_point(point) else {
+                    state.context_menu = None;
+                    return Some(canvas::Action::capture());
+                };
+                let origin = Point::new(
+                    point.x.min((bounds.width - SUSTAIN_CONTEXT_WIDTH).max(0.0)),
+                    point
+                        .y
+                        .min((bounds.height - SUSTAIN_CONTEXT_HEIGHT).max(0.0)),
+                );
+                state.context_menu = Some((index, origin));
+                Some(canvas::Action::request_redraw())
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let point = cursor.position_in(bounds)?;
+                let Some(drag) = &mut state.drag else {
+                    return None;
+                };
+                let mapping = self.mapping();
+                drag.current = MidiControllerData {
+                    controller: 64,
+                    tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+                        .min(self.item.length_ticks().saturating_sub(1)),
+                    value: if point.y < SUSTAIN_LANE_HEIGHT / 2.0 {
+                        127
+                    } else {
+                        0
+                    },
+                };
+                Some(canvas::Action::request_redraw())
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let drag = state.drag.take()?;
+                let mut controllers = drag.controllers;
+                if let Some(index) = drag.index {
+                    controllers[index] = drag.current;
+                } else {
+                    controllers.push(drag.current);
+                }
+                let changed_index = drag.index.unwrap_or(controllers.len() - 1);
+                let duplicate_position = controllers.iter().enumerate().any(|(index, current)| {
+                    index != changed_index
+                        && current.controller == drag.current.controller
+                        && current.tick == drag.current.tick
+                });
+                if duplicate_position {
+                    return Some(canvas::Action::capture());
+                }
+                if drag.original == Some(drag.current) {
+                    return Some(canvas::Action::capture());
+                }
+                Some(canvas::Action::publish(Message::SetMidiControllers(
+                    self.item_id,
+                    controllers,
+                )))
+            }
+            Event::Window(iced::window::Event::RedrawRequested(_)) if state.drag.is_some() => {
+                Some(canvas::Action::request_redraw())
+            }
+            _ => None,
+        }
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
+        let mapping = self.mapping();
+        let grid_ticks = mapping.grid_ticks();
+        let end_tick = mapping.tick_at_x(bounds.width);
+        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
+        while tick <= end_tick.saturating_add(grid_ticks) {
+            let x = mapping.x_at_tick(tick);
+            if (0.0..=bounds.width).contains(&x) {
+                let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default().with_color(Color::from_rgb8(43, 48, 51)),
+                );
+            }
+            if tick > u64::MAX - grid_ticks {
+                break;
+            }
+            tick += grid_ticks;
+        }
+
+        let controllers = self.item.controllers();
+        let mut value = controllers
+            .iter()
+            .filter(|controller| controller.controller == 64 && controller.tick < self.origin_tick)
+            .max_by_key(|controller| controller.tick)
+            .map_or(0, |controller| controller.value);
+        let mut segment_start = 0.0;
+        for controller in controllers.iter().filter(|controller| {
+            controller.controller == 64
+                && self.origin_tick <= controller.tick
+                && controller.tick <= end_tick
+        }) {
+            let x = mapping.x_at_tick(controller.tick).clamp(0.0, bounds.width);
+            let old_y = sustain_y(value, bounds.height);
+            let new_y = sustain_y(controller.value, bounds.height);
+            let path = canvas::Path::line(Point::new(segment_start, old_y), Point::new(x, old_y));
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(111, 190, 150)),
+            );
+            if old_y != new_y {
+                let transition = canvas::Path::line(Point::new(x, old_y), Point::new(x, new_y));
+                frame.stroke(
+                    &transition,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgb8(111, 190, 150)),
+                );
+            }
+            frame.fill_rectangle(
+                Point::new(x - 4.0, new_y - 4.0),
+                Size::new(8.0, 8.0),
+                Color::from_rgb8(175, 225, 196),
+            );
+            segment_start = x;
+            value = controller.value;
+        }
+        if let Some(drag) = &state.drag {
+            let current_x = mapping
+                .x_at_tick(drag.current.tick)
+                .clamp(0.0, bounds.width);
+            let current_y = sustain_y(drag.current.value, bounds.height);
+            let path = canvas::Path::line(
+                Point::new(segment_start, current_y),
+                Point::new(bounds.width, current_y),
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(111, 190, 150)),
+            );
+            frame.fill_rectangle(
+                Point::new(current_x - 5.0, current_y - 5.0),
+                Size::new(10.0, 10.0),
+                Color::WHITE,
+            );
+        } else {
+            let y = sustain_y(value, bounds.height);
+            let path =
+                canvas::Path::line(Point::new(segment_start, y), Point::new(bounds.width, y));
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(111, 190, 150)),
+            );
+        }
+        if let Some((_, origin)) = state.context_menu {
+            frame.fill_rectangle(
+                origin,
+                Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                Color::from_rgb8(49, 54, 59),
+            );
+            frame.stroke_rectangle(
+                origin,
+                Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                canvas::Stroke::default().with_color(Color::from_rgb8(104, 112, 118)),
+            );
+            frame.fill_text(Text {
+                content: "Delete CC64 point".to_owned(),
+                position: Point::new(origin.x + 7.0, origin.y + 2.0),
+                max_width: SUSTAIN_CONTEXT_WIDTH - 12.0,
+                color: Color::WHITE,
+                size: Pixels(11.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+fn sustain_y(value: u8, height: f32) -> f32 {
+    height - 10.0 - (f32::from(value) / 127.0) * (height - 20.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -866,6 +1199,7 @@ fn pitch_name(pitch: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::widget::canvas::Program;
 
     #[test]
     fn time_and_pitch_mapping_respect_origin_and_visible_pitch_range() {
@@ -903,6 +1237,147 @@ mod tests {
         assert_eq!(mapping.x_at_tick(120), 24.0);
         assert_eq!(mapping.grid_ticks(), 120);
         assert_eq!(snap_tick(70, mapping.grid_ticks()), 120);
+    }
+
+    #[test]
+    fn sustain_lane_click_drag_and_right_click_emit_single_controller_edits() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, SUSTAIN_LANE_HEIGHT));
+        let lane = SustainLane {
+            item: &project.midi_items()[0],
+            item_id,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = SustainInteraction::default();
+        let pressed = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let released = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let cursor = mouse::Cursor::Available(Point::new(96.0, 10.0));
+        let action = lane
+            .update(&mut interaction, &pressed, bounds, cursor)
+            .expect("click should begin an edit gesture");
+        assert_eq!(action.into_inner().2, iced::event::Status::Captured);
+        let action = lane
+            .update(&mut interaction, &released, bounds, cursor)
+            .expect("click release should commit an edit");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(changed_item, controllers) = message.unwrap() else {
+            panic!("sustain lane should publish one controller replacement");
+        };
+        assert_eq!(changed_item, item_id);
+        assert_eq!(
+            controllers,
+            vec![MidiControllerData {
+                controller: 64,
+                tick: 960,
+                value: 127,
+            }]
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+
+        let lane = SustainLane {
+            item: &project.midi_items()[0],
+            item_id,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = SustainInteraction::default();
+        lane.update(
+            &mut interaction,
+            &pressed,
+            bounds,
+            mouse::Cursor::Available(Point::new(96.0, 10.0)),
+        )
+        .expect("existing point should start a drag");
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(192.0, 80.0),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(192.0, 80.0)),
+        )
+        .expect("drag should update the preview");
+        let action = lane
+            .update(
+                &mut interaction,
+                &released,
+                bounds,
+                mouse::Cursor::Available(Point::new(192.0, 80.0)),
+            )
+            .expect("drag release should commit one edit");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(_, controllers) = message.unwrap() else {
+            panic!("drag should publish a controller replacement");
+        };
+        assert_eq!(
+            controllers,
+            vec![MidiControllerData {
+                controller: 64,
+                tick: 1_920,
+                value: 0,
+            }]
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+
+        let lane = SustainLane {
+            item: &project.midi_items()[0],
+            item_id,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = SustainInteraction::default();
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                bounds,
+                mouse::Cursor::Available(Point::new(192.0, 80.0)),
+            )
+            .expect("right-clicking a point should open its context menu");
+        assert!(action.into_inner().0.is_none());
+        let action = lane
+            .update(
+                &mut interaction,
+                &pressed,
+                bounds,
+                mouse::Cursor::Available(Point::new(200.0, 80.0)),
+            )
+            .expect("choosing Delete CC64 point should remove the point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(deleted_item, controllers) = message.unwrap() else {
+            panic!("context menu should publish a controller replacement");
+        };
+        assert_eq!(deleted_item, item_id);
+        assert!(controllers.is_empty());
     }
 
     #[test]

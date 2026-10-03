@@ -382,3 +382,72 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
         aaadaw_engine::MidiEventKind::NoteOn
     );
 }
+
+#[test]
+fn seek_chases_sustain_state_before_resuming_sustained_notes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1920,
+        })
+        .expect("MIDI item insertion should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![aaadaw_core::MidiNoteData {
+                pitch: 64,
+                tick: 0,
+                duration: 960,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note should be added");
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                aaadaw_core::MidiControllerData {
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                },
+                aaadaw_core::MidiControllerData {
+                    controller: 64,
+                    tick: 1200,
+                    value: 0,
+                },
+            ],
+        })
+        .expect("sustain pedal events should be added");
+    let seek_sample = project.sample_at_tick(480).expect("tick should map");
+    let (_, consumer) = pcm_stream(16).expect("positive queue capacity is valid");
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 16)
+        .expect("stream count should match track count");
+    graph.transport_mut().seek_sample(seek_sample);
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32, 0.0_f32]; 16];
+    let mut midi_output = [None; 3];
+
+    let stats = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("seeked MIDI block should render");
+
+    assert_eq!(stats.midi_event_count, 2);
+    let pedal = midi_output[0].expect("sustain state should be chased");
+    assert_eq!(pedal.kind, aaadaw_engine::MidiEventKind::ControllerChange);
+    assert_eq!(pedal.controller, Some(64));
+    assert_eq!(pedal.velocity, 127);
+    let note = midi_output[1].expect("sustained note should be chased");
+    assert_eq!(note.kind, aaadaw_engine::MidiEventKind::NoteOn);
+    assert_eq!(note.sample_offset, 0);
+}

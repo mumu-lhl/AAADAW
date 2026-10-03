@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
+use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TimeSignature};
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -162,6 +162,23 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("MIDI note insertion should succeed");
     project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                },
+                MidiControllerData {
+                    controller: 64,
+                    tick: 960,
+                    value: 0,
+                },
+            ],
+        })
+        .expect("MIDI sustain events should be stored in the project");
+    project
         .apply(DawAction::SetTempo {
             start_tick: 960,
             bpm: 90.0,
@@ -238,6 +255,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN record_armed; \
              ALTER TABLE track_fx_plugins DROP COLUMN state; \
              DROP TABLE track_fx_parameter_values; \
+             DROP TABLE midi_controllers; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -1199,12 +1217,61 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     store.close().expect("project should close");
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_fx_parameter_values; PRAGMA user_version = 6;")
+        .execute_batch(
+            "DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
+        )
         .expect("project should resemble a schema-six database");
     drop(connection);
 
-    let store = ProjectStore::open(&path).expect("schema six should migrate to seven");
-    assert_eq!(store.schema_version().unwrap(), 7);
+    let store = ProjectStore::open(&path).expect("schema six should migrate to current");
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy MIDI".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .expect("MIDI item should be created");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .expect("legacy note should be added");
+    let mut store = ProjectStore::open(&path).expect("project should open");
+    store.save(&project).expect("legacy project should save");
+    store.close().expect("project should close");
+
+    let connection = Connection::open(&path).expect("project should be SQLite");
+    connection
+        .execute_batch("DROP TABLE midi_controllers; PRAGMA user_version = 7;")
+        .expect("project should resemble a schema-seven database");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("schema seven should migrate");
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
     store.close().expect("migrated project should close");
     remove_database(&path);
 }
