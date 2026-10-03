@@ -69,6 +69,23 @@ fn view_builder_has_app_view_signature() {
 }
 
 #[test]
+fn playback_diagnostics_distinguish_stream_underruns_from_backend_errors() {
+    assert_eq!(super::view::playback_diagnostic_suffix("JACK", 0, 0), "");
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("JACK", 256, 0),
+        " · stream underrun: 256 samples"
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("PipeWire", 0, 2),
+        " · PipeWire errors: 2"
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("JACK", 256, 2),
+        " · stream underrun: 256 samples · JACK errors: 2"
+    );
+}
+
+#[test]
 fn audio_asset_maintenance_requires_a_saved_project_snapshot() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("project.aaadaw")),

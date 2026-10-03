@@ -19,6 +19,22 @@ mod tokens;
 
 const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
 
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+pub(super) fn playback_diagnostic_suffix(
+    backend_name: &str,
+    underrun_samples: u64,
+    callback_errors: u64,
+) -> String {
+    let mut diagnostics = String::new();
+    if underrun_samples > 0 {
+        diagnostics.push_str(&format!(" · stream underrun: {underrun_samples} samples"));
+    }
+    if callback_errors > 0 {
+        diagnostics.push_str(&format!(" · {backend_name} errors: {callback_errors}"));
+    }
+    diagnostics
+}
+
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
     if app.settings_window_id == Some(window_id) {
         settings::view(app)
@@ -226,12 +242,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         )
     } else {
         let seconds = app.playhead_sample as f64 / app.project.settings().sample_rate() as f64;
-        let callback_errors = app
-            .playback
-            .as_ref()
-            .map_or(0, |playback| playback.stats().callback_errors);
         format!(
-            "{} · {seconds:.2}s{}",
+            "{} · {seconds:.2}s",
             if app.playback_playing {
                 "Playing"
             } else if armed {
@@ -239,12 +251,16 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             } else {
                 "Stopped"
             },
-            if callback_errors > 0 {
-                format!(" · {backend_name} errors: {callback_errors}")
-            } else {
-                String::new()
-            },
         )
+    };
+    let playback_state = if let Some(playback) = app.playback.as_ref() {
+        let stats = playback.stats();
+        format!(
+            "{playback_state}{}",
+            playback_diagnostic_suffix(backend_name, stats.underrun_samples, stats.callback_errors,)
+        )
+    } else {
+        playback_state
     };
     let controls = row![
         button("Play").on_press(Message::StartPlayback),
