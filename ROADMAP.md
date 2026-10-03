@@ -52,7 +52,7 @@
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v4、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v8、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [ ] 扩展 schema 支持自动化，并按工程规模优化全量快照写入；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [x] 验收 SQLite 页数上限触发磁盘满时的原子保存回滚、旧工程恢复和解除限制后的重试（[Issue #24](https://github.com/mumu-lhl/AAADAW/issues/24)）。
@@ -79,7 +79,8 @@
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
-- [ ] 增加 MIDI CC/控制器数据与 seek 状态追逐；明确停止/跳转时 controller reset 与 Panic 语义。
+- [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。
+- [ ] 扩展到其他 MIDI CC/控制器数据，并明确全局 controller reset 与 Panic 语义。
 - [ ] 实现 Master 输出安全保护与欠载（XRun）可观测性；明确保护器的算法、延迟和安全边界，不宣传其可替代硬件/听力保护。
 - [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。
 

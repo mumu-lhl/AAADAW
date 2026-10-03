@@ -40,6 +40,14 @@ pub struct MidiNoteData {
     pub velocity: u8,
 }
 
+/// Input data for a MIDI control-change event; `tick` is relative to its item.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MidiControllerData {
+    pub controller: u8,
+    pub tick: u64,
+    pub value: u8,
+}
+
 /// A MIDI note stored in a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiNote {
@@ -82,6 +90,7 @@ pub struct MidiItem {
     pub(crate) start_tick: u64,
     pub(crate) length_ticks: u64,
     pub(crate) notes: Arc<Vec<MidiNote>>,
+    pub(crate) controllers: Arc<Vec<MidiControllerData>>,
 }
 
 impl MidiItem {
@@ -108,5 +117,10 @@ impl MidiItem {
     /// Returns the item's notes in insertion order.
     pub fn notes(&self) -> &[MidiNote] {
         &self.notes
+    }
+
+    /// Returns control-change events sorted by tick, then controller number.
+    pub fn controllers(&self) -> &[MidiControllerData] {
+        &self.controllers
     }
 }

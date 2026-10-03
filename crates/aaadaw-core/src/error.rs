@@ -61,6 +61,8 @@ pub enum ActionError {
         item_id: ItemId,
         note_id: NoteId,
     },
+    /// A MIDI control change has an invalid controller, value, or in-item position.
+    InvalidMidiController,
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -140,6 +142,7 @@ impl fmt::Display for ActionError {
                 note_id.value(),
                 item_id.value()
             ),
+            Self::InvalidMidiController => formatter.write_str("MIDI controller data is invalid"),
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")
             }

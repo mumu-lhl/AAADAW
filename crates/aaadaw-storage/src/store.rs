@@ -1,7 +1,8 @@
 use aaadaw_core::{
-    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
-    Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
-    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
+    MidiNoteSnapshot, Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve,
+    TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    TrackInstrumentSnapshot, TrackSnapshot,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -19,7 +20,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 7;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -119,6 +120,19 @@ CREATE TABLE track_fx_parameter_values (
     FOREIGN KEY (track_id, position)
         REFERENCES track_fx_plugins(track_id, position) ON DELETE CASCADE
 );
+"#;
+
+const MIGRATION_8: &str = r#"
+CREATE TABLE midi_controllers (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, controller, tick)
+);
+CREATE INDEX midi_controllers_by_item_tick ON midi_controllers(item_id, tick, controller);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1734,7 +1748,8 @@ impl ProjectStore {
         let Some((sample_rate, ppq, initial_tempo_bpm)) = metadata else {
             let rows: i64 = self.connection.query_row(
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
-                 (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
+            (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
+             (SELECT COUNT(*) FROM midi_controllers) + \
                  (SELECT COUNT(*) FROM tempo_points) + (SELECT COUNT(*) FROM meter_points)",
                 [],
                 |row| row.get(0),
@@ -1757,10 +1772,10 @@ impl ProjectStore {
 
         let tracks = read_tracks(&self.connection)?;
         let audio_items = read_audio_items(&self.connection)?;
-        let (midi_items, orphan_notes) = read_items_and_notes(&self.connection)?;
-        if orphan_notes {
+        let (midi_items, orphan_events) = read_midi_items(&self.connection)?;
+        if orphan_events {
             return Err(StorageError::InvalidStoredData(
-                "MIDI notes reference a missing item",
+                "MIDI events reference a missing item",
             ));
         }
         let tempo_points = read_tempo_points(&self.connection)?;
@@ -1902,6 +1917,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             5 => transaction.execute_batch(MIGRATION_5)?,
             6 => transaction.execute_batch(MIGRATION_6)?,
             7 => transaction.execute_batch(MIGRATION_7)?,
+            8 => transaction.execute_batch(MIGRATION_8)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1919,6 +1935,7 @@ fn write_snapshot(
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM midi_notes", [])?;
+    transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
@@ -2029,6 +2046,19 @@ fn write_snapshot(
                     to_sql_integer(note.data.tick)?,
                     to_sql_integer(note.data.duration)?,
                     i64::from(note.data.velocity)
+                ],
+            )?;
+        }
+        for (position, controller) in item.controllers.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_controllers(item_id, position, controller, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(controller.controller),
+                    to_sql_integer(controller.tick)?,
+                    i64::from(controller.value)
                 ],
             )?;
         }
@@ -2234,9 +2264,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         .collect()
 }
 
-fn read_items_and_notes(
-    connection: &Connection,
-) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
+fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
     let mut note_statement = connection.prepare(
         "SELECT item_id, id, position, pitch, tick, duration, velocity \
          FROM midi_notes ORDER BY item_id, position",
@@ -2271,6 +2299,36 @@ fn read_items_and_notes(
             .push((from_sql_u64(position)?, note));
     }
 
+    let mut controller_statement = connection.prepare(
+        "SELECT item_id, position, controller, tick, value \
+         FROM midi_controllers ORDER BY item_id, position",
+    )?;
+    let controller_rows = controller_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut controllers_by_item: HashMap<u64, Vec<(u64, MidiControllerData)>> = HashMap::new();
+    for (item_id, position, controller, tick, value) in controller_rows {
+        controllers_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiControllerData {
+                    controller: from_sql_u8(controller)?,
+                    tick: from_sql_u64(tick)?,
+                    value: from_sql_u8(value)?,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
         "SELECT id, track_id, position, start_tick, length_ticks \
          FROM items ORDER BY position",
@@ -2291,15 +2349,20 @@ fn read_items_and_notes(
         let id = from_sql_u64(id)?;
         let _ = from_sql_u64(position)?;
         let notes = notes_by_item.remove(&id).unwrap_or_default();
+        let controllers = controllers_by_item.remove(&id).unwrap_or_default();
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
             start_tick: from_sql_u64(start_tick)?,
             length_ticks: from_sql_u64(length_ticks)?,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
+            controllers: controllers.into_iter().map(|(_, event)| event).collect(),
         });
     }
-    Ok((items, !notes_by_item.is_empty()))
+    Ok((
+        items,
+        !notes_by_item.is_empty() || !controllers_by_item.is_empty(),
+    ))
 }
 
 fn read_tempo_points(connection: &Connection) -> Result<Vec<TempoPointSnapshot>, StorageError> {

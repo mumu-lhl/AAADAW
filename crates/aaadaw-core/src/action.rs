@@ -1,6 +1,6 @@
 use crate::{
-    GridFraction, ItemId, MidiNoteData, NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
-    TrackInstrument,
+    GridFraction, ItemId, MidiControllerData, MidiNoteData, NoteId, TempoCurve, TimeSignature,
+    TrackFxPlugin, TrackId, TrackInstrument,
 };
 
 /// A command that changes project state.
@@ -108,6 +108,11 @@ pub enum DawAction {
     DeleteMidiNotes {
         item_id: ItemId,
         note_ids: Vec<NoteId>,
+    },
+    /// Replace the control-change events belonging to a MIDI item.
+    SetMidiControllers {
+        item_id: ItemId,
+        controllers: Vec<MidiControllerData>,
     },
     /// Move note starts toward the nearest musical grid position.
     QuantizeItem {

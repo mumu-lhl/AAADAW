@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project, TempoCurve};
+use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TempoCurve};
 use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
@@ -133,7 +133,7 @@ fn active_note_query_chases_only_notes_strictly_inside_their_sample_range() {
     assert_eq!(chased.kind, MidiEventKind::NoteOn);
     assert_eq!(chased.sample_offset, 0);
     assert_eq!(chased.track_id, track_id);
-    assert_eq!(chased.note_id, note);
+    assert_eq!(chased.note_id, Some(note));
     assert_eq!(
         plan.active_notes_at(end_sample, &mut output)
             .expect("note end belongs to the regular schedule"),
@@ -147,6 +147,77 @@ fn active_note_query_chases_only_notes_strictly_inside_their_sample_range() {
             required: 1,
             available: 0,
         })
+    );
+}
+
+#[test]
+fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
+    let (mut project, track_id) = project_with_note(60, 480, 480);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                },
+                MidiControllerData {
+                    controller: 64,
+                    tick: 960,
+                    value: 0,
+                },
+                MidiControllerData {
+                    controller: 1,
+                    tick: 480,
+                    value: 64,
+                },
+            ],
+        })
+        .expect("sustain events should be accepted");
+    let attack_sample = project.sample_at_tick(480).expect("tick should map");
+    let release_sample = project.sample_at_tick(960).expect("tick should map");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 6];
+
+    assert_eq!(
+        plan.events_for_block(attack_sample, 1, &mut output)
+            .expect("events at the note attack should query"),
+        2
+    );
+    assert_eq!(output[0].unwrap().kind, MidiEventKind::ControllerChange);
+    assert_eq!(output[0].unwrap().controller, Some(1));
+    assert_eq!(output[1].unwrap().kind, MidiEventKind::NoteOn);
+    assert_eq!(
+        plan.active_controllers_at(attack_sample, &mut output)
+            .expect("controller state before the attack should query"),
+        1
+    );
+    let chased = output[0].unwrap();
+    assert_eq!(chased.kind, MidiEventKind::ControllerChange);
+    assert_eq!(chased.track_id, track_id);
+    assert_eq!(chased.controller, Some(64));
+    assert_eq!(chased.velocity, 127);
+
+    assert_eq!(
+        plan.events_for_block(release_sample, 1, &mut output)
+            .expect("controller-off point should query at its sample"),
+        2
+    );
+    assert_eq!(output[0].unwrap().kind, MidiEventKind::NoteOff);
+    assert_eq!(output[1].unwrap().kind, MidiEventKind::ControllerChange);
+    assert_eq!(output[1].unwrap().velocity, 0);
+    assert_eq!(
+        plan.active_controllers_at(release_sample + 1, &mut output)
+            .expect("controller state after release should query"),
+        2
+    );
+    assert!(
+        output[..2]
+            .iter()
+            .flatten()
+            .any(|event| { event.controller == Some(64) && event.velocity == 0 })
     );
 }
 

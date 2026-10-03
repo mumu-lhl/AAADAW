@@ -1,4 +1,4 @@
-use crate::{MidiNoteData, ProjectSettings, TempoCurve, TimebaseError};
+use crate::{MidiControllerData, MidiNoteData, ProjectSettings, TempoCurve, TimebaseError};
 use std::fmt;
 
 /// A validated, serialization-friendly copy of project state.
@@ -68,6 +68,7 @@ pub struct MidiItemSnapshot {
     pub start_tick: u64,
     pub length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,
+    pub controllers: Vec<MidiControllerData>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

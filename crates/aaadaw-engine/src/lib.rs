@@ -298,6 +298,9 @@ pub enum AudioGraphBuildError {
         required: usize,
         available: usize,
     },
+    InstrumentControllerDialect {
+        track_id: u64,
+    },
 }
 
 impl fmt::Display for AudioGraphBuildError {
@@ -381,6 +384,10 @@ impl fmt::Display for AudioGraphBuildError {
                 formatter,
                 "CLAP instrument on track {track_id} supports {available} MIDI events per block; playback may need {required}"
             ),
+            Self::InstrumentControllerDialect { track_id } => write!(
+                formatter,
+                "CLAP instrument on track {track_id} does not support MIDI 1.0 controller events required by the project"
+            ),
         }
     }
 }
@@ -402,6 +409,7 @@ impl std::error::Error for AudioGraphBuildError {
             | Self::DuplicateTrackInstrument { .. }
             | Self::InstrumentBlockCapacity { .. }
             | Self::InstrumentEventCapacity { .. } => None,
+            Self::InstrumentControllerDialect { .. } => None,
         }
     }
 }
@@ -982,6 +990,13 @@ impl AudioRenderGraph {
                     available: available_events,
                 });
             }
+            if midi_plan.controller_event_count_for_track(instrument.track_id) > 0
+                && !instrument.processor.supports_midi_controllers()
+            {
+                return Err(AudioGraphBuildError::InstrumentControllerDialect {
+                    track_id: instrument.track_id.value(),
+                });
+            }
             instrument_routes.push(InstrumentRoute {
                 track_id: instrument.track_id,
                 track_index,
@@ -1101,6 +1116,16 @@ impl AudioRenderGraph {
                     track_id: instrument.track_id.value(),
                     required: required_events,
                     available: available_events,
+                });
+            }
+            if self
+                .midi_plan
+                .controller_event_count_for_track(instrument.track_id)
+                > 0
+                && !instrument.processor.supports_midi_controllers()
+            {
+                return Err(AudioGraphBuildError::InstrumentControllerDialect {
+                    track_id: instrument.track_id.value(),
                 });
             }
             routes.push(InstrumentRoute {
@@ -1295,33 +1320,44 @@ impl AudioRenderGraph {
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed = !self.instruments.is_empty() || include_midi;
         let midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
-            let chase_note_count = if self.last_midi_sample_end != Some(block_start_sample)
+            let (chase_controller_count, chase_note_count) = if self.last_midi_sample_end
+                != Some(block_start_sample)
                 || self.last_midi_chase_generation != Some(chase_generation)
             {
-                self.midi_plan
-                    .active_notes_at(block_start_sample, &mut self.midi_scratch)
-                    .map_err(AudioGraphError::MidiSchedule)?
+                let controller_count = self
+                    .midi_plan
+                    .active_controllers_at(block_start_sample, &mut self.midi_scratch)
+                    .map_err(AudioGraphError::MidiSchedule)?;
+                let note_count = self
+                    .midi_plan
+                    .active_notes_at(
+                        block_start_sample,
+                        &mut self.midi_scratch[controller_count..],
+                    )
+                    .map_err(AudioGraphError::MidiSchedule)?;
+                (controller_count, note_count)
             } else {
-                0
+                (0, 0)
             };
+            let chase_count = chase_controller_count + chase_note_count;
             let scheduled_count = self
                 .midi_plan
                 .events_for_block(
                     block_start_sample,
                     output.len(),
-                    &mut self.midi_scratch[chase_note_count..],
+                    &mut self.midi_scratch[chase_count..],
                 )
                 .map_err(AudioGraphError::MidiSchedule)?;
-            let count = chase_note_count + scheduled_count;
-            if chase_note_count > 0 {
+            let count = chase_count + scheduled_count;
+            if chase_count > 0 {
                 self.midi_scratch[..count].sort_unstable_by_key(|event| {
                     let event = event.expect("rendered MIDI event slots are initialized");
                     (
                         event.sample_offset,
-                        event.kind,
+                        event.sort_priority(),
                         event.track_id.value(),
-                        event.pitch,
-                        event.note_id.value(),
+                        event.controller.unwrap_or(event.pitch),
+                        event.note_id.map_or(0, aaadaw_core::NoteId::value),
                     )
                 });
             }
