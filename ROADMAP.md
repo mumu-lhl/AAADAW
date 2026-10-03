@@ -119,7 +119,7 @@
 - [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。
 - [x] 为选中的 Audio Item 提供嵌入快照源变化后的重新导入操作（[`docs/tickets/2026-10-02-reimport-changed-embedded-audio.md`](docs/tickets/2026-10-02-reimport-changed-embedded-audio.md)）。
 - [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
-- [ ] 实现进程异常退出后的未完成录音恢复与录音元数据持久化；当前失败/取消会清理临时文件，但崩溃恢复未覆盖。
+- [x] 实现进程异常退出后的未完成录音恢复：项目旁路 manifest 持久化录音轨道、起点和已完成分段；打开工程后异步扫描，用户可显式恢复/丢弃，校验完整可解码分段并报告缺失帧/截断尾部，工程成功保存前保留恢复源（[Issue #8](https://github.com/mumu-lhl/AAADAW/issues/8)）。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
