@@ -78,7 +78,8 @@
 - [ ] 增加 Windows WASAPI 输入；明确各平台的设备枚举、热插拔和延迟语义。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
-- [ ] 实现 MIDI 事件调度、Seek 后 CC 状态追逐、停止/跳转时 Note Off 与 Panic 复位。
+- [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
+- [ ] 增加 MIDI CC/控制器数据与 seek 状态追逐；明确停止/跳转时 controller reset 与 Panic 语义。
 - [ ] 实现 Master 输出安全保护与欠载（XRun）可观测性；明确保护器的算法、延迟和安全边界，不宣传其可替代硬件/听力保护。
 - [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。
 

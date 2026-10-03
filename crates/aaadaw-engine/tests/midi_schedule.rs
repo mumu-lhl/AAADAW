@@ -112,6 +112,45 @@ fn event_blocks_exclude_the_end_sample_and_short_buffers_are_atomic() {
 }
 
 #[test]
+fn active_note_query_chases_only_notes_strictly_inside_their_sample_range() {
+    let (project, track_id) = project_with_note(60, 0, 480);
+    let note = project.midi_items()[0].notes()[0].id();
+    let end_sample = project.sample_at_tick(480).expect("note end should map");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 2];
+
+    assert_eq!(
+        plan.active_notes_at(0, &mut output)
+            .expect("note attack belongs to the regular schedule"),
+        0
+    );
+    assert_eq!(
+        plan.active_notes_at(1, &mut output)
+            .expect("sustained note should be chased"),
+        1
+    );
+    let chased = output[0].expect("chased note should be initialized");
+    assert_eq!(chased.kind, MidiEventKind::NoteOn);
+    assert_eq!(chased.sample_offset, 0);
+    assert_eq!(chased.track_id, track_id);
+    assert_eq!(chased.note_id, note);
+    assert_eq!(
+        plan.active_notes_at(end_sample, &mut output)
+            .expect("note end belongs to the regular schedule"),
+        0
+    );
+
+    let mut too_small = [];
+    assert_eq!(
+        plan.active_notes_at(1, &mut too_small),
+        Err(MidiScheduleError::OutputBufferTooSmall {
+            required: 1,
+            available: 0,
+        })
+    );
+}
+
+#[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
     let mut project = Project::new();
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {
@@ -171,5 +210,15 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
             .iter()
             .flatten()
             .all(|event| event.track_id == track_ids[1])
+    );
+    let mut chased = [None; 2];
+    assert_eq!(
+        plan.active_notes_at(1, &mut chased)
+            .expect("active notes should be queryable at seek positions"),
+        1
+    );
+    assert_eq!(
+        chased[0].expect("solo note should be chased").track_id,
+        track_ids[1]
     );
 }
