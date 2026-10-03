@@ -123,7 +123,7 @@
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
 - [x] 实现 MIDI Item 移动/调整长度 Action；收缩 Item 时拒绝裁掉已有音符，并支持撤销/重做。
 - [x] 实现 MIDI 钢琴卷帘窗口：双击或从 Item 上下文菜单/Inspector 打开，按 1/16 网格插入，选择、拖动、延长/缩短及删除音符均走可撤销 Action（[`docs/tickets/2026-10-03-midi-piano-roll.md`](docs/tickets/2026-10-03-midi-piano-roll.md)）。
-- [ ] 为钢琴卷帘增加音符复制/粘贴和 velocity lane；基础插入、选择、拖动、缩放和删除已完成并手工验收。
+- [x] 为钢琴卷帘增加音符复制/粘贴和 velocity lane；复制保留组内 tick 间距、音高、时值和力度，粘贴到原 Item 时从源短语末端开始、重复粘贴顺延，跨 Item 时从当前可视编辑位置吸附到 1/16；velocity lane 支持多选相对力度拖动与悬停反馈，每次操作可撤销（GitHub #6）。
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
 - [ ] 实现录音准备、输入监听和虚拟键盘基础路径；录音不得在音频回调中进行文件操作。
 

@@ -54,6 +54,8 @@ pub(crate) enum Message {
     OpenMidiEditor(ItemId),
     CloseMidiEditor,
     SelectMidiNotes(HashSet<NoteId>),
+    CopyMidiNotes(ItemId, Vec<NoteId>),
+    PasteMidiNotes(ItemId),
     AddMidiNoteAt(ItemId, MidiNoteData),
     EditMidiNotes(ItemId, Vec<(NoteId, MidiNoteData)>),
     DeleteMidiNotes(ItemId, Vec<NoteId>),

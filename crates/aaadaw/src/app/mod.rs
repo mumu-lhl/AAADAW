@@ -145,6 +145,10 @@ struct App {
     midi_editor_origin_tick: u64,
     midi_editor_high_pitch: u8,
     midi_editor_pixels_per_beat: f32,
+    midi_note_clipboard: Vec<aaadaw_core::MidiNoteData>,
+    midi_note_clipboard_source: Option<ItemId>,
+    midi_note_clipboard_span: u64,
+    midi_note_last_paste: Option<(ItemId, u64)>,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
     plugin_picker_instrument_track_id: Option<TrackId>,
@@ -689,6 +693,118 @@ impl App {
             Message::SelectMidiNotes(note_ids) => {
                 self.midi_editor_selected_notes = note_ids;
             }
+            Message::CopyMidiNotes(item_id, note_ids) => {
+                if let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                {
+                    let selected = item
+                        .notes()
+                        .iter()
+                        .filter(|note| note_ids.contains(&note.id()))
+                        .collect::<Vec<_>>();
+                    if let Some(first_tick) = selected.iter().map(|note| note.tick()).min() {
+                        self.midi_note_clipboard = selected
+                            .iter()
+                            .map(|note| aaadaw_core::MidiNoteData {
+                                pitch: note.pitch(),
+                                tick: note.tick() - first_tick,
+                                duration: note.duration(),
+                                velocity: note.velocity(),
+                            })
+                            .collect();
+                        self.midi_note_clipboard
+                            .sort_by_key(|note| (note.tick, note.pitch));
+                        self.midi_note_clipboard_span = self
+                            .midi_note_clipboard
+                            .iter()
+                            .map(|note| note.tick.saturating_add(note.duration))
+                            .max()
+                            .unwrap_or(0);
+                        self.midi_note_clipboard_source = Some(item_id);
+                        self.midi_note_last_paste = None;
+                        self.status =
+                            format!("Copied {} MIDI notes", self.midi_note_clipboard.len());
+                    }
+                }
+            }
+            Message::PasteMidiNotes(item_id) => {
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    return task;
+                };
+                if self.midi_note_clipboard.is_empty() {
+                    return task;
+                }
+                let grid = (u64::from(self.project.settings().ppq()) / 4).max(1);
+                let tick = self
+                    .midi_note_last_paste
+                    .filter(|(last_item, _)| *last_item == item_id)
+                    .map_or_else(
+                        || {
+                            if self.midi_note_clipboard_source == Some(item_id) {
+                                snap_tick_up(self.midi_note_clipboard_span, grid)
+                            } else {
+                                (self.midi_editor_origin_tick.saturating_add(grid / 2) / grid)
+                                    * grid
+                            }
+                        },
+                        |(_, previous)| {
+                            snap_tick_up(
+                                previous.saturating_add(self.midi_note_clipboard_span),
+                                grid,
+                            )
+                        },
+                    );
+                let notes = self
+                    .midi_note_clipboard
+                    .iter()
+                    .map(|note| aaadaw_core::MidiNoteData {
+                        tick: tick.saturating_add(note.tick),
+                        ..*note
+                    })
+                    .collect::<Vec<_>>();
+                if notes
+                    .iter()
+                    .any(|note| note.tick.saturating_add(note.duration) > item.length_ticks())
+                {
+                    self.status =
+                        "Paste rejected: notes would extend beyond the MIDI item".to_owned();
+                } else {
+                    let old_ids = item
+                        .notes()
+                        .iter()
+                        .map(|note| note.id())
+                        .collect::<HashSet<_>>();
+                    let revision = self.revision;
+                    self.apply_action(
+                        DawAction::AddMidiNotes { item_id, notes },
+                        "MIDI notes pasted",
+                    );
+                    if self.revision != revision {
+                        if let Some(item) = self
+                            .project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == item_id)
+                        {
+                            self.midi_editor_selected_notes = item
+                                .notes()
+                                .iter()
+                                .map(|note| note.id())
+                                .filter(|id| !old_ids.contains(id))
+                                .collect();
+                        }
+                        self.midi_note_last_paste = Some((item_id, tick));
+                    }
+                }
+            }
             Message::AddMidiNoteAt(item_id, data) => {
                 self.apply_action(
                     DawAction::AddMidiNotes {
@@ -1120,6 +1236,8 @@ impl App {
                 match result {
                     Some(Ok(project)) => {
                         self.project = project;
+                        self.midi_note_clipboard_source = None;
+                        self.midi_note_last_paste = None;
                         self.timeline.rebuild(&self.project);
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
@@ -1224,6 +1342,8 @@ impl App {
         }
 
         self.project = Project::new();
+        self.midi_note_clipboard_source = None;
+        self.midi_note_last_paste = None;
         self.project_path = None;
         self.project_path_query.clear();
         self.revision = 0;
@@ -1669,6 +1789,7 @@ impl App {
     fn apply_action(&mut self, action: DawAction, success: &str) {
         self.status = match self.project.apply(action) {
             Ok(()) => {
+                self.midi_note_last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 success.to_owned()
@@ -1953,6 +2074,7 @@ impl App {
         self.audio_item_start_edits.clear();
         self.status = match self.project.undo() {
             Ok(true) => {
+                self.midi_note_last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 "Action undone".to_owned()
@@ -1966,6 +2088,10 @@ impl App {
         self.audio_item_start_edits.clear();
         self.status = match self.project.redo() {
             Ok(true) => {
+                self.midi_note_last_paste = self.midi_editor_item_id.and_then(|item_id| {
+                    self.selected_clipboard_paste_start(item_id)
+                        .map(|start_tick| (item_id, start_tick))
+                });
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 "Action redone".to_owned()
@@ -1973,6 +2099,38 @@ impl App {
             Ok(false) => "Nothing to redo".to_owned(),
             Err(error) => format!("Redo failed: {error}"),
         };
+    }
+
+    fn selected_clipboard_paste_start(&self, item_id: ItemId) -> Option<u64> {
+        if self.midi_note_clipboard.is_empty() || self.midi_editor_selected_notes.is_empty() {
+            return None;
+        }
+        let item = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)?;
+        let mut selected = item
+            .notes()
+            .iter()
+            .filter(|note| self.midi_editor_selected_notes.contains(&note.id()))
+            .collect::<Vec<_>>();
+        if selected.len() != self.midi_note_clipboard.len() {
+            return None;
+        }
+        selected.sort_by_key(|note| (note.tick(), note.pitch()));
+        let start_tick = selected.iter().map(|note| note.tick()).min()?;
+        let matches_clipboard =
+            selected
+                .iter()
+                .zip(&self.midi_note_clipboard)
+                .all(|(note, copied)| {
+                    note.tick() - start_tick == copied.tick
+                        && note.pitch() == copied.pitch
+                        && note.duration() == copied.duration
+                        && note.velocity() == copied.velocity
+                });
+        matches_clipboard.then_some(start_tick)
     }
 
     fn run_action_query(&mut self) -> Task<Message> {
@@ -2379,6 +2537,12 @@ impl App {
         }
         self.pick_path(PathPickerTarget::OpenProject)
     }
+}
+
+fn snap_tick_up(tick: u64, grid_ticks: u64) -> u64 {
+    let grid_ticks = grid_ticks.max(1);
+    let quotient = tick / grid_ticks + u64::from(tick % grid_ticks != 0);
+    quotient.saturating_mul(grid_ticks)
 }
 
 fn split_audio_item_actions(
