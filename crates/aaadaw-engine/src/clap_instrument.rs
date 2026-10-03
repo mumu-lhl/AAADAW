@@ -379,9 +379,9 @@ impl ClapInstrumentOwner {
                 left: vec![0.0; max_block_frames],
                 right: vec![0.0; max_block_frames],
                 event_scratch: Vec::with_capacity(max_events),
-                // A reset block may need three controller resets in addition to
-                // every preallocated active-note release.
-                input_events: EventBuffer::with_capacity(max_events.saturating_add(3)),
+                // A reset block may need CC64/CC123/CC120 on every MIDI channel
+                // in addition to every preallocated active-note release.
+                input_events: EventBuffer::with_capacity(max_events.saturating_add(48)),
                 active_notes: Vec::with_capacity(max_events),
                 active_note_scratch: Vec::with_capacity(max_events),
                 input_note_port,
@@ -987,12 +987,9 @@ impl ClapInstrumentProcessor {
         if self.active_notes.is_empty() {
             self.input_events.clear();
             if let Some(port) = self.input_midi_port {
-                self.input_events
-                    .push(&MidiEvent::new(0, port, [0xb0, 64, 0]));
-                self.input_events
-                    .push(&MidiEvent::new(0, port, [0xb0, 123, 0]));
-                self.input_events
-                    .push(&MidiEvent::new(0, port, [0xb0, 120, 0]));
+                self.push_midi_controller_all_channels(port, 64);
+                self.push_midi_controller_all_channels(port, 123);
+                self.push_midi_controller_all_channels(port, 120);
             } else {
                 return Ok(());
             }
@@ -1002,8 +999,7 @@ impl ClapInstrumentProcessor {
         }
         self.input_events.clear();
         if let Some(port) = self.input_midi_port {
-            self.input_events
-                .push(&MidiEvent::new(0, port, [0xb0, 64, 0]));
+            self.push_midi_controller_all_channels(port, 64);
         }
         for note in &self.active_notes {
             self.input_events.push(&NoteOffEvent::new(
@@ -1018,15 +1014,21 @@ impl ClapInstrumentProcessor {
             ));
         }
         if let Some(port) = self.input_midi_port {
-            self.input_events
-                .push(&MidiEvent::new(0, port, [0xb0, 123, 0]));
-            self.input_events
-                .push(&MidiEvent::new(0, port, [0xb0, 120, 0]));
+            self.push_midi_controller_all_channels(port, 123);
+            self.push_midi_controller_all_channels(port, 120);
         }
         let mut discarded_audio = [[0.0, 0.0]];
         self.process_prepared_events(&mut discarded_audio)?;
         self.active_notes.clear();
         Ok(())
+    }
+
+    fn push_midi_controller_all_channels(&mut self, port: u16, controller: u8) {
+        for channel in 0..16 {
+            let status = 0xb0 | channel;
+            self.input_events
+                .push(&MidiEvent::new(0, port, [status, controller, 0]));
+        }
     }
 
     fn process_prepared_events(
@@ -1615,8 +1617,10 @@ mod tests {
                                         }
                                         self.sustain = sustain;
                                     }
-                                    123 => self.modulation = 0.5,
-                                    120 => self.modulation = 0.25,
+                                    123 => self.modulation = 0.5 + f32::from(status & 0x0f) / 100.0,
+                                    120 => {
+                                        self.modulation = 0.25 + f32::from(status & 0x0f) / 100.0
+                                    }
                                     _ => {}
                                 }
                             }
@@ -2316,6 +2320,76 @@ mod tests {
             assert!((frame[0] - expected).abs() < 0.0001);
             assert!((frame[1] - expected * 0.5).abs() < 0.0001);
         }
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn controller_reset_covers_all_midi_channels() {
+        let (owner, mut processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            16,
+            1,
+        )
+        .expect("test synth should load");
+        let (track_id, note_id) = test_ids();
+        processor
+            .all_notes_off()
+            .expect("controller-capable plugin should accept reset events");
+
+        let event = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            pitch: 127,
+            velocity: 127,
+            controller: None,
+            kind: MidiEventKind::NoteOn,
+        };
+        let mut output = [[0.0; 2]; 1];
+        processor
+            .process(&[event], &mut output)
+            .expect("test note should render after reset");
+
+        assert!((output[0][0] - 0.4).abs() < 0.0001);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn note_only_plugin_receives_host_tracked_note_off_on_reset() {
+        let (owner, mut processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            16,
+            1,
+        )
+        .expect("test synth should load");
+        processor.input_midi_port = None;
+        let (track_id, note_id) = test_ids();
+        let event = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            pitch: 64,
+            velocity: 127,
+            controller: None,
+            kind: MidiEventKind::NoteOn,
+        };
+        let mut output = [[0.0; 2]; 1];
+        processor
+            .process(&[event], &mut output)
+            .expect("test note should start");
+        assert!(output[0][0] > 0.0);
+
+        processor
+            .all_notes_off()
+            .expect("tracked note-off should be delivered without MIDI controllers");
+        processor
+            .process(&[], &mut output)
+            .expect("silence should render after tracked note-off");
+        assert_eq!(output, [[0.0; 2]; 1]);
         owner.deactivate(processor.stop());
     }
 

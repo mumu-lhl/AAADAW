@@ -6,7 +6,7 @@ Give musicians a reliable MIDI Panic command and leave CLAP instruments in a kno
 
 ## Scope
 
-- Send tracked CLAP note-offs, CC64-off, CC123 All Notes Off, and CC120 All Sound Off during reset when a MIDI 1.0 input port is available.
+- Send tracked CLAP note-offs, then CC64-off, CC123 All Notes Off, and CC120 All Sound Off on all 16 MIDI channels when a MIDI 1.0 input port is available. The current host note model emits tracked notes on channel 0.
 - Add a transport Panic button and a searchable Actions command that leaves the playhead and transport state unchanged.
 - Keep reset event capacity preallocated on the audio callback; note-only CLAP ports still receive host-tracked note-offs.
 
@@ -20,7 +20,7 @@ Stop and graph replacement release current notes and reset MIDI-capable CLAP ins
 
 ## Verification
 
-Passed locally: `cargo xtest` (242 tests), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check`. Focused CLAP controller scheduling and Panic-preserves-transport tests also pass.
+Passed locally: `cargo xtest` (244 tests), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check`. Focused CLAP tests also verify sample-accurate controller scheduling, reset coverage across all 16 MIDI channels, note-only plugin note-offs, and Panic preserving transport state.
 
 Feature-gated JACK/PipeWire backend tests are left to CI because JACK development libraries are unavailable in this environment. Native Iced GUI rendering has not been visually reviewed here.
 
