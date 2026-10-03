@@ -1,6 +1,12 @@
-use crate::clap_instrument::ClapInstrumentError;
+use crate::clap_instrument::{ClapInstrumentError, restore_parameter_values};
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui, Window as ClapWindow};
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
+use clack_host::events::Pckn;
+use clack_host::events::event_types::{
+    ParamGestureBeginEvent, ParamGestureEndEvent, ParamValueEvent,
+};
+use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::prelude::{HostInfo, PluginEntry, PluginInstance};
 use std::ffi::CString;
 use std::io::Cursor;
@@ -12,13 +18,111 @@ use std::path::Path;
 /// The editor must be destroyed before its native parent X11 window is destroyed.
 pub struct ClapPluginGuiOwner {
     instance: PluginInstance<()>,
-    gui: PluginGui,
+    gui: Option<PluginGui>,
     created: bool,
     visible: bool,
     show_warning: Option<String>,
 }
 
 impl ClapPluginGuiOwner {
+    /// Lists visible parameter metadata and current values from the GUI's plugin instance.
+    pub fn parameters(&mut self) -> Vec<crate::ClapParameterInfo> {
+        let handle = self.instance.plugin_handle();
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+        let count = params.count(&handle);
+        let mut result = Vec::with_capacity(count as usize);
+        let mut buffer = ParamInfoBuffer::new();
+        for index in 0..count {
+            let Some(info) = params.get_info(&handle, index, &mut buffer) else {
+                continue;
+            };
+            if info.flags.contains(ParamInfoFlags::IS_HIDDEN)
+                || !info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE)
+            {
+                continue;
+            }
+            let id = info.id;
+            let (min_value, max_value, stepped, read_only, default_value) = (
+                info.min_value,
+                info.max_value,
+                info.flags.contains(ParamInfoFlags::IS_STEPPED),
+                info.flags.contains(ParamInfoFlags::IS_READONLY),
+                info.default_value,
+            );
+            let name = String::from_utf8_lossy(info.name).into_owned();
+            let value = params.get_value(&handle, id).unwrap_or(default_value);
+            if !min_value.is_finite()
+                || !max_value.is_finite()
+                || max_value < min_value
+                || !default_value.is_finite()
+                || !value.is_finite()
+            {
+                continue;
+            }
+            let mut display_buffer = [0_u8; 64];
+            let display_value = params
+                .value_to_text(&handle, id, value, &mut display_buffer)
+                .map(|display| String::from_utf8_lossy(display).into_owned())
+                .unwrap_or_else(|_| format!("{value:.3}"));
+            result.push(crate::ClapParameterInfo {
+                id: id.get(),
+                name,
+                min_value,
+                max_value,
+                default_value,
+                value,
+                display_value,
+                stepped,
+                read_only,
+            });
+        }
+        result
+    }
+
+    /// Flushes one host parameter gesture event on the inactive GUI instance.
+    pub fn apply_parameter_command(
+        &mut self,
+        command: crate::ClapParameterCommand,
+    ) -> Result<(), String> {
+        let events = match command {
+            crate::ClapParameterCommand::Begin { id } => {
+                let param_id = clack_host::prelude::ClapId::from_raw(id)
+                    .ok_or_else(|| "CLAP parameter ID is invalid".to_owned())?;
+                let mut events = EventBuffer::with_capacity(1);
+                events.push(&ParamGestureBeginEvent::new(0, param_id));
+                events
+            }
+            crate::ClapParameterCommand::Set { id, value } => {
+                let param_id = clack_host::prelude::ClapId::from_raw(id)
+                    .ok_or_else(|| "CLAP parameter ID is invalid".to_owned())?;
+                let mut events = EventBuffer::with_capacity(1);
+                events.push(&ParamValueEvent::new(0, param_id, Pckn::match_all(), value));
+                events
+            }
+            crate::ClapParameterCommand::End { id } => {
+                let param_id = clack_host::prelude::ClapId::from_raw(id)
+                    .ok_or_else(|| "CLAP parameter ID is invalid".to_owned())?;
+                let mut events = EventBuffer::with_capacity(1);
+                events.push(&ParamGestureEndEvent::new(0, param_id));
+                events
+            }
+        };
+        let mut handle = self
+            .instance
+            .inactive_plugin_handle()
+            .ok_or_else(|| "CLAP editor instance is unexpectedly active".to_owned())?;
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return Err("CLAP plugin does not expose parameter controls".to_owned());
+        };
+        let input = InputEvents::from_buffer(&events);
+        let mut output = EventBuffer::with_capacity(8);
+        let mut output_events = output.as_output();
+        params.flush(&mut handle, &input, &mut output_events);
+        Ok(())
+    }
+
     /// Loads a trusted CLAP plugin and embeds its X11 editor in the supplied parent window.
     ///
     /// CLAP initialization and GUI calls execute third-party native code on the calling thread.
@@ -32,10 +136,10 @@ impl ClapPluginGuiOwner {
         entry_path: &Path,
         plugin_id: &str,
         parent_x11_window: u64,
-        requested_width: u32,
-        requested_height: u32,
+        requested_size: (u32, u32),
         scale_factor: f32,
         state: Option<&[u8]>,
+        parameter_values: &[(u32, f64)],
     ) -> Result<Self, ClapInstrumentError> {
         // SAFETY: The caller guarantees the selected entry is trusted and valid.
         let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
@@ -88,18 +192,24 @@ impl ClapPluginGuiOwner {
                     ))
                 })?;
         }
-        let gui = instance
-            .plugin_shared_handle()
-            .get_extension::<PluginGui>()
-            .ok_or_else(|| ClapInstrumentError::new("CLAP plugin does not provide a native GUI"))?;
+        if state.is_none() {
+            restore_parameter_values(&mut instance, parameter_values);
+        }
+        let Some(gui) = instance.plugin_shared_handle().get_extension::<PluginGui>() else {
+            return Ok(Self::control_only(
+                instance,
+                "This plugin has no native editor; use the host parameter controls below.",
+            ));
+        };
         let configuration = GuiConfiguration {
             api_type: GuiApiType::X11,
             is_floating: false,
         };
         let plugin = instance.plugin_handle();
         if !gui.is_api_supported(&plugin, configuration) {
-            return Err(ClapInstrumentError::new(
-                "CLAP plugin does not support an embedded X11 editor",
+            return Ok(Self::control_only(
+                instance,
+                "This plugin has no embedded X11 editor; use the host parameter controls below.",
             ));
         }
         gui.create(&plugin, configuration).map_err(|error| {
@@ -113,8 +223,8 @@ impl ClapPluginGuiOwner {
         let _ = gui.set_scale(&plugin, scale);
         if gui.can_resize(&plugin) {
             let requested_size = clack_extensions::gui::GuiSize {
-                width: requested_width.max(1),
-                height: requested_height.max(1),
+                width: requested_size.0.max(1),
+                height: requested_size.1.max(1),
             };
             let size = gui
                 .adjust_size(&plugin, requested_size)
@@ -155,11 +265,21 @@ impl ClapPluginGuiOwner {
             });
         Ok(Self {
             instance,
-            gui,
+            gui: Some(gui),
             created: true,
             visible: true,
             show_warning,
         })
+    }
+
+    fn control_only(instance: PluginInstance<()>, warning: &str) -> Self {
+        Self {
+            instance,
+            gui: None,
+            created: false,
+            visible: false,
+            show_warning: Some(warning.to_owned()),
+        }
     }
 
     /// Returns a warning when the plugin rejected the CLAP show callback after being attached.
@@ -183,6 +303,7 @@ impl ClapPluginGuiOwner {
     /// Returns the plugin's preferred editor size, when provided.
     pub fn preferred_size(&mut self) -> Option<(u32, u32)> {
         self.gui
+            .as_ref()?
             .get_size(&self.instance.plugin_handle())
             .map(|size| (size.width, size.height))
     }
@@ -190,16 +311,21 @@ impl ClapPluginGuiOwner {
     /// Negotiates and applies a new editor size if the plugin supports resizing.
     pub fn resize(&mut self, width: u32, height: u32) -> Result<bool, ClapInstrumentError> {
         let plugin = self.instance.plugin_handle();
-        if !self.gui.can_resize(&plugin) {
+        let Some(gui) = self.gui.as_ref() else {
+            return Ok(false);
+        };
+        if !gui.can_resize(&plugin) {
             return Ok(false);
         }
         let Some(size) = self
             .gui
+            .as_ref()
+            .expect("GUI checked above")
             .adjust_size(&plugin, clack_extensions::gui::GuiSize { width, height })
         else {
             return Ok(false);
         };
-        self.gui.set_size(&plugin, size).map_err(|error| {
+        gui.set_size(&plugin, size).map_err(|error| {
             ClapInstrumentError::new(format!("Could not resize plugin GUI: {error}"))
         })?;
         Ok(true)
@@ -210,11 +336,16 @@ impl ClapPluginGuiOwner {
         if !self.created {
             return;
         }
+        let Some(gui) = self.gui.as_ref() else {
+            self.created = false;
+            self.visible = false;
+            return;
+        };
         let plugin = self.instance.plugin_handle();
         if self.visible {
-            let _ = self.gui.hide(&plugin);
+            let _ = gui.hide(&plugin);
         }
-        self.gui.destroy(&plugin);
+        gui.destroy(&plugin);
         self.visible = false;
         self.created = false;
     }

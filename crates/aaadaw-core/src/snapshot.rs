@@ -32,7 +32,7 @@ pub struct TrackInstrumentSnapshot {
     pub state: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrackFxPluginSnapshot {
     /// Stable identifier reported by the CLAP plugin.
     pub plugin_id: String,
@@ -41,6 +41,14 @@ pub struct TrackFxPluginSnapshot {
     /// Whether the plugin is enabled in the chain.
     pub enabled: bool,
     pub state: Option<Vec<u8>>,
+    /// Last host parameter values, retained independently of the optional CLAP State extension.
+    pub parameter_values: Vec<TrackFxParameterValueSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrackFxParameterValueSnapshot {
+    pub parameter_id: u32,
+    pub value: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

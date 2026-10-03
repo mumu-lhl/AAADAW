@@ -1,7 +1,7 @@
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
     Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
-    TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
+    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -107,6 +107,18 @@ ALTER TABLE tracks ADD COLUMN record_armed INTEGER NOT NULL DEFAULT 0 CHECK (rec
 const MIGRATION_6: &str = r#"
 ALTER TABLE tracks ADD COLUMN instrument_state BLOB;
 ALTER TABLE track_fx_plugins ADD COLUMN state BLOB;
+"#;
+
+const MIGRATION_7: &str = r#"
+CREATE TABLE track_fx_parameter_values (
+    track_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    parameter_id INTEGER NOT NULL CHECK (parameter_id BETWEEN 0 AND 4294967295),
+    value REAL NOT NULL CHECK (value BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308),
+    PRIMARY KEY (track_id, position, parameter_id),
+    FOREIGN KEY (track_id, position)
+        REFERENCES track_fx_plugins(track_id, position) ON DELETE CASCADE
+);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1733,6 +1745,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             4 => transaction.execute_batch(MIGRATION_4)?,
             5 => transaction.execute_batch(MIGRATION_5)?,
             6 => transaction.execute_batch(MIGRATION_6)?,
+            7 => transaction.execute_batch(MIGRATION_7)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1802,6 +1815,21 @@ fn write_snapshot(
                     plugin.state.as_deref(),
                 ],
             )?;
+            for parameter in &plugin.parameter_values {
+                if !parameter.value.is_finite() {
+                    return Err(StorageError::InvalidStoredData("track FX parameter value"));
+                }
+                transaction.execute(
+                    "INSERT INTO track_fx_parameter_values(track_id, position, parameter_id, value) \
+                     VALUES(?1, ?2, ?3, ?4)",
+                    params![
+                        to_sql_integer(track.id)?,
+                        usize_to_sql(position)?,
+                        i64::from(parameter.parameter_id),
+                        parameter.value,
+                    ],
+                )?;
+            }
         }
     }
 
@@ -1875,6 +1903,7 @@ fn write_snapshot(
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
+    let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
     let mut fx_statement = connection.prepare(
         "SELECT track_id, position, plugin_id, plugin_path, enabled, state \
          FROM track_fx_plugins ORDER BY track_id, position",
@@ -1904,7 +1933,44 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 bundle_path,
                 enabled,
                 state,
+                parameter_values: Vec::new(),
             });
+    }
+
+    let mut parameter_statement = connection.prepare(
+        "SELECT track_id, position, parameter_id, value \
+         FROM track_fx_parameter_values ORDER BY track_id, position, parameter_id",
+    )?;
+    let parameter_rows = parameter_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (track_id, position, parameter_id, value) in parameter_rows {
+        let parameter_id = u32::try_from(parameter_id)
+            .map_err(|_| StorageError::InvalidStoredData("track FX parameter ID"))?;
+        if !value.is_finite() {
+            return Err(StorageError::InvalidStoredData("track FX parameter value"));
+        }
+        parameter_values
+            .entry((track_id, position))
+            .or_default()
+            .push(TrackFxParameterValueSnapshot {
+                parameter_id,
+                value,
+            });
+    }
+    for (track_id, chain) in &mut fx_chains {
+        for (position, plugin) in chain.iter_mut().enumerate() {
+            plugin.parameter_values = parameter_values
+                .remove(&(*track_id, usize_to_sql(position)?))
+                .unwrap_or_default();
+        }
     }
 
     let mut statement = connection.prepare(

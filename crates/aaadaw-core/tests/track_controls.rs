@@ -221,6 +221,112 @@ fn track_fx_chain_order_and_bypass_are_undoable_and_redoable() {
 }
 
 #[test]
+fn track_fx_parameter_gesture_updates_plugin_state_and_undoes_as_one_action() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Guitar".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let plugin = TrackFxPlugin::new("org.example.eq", "/plugins/eq.clap").unwrap();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![plugin],
+        })
+        .unwrap();
+
+    project
+        .apply(DawAction::SetTrackFxParameter {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            before: 0.25,
+            after: 0.75,
+            before_state: None,
+            after_state: Some(vec![7, 5]),
+        })
+        .unwrap();
+    assert_eq!(project.last_fx_parameter_change().unwrap().value, 0.75);
+    let effect = &project.tracks()[0].fx_chain()[0];
+    assert_eq!(effect.parameter_value(7), Some(0.75));
+    assert_eq!(effect.state(), Some(&[7, 5][..]));
+
+    assert!(project.undo().unwrap());
+    assert_eq!(project.last_fx_parameter_change().unwrap().value, 0.25);
+    let effect = &project.tracks()[0].fx_chain()[0];
+    assert_eq!(effect.parameter_value(7), Some(0.25));
+    assert_eq!(effect.state(), None);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.last_fx_parameter_change().unwrap().value, 0.75);
+    let effect = &project.tracks()[0].fx_chain()[0];
+    assert_eq!(effect.parameter_value(7), Some(0.75));
+    assert_eq!(effect.state(), Some(&[7, 5][..]));
+
+    let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+    let effect = &reopened.tracks()[0].fx_chain()[0];
+    assert_eq!(effect.state(), Some(&[7, 5][..]));
+    assert_eq!(effect.parameter_value(7), Some(0.75));
+}
+
+#[test]
+fn track_fx_parameter_edit_adopts_the_value_reported_by_the_loaded_plugin() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keys".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("org.example.fx", "/plugins/fx.clap").unwrap()],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackFxParameter {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            before: 0.0,
+            after: 10.0,
+            before_state: None,
+            after_state: None,
+        })
+        .unwrap();
+
+    project
+        .apply(DawAction::SetTrackFxParameter {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            before: 5.0,
+            after: 7.0,
+            before_state: None,
+            after_state: None,
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(7.0)
+    );
+    assert!(project.undo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(5.0)
+    );
+    assert!(project.undo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(0.0)
+    );
+}
+
+#[test]
 fn snapshots_with_malformed_track_fx_references_are_rejected() {
     let mut project = Project::new();
     project
@@ -235,6 +341,7 @@ fn snapshots_with_malformed_track_fx_references_are_rejected() {
         bundle_path: "  ".to_owned(),
         enabled: true,
         state: None,
+        parameter_values: Vec::new(),
     });
 
     assert!(matches!(

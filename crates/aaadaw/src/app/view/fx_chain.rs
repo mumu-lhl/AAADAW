@@ -1,6 +1,6 @@
 use super::super::{App, Message};
 use aaadaw_core::TrackFxPlugin;
-use iced::widget::{button, column, container, row, rule, scrollable, text};
+use iced::widget::{button, column, container, row, rule, scrollable, slider, text, text_input};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -167,13 +167,66 @@ fn selected_plugin_details<'a>(
             (false, false) => "Other CLAP plugin",
         }
     });
-    let editor_state = if app.fx_chain_plugin_gui_identity.is_some() {
-        "Native CLAP editor is attached in this pane."
-    } else if app.fx_chain_editor_status.is_empty() {
-        "Opening the plugin editor…"
-    } else {
+    let editor_state = if !app.fx_chain_editor_status.is_empty() {
         app.fx_chain_editor_status.as_str()
+    } else if app.fx_chain_plugin_gui_identity.is_some() {
+        "Native CLAP editor is attached in this pane."
+    } else {
+        "Opening the plugin editor…"
     };
+    let mut parameter_controls = column![].spacing(3);
+    for parameter in &app.fx_chain_parameters {
+        if parameter.stepped
+            || parameter.read_only
+            || !parameter.min_value.is_finite()
+            || !parameter.max_value.is_finite()
+            || parameter.max_value <= parameter.min_value
+        {
+            continue;
+        }
+        let id = parameter.id;
+        let minimum = parameter.min_value as f32;
+        let maximum = parameter.max_value as f32;
+        if !minimum.is_finite() || !maximum.is_finite() || maximum <= minimum {
+            continue;
+        }
+        let value = (parameter.value as f32).clamp(minimum, maximum);
+        let step = ((maximum - minimum) / 100.0).max(f32::EPSILON);
+        parameter_controls = parameter_controls.push(
+            row![
+                text(parameter.name.as_str())
+                    .size(11)
+                    .width(Length::Fixed(120.0)),
+                slider(minimum..=maximum, value, move |value| {
+                    Message::FxParameterChanged(id, f64::from(value))
+                })
+                .step(step)
+                .on_release(Message::FxParameterEnded(id))
+                .width(Length::Fill),
+                text_input(
+                    "value",
+                    app.fx_parameter_value_edits
+                        .get(&id)
+                        .map(String::as_str)
+                        .unwrap_or(parameter.display_value.as_str()),
+                )
+                .on_input(move |value| Message::FxParameterValueTextChanged(id, value))
+                .on_submit(Message::CommitFxParameterValue(id))
+                .width(Length::Fixed(78.0)),
+                button("Reset")
+                    .on_press(Message::ResetFxParameterValue(id))
+                    .padding([3, 5]),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    if app.fx_chain_parameters.iter().all(|parameter| {
+        parameter.stepped || parameter.read_only || parameter.max_value <= parameter.min_value
+    }) {
+        parameter_controls = parameter_controls
+            .push(text("No continuous host parameters are exposed by this plugin.").size(11));
+    }
     column![
         text(name).size(17),
         text(format!("{vendor} · {kind}")).size(11),
@@ -186,6 +239,10 @@ fn selected_plugin_details<'a>(
             editor_state
         })
         .size(12),
+        rule::horizontal(1),
+        text("Parameters · Enter a value and press Return for exact entry; Reset uses the plugin default.")
+            .size(10),
+        scrollable(parameter_controls).height(Length::Fill),
     ]
     .spacing(8)
 }
