@@ -124,7 +124,8 @@
 - [x] 实现 MIDI Item 移动/调整长度 Action；收缩 Item 时拒绝裁掉已有音符，并支持撤销/重做。
 - [ ] 实现钢琴卷帘和音符选择 UI；当前仍是列表式音符编辑。通过轨道右键可指派 CLAP 乐器，MIDI 播放、音频/乐器混合及 FX 链路已接通（[`docs/tickets/2026-10-02-clap-host-processor.md`](docs/tickets/2026-10-02-clap-host-processor.md)、[`docs/tickets/2026-10-02-clap-render-graph.md`](docs/tickets/2026-10-02-clap-render-graph.md)、[`docs/tickets/2026-10-02-clap-instrument-playback.md`](docs/tickets/2026-10-02-clap-instrument-playback.md)）。完成插件搜索路径/扫描和轨道 FX 工作流后，继续钢琴卷帘。
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
-- [ ] 实现录音准备、输入监听和虚拟键盘基础路径；录音不得在音频回调中进行文件操作。
+- [x] 为 TCP 增加可持久化、可撤销的输入录音准备状态（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)）。
+- [ ] 完成实时录音与输入监听路径；回调只向有界预分配队列写入，后台线程负责落盘和素材入库。
 
 **退出标准**：可导入音频、录制麦克风素材、编辑并播放 MIDI；模拟异常退出后录音仍能按既定恢复策略读取；基础编辑无爆音/咔哒声回归问题。
 

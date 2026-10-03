@@ -391,9 +391,27 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
+    let record_arm_command = CommandId::Track {
+        track_id,
+        command: TrackCommand::ToggleRecordArm,
+    };
+    let record_arm = button("R")
+        .on_press_maybe(
+            commands::is_enabled(app, record_arm_command)
+                .then_some(Message::ExecuteCommand(record_arm_command)),
+        )
+        .style(move |theme: &Theme, status| {
+            if track.is_record_armed() {
+                iced::widget::button::danger(theme, status)
+            } else {
+                iced::widget::button::secondary(theme, status)
+            }
+        })
+        .padding([2, 8]);
     let controls = row![
         mute,
         solo,
+        record_arm,
         text(format!("{:.0} dB", track.volume_db())).size(11),
         small_control("−", Message::AdjustVolume(track_id, -1.0)),
         small_control("+", Message::AdjustVolume(track_id, 1.0)),

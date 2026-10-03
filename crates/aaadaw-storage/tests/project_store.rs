@@ -88,6 +88,12 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("solo change should succeed");
     project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .expect("record arm should be saved with the project");
+    project
         .apply(DawAction::SetTrackInstrument {
             track_id,
             instrument: Some(
@@ -215,6 +221,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN instrument_path; \
              ALTER TABLE tracks DROP COLUMN instrument_id; \
+             ALTER TABLE tracks DROP COLUMN record_armed; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -226,6 +233,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
     let migrated = store.load().expect("migrated project should load");
     assert_eq!(migrated.tracks()[0].name(), "Legacy");
     assert_eq!(migrated.tracks()[0].instrument(), None);
+    assert!(!migrated.tracks()[0].is_record_armed());
     store.close().expect("migrated project should close");
     remove_database(&path);
 }

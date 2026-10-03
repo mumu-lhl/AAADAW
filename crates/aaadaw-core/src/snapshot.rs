@@ -20,6 +20,7 @@ pub struct TrackSnapshot {
     pub pan: f32,
     pub muted: bool,
     pub solo: bool,
+    pub record_armed: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,
     pub fx_chain: Vec<TrackFxPluginSnapshot>,
 }
