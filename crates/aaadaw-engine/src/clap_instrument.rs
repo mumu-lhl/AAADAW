@@ -1453,6 +1453,7 @@ mod tests {
     struct TestInstrumentAudioProcessor {
         active_pitch: Option<u8>,
         modulation: f32,
+        expression: f32,
         sustain: bool,
         released_while_sustained: bool,
     }
@@ -1561,6 +1562,7 @@ mod tests {
             Ok(Self {
                 active_pitch: None,
                 modulation: 1.0,
+                expression: 1.0,
                 sustain: false,
                 released_while_sustained: false,
             })
@@ -1606,6 +1608,7 @@ mod tests {
                             if status & 0xf0 == 0xb0 {
                                 match controller {
                                     1 => self.modulation = f32::from(value) / 127.0,
+                                    11 => self.expression = f32::from(value) / 127.0,
                                     64 => {
                                         let sustain = value >= 64;
                                         if self.sustain && !sustain && self.released_while_sustained
@@ -1626,7 +1629,9 @@ mod tests {
                         _ => {}
                     }
                 }
-                let level = f32::from(self.active_pitch.unwrap_or(0)) / 127.0 * self.modulation;
+                let level = f32::from(self.active_pitch.unwrap_or(0)) / 127.0
+                    * self.modulation
+                    * self.expression;
                 left[frame] = level;
                 right[frame] = level * 0.5;
             }
@@ -2256,6 +2261,15 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                sample_offset: 8,
+                track_id,
+                note_id: None,
+                pitch: 64,
+                velocity: 32,
+                controller: Some(11),
+                kind: MidiEventKind::ControllerChange,
+            },
+            ScheduledMidiEvent {
                 sample_offset: 4,
                 track_id,
                 note_id: None,
@@ -2312,7 +2326,8 @@ mod tests {
                 0..4 => level,
                 4..6 => level * (64.0 / 127.0),
                 6 => level * 0.5,
-                7..10 => level * 0.25,
+                7 => level * 0.25,
+                8..10 => level * 0.25 * (32.0 / 127.0),
                 _ => 0.0,
             };
             assert!((frame[0] - expected).abs() < 0.0001);

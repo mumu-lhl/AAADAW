@@ -173,13 +173,18 @@ fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
                     tick: 480,
                     value: 64,
                 },
+                MidiControllerData {
+                    controller: 11,
+                    tick: 240,
+                    value: 96,
+                },
             ],
         })
         .expect("sustain events should be accepted");
     let attack_sample = project.sample_at_tick(480).expect("tick should map");
     let release_sample = project.sample_at_tick(960).expect("tick should map");
     let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
-    let mut output = [None; 6];
+    let mut output = [None; 8];
 
     assert_eq!(
         plan.events_for_block(attack_sample, 1, &mut output)
@@ -192,13 +197,19 @@ fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
     assert_eq!(
         plan.active_controllers_at(attack_sample, &mut output)
             .expect("controller state before the attack should query"),
-        1
+        2
     );
     let chased = output[0].unwrap();
     assert_eq!(chased.kind, MidiEventKind::ControllerChange);
     assert_eq!(chased.track_id, track_id);
     assert_eq!(chased.controller, Some(64));
     assert_eq!(chased.velocity, 127);
+    assert!(
+        output[..2]
+            .iter()
+            .flatten()
+            .any(|event| { event.controller == Some(11) && event.velocity == 96 })
+    );
 
     assert_eq!(
         plan.events_for_block(release_sample, 1, &mut output)
@@ -211,19 +222,25 @@ fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
     assert_eq!(
         plan.active_controllers_at(release_sample + 1, &mut output)
             .expect("controller state after release should query"),
-        2
+        3
     );
     assert!(
-        output[..2]
+        output[..3]
             .iter()
             .flatten()
             .any(|event| { event.controller == Some(64) && event.velocity == 0 })
     );
     assert!(
-        output[..2]
+        output[..3]
             .iter()
             .flatten()
             .any(|event| { event.controller == Some(1) && event.velocity == 64 })
+    );
+    assert!(
+        output[..3]
+            .iter()
+            .flatten()
+            .any(|event| { event.controller == Some(11) && event.velocity == 96 })
     );
 }
 

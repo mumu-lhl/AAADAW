@@ -16,6 +16,7 @@ const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
 const MODULATION_LANE_HEIGHT: f32 = 72.0;
+const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
 const CONTROLLER_CONTEXT_HEIGHT: f32 = 24.0;
 
@@ -166,13 +167,34 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         modulation_canvas
     ]
     .height(Length::Fixed(MODULATION_LANE_HEIGHT));
+    let expression_canvas = canvas_widget::Canvas::new(ControllerLane {
+        item,
+        item_id,
+        controller: 11,
+        lane_height: EXPRESSION_LANE_HEIGHT,
+        origin_tick: app.midi_editor_origin_tick,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(EXPRESSION_LANE_HEIGHT));
+    let expression_lane = row![
+        container(text("Expr CC11"))
+            .width(Length::Fixed(KEY_WIDTH))
+            .height(Length::Fixed(EXPRESSION_LANE_HEIGHT))
+            .center_y(Length::Fill)
+            .padding(SPACING_XS),
+        expression_canvas
+    ]
+    .height(Length::Fixed(EXPRESSION_LANE_HEIGHT));
     column![
         edit_toolbar,
         navigation_toolbar,
         scrollable(pitch_canvas).height(Length::Fill),
         velocity_lane,
         sustain_lane,
-        modulation_lane
+        modulation_lane,
+        expression_lane
     ]
     .spacing(ROW_GAP)
     .padding(PANEL_PADDING)
@@ -1575,6 +1597,118 @@ mod tests {
             panic!("modulation deletion should submit a controller replacement");
         };
         assert!(controllers.is_empty());
+    }
+
+    #[test]
+    fn expression_lane_edits_cc11_without_changing_other_controllers() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                }],
+            })
+            .unwrap();
+        let existing_controllers = vec![
+            MidiControllerData {
+                controller: 1,
+                tick: 0,
+                value: 50,
+            },
+            MidiControllerData {
+                controller: 64,
+                tick: 0,
+                value: 127,
+            },
+        ];
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: existing_controllers.clone(),
+            })
+            .unwrap();
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 11,
+            lane_height: EXPRESSION_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, EXPRESSION_LANE_HEIGHT));
+        let mut interaction = ControllerLaneInteraction::default();
+        let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("click should begin a CC11 edit");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("click release should submit the CC11 point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(changed_item, controllers) = message.unwrap() else {
+            panic!("Expression lane should submit a controller replacement");
+        };
+        assert_eq!(changed_item, item_id);
+        assert_eq!(
+            controllers,
+            [
+                existing_controllers.clone(),
+                vec![MidiControllerData {
+                    controller: 11,
+                    tick: 960,
+                    value: 64,
+                }],
+            ]
+            .concat()
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+        assert_eq!(project.midi_items()[0].notes().len(), 1);
+        assert_eq!(
+            project.midi_items()[0].controllers(),
+            [
+                existing_controllers,
+                vec![MidiControllerData {
+                    controller: 11,
+                    tick: 960,
+                    value: 64,
+                }],
+            ]
+            .concat()
+        );
     }
 
     #[test]
