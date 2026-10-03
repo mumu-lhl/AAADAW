@@ -21,4 +21,4 @@ The focused `aaadaw-app` tests verify delayed setup anchor refinement and ordere
 
 ## Status
 
-Implementation in progress for Issue #36.
+Merged in PR #37 (`a865d01`). Issue #36 is closed. Linux JACK/PipeWire feature checks, Linux tests, Clippy, formatting, and Windows workspace CI passed.
