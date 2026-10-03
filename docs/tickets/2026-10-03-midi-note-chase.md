@@ -9,7 +9,7 @@ A musician seeks into a held MIDI note or stops and resumes playback in the midd
 - At the first non-empty block after playback starts or jumps, emit a note-on at offset zero for notes whose start is before the transport position and whose end is after it.
 - Leave notes beginning exactly at the transport position to the regular event schedule, preventing duplicate note-ons.
 - Preserve the scheduled note-off at the note's original end and filter muted/non-solo tracks during compilation.
-- Keep the callback path allocation-free using render-graph event storage sized before playback.
+- Keep callback lookup allocation-free using a prebuilt interval index and render-graph event storage.
 - Do not consume a pending chase for an empty callback block.
 
 ## Verification

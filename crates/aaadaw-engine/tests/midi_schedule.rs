@@ -151,6 +151,64 @@ fn active_note_query_chases_only_notes_strictly_inside_their_sample_range() {
 }
 
 #[test]
+fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 5_000,
+        })
+        .expect("MIDI item insertion should succeed");
+    let item_id = project.midi_items()[0].id();
+    let notes: Vec<_> = (0..64)
+        .map(|index| MidiNoteData {
+            pitch: index,
+            tick: u64::from(index) * 37,
+            duration: 83 + u64::from(index % 11) * 41,
+            velocity: 90,
+        })
+        .collect();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: notes.clone(),
+        })
+        .expect("MIDI notes should be accepted");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 64];
+
+    for tick in (0..3_000).step_by(19) {
+        let sample = project
+            .sample_at_tick(tick)
+            .expect("query tick should map to a sample");
+        let mut expected: Vec<_> = notes
+            .iter()
+            .filter(|note| note.tick < tick && tick < note.tick + note.duration)
+            .map(|note| note.pitch)
+            .collect();
+        let count = plan
+            .active_notes_at(sample, &mut output)
+            .expect("interval query should fit its preallocated note buffer");
+        let mut actual: Vec<_> = output[..count]
+            .iter()
+            .flatten()
+            .map(|event| event.pitch)
+            .collect();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "active notes at tick {tick}");
+    }
+}
+
+#[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
     let mut project = Project::new();
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {

@@ -269,6 +269,15 @@ fn render_graph_schedules_midi_atomically_with_the_audio_block() {
         .expect("sufficient event capacity should render");
     assert_eq!(stats.midi_event_count, 2);
     assert_eq!(
+        midi_output
+            .iter()
+            .flatten()
+            .filter(|event| event.kind == aaadaw_engine::MidiEventKind::NoteOn)
+            .count(),
+        1,
+        "a note beginning at the playhead is scheduled exactly once"
+    );
+    assert_eq!(
         midi_output[0].expect("note-on should be written").kind,
         aaadaw_engine::MidiEventKind::NoteOn
     );
@@ -329,13 +338,38 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
     assert_eq!(chased.kind, aaadaw_engine::MidiEventKind::NoteOn);
     assert_eq!(chased.sample_offset, 0);
 
-    graph.transport_mut().stop();
-    let mut stopped_output = [[1.0_f32, 1.0_f32]; 64];
     midi_output.fill(None);
+    let empty_during_playback = graph
+        .render_with_midi(&mut midi_output, &mut [])
+        .expect("empty blocks should not chase already-active notes again");
+    assert_eq!(empty_during_playback.midi_event_count, 0);
     graph
-        .render_with_midi(&mut midi_output, &mut stopped_output)
-        .expect("stopped block should render");
-    assert_eq!(midi_output, [None; 2]);
+        .render_into(&mut output)
+        .expect("audio-only rendering should continue playback");
+    let resumed_from_audio_only = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("returning to MIDI rendering should chase notes missed by audio-only blocks");
+    assert_eq!(resumed_from_audio_only.midi_event_count, 1);
+    assert_eq!(
+        midi_output[0]
+            .expect("active note should be chased after audio-only rendering")
+            .kind,
+        aaadaw_engine::MidiEventKind::NoteOn
+    );
+
+    midi_output.fill(None);
+    let empty_during_playback = graph
+        .render_with_midi(&mut midi_output, &mut [])
+        .expect("empty blocks should not chase already-active notes again");
+    assert_eq!(empty_during_playback.midi_event_count, 0);
+    let continuous = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("continuous playback should render without another chase");
+    assert_eq!(continuous.midi_event_count, 0);
+
+    // Both commands can arrive before one callback, so the transport generation must retain the
+    // stop/start transition even though the playhead does not move.
+    graph.transport_mut().stop();
     graph.transport_mut().start();
     let resumed = graph
         .render_with_midi(&mut midi_output, &mut output)
