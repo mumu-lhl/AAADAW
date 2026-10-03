@@ -22,8 +22,8 @@ Stop and graph replacement release current notes and reset MIDI-capable CLAP ins
 
 Passed locally: `cargo xtest` (244 tests), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check`. Focused CLAP tests also verify sample-accurate controller scheduling, reset coverage across all 16 MIDI channels, note-only plugin note-offs, and Panic preserving transport state.
 
-Feature-gated JACK/PipeWire backend tests are left to CI because JACK development libraries are unavailable in this environment. Native Iced GUI rendering has not been visually reviewed here.
+Feature-gated Linux JACK and PipeWire checks, Windows workspace checks, and the Linux test suite passed in PR #31 CI. Native Iced GUI rendering has not been visually reviewed here.
 
 ## Status
 
-Implementation complete; awaiting CI and review.
+Complete in PR #31.
