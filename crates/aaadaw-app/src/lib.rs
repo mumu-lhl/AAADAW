@@ -21,8 +21,8 @@ pub use asset_management::{
 };
 pub use audio_editing::{AudioEditError, duplicate_audio_item, set_audio_item_start_sample};
 pub use audio_import::{
-    AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker, start_audio_item_import,
-    start_audio_item_reimport,
+    AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker,
+    cleanup_unplaced_audio_assets, start_audio_item_import, start_audio_item_reimport,
 };
 pub use clap_plugins::{
     ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,

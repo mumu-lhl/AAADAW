@@ -25,6 +25,7 @@ pub enum AudioItemImportError {
     DurationOutOfRange,
     ZeroLengthAudio,
     AssetNotEmbedded(String),
+    AssetRollbackFailed(String),
     AssetSourceNotChanged(String),
     AssetSourcePathUnavailable(String),
 }
@@ -55,6 +56,12 @@ impl fmt::Display for AudioItemImportError {
                     "newly imported asset {media_ref:?} is not embedded"
                 )
             }
+            Self::AssetRollbackFailed(details) => {
+                write!(
+                    formatter,
+                    "import failed and asset cleanup also failed: {details}"
+                )
+            }
             Self::AssetSourceNotChanged(media_ref) => {
                 write!(formatter, "audio source {media_ref:?} is no longer changed")
             }
@@ -79,6 +86,7 @@ impl StdError for AudioItemImportError {
             | Self::DurationOutOfRange
             | Self::ZeroLengthAudio
             | Self::AssetNotEmbedded(_)
+            | Self::AssetRollbackFailed(_)
             | Self::AssetSourceNotChanged(_)
             | Self::AssetSourcePathUnavailable(_) => None,
         }
@@ -144,40 +152,67 @@ impl AudioItemImportWorker {
     /// metadata probing and SQLite access still belong on a background control worker.
     pub fn finish(self) -> Result<DawAction, AudioItemImportError> {
         let media_ref = self.worker.join()?;
-        let mut store = ProjectStore::open(&self.project_path)?;
-        let metadata_result = load_or_probe_metadata(&mut store, &media_ref);
-        let close_result = store.close();
-        let metadata = metadata_result?;
-        close_result?;
-        match self.target {
-            AudioItemImportTarget::Insert {
-                track_id,
-                start_sample,
-            } => {
-                let length_samples =
-                    audio_item_length_samples(&metadata, self.project_sample_rate)?;
-                Ok(DawAction::InsertAudioItem {
+        let result = (|| {
+            let mut store = ProjectStore::open(&self.project_path)?;
+            let metadata = load_or_probe_metadata(&mut store, &media_ref)?;
+            store.close()?;
+            match self.target {
+                AudioItemImportTarget::Insert {
                     track_id,
-                    media_ref,
                     start_sample,
-                    source_offset_samples: 0,
+                } => {
+                    let length_samples =
+                        audio_item_length_samples(&metadata, self.project_sample_rate)?;
+                    Ok(DawAction::InsertAudioItem {
+                        track_id,
+                        media_ref: media_ref.clone(),
+                        start_sample,
+                        source_offset_samples: 0,
+                        length_samples,
+                    })
+                }
+                AudioItemImportTarget::Replace {
+                    item_id,
+                    start_sample,
+                    source_offset_samples,
                     length_samples,
-                })
+                } => Ok(DawAction::EditAudioItem {
+                    item_id,
+                    media_ref: media_ref.clone(),
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                }),
             }
-            AudioItemImportTarget::Replace {
-                item_id,
-                start_sample,
-                source_offset_samples,
-                length_samples,
-            } => Ok(DawAction::EditAudioItem {
-                item_id,
-                media_ref,
-                start_sample,
-                source_offset_samples,
-                length_samples,
-            }),
+        })();
+        match result {
+            Err(import_error) => {
+                match cleanup_unplaced_audio_assets(
+                    &self.project_path,
+                    std::slice::from_ref(&media_ref),
+                ) {
+                    Ok(()) => Err(import_error),
+                    Err(cleanup_error) => Err(AudioItemImportError::AssetRollbackFailed(format!(
+                        "{import_error}; rollback error: {cleanup_error}"
+                    ))),
+                }
+            }
+            result => result,
         }
     }
+}
+
+/// Removes assets imported for placements that failed before project actions were applied.
+pub fn cleanup_unplaced_audio_assets(
+    project_path: impl AsRef<Path>,
+    media_refs: &[String],
+) -> Result<(), AudioItemImportError> {
+    let mut store = ProjectStore::open(project_path)?;
+    for media_ref in media_refs {
+        store.remove_unreferenced_audio_asset(media_ref)?;
+    }
+    store.close()?;
+    Ok(())
 }
 
 /// Starts embedding an audio file in a saved project.

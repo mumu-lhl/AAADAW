@@ -1,7 +1,7 @@
 //! Non-realtime recording-file ownership and finalization.
 //!
 //! The audio callback only writes fixed-size stereo frames to the bounded engine queue. This
-//! worker drains that queue, writes PCM WAV data, and publishes the completed file on stop.
+//! worker drains that queue, writes bounded PCM WAV segments, and publishes them on stop.
 
 use aaadaw_engine::{AudioCaptureConsumer, AudioCaptureControl};
 use std::error::Error as StdError;
@@ -72,7 +72,7 @@ impl From<io::Error> for AudioRecordingError {
     }
 }
 
-/// Background WAV writer for a single stereo take.
+/// Background segmented WAV writer for a single stereo take.
 ///
 /// The writer owns the queue consumer. Call `finish` only after stopping and joining the input
 /// backend, so no callback can publish frames after the worker drains the queue.
@@ -83,7 +83,7 @@ pub struct AudioRecordingWorker {
 }
 
 impl AudioRecordingWorker {
-    /// Starts a dedicated writer and creates its temporary file next to the project.
+    /// Starts a dedicated writer and creates temporary segment files next to the project.
     pub fn start(
         project_path: impl AsRef<Path>,
         sample_rate: u32,
@@ -361,11 +361,14 @@ fn write_wav_header(
 #[cfg(test)]
 mod tests {
     use super::{AudioRecordingError, AudioRecordingWorker};
-    use crate::audio_capture_stream;
+    use crate::{audio_capture_stream, prepare_audio_playback, start_audio_item_import};
+    use aaadaw_core::{DawAction, Project};
     use aaadaw_media::AudioStreamDecoder;
+    use aaadaw_storage::ProjectStore;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
 
@@ -448,6 +451,95 @@ mod tests {
         for (actual, expected) in decoded.iter().zip([0.1_f32, 0.2, 0.3, 0.4, 0.5]) {
             assert!((actual - expected).abs() < 0.001);
         }
+        fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn segmented_take_survives_save_reopen_and_playback_across_the_boundary() {
+        let (directory, project_path) = test_project_path();
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Long take".to_owned(),
+            })
+            .expect("track should be created");
+        let track_id = project.tracks()[0].id();
+        let mut store = ProjectStore::open(&project_path).expect("project store should open");
+        store
+            .save(&project)
+            .expect("project should be saved before recording");
+        store.close().expect("project store should close");
+
+        let (mut producer, consumer, control) = audio_capture_stream(16);
+        let writer = AudioRecordingWorker::start_with_segment_limit(
+            &project_path,
+            project.settings().sample_rate(),
+            consumer,
+            control.clone(),
+            12,
+        )
+        .expect("recording writer should start");
+        control.start();
+        producer.push_planar(&[0.1, 0.2, 0.3, 0.4], &[0.1, 0.2, 0.3, 0.4]);
+        control.stop();
+        let recordings = writer.finish().expect("take should finalize into segments");
+        assert_eq!(recordings.len(), 2);
+
+        let mut cursor = 0;
+        let mut placements = Vec::new();
+        for recording in &recordings {
+            let worker = start_audio_item_import(
+                &project_path,
+                recording,
+                track_id,
+                cursor,
+                project.settings().sample_rate(),
+            )
+            .expect("recorded segment should import");
+            while !worker.is_finished() {
+                let _ = worker.progress().try_iter().count();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let action = worker.finish().expect("segment metadata should finalize");
+            let DawAction::InsertAudioItem { length_samples, .. } = &action else {
+                panic!("segment import should produce an audio placement");
+            };
+            cursor += length_samples;
+            placements.push(action);
+        }
+        project
+            .apply(DawAction::BatchTransaction {
+                tx_id: 1,
+                actions: placements,
+            })
+            .expect("segments should form one continuous edit");
+        let mut store = ProjectStore::open(&project_path).expect("project store should reopen");
+        store.save(&project).expect("segmented take should save");
+        store.close().expect("project store should close");
+
+        let store = ProjectStore::open(&project_path).expect("saved project should reopen");
+        let reopened = store.load().expect("saved project should load");
+        assert_eq!(reopened.audio_items().len(), 2);
+        assert_eq!(reopened.audio_items()[0].start_sample(), 0);
+        assert_eq!(reopened.audio_items()[1].start_sample(), 2);
+        let prepared = prepare_audio_playback(&reopened, &store, 16, 8)
+            .expect("all recorded segments should resolve for playback");
+        let (mut graph, feeders) = prepared.into_parts();
+        for feeder in feeders {
+            feeder.join().expect("recording feeder should finish");
+        }
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 4];
+        let stats = graph
+            .render_into(&mut output)
+            .expect("segmented take should render across the join");
+        assert_eq!(stats.underrun_samples, 0);
+        assert!(output.iter().all(|frame| frame[0] > 0.0));
+        assert!(output[0][0] < output[1][0]);
+        assert!(output[1][0] < output[2][0]);
+        assert!(output[2][0] < output[3][0]);
+        drop(store);
         fs::remove_dir_all(directory).expect("test files should be removed");
     }
 

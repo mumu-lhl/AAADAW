@@ -168,13 +168,17 @@ impl App {
                 let tracks = std::mem::take(&mut self.recording_tracks);
                 let start_sample = self.recording_start_sample;
                 let Some(project_path) = self.project_path.clone() else {
-                    remove_recording_files(&paths);
-                    self.status = "Project path disappeared before take import".to_owned();
+                    self.status = remove_recording_files(&paths).map_or_else(
+                        |error| format!("Project path disappeared; take cleanup failed: {error}"),
+                        |_| "Project path disappeared before take import".to_owned(),
+                    );
                     return Task::none();
                 };
                 let Some(first_track) = tracks.first().copied() else {
-                    remove_recording_files(&paths);
-                    self.status = "No armed tracks remain for this take".to_owned();
+                    self.status = remove_recording_files(&paths).map_or_else(
+                        |error| format!("No armed tracks remain; take cleanup failed: {error}"),
+                        |_| "No armed tracks remain for this take".to_owned(),
+                    );
                     return Task::none();
                 };
                 let first_path = paths[0].clone();
@@ -270,8 +274,18 @@ fn discard_recording(recording: ActiveRecording) {
     recording.writer.cancel();
 }
 
-fn remove_recording_files(paths: &[std::path::PathBuf]) {
+fn remove_recording_files(paths: &[std::path::PathBuf]) -> Result<(), String> {
+    let mut failures = Vec::new();
     for path in paths {
-        let _ = std::fs::remove_file(path);
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!("{}: {error}", path.display())),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
