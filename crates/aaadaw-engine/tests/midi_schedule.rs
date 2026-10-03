@@ -182,9 +182,20 @@ fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
         })
         .expect("sustain events should be accepted");
     let attack_sample = project.sample_at_tick(480).expect("tick should map");
+    let expression_sample = project.sample_at_tick(240).expect("tick should map");
     let release_sample = project.sample_at_tick(960).expect("tick should map");
     let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
     let mut output = [None; 8];
+
+    assert_eq!(
+        plan.events_for_block(expression_sample, 1, &mut output)
+            .expect("CC11 event should query at its scheduled sample"),
+        1
+    );
+    let expression = output[0].expect("CC11 should be scheduled");
+    assert_eq!(expression.controller, Some(11));
+    assert_eq!(expression.sample_offset, 0);
+    assert_eq!(expression.velocity, 96);
 
     assert_eq!(
         plan.events_for_block(attack_sample, 1, &mut output)
