@@ -206,6 +206,7 @@ impl App {
                     project_generation: self.project_generation,
                     recovery_discarded_frames: 0,
                     recovery_discarded_tail_bytes: 0,
+                    recovery_start_sample_is_estimate: false,
                 });
                 self.import_busy = true;
                 self.import_finalizing = false;
@@ -309,9 +310,25 @@ impl App {
                 discard_recording(recording);
                 self.status = "Recording setup cancelled".to_owned();
             }
-            Some(Ok((recording, start_sample))) => {
-                self.recording_start_sample = start_sample;
+            Some(Ok((recording, _provisional_start_sample))) => {
+                let start_sample = self
+                    .playback
+                    .as_ref()
+                    .map_or(self.playhead_sample, |playback| {
+                        playback.stats().playhead_sample
+                    });
+                // The provisional sample was persisted before this callback. Refresh the
+                // playhead now so slow recovery-file sync time is not included in the take.
                 recording.control.start();
+                if let Err(error) = recording.writer.refine_start_sample(start_sample) {
+                    recording.control.fail();
+                    discard_recording(recording);
+                    self.recording_starting = false;
+                    self.recording_tracks.clear();
+                    self.status = format!("Could not update recording recovery position: {error}");
+                    return;
+                }
+                self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;
                 self.status = "Recording".to_owned();

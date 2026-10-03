@@ -21,6 +21,10 @@ impl App {
             self.status = "This take has no complete audio frames to recover".to_owned();
             return Task::none();
         }
+        if candidate.manifest.start_sample.is_none() {
+            self.status = "This take has audio but no saved timeline position; it was kept in the recovery folder".to_owned();
+            return Task::none();
+        }
         let track_ids = candidate
             .manifest
             .track_ids
@@ -88,7 +92,11 @@ impl App {
         let Some(first_path) = candidate.segment_paths.first().cloned() else {
             return Task::none();
         };
-        let start_sample = candidate.manifest.start_sample.unwrap_or(0);
+        let start_sample = candidate
+            .manifest
+            .start_sample
+            .expect("recovery candidate position was checked before preparation");
+        let start_is_estimate = candidate.manifest.start_sample_is_estimate;
         let sample_rate = self.project.settings().sample_rate();
         if let Some(current) = self
             .recording_recovery_candidates
@@ -109,13 +117,18 @@ impl App {
             project_generation: self.project_generation,
             recovery_discarded_frames: candidate.discarded_frames,
             recovery_discarded_tail_bytes: candidate.discarded_tail_bytes,
+            recovery_start_sample_is_estimate: start_is_estimate,
         });
         self.import_busy = true;
         self.import_finalizing = false;
         self.import_cancel_requested = false;
         self.import_bytes = 0;
         self.import_total_bytes = None;
-        self.status = "Restoring recorded take into the arrangement…".to_owned();
+        self.status = if start_is_estimate {
+            "Restoring take at its last saved approximate position…".to_owned()
+        } else {
+            "Restoring recorded take into the arrangement…".to_owned()
+        };
         Task::perform(
             run_blocking("aaadaw-recording-recovery-import", move || {
                 start_audio_item_import(

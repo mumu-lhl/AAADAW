@@ -680,6 +680,11 @@ impl App {
                     } else {
                         String::new()
                     };
+                    let recovery_position = if target.recovery_start_sample_is_estimate {
+                        "; start position is approximate"
+                    } else {
+                        ""
+                    };
                     completed_recording_manifest = Some((
                         target.recovery_manifest_path.clone(),
                         target.project_generation,
@@ -691,7 +696,7 @@ impl App {
                             actions: target.imported_actions,
                         }),
                         Some(format!(
-                            "Take recorded onto {track_count} armed track(s){recovery_loss}"
+                            "Take recorded onto {track_count} armed track(s){recovery_loss}{recovery_position}"
                         )),
                     )
                 }

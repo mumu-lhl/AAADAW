@@ -293,6 +293,7 @@ struct RecordImportTarget {
     project_generation: u64,
     recovery_discarded_frames: u64,
     recovery_discarded_tail_bytes: u64,
+    recovery_start_sample_is_estimate: bool,
 }
 
 struct PendingRecordingCleanup {
