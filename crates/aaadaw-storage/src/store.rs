@@ -1877,7 +1877,18 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
         .map(
-            |(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path)| {
+            |(
+                id,
+                position,
+                name,
+                volume_db,
+                pan,
+                muted,
+                solo,
+                record_armed,
+                instrument_id,
+                instrument_path,
+            )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
                     (None, None) => None,

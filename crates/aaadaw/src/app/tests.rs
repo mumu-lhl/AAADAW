@@ -3,7 +3,9 @@ use super::commands::{self, CommandId, TrackCommand};
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
 use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
-use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_core::TrackFxPlugin;
+use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
