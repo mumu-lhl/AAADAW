@@ -27,7 +27,11 @@ pub use audio_import::{
 pub use clap_plugins::{
     ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,
 };
-pub use live_recording::{AudioRecordingError, AudioRecordingWorker};
+pub use live_recording::{
+    AudioRecordingError, AudioRecordingWorker, RecordingRecoveryCandidate,
+    RecordingRecoveryManifest, RecordingSegment, discard_recording_recovery,
+    recover_recording_candidate, scan_recording_recoveries,
+};
 pub use midi_editing::{
     MidiEditError, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
     create_four_beat_midi_item, delete_midi_note, move_midi_item_by_beat,

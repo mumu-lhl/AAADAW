@@ -49,18 +49,24 @@ impl App {
         let (producer, consumer, control) = audio_capture_stream(sample_rate as usize * 10);
         Task::perform(
             run_blocking("aaadaw-recording-start", move || {
-                let writer = aaadaw_app::AudioRecordingWorker::start(
+                let writer = aaadaw_app::AudioRecordingWorker::start_recoverable(
                     project_path,
                     sample_rate,
+                    tracks.iter().map(|track| track.value()).collect(),
                     consumer,
                     control.clone(),
                 )
                 .map_err(|error| error.to_string())?;
+                let recovery_manifest_path = writer
+                    .recovery_manifest_path()
+                    .expect("recoverable recording has a manifest")
+                    .to_path_buf();
                 match open_audio_input(backend, producer, control.clone(), sample_rate) {
                     Ok(input) => Ok(ActiveRecording {
                         input,
                         writer,
                         control,
+                        recovery_manifest_path,
                     }),
                     Err(error) => {
                         writer.cancel();
@@ -103,8 +109,7 @@ impl App {
                         }
                         self.playback_playing = true;
                     }
-                    self.begin_recording(recording);
-                    Task::none()
+                    self.begin_recording(recording)
                 }
             }
             Some(Err(error)) => {
@@ -146,12 +151,17 @@ impl App {
         self.recording_stopping = true;
         self.recording_cancelled_transport_start = true;
         recording.control.stop();
+        let manifest_path = recording.recovery_manifest_path.clone();
         self.stop_playback();
         self.status = "Finalizing take…".to_owned();
         Task::perform(
             run_blocking("aaadaw-recording-finish", move || {
                 recording.input.shutdown();
-                recording.writer.finish().map_err(|error| error.to_string())
+                recording
+                    .writer
+                    .finish()
+                    .map(|paths| (paths, manifest_path))
+                    .map_err(|error| error.to_string())
             }),
             |result| {
                 Message::RecordingStopped(SharedRecordingStop(Arc::new(Mutex::new(Some(result)))))
@@ -163,24 +173,24 @@ impl App {
         self.recording_stopping = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
-            Some(Ok(paths)) => {
+            Some(Ok((paths, recovery_manifest_path))) => {
                 self.close_playback();
                 let tracks = std::mem::take(&mut self.recording_tracks);
                 let start_sample = self.recording_start_sample;
                 let Some(project_path) = self.project_path.clone() else {
-                    self.status = remove_recording_files(&paths).map_or_else(
-                        |error| format!("Project path disappeared; take cleanup failed: {error}"),
-                        |_| "Project path disappeared before take import".to_owned(),
-                    );
+                    self.status = "Project path disappeared; the finalized take remains available for recovery".to_owned();
                     return Task::none();
                 };
                 let Some(first_track) = tracks.first().copied() else {
-                    self.status = remove_recording_files(&paths).map_or_else(
-                        |error| format!("No armed tracks remain; take cleanup failed: {error}"),
-                        |_| "No armed tracks remain for this take".to_owned(),
-                    );
+                    self.status =
+                        "No armed tracks remain; the finalized take is available for recovery"
+                            .to_owned();
                     return Task::none();
                 };
+                if paths.is_empty() {
+                    self.status = "No finalized audio frames were recorded".to_owned();
+                    return Task::none();
+                }
                 let first_path = paths[0].clone();
                 let sample_rate = self.project.settings().sample_rate();
                 self.record_import_tracks = Some(RecordImportTarget {
@@ -191,6 +201,10 @@ impl App {
                     imported_actions: Vec::new(),
                     project_path: project_path.clone(),
                     sample_rate,
+                    recovery_manifest_path,
+                    project_generation: self.project_generation,
+                    recovery_discarded_frames: 0,
+                    recovery_discarded_tail_bytes: 0,
                 });
                 self.import_busy = true;
                 self.import_finalizing = false;
@@ -218,7 +232,8 @@ impl App {
             }
             Some(Err(error)) => {
                 self.recording_tracks.clear();
-                self.status = format!("Take was discarded: {error}");
+                self.status =
+                    format!("Recording stopped with an error; recoverable take retained: {error}");
                 Task::none()
             }
             None => {
@@ -229,9 +244,9 @@ impl App {
         }
     }
 
-    pub(super) fn begin_pending_recording(&mut self) {
+    pub(super) fn begin_pending_recording(&mut self) -> Task<Message> {
         let Some(recording) = self.pending_recording.take() else {
-            return;
+            return Task::none();
         };
         if self.recording_cancel_requested {
             self.recording_cancel_requested = false;
@@ -239,7 +254,7 @@ impl App {
             self.recording_tracks.clear();
             discard_recording(recording);
             self.status = "Recording setup cancelled".to_owned();
-            return;
+            return Task::none();
         }
         if !self.playback_playing {
             self.recording_starting = false;
@@ -249,22 +264,70 @@ impl App {
                 "{} output could not start for recording",
                 self.playback_name()
             );
-            return;
+            return Task::none();
         }
-        self.begin_recording(recording);
+        self.begin_recording(recording)
     }
 
-    fn begin_recording(&mut self, recording: ActiveRecording) {
+    fn begin_recording(&mut self, recording: ActiveRecording) -> Task<Message> {
         self.recording_start_sample = self
             .playback
             .as_ref()
             .map_or(self.playhead_sample, |playback| {
                 playback.stats().playhead_sample
             });
-        recording.control.start();
-        self.recording = Some(recording);
-        self.recording_starting = false;
-        self.status = "Recording".to_owned();
+        let start_sample = self.recording_start_sample;
+        self.status = "Preparing recording recovery metadata…".to_owned();
+        Task::perform(
+            run_blocking("aaadaw-recording-position", move || {
+                if let Err(error) = recording.writer.set_start_sample(start_sample) {
+                    let error = error.to_string();
+                    discard_recording(recording);
+                    return Err(error);
+                }
+                Ok((recording, start_sample))
+            }),
+            |result| {
+                Message::RecordingPositionSaved(super::SharedRecordingPositionSaved(Arc::new(
+                    Mutex::new(Some(result)),
+                )))
+            },
+        )
+    }
+
+    pub(super) fn finish_recording_position_saved(
+        &mut self,
+        result: super::SharedRecordingPositionSaved,
+    ) {
+        let result = result.0.lock().ok().and_then(|mut result| result.take());
+        match result {
+            Some(Ok((recording, _start_sample))) if self.recording_cancel_requested => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                discard_recording(recording);
+                self.status = "Recording setup cancelled".to_owned();
+            }
+            Some(Ok((recording, start_sample))) => {
+                self.recording_start_sample = start_sample;
+                recording.control.start();
+                self.recording = Some(recording);
+                self.recording_starting = false;
+                self.status = "Recording".to_owned();
+            }
+            Some(Err(error)) => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                self.status = format!("Could not persist recording recovery metadata: {error}");
+            }
+            None => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                self.status = "Recording recovery metadata result was unavailable".to_owned();
+            }
+        }
     }
 }
 
@@ -272,20 +335,4 @@ fn discard_recording(recording: ActiveRecording) {
     recording.control.stop();
     recording.input.shutdown();
     recording.writer.cancel();
-}
-
-fn remove_recording_files(paths: &[std::path::PathBuf]) -> Result<(), String> {
-    let mut failures = Vec::new();
-    for path in paths {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => failures.push(format!("{}: {error}", path.display())),
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
 }

@@ -2085,7 +2085,6 @@ fn completed_audio_import_places_item_through_project_action() {
     assert!(!app.import_busy);
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
 fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_undo_step() {
     let mut app = App::default();
@@ -2100,14 +2099,20 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         std::process::id(),
         NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed)
     ));
+    let project_path = source.with_extension("aaadaw");
+    app.project_path = Some(project_path.clone());
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
         source_paths: vec![source.clone()],
         next_segment_index: 0,
         next_start_sample: 96_000,
         imported_actions: Vec::new(),
-        project_path: source.with_extension("aaadaw"),
+        project_path,
         sample_rate: app.project.settings().sample_rate(),
+        recovery_manifest_path: source.with_extension("recovery.json"),
+        project_generation: app.project_generation,
+        recovery_discarded_frames: 0,
+        recovery_discarded_tail_bytes: 0,
     });
     app.import_busy = true;
 
@@ -2125,12 +2130,35 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     }));
     let _ = app.update(Message::Undo);
     assert!(app.project.audio_items().is_empty());
+    let _ = app.update(Message::ProjectSaved(
+        app.project_path.clone().expect("project path is set"),
+        app.revision,
+        Ok(()),
+    ));
+    assert_eq!(app.pending_recording_cleanup.len(), 1);
+    let imported_revision = app.pending_recording_cleanup[0].saved_revision;
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items().len(), 2);
     assert!(app.record_import_tracks.is_none());
+    assert_eq!(app.pending_recording_cleanup.len(), 1);
+    assert_eq!(
+        app.pending_recording_cleanup[0].saved_revision,
+        imported_revision
+    );
+    let _ = app.update(Message::ProjectSaved(
+        app.project_path.clone().expect("project path is set"),
+        app.revision,
+        Ok(()),
+    ));
+    let manifest_path = app.pending_recording_cleanup[0].manifest_path.clone();
+    assert_eq!(
+        app.pending_recording_cleanup[0].media_refs,
+        ["asset://recorded-take"]
+    );
+    let _ = app.update(Message::RecordingRecoveryCleaned(Ok(vec![manifest_path])));
+    assert!(app.pending_recording_cleanup.is_empty());
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
 fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
     let mut app = App::default();
@@ -2150,6 +2178,10 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
         imported_actions: Vec::new(),
         project_path: std::env::temp_dir().join("aaadaw-segmented-test.aaadaw"),
         sample_rate: app.project.settings().sample_rate(),
+        recovery_manifest_path: std::env::temp_dir().join("aaadaw-segmented-test.recovery.json"),
+        project_generation: app.project_generation,
+        recovery_discarded_frames: 0,
+        recovery_discarded_tail_bytes: 0,
     });
     app.import_busy = true;
 
@@ -2200,6 +2232,61 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
     assert!(app.project.audio_items().is_empty());
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items().len(), 4);
+}
+
+#[test]
+fn failed_recording_import_keeps_recovery_sources_for_retry() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-recording-retry-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let manifest_path =
+        project_path.with_file_name(format!(".aaadaw-recording-retry-{file_id}.recovery.json"));
+    let source_path = project_path.with_file_name(format!(".aaadaw-recording-retry-{file_id}.wav"));
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Recorded".to_owned(),
+        })
+        .expect("track should be created");
+    save_project_file(project_path.clone(), project.snapshot(), false)
+        .expect("project should be saved before recording");
+    std::fs::write(&manifest_path, b"recoverable metadata")
+        .expect("recovery manifest should be written");
+    std::fs::write(&source_path, b"recorded segment").expect("recorded source should be written");
+
+    let mut app = App {
+        project,
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let track_id = app.project.tracks()[0].id();
+    app.record_import_tracks = Some(super::RecordImportTarget {
+        track_ids: vec![track_id],
+        source_paths: vec![source_path.clone()],
+        next_segment_index: 0,
+        next_start_sample: 0,
+        imported_actions: Vec::new(),
+        project_path: project_path.clone(),
+        sample_rate: app.project.settings().sample_rate(),
+        recovery_manifest_path: manifest_path.clone(),
+        project_generation: app.project_generation,
+        recovery_discarded_frames: 0,
+        recovery_discarded_tail_bytes: 0,
+    });
+    app.import_busy = true;
+    let _ = app.finish_audio_import(Err("simulated interrupted import".to_owned()));
+
+    assert!(source_path.is_file());
+    assert!(manifest_path.is_file());
+    assert!(app.record_import_tracks.is_none());
+    assert!(app.status.contains("simulated interrupted import"));
+
+    for path in [&project_path, &manifest_path, &source_path] {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 #[test]

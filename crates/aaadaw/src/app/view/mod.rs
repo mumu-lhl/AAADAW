@@ -1,7 +1,6 @@
 use super::{App, Message};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::widget::button;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use iced::widget::text_input;
@@ -46,6 +45,53 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SECTION_GAP)
         .padding(tokens::SPACING_LG)
         .height(Length::Fill);
+    let visible_recoveries = app
+        .recording_recovery_candidates
+        .iter()
+        .filter(|candidate| candidate_needs_recovery(app, candidate))
+        .collect::<Vec<_>>();
+    if let Some(candidate) = visible_recoveries.first() {
+        let seconds =
+            candidate.recorded_frames as f64 / f64::from(candidate.manifest.sample_rate.max(1));
+        let description = if candidate.discarded_tail_bytes > 0 {
+            format!(
+                "Incomplete take found: {:.1}s of audio. The final {} byte(s) are incomplete and will be dropped.",
+                seconds, candidate.discarded_tail_bytes
+            )
+        } else {
+            format!("Incomplete take found: {:.1}s of audio.", seconds)
+        };
+        let description = if candidate.discarded_frames > 0 {
+            format!(
+                "{description} {} previously finalized frame(s) are missing or unreadable.",
+                candidate.discarded_frames
+            )
+        } else {
+            description
+        };
+        let count = visible_recoveries.len();
+        let mut notice = row![text(description).size(12)].spacing(tokens::SECTION_GAP);
+        if count > 1 {
+            notice = notice.push(text(format!("{count} takes")).size(11));
+        }
+        notice = notice
+            .push(
+                button(text("Recover").size(12))
+                    .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+                    .on_press(Message::RecoverRecording(candidate.manifest_path.clone())),
+            )
+            .push(
+                button(text("Discard").size(12))
+                    .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+                    .on_press(Message::DiscardRecording(candidate.manifest_path.clone())),
+            )
+            .align_y(Alignment::Center);
+        content = content.push(
+            container(notice)
+                .width(Length::Fill)
+                .padding(tokens::PANEL_PADDING),
+        );
+    }
     let transport = container(
         row![
             text("Transport").size(14),
@@ -86,6 +132,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)
         .into()
+}
+
+fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecoveryCandidate) -> bool {
+    !app.pending_recording_cleanup.iter().any(|cleanup| {
+        cleanup.manifest_path == candidate.manifest_path
+            && cleanup.media_refs.iter().all(|media_ref| {
+                app.project
+                    .audio_items()
+                    .iter()
+                    .any(|item| item.media_ref() == media_ref)
+            })
+    })
 }
 
 fn docked_arrangement(app: &App) -> Element<'_, Message> {

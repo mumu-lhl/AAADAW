@@ -160,6 +160,15 @@ pub(crate) enum Message {
     BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
     ProjectSaved(PathBuf, u64, Result<(), String>),
+    RecordingRecoveryScanned(
+        PathBuf,
+        Result<Vec<aaadaw_app::RecordingRecoveryCandidate>, String>,
+    ),
+    RecoverRecording(PathBuf),
+    DiscardRecording(PathBuf),
+    RecordingRecoveryPrepared(Result<aaadaw_app::RecordingRecoveryCandidate, String>),
+    RecordingRecoveryDiscarded(PathBuf, Result<(), String>),
+    RecordingRecoveryCleaned(Result<Vec<PathBuf>, String>),
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     TogglePlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -172,6 +181,8 @@ pub(crate) enum Message {
     StopRecording,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     RecordingStarted(super::SharedRecordingStart),
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    RecordingPositionSaved(super::SharedRecordingPositionSaved),
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     RecordingStopped(super::SharedRecordingStop),
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]

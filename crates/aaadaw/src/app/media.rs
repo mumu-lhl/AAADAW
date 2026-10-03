@@ -242,7 +242,6 @@ impl App {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
-                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 let error = self
                     .record_import_tracks
                     .take()
@@ -256,13 +255,11 @@ impl App {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
-                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 let cleanup_error = self
                     .record_import_tracks
                     .take()
                     .and_then(|target| cleanup_recorded_import(&target).err());
                 self.status = "Audio import worker result was unavailable".to_owned();
-                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 if let Some(error) = cleanup_error {
                     self.status
                         .push_str(&format!("; take cleanup failed: {error}"));
@@ -587,11 +584,8 @@ impl App {
         self.import_busy = false;
         self.import_finalizing = false;
         self.import_cancel_requested = false;
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        let mut completed_recording_manifest = None;
         let (result, success_status) = if let Some(mut target) = self.record_import_tracks.take() {
-            if let Some(path) = target.source_paths.get(target.next_segment_index) {
-                let _ = std::fs::remove_file(path);
-            }
             match result {
                 Ok(DawAction::InsertAudioItem {
                     media_ref,
@@ -666,20 +660,39 @@ impl App {
                         );
                     }
                     let track_count = target.track_ids.len();
-                    if let Err(error) = remove_recorded_import_files(&target.source_paths) {
-                        let cleanup_error = cleanup_recorded_import(&target).err();
-                        self.status = cleanup_error.map_or_else(
-                            || format!("Recorded take files could not be removed: {error}"),
-                            |cleanup| format!("Take cleanup failed: {cleanup}"),
-                        );
-                        return Task::none();
-                    }
+                    let mut media_refs = target
+                        .imported_actions
+                        .iter()
+                        .filter_map(|action| match action {
+                            DawAction::InsertAudioItem { media_ref, .. } => Some(media_ref.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    media_refs.sort_unstable();
+                    media_refs.dedup();
+                    let recovery_loss = if target.recovery_discarded_frames > 0
+                        || target.recovery_discarded_tail_bytes > 0
+                    {
+                        format!(
+                            "; {} frame(s) and {} trailing byte(s) could not be recovered",
+                            target.recovery_discarded_frames, target.recovery_discarded_tail_bytes
+                        )
+                    } else {
+                        String::new()
+                    };
+                    completed_recording_manifest = Some((
+                        target.recovery_manifest_path.clone(),
+                        target.project_generation,
+                        media_refs,
+                    ));
                     (
                         Ok(DawAction::BatchTransaction {
                             tx_id: self.revision,
                             actions: target.imported_actions,
                         }),
-                        Some(format!("Take recorded onto {track_count} armed track(s)")),
+                        Some(format!(
+                            "Take recorded onto {track_count} armed track(s){recovery_loss}"
+                        )),
                     )
                 }
                 Ok(_) => (
@@ -705,14 +718,13 @@ impl App {
         } else {
             (result, None)
         };
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
-        let (result, success_status): (Result<DawAction, String>, Option<String>) = (result, None);
         match result {
             Ok(action) => {
                 let new_media_ref = match &action {
                     DawAction::EditAudioItem { media_ref, .. } => Some(media_ref.clone()),
                     _ => None,
                 };
+                let previous_revision = self.revision;
                 self.apply_action(
                     action,
                     if let Some(status) = success_status.as_deref() {
@@ -723,6 +735,18 @@ impl App {
                         "Audio imported and appended to the first track"
                     },
                 );
+                if self.revision != previous_revision
+                    && let Some((manifest_path, project_generation, media_refs)) =
+                        completed_recording_manifest
+                {
+                    self.pending_recording_cleanup
+                        .push(super::PendingRecordingCleanup {
+                            manifest_path: manifest_path.clone(),
+                            project_generation,
+                            saved_revision: self.revision,
+                            media_refs,
+                        });
+                }
                 if let Some(media_ref) = new_media_ref {
                     self.audio_asset_source_statuses.insert(
                         media_ref.clone(),
@@ -741,26 +765,7 @@ impl App {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-fn remove_recorded_import_files(paths: &[PathBuf]) -> Result<(), String> {
-    let mut failures = Vec::new();
-    for path in paths {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => failures.push(format!("{}: {error}", path.display())),
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
-}
-
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 fn cleanup_recorded_import(target: &super::RecordImportTarget) -> Result<(), String> {
-    let file_cleanup = remove_recorded_import_files(&target.source_paths);
     let media_refs = target
         .imported_actions
         .iter()
@@ -769,12 +774,6 @@ fn cleanup_recorded_import(target: &super::RecordImportTarget) -> Result<(), Str
             _ => None,
         })
         .collect::<Vec<_>>();
-    let asset_cleanup =
-        aaadaw_app::cleanup_unplaced_audio_assets(&target.project_path, &media_refs)
-            .map_err(|error| error.to_string());
-    match (file_cleanup, asset_cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(files), Err(assets)) => Err(format!("{files}; {assets}")),
-    }
+    aaadaw_app::cleanup_unplaced_audio_assets(&target.project_path, &media_refs)
+        .map_err(|error| error.to_string())
 }

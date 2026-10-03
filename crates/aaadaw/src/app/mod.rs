@@ -45,6 +45,7 @@ mod messages;
 mod project_io;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 mod recording;
+mod recording_recovery;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -187,6 +188,7 @@ struct App {
     relink_source_path_query: String,
     revision: u64,
     saved_revision: u64,
+    project_generation: u64,
     io_busy: bool,
     audio_file_path_query: String,
     import_busy: bool,
@@ -195,6 +197,10 @@ struct App {
     import_worker: Option<PendingAudioImport>,
     import_bytes: u64,
     import_total_bytes: Option<u64>,
+    recording_recovery_candidates: Vec<aaadaw_app::RecordingRecoveryCandidate>,
+    recording_recovery_scanning: bool,
+    recording_recovery_busy: bool,
+    pending_recording_cleanup: Vec<PendingRecordingCleanup>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording: Option<ActiveRecording>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -211,7 +217,6 @@ struct App {
     recording_start_sample: u64,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     recording_tracks: Vec<TrackId>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     record_import_tracks: Option<RecordImportTarget>,
     status: String,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -241,9 +246,9 @@ struct ActiveRecording {
     input: RunningAudioInput,
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
+    recovery_manifest_path: PathBuf,
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 struct RecordImportTarget {
     track_ids: Vec<TrackId>,
     source_paths: Vec<PathBuf>,
@@ -252,6 +257,17 @@ struct RecordImportTarget {
     imported_actions: Vec<DawAction>,
     project_path: PathBuf,
     sample_rate: u32,
+    recovery_manifest_path: PathBuf,
+    project_generation: u64,
+    recovery_discarded_frames: u64,
+    recovery_discarded_tail_bytes: u64,
+}
+
+struct PendingRecordingCleanup {
+    manifest_path: PathBuf,
+    project_generation: u64,
+    saved_revision: u64,
+    media_refs: Vec<String>,
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -266,7 +282,20 @@ impl std::fmt::Debug for SharedRecordingStart {
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-type RecordingStopResult = Result<Vec<PathBuf>, String>;
+#[derive(Clone)]
+pub(super) struct SharedRecordingPositionSaved(
+    Arc<Mutex<Option<Result<(ActiveRecording, u64), String>>>>,
+);
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl std::fmt::Debug for SharedRecordingPositionSaved {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingPositionSaved(..)")
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+type RecordingStopResult = Result<(Vec<PathBuf>, PathBuf), String>;
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[derive(Clone)]
@@ -594,6 +623,21 @@ impl App {
             self.status = "Wait for the file dialog to finish".to_owned();
             return Task::none();
         }
+        if self.recording_recovery_busy
+            && !matches!(
+                &message,
+                Message::RecordingRecoveryPrepared(_)
+                    | Message::RecordingRecoveryDiscarded(..)
+                    | Message::RecordingRecoveryCleaned(_)
+                    | Message::BackgroundTick
+                    | Message::ToggleMainMenu(_)
+                    | Message::DismissMainMenu
+                    | Message::Escape
+            )
+        {
+            self.status = "Wait for recording recovery to finish".to_owned();
+            return Task::none();
+        }
         if self.import_busy
             && !window_safe_message
             && !matches!(
@@ -643,6 +687,7 @@ impl App {
                     Message::StopPlayback
                         | Message::StopRecording
                         | Message::RecordingStarted(_)
+                        | Message::RecordingPositionSaved(_)
                         | Message::RecordingStopped(_)
                         | Message::BackgroundTick
                         | Message::ToggleMainMenu(_)
@@ -663,6 +708,7 @@ impl App {
                     Message::PlaybackPrepared { .. }
                         | Message::StopRecording
                         | Message::RecordingStarted(_)
+                        | Message::RecordingPositionSaved(_)
                         | Message::RecordingStopped(_)
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
@@ -1397,10 +1443,35 @@ impl App {
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
+                        self.recording_recovery_candidates.clear();
+                        self.project_generation = self.project_generation.wrapping_add(1);
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
                         self.status = format!("Opened {}", path.display());
+                        self.recording_recovery_scanning = true;
+                        let recovery_path = path.clone();
+                        task = Task::batch([
+                            task,
+                            Task::perform(
+                                run_blocking("aaadaw-recording-recovery-scan", move || {
+                                    let result = aaadaw_app::scan_recording_recoveries(
+                                        recovery_path.clone(),
+                                    )
+                                    .map_err(|error| error.to_string());
+                                    Ok((recovery_path, result))
+                                }),
+                                |result| match result {
+                                    Ok((path, result)) => {
+                                        Message::RecordingRecoveryScanned(path, result)
+                                    }
+                                    Err(error) => Message::RecordingRecoveryScanned(
+                                        PathBuf::new(),
+                                        Err(error),
+                                    ),
+                                },
+                            ),
+                        ]);
                     }
                     Some(Err(error)) => self.status = format!("Open failed: {error}"),
                     None => self.status = "Project open result was unavailable".to_owned(),
@@ -1418,10 +1489,81 @@ impl App {
                         } else {
                             format!("Saved {}; newer edits remain unsaved", path.display())
                         };
+                        let ready = self
+                            .pending_recording_cleanup
+                            .iter()
+                            .filter(|cleanup| {
+                                cleanup.project_generation == self.project_generation
+                                    && cleanup.saved_revision <= revision
+                                    && cleanup.media_refs.iter().all(|media_ref| {
+                                        self.project
+                                            .audio_items()
+                                            .iter()
+                                            .any(|item| item.media_ref() == media_ref)
+                                    })
+                            })
+                            .map(|cleanup| cleanup.manifest_path.clone())
+                            .collect::<Vec<_>>();
+                        if !ready.is_empty() {
+                            task = Task::perform(
+                                run_blocking("aaadaw-recording-recovery-cleanup", move || {
+                                    for manifest_path in &ready {
+                                        aaadaw_app::discard_recording_recovery(manifest_path)
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                    Ok(ready)
+                                }),
+                                Message::RecordingRecoveryCleaned,
+                            );
+                        }
                     }
                     Err(error) => self.status = format!("Save failed: {error}"),
                 }
             }
+            Message::RecordingRecoveryScanned(path, result) => {
+                if self
+                    .project_path
+                    .as_ref()
+                    .is_some_and(|current| same_path(current, &path))
+                {
+                    self.recording_recovery_scanning = false;
+                    match result {
+                        Ok(candidates) => self.recording_recovery_candidates = candidates,
+                        Err(error) => {
+                            self.status = format!("Recording recovery scan failed: {error}")
+                        }
+                    }
+                }
+            }
+            Message::RecoverRecording(path) => task = self.recover_recording(path),
+            Message::DiscardRecording(path) => task = self.discard_recording_recovery(path),
+            Message::RecordingRecoveryPrepared(result) => {
+                task = self.recording_recovery_prepared(result);
+            }
+            Message::RecordingRecoveryDiscarded(path, result) => {
+                self.recording_recovery_busy = false;
+                match result {
+                    Ok(()) => {
+                        self.recording_recovery_candidates
+                            .retain(|candidate| candidate.manifest_path != path);
+                        self.status = "Incomplete recording discarded".to_owned();
+                    }
+                    Err(error) => self.status = format!("Recording discard failed: {error}"),
+                }
+            }
+            Message::RecordingRecoveryCleaned(result) => match result {
+                Ok(paths) => {
+                    self.pending_recording_cleanup
+                        .retain(|cleanup| !paths.contains(&cleanup.manifest_path));
+                    self.recording_recovery_candidates
+                        .retain(|candidate| !paths.contains(&candidate.manifest_path));
+                }
+                Err(error) => {
+                    self.status = format!(
+                        "Project saved, but recording source cleanup failed; saving again will retry: {error}"
+                    );
+                }
+            },
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StartPlayback => task = self.start_playback(),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1438,6 +1580,10 @@ impl App {
             Message::StopRecording => task = self.stop_recording(),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::RecordingPositionSaved(result) => {
+                self.finish_recording_position_saved(result);
+            }
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::RecordingStopped(result) => task = self.finish_recording_stop(result),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1461,7 +1607,7 @@ impl App {
             } => {
                 self.finish_playback_preparation(target_sample, start_when_ready, result);
                 if self.pending_recording.is_some() {
-                    self.begin_pending_recording();
+                    task = self.begin_pending_recording();
                 }
             }
             #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1504,6 +1650,9 @@ impl App {
         }
 
         self.project = Project::new();
+        self.project_generation = self.project_generation.wrapping_add(1);
+        self.recording_recovery_candidates.clear();
+        self.recording_recovery_scanning = false;
         self.midi_note_clipboard.source_item_id = None;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
@@ -3003,4 +3152,9 @@ fn shortcut_message(
         return Some(Message::Escape);
     }
     commands::from_shortcut(&key, modifiers, bindings).map(Message::ExecuteCommand)
+}
+
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf())
+        == std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf())
 }

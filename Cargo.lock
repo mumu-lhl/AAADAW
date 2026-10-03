@@ -28,6 +28,8 @@ dependencies = [
  "aaadaw-engine",
  "aaadaw-media",
  "aaadaw-storage",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
