@@ -733,7 +733,10 @@ impl PianoRoll<'_> {
             if state.hovered_velocity_note == Some(note.id()) {
                 frame.fill_text(Text {
                     content: velocity.to_string(),
-                    position: Point::new(velocity_x + 7.0, VELOCITY_LANE_HEIGHT - 10.0),
+                    position: Point::new(
+                        velocity_x + 7.0,
+                        (velocity_y - 6.0).clamp(10.0, VELOCITY_LANE_HEIGHT - 10.0),
+                    ),
                     max_width: 28.0,
                     color: Color::from_rgb8(213, 218, 221),
                     size: Pixels(9.0),
