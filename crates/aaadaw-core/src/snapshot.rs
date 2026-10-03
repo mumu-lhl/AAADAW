@@ -29,6 +29,7 @@ pub struct TrackSnapshot {
 pub struct TrackInstrumentSnapshot {
     pub plugin_id: String,
     pub bundle_path: String,
+    pub state: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,6 +40,7 @@ pub struct TrackFxPluginSnapshot {
     pub bundle_path: String,
     /// Whether the plugin is enabled in the chain.
     pub enabled: bool,
+    pub state: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -155,6 +155,7 @@ fn snapshots_with_malformed_track_instruments_are_rejected() {
     snapshot.tracks[0].instrument = Some(TrackInstrumentSnapshot {
         plugin_id: " ".to_owned(),
         bundle_path: "/plugins/keys.clap".to_owned(),
+        state: None,
     });
 
     assert!(matches!(
@@ -233,6 +234,7 @@ fn snapshots_with_malformed_track_fx_references_are_rejected() {
         plugin_id: "org.example.effect".to_owned(),
         bundle_path: "  ".to_owned(),
         enabled: true,
+        state: None,
     });
 
     assert!(matches!(

@@ -1158,7 +1158,7 @@ fn jack_feature_prepares_offline_graph_without_opening_device() {
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
-fn clap_fx_activation_failure_is_reported_before_audio_output_starts() {
+fn missing_clap_effect_is_skipped_without_failing_playback_preparation() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
     let project_path = std::env::temp_dir().join(format!(
         "aaadaw-ui-fx-playback-{}-{file_id}.aaadaw",
@@ -1188,10 +1188,15 @@ fn clap_fx_activation_failure_is_reported_before_audio_output_starts() {
     let mut prepared =
         prepare_project_playback_file(project_path.clone(), app.project.snapshot(), 0)
             .expect("empty media graph should prepare");
-    let error = app
+    let owners = app
         .install_track_fx_processors(&mut prepared)
-        .expect_err("missing plugin should block playback preparation");
-    assert!(error.contains("org.example.missing"));
+        .expect("a missing effect should not block playback preparation");
+    assert!(owners.is_empty());
+    assert!(
+        app.clap_plugin_warnings
+            .iter()
+            .any(|warning| warning.contains("org.example.missing") && warning.contains("skipped"))
+    );
     assert!(app.clap_effect_owners.is_empty());
 
     drop(prepared);
@@ -1204,7 +1209,7 @@ fn clap_fx_activation_failure_is_reported_before_audio_output_starts() {
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
-fn clap_instrument_activation_failure_is_reported_before_audio_output_starts() {
+fn missing_clap_instrument_is_skipped_without_failing_playback_preparation() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
     let project_path = std::env::temp_dir().join(format!(
         "aaadaw-ui-instrument-playback-{}-{file_id}.aaadaw",
@@ -1234,10 +1239,13 @@ fn clap_instrument_activation_failure_is_reported_before_audio_output_starts() {
     let mut prepared =
         prepare_project_playback_file(project_path.clone(), app.project.snapshot(), 0)
             .expect("empty media graph should prepare");
-    let error = app
+    let owners = app
         .install_track_instrument_processors(&mut prepared)
-        .expect_err("missing instrument should block playback preparation");
-    assert!(error.contains("org.example.missing-synth"));
+        .expect("a missing instrument should not block playback preparation");
+    assert!(owners.is_empty());
+    assert!(app.clap_plugin_warnings.iter().any(|warning| {
+        warning.contains("org.example.missing-synth") && warning.contains("silent")
+    }));
     assert!(app.clap_instrument_owners.is_empty());
 
     drop(prepared);
@@ -2134,6 +2142,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         app.project_path.clone().expect("project path is set"),
         app.revision,
         Ok(()),
+        None,
     ));
     assert_eq!(app.pending_recording_cleanup.len(), 1);
     let imported_revision = app.pending_recording_cleanup[0].saved_revision;
@@ -2149,6 +2158,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         app.project_path.clone().expect("project path is set"),
         app.revision,
         Ok(()),
+        None,
     ));
     let manifest_path = app.pending_recording_cleanup[0].manifest_path.clone();
     assert_eq!(

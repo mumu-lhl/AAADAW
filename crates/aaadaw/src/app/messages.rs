@@ -159,7 +159,7 @@ pub(crate) enum Message {
     AudioItemRelinked(ItemId, Result<(), String>),
     BackgroundTick,
     ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
-    ProjectSaved(PathBuf, u64, Result<(), String>),
+    ProjectSaved(PathBuf, u64, Result<(), String>, Option<String>),
     RecordingRecoveryScanned(
         PathBuf,
         Result<Vec<aaadaw_app::RecordingRecoveryCandidate>, String>,

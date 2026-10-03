@@ -24,6 +24,7 @@ impl App {
         prepared: &mut PreparedAudioPlayback,
     ) -> Result<Vec<u64>, String> {
         let mut owners = Vec::new();
+        let mut owner_targets = Vec::new();
         let mut processors = Vec::new();
         let sample_rate = self.project.settings().sample_rate();
         let max_block_frames = prepared.graph().max_block_frames();
@@ -36,15 +37,46 @@ impl App {
                 // SAFETY: this project plugin was explicitly added from the user's scanned CLAP
                 // catalog; in-process CLAP plugins are documented as trusted native code.
                 let loaded = unsafe {
-                    aaadaw_engine::ClapEffectOwner::load(
+                    aaadaw_engine::ClapEffectOwner::load_with_state(
                         Path::new(plugin.bundle_path()),
                         plugin.plugin_id(),
+                        plugin.state(),
                         sample_rate,
                         max_block_frames,
                     )
                 };
+                let (loaded, state_restored) = match loaded {
+                    Err(state_error)
+                        if plugin.state().is_some() && state_error.is_state_restore_error() =>
+                    {
+                        self.clap_plugin_warnings.push(format!(
+                            "{} state could not be restored; using its default state ({state_error})",
+                            plugin.plugin_id()
+                        ));
+                        // SAFETY: same trusted plugin entry selected by the project; retry only
+                        // omits its optional saved state after the plugin rejected that state.
+                        (
+                            unsafe {
+                                aaadaw_engine::ClapEffectOwner::load(
+                                    Path::new(plugin.bundle_path()),
+                                    plugin.plugin_id(),
+                                    sample_rate,
+                                    max_block_frames,
+                                )
+                            },
+                            false,
+                        )
+                    }
+                    result => (result, true),
+                };
                 match loaded {
                     Ok((owner, processor)) => {
+                        if state_restored {
+                            owner_targets.push((
+                                owner.instance_id(),
+                                (track.id(), chain_index, plugin.plugin_id().to_owned()),
+                            ));
+                        }
                         owners.push((owner.instance_id(), owner));
                         processors.push(TrackFxProcessor::new(
                             track.id(),
@@ -54,9 +86,10 @@ impl App {
                         ));
                     }
                     Err(error) => {
-                        let message = format!("Could not activate {}: {error}", plugin.plugin_id());
-                        deactivate_uninstalled_fx(owners, processors);
-                        return Err(message);
+                        self.clap_plugin_warnings.push(format!(
+                            "Could not activate effect {}; it was skipped ({error})",
+                            plugin.plugin_id()
+                        ));
                     }
                 }
             }
@@ -71,6 +104,7 @@ impl App {
         }
 
         let ids = owners.iter().map(|(instance_id, _)| *instance_id).collect();
+        self.clap_effect_targets.extend(owner_targets);
         for (instance_id, owner) in owners {
             self.clap_effect_owners.insert(instance_id, owner);
         }
@@ -88,6 +122,7 @@ impl App {
             match result {
                 Some(Ok(())) => {
                     self.clap_effect_owners.remove(id);
+                    self.clap_effect_targets.remove(id);
                 }
                 Some(Err(error)) => {
                     error_message = Some(format!(
@@ -108,6 +143,7 @@ impl App {
         for stopped in processors {
             let instance_id = stopped.instance_id();
             if let Some(owner) = self.clap_effect_owners.remove(&instance_id) {
+                self.clap_effect_targets.remove(&instance_id);
                 let (_, _, _, processor) = stopped.into_parts();
                 owner.deactivate(processor);
             } else {
@@ -453,6 +489,7 @@ impl App {
         };
         let plugin_id = plugin.plugin_id().to_owned();
         let bundle_path = plugin.bundle_path().to_owned();
+        let saved_state = plugin.state().map(<[u8]>::to_vec);
         let identity = (track_id, index, plugin_id.clone());
         if self.fx_chain_plugin_gui_identity.as_ref() == Some(&identity) {
             return Task::none();
@@ -473,6 +510,7 @@ impl App {
                 editor_width,
                 editor_height,
                 self.fx_chain_window_scale_factor,
+                saved_state.as_deref(),
             )
         };
         match loaded {
@@ -512,6 +550,42 @@ impl App {
 
     pub(super) fn close_selected_fx_plugin_gui(&mut self) {
         if let Some(mut plugin_gui) = self.fx_chain_plugin_gui.take() {
+            let state = plugin_gui.save_state();
+            if let Err(error) = &state {
+                self.fx_chain_editor_status = format!("Could not save CLAP editor state: {error}");
+            }
+            if let (Some((track_id, chain_index, plugin_id)), Ok(Some(state))) =
+                (self.fx_chain_plugin_gui_identity.clone(), state)
+            {
+                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                self.clap_effect_state_overrides
+                    .insert((track_id, chain_index, plugin_id.clone()));
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    let mut plugins = track.fx_chain().to_vec();
+                    if let Some(plugin) = plugins.get_mut(chain_index) {
+                        if plugin.plugin_id() == plugin_id
+                            && plugin.state() != Some(state.as_slice())
+                        {
+                            *plugin = plugin.clone().with_state(Some(state));
+                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            let previous_revision = self.revision;
+                            self.apply_action(
+                                DawAction::SetTrackFxChain { track_id, plugins },
+                                "Saved CLAP editor state",
+                            );
+                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            if self.revision != previous_revision {
+                                self.playback_graph_dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
             plugin_gui.close();
         }
         self.fx_chain_plugin_gui_identity = None;
