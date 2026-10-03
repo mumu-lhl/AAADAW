@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -98,6 +98,10 @@ CREATE TABLE track_fx_plugins (
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     PRIMARY KEY (track_id, position)
 );
+"#;
+
+const MIGRATION_5: &str = r#"
+ALTER TABLE tracks ADD COLUMN record_armed INTEGER NOT NULL DEFAULT 0 CHECK (record_armed IN (0, 1));
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1279,6 +1283,48 @@ impl ProjectStore {
         })
     }
 
+    /// Removes a project audio asset only when no persisted audio item references it.
+    ///
+    /// This is used to roll back multi-file imports that fail before their placement action is
+    /// committed. Assets are immutable; normal editing should use undoable project actions.
+    pub fn remove_unreferenced_audio_asset(
+        &mut self,
+        media_ref: &str,
+    ) -> Result<bool, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let referenced: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audio_items WHERE media_ref = ?1)",
+            [media_ref],
+            |row| row.get(0),
+        )?;
+        if referenced {
+            return Ok(false);
+        }
+        let storage_key: Option<String> = transaction
+            .query_row(
+                "SELECT storage_key FROM audio_assets WHERE media_ref = ?1",
+                [media_ref],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(storage_key) = storage_key {
+            transaction.execute(
+                "DELETE FROM audio_asset_storage_chunks WHERE storage_key = ?1",
+                [storage_key],
+            )?;
+        }
+        let removed =
+            transaction.execute("DELETE FROM audio_assets WHERE media_ref = ?1", [media_ref])?;
+        transaction.execute(
+            "DELETE FROM audio_asset_links WHERE media_ref = ?1",
+            [media_ref],
+        )?;
+        transaction.commit()?;
+        Ok(removed > 0)
+    }
+
     /// Stores decoder-discovered metadata for a complete embedded asset.
     pub fn set_audio_asset_metadata(
         &mut self,
@@ -1680,6 +1726,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             2 => transaction.execute_batch(MIGRATION_2)?,
             3 => transaction.execute_batch(MIGRATION_3)?,
             4 => transaction.execute_batch(MIGRATION_4)?,
+            5 => transaction.execute_batch(MIGRATION_5)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1717,8 +1764,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -1727,6 +1774,7 @@ fn write_snapshot(
                 f64::from(track.pan),
                 track.muted,
                 track.solo,
+                track.record_armed,
                 track.instrument.as_ref().map(|instrument| &instrument.plugin_id),
                 track.instrument.as_ref().map(|instrument| &instrument.bundle_path)
             ],
@@ -1850,7 +1898,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -1863,14 +1911,26 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, f64>(4)?,
                 row.get::<_, bool>(5)?,
                 row.get::<_, bool>(6)?,
-                row.get::<_, Option<String>>(7)?,
+                row.get::<_, bool>(7)?,
                 row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
         .map(
-            |(id, position, name, volume_db, pan, muted, solo, instrument_id, instrument_path)| {
+            |(
+                id,
+                position,
+                name,
+                volume_db,
+                pan,
+                muted,
+                solo,
+                record_armed,
+                instrument_id,
+                instrument_path,
+            )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
                     (None, None) => None,
@@ -1895,6 +1955,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     pan: pan as f32,
                     muted,
                     solo,
+                    record_armed,
                     instrument,
                     fx_chain: fx_chains.remove(&id).unwrap_or_default(),
                 })

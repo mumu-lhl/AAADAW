@@ -88,6 +88,12 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("solo change should succeed");
     project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .expect("record arm should be saved with the project");
+    project
         .apply(DawAction::SetTrackInstrument {
             track_id,
             instrument: Some(
@@ -215,6 +221,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN instrument_path; \
              ALTER TABLE tracks DROP COLUMN instrument_id; \
+             ALTER TABLE tracks DROP COLUMN record_armed; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -226,6 +233,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
     let migrated = store.load().expect("migrated project should load");
     assert_eq!(migrated.tracks()[0].name(), "Legacy");
     assert_eq!(migrated.tracks()[0].instrument(), None);
+    assert!(!migrated.tracks()[0].is_record_armed());
     store.close().expect("migrated project should close");
     remove_database(&path);
 }
@@ -1003,6 +1011,57 @@ fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
     assert_eq!(restored, bytes);
     drop(reader);
     reopened.close().expect("reopened database should close");
+    remove_database(&path);
+}
+
+#[test]
+fn unreferenced_audio_asset_cleanup_preserves_assets_used_by_saved_items() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    let mut store = ProjectStore::open(&path).expect("project store should open");
+    store.save(&project).expect("project should be persisted");
+
+    store
+        .import_audio_asset("asset://unplaced", "unused.wav", Cursor::new([1, 2, 3]))
+        .expect("unplaced asset should import");
+    assert!(
+        store
+            .remove_unreferenced_audio_asset("asset://unplaced")
+            .expect("unreferenced asset should be removed")
+    );
+    assert!(matches!(
+        store.audio_asset_reader("asset://unplaced"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+
+    store
+        .import_audio_asset("asset://placed", "used.wav", Cursor::new([4, 5, 6]))
+        .expect("placed asset should import");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://placed".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1,
+        })
+        .expect("item should reference asset");
+    store.save(&project).expect("placement should be persisted");
+    assert!(
+        !store
+            .remove_unreferenced_audio_asset("asset://placed")
+            .expect("referenced asset should be retained")
+    );
+    assert!(store.audio_asset_reader("asset://placed").is_ok());
+
+    store.close().expect("project store should close");
     remove_database(&path);
 }
 

@@ -8,6 +8,8 @@ use aaadaw_app::{
     set_audio_item_start_sample,
 };
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_app::{AudioCaptureControl, AudioRecordingWorker, RunningAudioInput};
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::{
     PlaybackBackend, PlaybackBuildError, PreparedAudioPlayback, RunningAudioPlayback,
     prepare_audio_playback_at,
@@ -41,6 +43,8 @@ mod keyboard_config;
 mod media;
 mod messages;
 mod project_io;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+mod recording;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -182,6 +186,24 @@ struct App {
     import_worker: Option<PendingAudioImport>,
     import_bytes: u64,
     import_total_bytes: Option<u64>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording: Option<ActiveRecording>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    pending_recording: Option<ActiveRecording>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_starting: bool,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_cancel_requested: bool,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_stopping: bool,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_cancelled_transport_start: bool,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_start_sample: u64,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    recording_tracks: Vec<TrackId>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    record_import_tracks: Option<RecordImportTarget>,
     status: String,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback: Option<RunningAudioPlayback>,
@@ -203,6 +225,49 @@ struct App {
 
 struct PendingAudioImport {
     worker: AudioItemImportWorker,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+struct ActiveRecording {
+    input: RunningAudioInput,
+    writer: AudioRecordingWorker,
+    control: AudioCaptureControl,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+struct RecordImportTarget {
+    track_ids: Vec<TrackId>,
+    source_paths: Vec<PathBuf>,
+    next_segment_index: usize,
+    next_start_sample: u64,
+    imported_actions: Vec<DawAction>,
+    project_path: PathBuf,
+    sample_rate: u32,
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Clone)]
+pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, String>>>>);
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl std::fmt::Debug for SharedRecordingStart {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingStart(..)")
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+type RecordingStopResult = Result<Vec<PathBuf>, String>;
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[derive(Clone)]
+pub(super) struct SharedRecordingStop(Arc<Mutex<Option<RecordingStopResult>>>);
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl std::fmt::Debug for SharedRecordingStop {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingStop(..)")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,9 +448,15 @@ impl App {
         let playback_active = self.playback.is_some();
         #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         let playback_active = false;
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        let recording_active =
+            self.recording.is_some() || self.recording_starting || self.recording_stopping;
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        let recording_active = false;
 
         let background_ticks = if self.import_busy
             || playback_active
+            || recording_active
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
         {
@@ -556,11 +627,34 @@ impl App {
         }
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
         {
+            if (self.recording.is_some() || self.recording_starting || self.recording_stopping)
+                && !window_safe_message
+                && !matches!(
+                    &message,
+                    Message::StopPlayback
+                        | Message::StopRecording
+                        | Message::RecordingStarted(_)
+                        | Message::RecordingStopped(_)
+                        | Message::BackgroundTick
+                        | Message::ToggleMainMenu(_)
+                        | Message::DismissMainMenu
+                        | Message::Escape
+                        | Message::Timeline(_)
+                        | Message::TcpScrolled { .. }
+                        | Message::TimelineScrolled { .. }
+                )
+            {
+                self.status = "Stop recording before changing the project".to_owned();
+                return Task::none();
+            }
             if self.playback_busy
                 && !window_safe_message
                 && !matches!(
                     &message,
                     Message::PlaybackPrepared { .. }
+                        | Message::StopRecording
+                        | Message::RecordingStarted(_)
+                        | Message::RecordingStopped(_)
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
                         | Message::Escape
@@ -593,6 +687,7 @@ impl App {
                         | Message::CommitTrackName(_)
                         | Message::ToggleMute(_)
                         | Message::ToggleSolo(_)
+                        | Message::ToggleRecordArm(_)
                         | Message::AdjustVolume(..)
                         | Message::AdjustPan(..)
                         | Message::AddScannedPlugin(_)
@@ -972,6 +1067,22 @@ impl App {
                     );
                 }
             }
+            Message::ToggleRecordArm(track_id) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    self.apply_action(
+                        DawAction::SetTrackRecordArm {
+                            track_id,
+                            armed: !track.is_record_armed(),
+                        },
+                        "Track record arm changed",
+                    );
+                }
+            }
             Message::AdjustVolume(track_id, delta_db) => {
                 if let Some(track) = self
                     .project
@@ -1089,7 +1200,7 @@ impl App {
             Message::ReimportAudioItem(item_id) => task = self.reimport_audio_item(item_id),
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
-            Message::AudioImportFinished(result) => self.finish_audio_import(result),
+            Message::AudioImportFinished(result) => task = self.finish_audio_import(result),
             Message::RunAudioAssetManagement(operation) => {
                 task = self.start_audio_asset_management(operation);
             }
@@ -1107,12 +1218,35 @@ impl App {
             }
             Message::BackgroundTick => {
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-                self.update_playback_stats();
-                self.update_audio_waveforms();
-                task = Task::batch([
-                    self.update_audio_import(),
-                    self.update_audio_asset_management(),
-                ]);
+                {
+                    self.update_playback_stats();
+                    let recording_failed = self
+                        .recording
+                        .as_ref()
+                        .is_some_and(|recording| recording.control.has_failed())
+                        && !self.recording_stopping;
+                    self.update_audio_waveforms();
+                    task = if recording_failed {
+                        Task::batch([
+                            self.stop_recording(),
+                            self.update_audio_import(),
+                            self.update_audio_asset_management(),
+                        ])
+                    } else {
+                        Task::batch([
+                            self.update_audio_import(),
+                            self.update_audio_asset_management(),
+                        ])
+                    };
+                }
+                #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+                {
+                    self.update_audio_waveforms();
+                    task = Task::batch([
+                        self.update_audio_import(),
+                        self.update_audio_asset_management(),
+                    ]);
+                }
             }
             Message::ProjectLoaded(path, result) => {
                 self.io_busy = false;
@@ -1164,7 +1298,21 @@ impl App {
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::StartPlayback => task = self.start_playback(),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-            Message::StopPlayback => self.stop_playback(),
+            Message::StopPlayback => {
+                if self.recording.is_some() {
+                    task = self.stop_recording();
+                } else {
+                    self.stop_playback();
+                }
+            }
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::StartRecording => task = self.start_recording(),
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::StopRecording => task = self.stop_recording(),
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::RecordingStarted(result) => task = self.finish_recording_start(result),
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            Message::RecordingStopped(result) => task = self.finish_recording_stop(result),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::RestartPlayback => task = self.restart_playback(),
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1183,7 +1331,12 @@ impl App {
                 target_sample,
                 start_when_ready,
                 result,
-            } => self.finish_playback_preparation(target_sample, start_when_ready, result),
+            } => {
+                self.finish_playback_preparation(target_sample, start_when_ready, result);
+                if self.pending_recording.is_some() {
+                    self.begin_pending_recording();
+                }
+            }
             #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
             Message::SelectPlaybackBackend(backend) => {
                 if self.playback.is_some() {
@@ -1385,6 +1538,7 @@ impl App {
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn start_playback(&mut self) -> Task<Message> {
+        self.recording_cancelled_transport_start = false;
         if let Some(playback) = self.playback.as_mut() {
             return match playback.play() {
                 Ok(()) => {
@@ -1513,6 +1667,8 @@ impl App {
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     ) {
+        let start_when_ready = start_when_ready && !self.recording_cancelled_transport_start;
+        self.recording_cancelled_transport_start = false;
         self.playback_busy = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         let mut prepared = match result {

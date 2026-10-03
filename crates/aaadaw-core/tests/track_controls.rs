@@ -63,6 +63,35 @@ fn mute_and_solo_states_are_undoable_and_redoable() {
 }
 
 #[test]
+fn record_arm_is_undoable_and_survives_snapshot_roundtrip() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Vocal".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    assert!(!project.tracks()[0].is_record_armed());
+
+    project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .unwrap();
+    assert!(project.tracks()[0].is_record_armed());
+    assert!(project.undo().unwrap());
+    assert!(!project.tracks()[0].is_record_armed());
+    assert!(project.redo().unwrap());
+
+    let snapshot = project.snapshot();
+    assert!(snapshot.tracks[0].record_armed);
+    let reopened = Project::from_snapshot(snapshot).unwrap();
+    assert!(reopened.tracks()[0].is_record_armed());
+}
+
+#[test]
 fn track_instrument_assignment_and_clear_are_undoable() {
     let mut project = Project::new();
     project

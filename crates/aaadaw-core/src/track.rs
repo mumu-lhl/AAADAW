@@ -22,6 +22,7 @@ pub struct Track {
     pub(crate) pan: f32,
     pub(crate) muted: bool,
     pub(crate) solo: bool,
+    pub(crate) record_armed: bool,
     pub(crate) instrument: Option<TrackInstrument>,
     pub(crate) fx_chain: Vec<TrackFxPlugin>,
 }
@@ -133,6 +134,11 @@ impl Track {
     /// Returns whether this track is soloed.
     pub fn is_solo(&self) -> bool {
         self.solo
+    }
+
+    /// Returns whether this track is armed to receive the next audio take.
+    pub fn is_record_armed(&self) -> bool {
+        self.record_armed
     }
 
     /// Returns this track's optional CLAP instrument reference.

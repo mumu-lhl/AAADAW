@@ -397,9 +397,33 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
+    let record_arm_command = CommandId::Track {
+        track_id,
+        command: TrackCommand::ToggleRecordArm,
+    };
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    let is_recording = app.recording.is_some() && app.recording_tracks.contains(&track_id);
+    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+    let is_recording = false;
+    let record_arm = button(if is_recording { "REC" } else { "R" })
+        .on_press_maybe(
+            commands::is_enabled(app, record_arm_command)
+                .then_some(Message::ExecuteCommand(record_arm_command)),
+        )
+        .style(move |theme: &Theme, status| {
+            if is_recording {
+                iced::widget::button::danger(theme, status)
+            } else if track.is_record_armed() {
+                iced::widget::button::warning(theme, status)
+            } else {
+                iced::widget::button::secondary(theme, status)
+            }
+        })
+        .padding([2, 8]);
     let controls = row![
         mute,
         solo,
+        record_arm,
         text(format!("{:.0} dB", track.volume_db())).size(11),
         small_control("−", Message::AdjustVolume(track_id, -1.0)),
         small_control("+", Message::AdjustVolume(track_id, 1.0)),
