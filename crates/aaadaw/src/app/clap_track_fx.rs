@@ -45,31 +45,38 @@ impl App {
                         max_block_frames,
                     )
                 };
-                let loaded = match loaded {
-                    Err(state_error) if plugin.state().is_some() => {
+                let (loaded, state_restored) = match loaded {
+                    Err(state_error)
+                        if plugin.state().is_some() && state_error.is_state_restore_error() =>
+                    {
                         self.clap_plugin_warnings.push(format!(
                             "{} state could not be restored; using its default state ({state_error})",
                             plugin.plugin_id()
                         ));
                         // SAFETY: same trusted plugin entry selected by the project; retry only
                         // omits its optional saved state after the plugin rejected that state.
-                        unsafe {
-                            aaadaw_engine::ClapEffectOwner::load(
-                                Path::new(plugin.bundle_path()),
-                                plugin.plugin_id(),
-                                sample_rate,
-                                max_block_frames,
-                            )
-                        }
+                        (
+                            unsafe {
+                                aaadaw_engine::ClapEffectOwner::load(
+                                    Path::new(plugin.bundle_path()),
+                                    plugin.plugin_id(),
+                                    sample_rate,
+                                    max_block_frames,
+                                )
+                            },
+                            false,
+                        )
                     }
-                    result => result,
+                    result => (result, true),
                 };
                 match loaded {
                     Ok((owner, processor)) => {
-                        owner_targets.push((
-                            owner.instance_id(),
-                            (track.id(), chain_index, plugin.plugin_id().to_owned()),
-                        ));
+                        if state_restored {
+                            owner_targets.push((
+                                owner.instance_id(),
+                                (track.id(), chain_index, plugin.plugin_id().to_owned()),
+                            ));
+                        }
                         owners.push((owner.instance_id(), owner));
                         processors.push(TrackFxProcessor::new(
                             track.id(),
@@ -550,6 +557,9 @@ impl App {
             if let (Some((track_id, chain_index, plugin_id)), Ok(Some(state))) =
                 (self.fx_chain_plugin_gui_identity.clone(), state)
             {
+                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                self.clap_effect_state_overrides
+                    .insert((track_id, chain_index, plugin_id.clone()));
                 if let Some(track) = self
                     .project
                     .tracks()
@@ -562,10 +572,16 @@ impl App {
                             && plugin.state() != Some(state.as_slice())
                         {
                             *plugin = plugin.clone().with_state(Some(state));
+                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            let previous_revision = self.revision;
                             self.apply_action(
                                 DawAction::SetTrackFxChain { track_id, plugins },
                                 "Saved CLAP editor state",
                             );
+                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            if self.revision != previous_revision {
+                                self.playback_graph_dirty = true;
+                            }
                         }
                     }
                 }

@@ -68,13 +68,27 @@ impl ClapPluginDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClapInstrumentError {
     message: String,
+    state_restore: bool,
 }
 
 impl ClapInstrumentError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            state_restore: false,
         }
+    }
+
+    pub(crate) fn state_restore(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            state_restore: true,
+        }
+    }
+
+    /// Returns whether this error came from applying a project's saved state.
+    pub fn is_state_restore_error(&self) -> bool {
+        self.state_restore
     }
 }
 
@@ -929,11 +943,13 @@ fn restore_plugin_state(
     };
     let plugin = instance.plugin_handle();
     let state_extension = plugin.get_extension::<PluginState>().ok_or_else(|| {
-        ClapInstrumentError::new("CLAP plugin does not implement the state extension")
+        ClapInstrumentError::state_restore("CLAP plugin does not implement the state extension")
     })?;
     state_extension
         .load(&plugin, &mut Cursor::new(state))
-        .map_err(|error| ClapInstrumentError::new(format!("Could not restore CLAP state: {error}")))
+        .map_err(|error| {
+            ClapInstrumentError::state_restore(format!("Could not restore CLAP state: {error}"))
+        })
 }
 
 fn save_plugin_state(
@@ -1067,8 +1083,8 @@ mod tests {
     use clack_extensions::state::PluginStateImpl;
     use clack_plugin::entry::{DefaultPluginFactory, SinglePluginEntry};
     use clack_plugin::events::spaces::CoreEventSpace;
-    use clack_plugin::plugin::PluginMainThread;
     use clack_plugin::plugin::{PluginDescriptor, features as plugin_features};
+    use clack_plugin::plugin::{PluginMainThread, PluginShared};
     use clack_plugin::prelude::{
         Audio, HostAudioProcessorHandle, HostMainThreadHandle, HostSharedHandle, Plugin,
         PluginAudioProcessor as ClackPluginAudioProcessor, PluginError, PluginExtensions, Process,
@@ -1076,8 +1092,9 @@ mod tests {
     };
     use clack_plugin::process::audio::ChannelPair;
     use clack_plugin::utils::ClapId;
-    use std::cell::Cell;
     use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU8;
 
     const PLUGIN_ID: &str = "org.aaadaw.test.synth";
     const MONO_PLUGIN_ID: &str = "org.aaadaw.test.mono-synth";
@@ -1280,28 +1297,31 @@ mod tests {
     }
 
     struct TestEffect;
-    struct TestEffectMainThread(Cell<u8>);
-    struct TestEffectAudioProcessor;
+    struct TestEffectShared(Arc<AtomicU8>);
+    struct TestEffectMainThread(Arc<AtomicU8>);
+    struct TestEffectAudioProcessor(Arc<AtomicU8>);
 
-    impl PluginMainThread<'_, ()> for TestEffectMainThread {}
+    impl PluginShared<'_> for TestEffectShared {}
+
+    impl PluginMainThread<'_, TestEffectShared> for TestEffectMainThread {}
 
     impl PluginStateImpl for TestEffectMainThread {
         fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
-            output.write_all(&[self.0.get()])?;
+            output.write_all(&[self.0.load(Ordering::Relaxed)])?;
             Ok(())
         }
 
         fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
             let mut state = [0];
             input.read_exact(&mut state)?;
-            self.0.set(state[0]);
+            self.0.store(state[0], Ordering::Relaxed);
             Ok(())
         }
     }
 
     impl Plugin for TestEffect {
         type AudioProcessor<'a> = TestEffectAudioProcessor;
-        type Shared<'a> = ();
+        type Shared<'a> = TestEffectShared;
         type MainThread<'a> = TestEffectMainThread;
 
         fn declare_extensions(
@@ -1320,14 +1340,14 @@ mod tests {
         }
 
         fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
-            Ok(())
+            Ok(TestEffectShared(Arc::new(AtomicU8::new(0))))
         }
 
         fn new_main_thread<'a>(
             _host: HostMainThreadHandle<'a>,
-            _shared: &'a Self::Shared<'a>,
+            shared: &'a Self::Shared<'a>,
         ) -> Result<Self::MainThread<'a>, PluginError> {
-            Ok(TestEffectMainThread(Cell::new(0)))
+            Ok(TestEffectMainThread(Arc::clone(&shared.0)))
         }
     }
 
@@ -1354,14 +1374,16 @@ mod tests {
         }
     }
 
-    impl<'a> ClackPluginAudioProcessor<'a, (), TestEffectMainThread> for TestEffectAudioProcessor {
+    impl<'a> ClackPluginAudioProcessor<'a, TestEffectShared, TestEffectMainThread>
+        for TestEffectAudioProcessor
+    {
         fn activate(
             _host: HostAudioProcessorHandle<'a>,
             _main_thread: &TestEffectMainThread,
-            _shared: &'a (),
+            shared: &'a TestEffectShared,
             _audio_config: clack_plugin::prelude::PluginAudioConfiguration,
         ) -> Result<Self, PluginError> {
-            Ok(Self)
+            Ok(Self(Arc::clone(&shared.0)))
         }
 
         fn process(
@@ -1370,6 +1392,7 @@ mod tests {
             mut audio: Audio,
             _events: clack_plugin::process::Events,
         ) -> Result<ProcessStatus, PluginError> {
+            self.0.fetch_add(1, Ordering::Relaxed);
             for mut port in &mut audio {
                 let channels = port
                     .channels()
@@ -1450,11 +1473,40 @@ mod tests {
             16,
         )
         .expect("test effect state should restore");
+        let mut processor = processor;
+        let mut audio = [[0.8, -0.4], [0.2, -0.1]];
+        processor
+            .process(&mut audio)
+            .expect("test effect should process and mutate state");
         drop(processor);
-        assert_eq!(owner.save_state().unwrap(), Some(state.to_vec()));
+        assert_eq!(owner.save_state().unwrap(), Some(vec![0x28]));
         owner
             .try_deactivate_unused()
             .expect("unused test effect should deactivate");
+    }
+
+    #[test]
+    fn restore_errors_are_distinguished_from_plugin_activation_errors() {
+        let state_error = ClapEffectOwner::load_from_entry_with_state(
+            test_effect_entry(),
+            EFFECT_PLUGIN_ID,
+            Some(&[]),
+            48_000,
+            16,
+        )
+        .err()
+        .expect("empty test state should fail restoration");
+        assert!(state_error.is_state_restore_error());
+
+        let plugin_error = ClapEffectOwner::load_from_entry(
+            test_effect_entry(),
+            "org.aaadaw.missing-effect",
+            48_000,
+            16,
+        )
+        .err()
+        .expect("missing test effect should fail activation");
+        assert!(!plugin_error.is_state_restore_error());
     }
 
     #[test]

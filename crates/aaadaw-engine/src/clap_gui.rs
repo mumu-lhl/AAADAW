@@ -76,12 +76,16 @@ impl ClapPluginGuiOwner {
         if let Some(state) = state {
             let plugin = instance.plugin_handle();
             let state_extension = plugin.get_extension::<PluginState>().ok_or_else(|| {
-                ClapInstrumentError::new("CLAP plugin does not implement the state extension")
+                ClapInstrumentError::state_restore(
+                    "CLAP plugin does not implement the state extension",
+                )
             })?;
             state_extension
                 .load(&plugin, &mut Cursor::new(state))
                 .map_err(|error| {
-                    ClapInstrumentError::new(format!("Could not restore CLAP state: {error}"))
+                    ClapInstrumentError::state_restore(format!(
+                        "Could not restore CLAP state: {error}"
+                    ))
                 })?;
         }
         let gui = instance

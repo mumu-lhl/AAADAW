@@ -141,29 +141,36 @@ impl App {
                     max_events,
                 )
             };
-            let loaded = match loaded {
-                Err(state_error) if instrument.state().is_some() => {
+            let (loaded, state_restored) = match loaded {
+                Err(state_error)
+                    if instrument.state().is_some() && state_error.is_state_restore_error() =>
+                {
                     self.clap_plugin_warnings.push(format!(
                         "{} state could not be restored; using its default state ({state_error})",
                         instrument.plugin_id()
                     ));
                     // SAFETY: same trusted plugin entry selected by the project; retry only omits
                     // its optional saved state after the plugin rejected that state.
-                    unsafe {
-                        aaadaw_engine::ClapInstrumentOwner::load(
-                            Path::new(instrument.bundle_path()),
-                            instrument.plugin_id(),
-                            sample_rate,
-                            max_block_frames,
-                            max_events,
-                        )
-                    }
+                    (
+                        unsafe {
+                            aaadaw_engine::ClapInstrumentOwner::load(
+                                Path::new(instrument.bundle_path()),
+                                instrument.plugin_id(),
+                                sample_rate,
+                                max_block_frames,
+                                max_events,
+                            )
+                        },
+                        false,
+                    )
                 }
-                result => result,
+                result => (result, true),
             };
             match loaded {
                 Ok((owner, processor)) => {
-                    owner_targets.push((owner.instance_id(), track.id()));
+                    if state_restored {
+                        owner_targets.push((owner.instance_id(), track.id()));
+                    }
                     owners.push((owner.instance_id(), owner));
                     processors.push(TrackInstrumentProcessor::new(track.id(), processor));
                 }

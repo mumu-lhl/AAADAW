@@ -224,6 +224,8 @@ struct App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback: Option<RunningAudioPlayback>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    playback_graph_dirty: bool,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback_busy: bool,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     playback_playing: bool,
@@ -237,6 +239,8 @@ struct App {
     clap_effect_owners: ClapEffectOwners,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_targets: HashMap<u64, (TrackId, usize, String)>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_effect_state_overrides: HashSet<(TrackId, usize, String)>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_instrument_owners: ClapInstrumentOwners,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1830,6 +1834,9 @@ impl App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn start_playback(&mut self) -> Task<Message> {
         self.recording_cancelled_transport_start = false;
+        if self.playback.is_some() && self.playback_graph_dirty {
+            return self.prepare_playback(self.playhead_sample, true);
+        }
         if let Some(playback) = self.playback.as_mut() {
             return match playback.play() {
                 Ok(()) => {
@@ -2025,6 +2032,7 @@ impl App {
                 Ok(()) => {
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
+                    self.playback_graph_dirty = false;
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
                 Err(error) => {
@@ -2072,6 +2080,7 @@ impl App {
             None
         };
         self.playback = Some(playback);
+        self.playback_graph_dirty = false;
         self.playback_playing = start_when_ready && play_error.is_none();
         self.playhead_sample = target_sample;
         self.seek_sample_query = target_sample.to_string();

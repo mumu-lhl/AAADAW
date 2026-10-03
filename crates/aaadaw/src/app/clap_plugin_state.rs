@@ -23,7 +23,32 @@ impl App {
         }
 
         let mut effect_states = HashMap::new();
+        if let (Some(gui), Some((track_id, chain_index, plugin_id))) = (
+            self.fx_chain_plugin_gui.as_mut(),
+            self.fx_chain_plugin_gui_identity.clone(),
+        ) {
+            match gui.save_state() {
+                Ok(Some(state)) => {
+                    self.clap_effect_state_overrides.insert((
+                        track_id,
+                        chain_index,
+                        plugin_id.clone(),
+                    ));
+                    effect_states.insert((track_id, chain_index), (plugin_id, state));
+                }
+                Ok(None) => {}
+                Err(error) => errors.push(format!("Could not save CLAP editor state: {error}")),
+            }
+        }
+
         for (instance_id, (track_id, chain_index, plugin_id)) in &self.clap_effect_targets {
+            if self.clap_effect_state_overrides.contains(&(
+                *track_id,
+                *chain_index,
+                plugin_id.clone(),
+            )) {
+                continue;
+            }
             match self.clap_effect_owners.get_mut(instance_id) {
                 Some(owner) => match owner.save_state() {
                     Ok(Some(state)) => {
@@ -36,19 +61,6 @@ impl App {
                     )),
                 },
                 None => errors.push(format!("CLAP effect owner {instance_id} is missing")),
-            }
-        }
-
-        if let (Some(gui), Some((track_id, chain_index, plugin_id))) = (
-            self.fx_chain_plugin_gui.as_mut(),
-            self.fx_chain_plugin_gui_identity.clone(),
-        ) {
-            match gui.save_state() {
-                Ok(Some(state)) => {
-                    effect_states.insert((track_id, chain_index), (plugin_id, state));
-                }
-                Ok(None) => {}
-                Err(error) => errors.push(format!("Could not save CLAP editor state: {error}")),
             }
         }
 
@@ -108,6 +120,7 @@ impl App {
             if self.revision == previous_revision {
                 return Err(self.status.clone());
             }
+            self.playback_graph_dirty = true;
         }
         if errors.is_empty() {
             Ok(())
