@@ -4,6 +4,7 @@
 //! worker drains that queue, writes bounded PCM WAV segments, and publishes them on stop.
 
 use aaadaw_engine::{AudioCaptureConsumer, AudioCaptureControl};
+use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -11,6 +12,7 @@ use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -19,6 +21,41 @@ const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - WAV_HEADER_SIZE;
 const MAX_SEGMENT_DATA_BYTES: u64 = MAX_RIFF_DATA_BYTES - MAX_RIFF_DATA_BYTES % 6;
 const DRAIN_FRAMES: usize = 4096;
 static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
+
+const RECOVERY_MANIFEST_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecordingRecoveryManifest {
+    pub version: u32,
+    pub project_path: PathBuf,
+    pub sample_rate: u32,
+    /// Stable numeric `TrackId::value()` values; the core ID type intentionally stays opaque.
+    pub track_ids: Vec<u64>,
+    pub start_sample: Option<u64>,
+    pub stem: String,
+    pub segments: Vec<RecordingSegment>,
+    pub finalized: bool,
+    #[serde(default)]
+    pub discarded_frames: u64,
+    #[serde(default)]
+    pub discarded_tail_bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecordingSegment {
+    pub path: PathBuf,
+    pub frame_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordingRecoveryCandidate {
+    pub manifest_path: PathBuf,
+    pub manifest: RecordingRecoveryManifest,
+    pub segment_paths: Vec<PathBuf>,
+    pub recorded_frames: u64,
+    pub discarded_frames: u64,
+    pub discarded_tail_bytes: u64,
+}
 
 enum Command {
     Finish,
@@ -80,6 +117,7 @@ pub struct AudioRecordingWorker {
     command: Sender<Command>,
     thread: Option<JoinHandle<Result<Vec<PathBuf>, AudioRecordingError>>>,
     control: AudioCaptureControl,
+    recovery_manifest: Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
 }
 
 impl AudioRecordingWorker {
@@ -99,6 +137,24 @@ impl AudioRecordingWorker {
         )
     }
 
+    /// Starts recording with a durable sidecar that identifies the owning project and tracks.
+    pub fn start_recoverable(
+        project_path: impl AsRef<Path>,
+        sample_rate: u32,
+        track_ids: Vec<u64>,
+        consumer: AudioCaptureConsumer,
+        control: AudioCaptureControl,
+    ) -> Result<Self, AudioRecordingError> {
+        Self::start_internal(
+            project_path.as_ref(),
+            sample_rate,
+            consumer,
+            control,
+            MAX_SEGMENT_DATA_BYTES,
+            Some(track_ids),
+        )
+    }
+
     fn start_with_segment_limit(
         project_path: impl AsRef<Path>,
         sample_rate: u32,
@@ -106,13 +162,30 @@ impl AudioRecordingWorker {
         control: AudioCaptureControl,
         segment_data_limit: u64,
     ) -> Result<Self, AudioRecordingError> {
+        Self::start_internal(
+            project_path.as_ref(),
+            sample_rate,
+            consumer,
+            control,
+            segment_data_limit,
+            None,
+        )
+    }
+
+    fn start_internal(
+        project_path: &Path,
+        sample_rate: u32,
+        consumer: AudioCaptureConsumer,
+        control: AudioCaptureControl,
+        segment_data_limit: u64,
+        recovery_tracks: Option<Vec<u64>>,
+    ) -> Result<Self, AudioRecordingError> {
         if sample_rate == 0 {
             return Err(AudioRecordingError::InvalidSampleRate);
         }
         if segment_data_limit < 6 || segment_data_limit % 6 != 0 {
             return Err(AudioRecordingError::TakeTooLarge);
         }
-        let project_path = project_path.as_ref();
         let directory = project_path
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
@@ -132,31 +205,76 @@ impl AudioRecordingWorker {
             let base = format!(".{stem}-take-{}-{id}", std::process::id());
             let first_part = directory.join(format!("{base}-000000.wav.part"));
             let first_final = directory.join(format!("{base}-000000.wav"));
-            if !first_part.exists() && !first_final.exists() {
+            let manifest_path = directory.join(format!("{base}.recovery.json"));
+            if !first_part.exists() && !first_final.exists() && !manifest_path.exists() {
                 break base;
             }
         };
+        let recovery_manifest = recovery_tracks.map(|track_ids| {
+            let manifest_path = directory.join(format!("{stem}.recovery.json"));
+            let manifest = RecordingRecoveryManifest {
+                version: RECOVERY_MANIFEST_VERSION,
+                project_path: project_path.to_path_buf(),
+                sample_rate,
+                track_ids,
+                start_sample: None,
+                stem: stem.clone(),
+                segments: Vec::new(),
+                finalized: false,
+                discarded_frames: 0,
+                discarded_tail_bytes: 0,
+            };
+            (manifest_path, Arc::new(Mutex::new(manifest)))
+        });
+        if let Some((path, manifest)) = &recovery_manifest {
+            write_recovery_manifest(path, &manifest.lock().unwrap_or_else(|e| e.into_inner()))?;
+        }
         let (command, commands) = mpsc::channel();
         let worker_control = control.clone();
+        let writer_manifest = recovery_manifest.clone();
         let thread = thread::Builder::new()
             .name("aaadaw-recording-writer".to_owned())
             .spawn(move || {
-                write_take(
+                write_take(RecordingWriter {
                     directory,
                     stem,
                     sample_rate,
                     segment_data_limit,
                     consumer,
-                    worker_control,
+                    control: worker_control,
                     commands,
-                )
+                    recovery_manifest: writer_manifest,
+                })
             })
-            .map_err(AudioRecordingError::Io)?;
+            .map_err(|error| {
+                if let Some((path, _)) = &recovery_manifest {
+                    let _ = fs::remove_file(path);
+                }
+                AudioRecordingError::Io(error)
+            })?;
         Ok(Self {
             command,
             thread: Some(thread),
             control,
+            recovery_manifest,
         })
+    }
+
+    /// Records the transport position before the input callback is allowed to publish frames.
+    pub fn set_start_sample(&self, sample: u64) -> Result<(), AudioRecordingError> {
+        let Some((path, manifest)) = &self.recovery_manifest else {
+            return Ok(());
+        };
+        let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
+        manifest.start_sample = Some(sample);
+        write_recovery_manifest(path, &manifest)
+    }
+
+    /// Returns the durable recovery sidecar path, if this writer is recoverable.
+    pub fn recovery_manifest_path(&self) -> Option<&Path> {
+        self.recovery_manifest
+            .as_ref()
+            .map(|(path, _)| path.as_path())
     }
 
     /// Requests finalization and waits for all queued frames to be written.
@@ -176,6 +294,9 @@ impl AudioRecordingWorker {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        if let Some((manifest_path, _)) = &self.recovery_manifest {
+            let _ = discard_recording_recovery(manifest_path);
+        }
     }
 }
 
@@ -189,15 +310,28 @@ impl Drop for AudioRecordingWorker {
     }
 }
 
-fn write_take(
+struct RecordingWriter {
     directory: PathBuf,
     stem: String,
     sample_rate: u32,
     segment_data_limit: u64,
-    mut consumer: AudioCaptureConsumer,
+    consumer: AudioCaptureConsumer,
     control: AudioCaptureControl,
     commands: Receiver<Command>,
-) -> Result<Vec<PathBuf>, AudioRecordingError> {
+    recovery_manifest: Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
+}
+
+fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingError> {
+    let RecordingWriter {
+        directory,
+        stem,
+        sample_rate,
+        segment_data_limit,
+        mut consumer,
+        control,
+        commands,
+        recovery_manifest,
+    } = writer;
     let mut completed_segments = Vec::new();
     let mut current_segment = None;
     let result = (|| {
@@ -225,6 +359,7 @@ fn write_take(
                         &directory,
                         &stem,
                         completed_segments.len(),
+                        recovery_manifest.is_some(),
                     )?);
                 }
                 let segment = current_segment.as_mut().expect("segment was created");
@@ -255,7 +390,10 @@ fn write_take(
                 frame_offset += write_frames;
                 if segment.data_bytes == segment_data_limit {
                     let segment = current_segment.take().expect("full segment exists");
-                    completed_segments.push(segment.finish(sample_rate)?);
+                    let frame_count = segment.data_bytes / 6;
+                    let path = segment.finish(sample_rate)?;
+                    completed_segments.push(path.clone());
+                    record_finalized_segment(&recovery_manifest, path, frame_count)?;
                 }
             }
         }
@@ -268,18 +406,317 @@ fn write_take(
             return Err(AudioRecordingError::EmptyTake);
         }
         if let Some(segment) = current_segment.take() {
-            completed_segments.push(segment.finish(sample_rate)?);
+            let frame_count = segment.data_bytes / 6;
+            let path = segment.finish(sample_rate)?;
+            completed_segments.push(path.clone());
+            record_finalized_segment(&recovery_manifest, path, frame_count)?;
+        }
+        if let Some((path, manifest)) = &recovery_manifest {
+            let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
+            manifest.finalized = true;
+            write_recovery_manifest(path, &manifest)?;
         }
         Ok(completed_segments.clone())
     })();
     if result.is_err() {
         control.fail();
         drop(current_segment);
-        for path in completed_segments {
-            let _ = fs::remove_file(path);
+        if recovery_manifest.is_none() {
+            for path in completed_segments {
+                let _ = fs::remove_file(path);
+            }
         }
     }
     result
+}
+
+fn record_finalized_segment(
+    recovery_manifest: &Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
+    path: PathBuf,
+    frame_count: u64,
+) -> Result<(), AudioRecordingError> {
+    if let Some((manifest_path, manifest)) = recovery_manifest {
+        let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
+        manifest
+            .segments
+            .push(RecordingSegment { path, frame_count });
+        write_recovery_manifest(manifest_path, &manifest)?;
+    }
+    Ok(())
+}
+
+fn write_recovery_manifest(
+    path: &Path,
+    manifest: &RecordingRecoveryManifest,
+) -> Result<(), AudioRecordingError> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let temporary = path.with_extension("recovery.json.tmp");
+    let contents = serde_json::to_vec(manifest)
+        .map_err(|error| AudioRecordingError::Io(io::Error::other(error)))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temporary)?;
+    file.write_all(&contents)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temporary, path)?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+/// Finds durable recording manifests associated with the requested project path.
+pub fn scan_recording_recoveries(
+    project_path: impl AsRef<Path>,
+) -> io::Result<Vec<RecordingRecoveryCandidate>> {
+    let project_path = project_path.as_ref();
+    let directory = project_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let project_identity = canonical_or_original(project_path);
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json")
+            || !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".recovery.json"))
+        {
+            continue;
+        }
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let Ok(manifest) = serde_json::from_slice::<RecordingRecoveryManifest>(&contents) else {
+            continue;
+        };
+        if manifest.version != RECOVERY_MANIFEST_VERSION
+            || canonical_or_original(&manifest.project_path) != project_identity
+            || path.file_name().and_then(|name| name.to_str())
+                != Some(format!("{}.recovery.json", manifest.stem).as_str())
+        {
+            continue;
+        }
+        let mut segment_paths = Vec::new();
+        let mut recorded_frames = 0_u64;
+        let mut newly_discarded_frames = 0_u64;
+        let mut newly_discarded_tail_bytes = 0_u64;
+        for segment in recording_files(directory, &manifest.stem)? {
+            if segment.extension().and_then(|extension| extension.to_str()) == Some("part") {
+                let wav_path = segment.with_extension("");
+                if wav_path.is_file() {
+                    continue;
+                }
+                let bytes = fs::metadata(&segment)?
+                    .len()
+                    .saturating_sub(WAV_HEADER_SIZE);
+                let complete_pcm_bytes = bytes - bytes % 6;
+                let frame_count = complete_pcm_bytes / 6;
+                if frame_count > 0 {
+                    recorded_frames = recorded_frames.saturating_add(frame_count);
+                    segment_paths.push(segment);
+                    newly_discarded_tail_bytes =
+                        newly_discarded_tail_bytes.saturating_add(bytes % 6);
+                }
+                continue;
+            }
+            if let Ok(decoder) = aaadaw_media::AudioStreamDecoder::open(&segment) {
+                let metadata = decoder.metadata();
+                if metadata.sample_rate == Some(manifest.sample_rate)
+                    && metadata.channel_count == Some(2)
+                    && let Some(frame_count) = metadata.frame_count.filter(|frames| *frames > 0)
+                {
+                    recorded_frames = recorded_frames.saturating_add(frame_count);
+                    segment_paths.push(segment);
+                }
+            }
+        }
+        segment_paths.sort();
+        for expected in &manifest.segments {
+            if !segment_paths.contains(&expected.path) {
+                newly_discarded_frames =
+                    newly_discarded_frames.saturating_add(expected.frame_count);
+            }
+        }
+        let discarded_frames = manifest
+            .discarded_frames
+            .saturating_add(newly_discarded_frames);
+        let discarded_tail_bytes = manifest
+            .discarded_tail_bytes
+            .saturating_add(newly_discarded_tail_bytes);
+        candidates.push(RecordingRecoveryCandidate {
+            manifest_path: path,
+            manifest,
+            segment_paths,
+            recorded_frames,
+            discarded_frames,
+            discarded_tail_bytes,
+        });
+    }
+    candidates.sort_by(|left, right| left.manifest_path.cmp(&right.manifest_path));
+    Ok(candidates)
+}
+
+/// Repairs a partial PCM WAV, validates candidate segments by decoding them, and updates manifest.
+pub fn recover_recording_candidate(
+    mut candidate: RecordingRecoveryCandidate,
+) -> io::Result<RecordingRecoveryCandidate> {
+    let scanned_frames = candidate.recorded_frames;
+    let mut valid_paths = Vec::new();
+    let mut recorded_frames = 0_u64;
+    let mut segments = Vec::new();
+    for path in &candidate.segment_paths {
+        let wav_path = if path.extension().and_then(|extension| extension.to_str()) == Some("part")
+        {
+            finalize_partial_segment(path, candidate.manifest.sample_rate)?
+        } else {
+            path.clone()
+        };
+        let Ok(mut decoder) = aaadaw_media::AudioStreamDecoder::open(&wav_path) else {
+            continue;
+        };
+        let metadata = decoder.metadata();
+        if metadata.sample_rate != Some(candidate.manifest.sample_rate)
+            || metadata.channel_count != Some(2)
+        {
+            continue;
+        }
+        let mut decoded_frames = 0_u64;
+        let mut decode_failed = false;
+        loop {
+            match decoder.next_chunk() {
+                Ok(Some(chunk)) => {
+                    decoded_frames = decoded_frames.saturating_add(chunk.frame_count() as u64)
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    decode_failed = true;
+                    break;
+                }
+            }
+        }
+        if decode_failed || decoded_frames == 0 {
+            continue;
+        }
+        recorded_frames = recorded_frames.saturating_add(decoded_frames);
+        valid_paths.push(wav_path.clone());
+        segments.push(RecordingSegment {
+            path: wav_path,
+            frame_count: decoded_frames,
+        });
+    }
+    candidate.discarded_frames = candidate
+        .discarded_frames
+        .saturating_add(scanned_frames.saturating_sub(recorded_frames));
+    candidate.manifest.segments = segments;
+    candidate.manifest.finalized = true;
+    candidate.manifest.discarded_frames = candidate.discarded_frames;
+    candidate.manifest.discarded_tail_bytes = candidate.discarded_tail_bytes;
+    write_recovery_manifest(&candidate.manifest_path, &candidate.manifest)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    candidate.segment_paths = valid_paths;
+    candidate.recorded_frames = recorded_frames;
+    Ok(candidate)
+}
+
+/// Removes a recovery session and its numbered WAV/partial files after explicit discard or save.
+pub fn discard_recording_recovery(manifest_path: impl AsRef<Path>) -> io::Result<()> {
+    let manifest_path = manifest_path.as_ref();
+    let contents = match fs::read(manifest_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return remove_if_exists(&manifest_path.with_extension("recovery.json.tmp"));
+        }
+        Err(error) => return Err(error),
+    };
+    let manifest: RecordingRecoveryManifest = serde_json::from_slice(&contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let directory = manifest_path.parent().unwrap_or(Path::new("."));
+    for path in recording_files(directory, &manifest.stem)? {
+        remove_if_exists(&path)?;
+    }
+    remove_if_exists(&manifest_path.with_extension("recovery.json.tmp"))?;
+    remove_if_exists(manifest_path)?;
+    Ok(())
+}
+
+fn recording_files(directory: &Path, stem: &str) -> io::Result<Vec<PathBuf>> {
+    let prefix = format!("{stem}-");
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.starts_with(&prefix) && (name.ends_with(".wav") || name.ends_with(".wav.part")) {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn finalize_partial_segment(path: &Path, sample_rate: u32) -> io::Result<PathBuf> {
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    let file_len = file.metadata()?.len();
+    let pcm_bytes = file_len.saturating_sub(WAV_HEADER_SIZE);
+    let complete_pcm_bytes = pcm_bytes - pcm_bytes % 6;
+    let frame_count = complete_pcm_bytes / 6;
+    if frame_count == 0 || complete_pcm_bytes > MAX_RIFF_DATA_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "partial take has no complete WAV frames",
+        ));
+    }
+    let data_len = u32::try_from(complete_pcm_bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "partial take exceeds WAV size limit",
+        )
+    })?;
+    let riff_len = 36_u32.checked_add(data_len).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "partial take exceeds WAV size limit",
+        )
+    })?;
+    file.set_len(WAV_HEADER_SIZE + complete_pcm_bytes)?;
+    file.seek(SeekFrom::Start(0))?;
+    write_wav_header(&mut file, sample_rate, riff_len, data_len)?;
+    file.sync_all()?;
+    drop(file);
+    let final_path = path.with_extension("");
+    if final_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "finalized take segment already exists",
+        ));
+    }
+    fs::rename(path, &final_path)?;
+    #[cfg(unix)]
+    if let Some(parent) = final_path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(final_path)
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn remove_if_exists(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 struct OpenRecordingSegment {
@@ -287,10 +724,16 @@ struct OpenRecordingSegment {
     final_path: PathBuf,
     file: Option<File>,
     data_bytes: u64,
+    preserve_partial: bool,
 }
 
 impl OpenRecordingSegment {
-    fn create(directory: &Path, stem: &str, index: usize) -> io::Result<Self> {
+    fn create(
+        directory: &Path,
+        stem: &str,
+        index: usize,
+        preserve_partial: bool,
+    ) -> io::Result<Self> {
         let part_path = directory.join(format!("{stem}-{index:06}.wav.part"));
         let final_path = directory.join(format!("{stem}-{index:06}.wav"));
         let mut file = OpenOptions::new()
@@ -306,6 +749,7 @@ impl OpenRecordingSegment {
             final_path,
             file: Some(file),
             data_bytes: 0,
+            preserve_partial,
         })
     }
 
@@ -331,7 +775,9 @@ impl OpenRecordingSegment {
 
 impl Drop for OpenRecordingSegment {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.part_path);
+        if !self.preserve_partial {
+            let _ = fs::remove_file(&self.part_path);
+        }
     }
 }
 
@@ -360,12 +806,16 @@ fn write_wav_header(
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioRecordingError, AudioRecordingWorker};
+    use super::{
+        AudioRecordingError, AudioRecordingWorker, discard_recording_recovery,
+        recover_recording_candidate, scan_recording_recoveries, write_recovery_manifest,
+    };
     use crate::{audio_capture_stream, prepare_audio_playback, start_audio_item_import};
     use aaadaw_core::{DawAction, Project};
     use aaadaw_media::AudioStreamDecoder;
     use aaadaw_storage::ProjectStore;
-    use std::fs;
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -416,6 +866,92 @@ mod tests {
                 .all(|entry| !entry.file_name().to_string_lossy().ends_with(".part"))
         );
         fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn interrupted_recoverable_take_restores_finalized_and_partial_rollover_segments() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(16);
+        let worker = AudioRecordingWorker::start_internal(
+            &project,
+            48_000,
+            consumer,
+            control.clone(),
+            12,
+            Some(vec![41, 42]),
+        )
+        .expect("recoverable recording worker should start");
+        let manifest_path = worker
+            .recovery_manifest_path()
+            .expect("manifest should exist before recording")
+            .to_path_buf();
+        worker
+            .set_start_sample(96_000)
+            .expect("recording start position should persist");
+        control.start();
+        producer.push_planar(&[0.1, 0.2, 0.3], &[-0.1, -0.2, -0.3]);
+        control.fail();
+        assert!(matches!(
+            worker.finish(),
+            Err(AudioRecordingError::CaptureFailed { .. })
+        ));
+
+        let partial_path = fs::read_dir(&directory)
+            .expect("directory should be readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".wav.part"))
+            .expect("crash boundary should leave the active segment partial");
+        OpenOptions::new()
+            .append(true)
+            .open(&partial_path)
+            .expect("partial segment should be appendable")
+            .write_all(&[1, 2, 3, 4, 5])
+            .expect("simulate a truncated final PCM frame");
+        let mut manifest: super::RecordingRecoveryManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should be readable"))
+                .expect("manifest should decode");
+        manifest.segments = vec![super::RecordingSegment {
+            path: directory.join(format!("{}-missing.wav", manifest.stem)),
+            frame_count: 2,
+        }];
+        write_recovery_manifest(&manifest_path, &manifest)
+            .expect("simulate a crash before finalized paths reach the manifest");
+
+        let candidates = scan_recording_recoveries(&project)
+            .expect("interrupted recording should be discoverable");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].manifest.start_sample, Some(96_000));
+        assert_eq!(candidates[0].manifest.track_ids, [41, 42]);
+        assert_eq!(candidates[0].recorded_frames, 3);
+        assert_eq!(candidates[0].discarded_frames, 2);
+        assert_eq!(candidates[0].discarded_tail_bytes, 5);
+        assert_eq!(candidates[0].segment_paths.len(), 2);
+
+        let recovered = recover_recording_candidate(candidates[0].clone())
+            .expect("complete PCM frames should be finalized and decoded");
+        assert_eq!(recovered.recorded_frames, 3);
+        assert_eq!(recovered.discarded_frames, 2);
+        assert!(recovered.manifest.finalized);
+        assert!(recovered.segment_paths.iter().all(|path| path.is_file()));
+        let rescanned = scan_recording_recoveries(&project)
+            .expect("recovery loss report should survive another restart");
+        assert_eq!(rescanned[0].discarded_frames, 2);
+        assert_eq!(rescanned[0].discarded_tail_bytes, 5);
+
+        discard_recording_recovery(&manifest_path).expect("explicit discard should clean take");
+        discard_recording_recovery(&manifest_path).expect("discard should be retry-safe");
+        assert!(!manifest_path.exists());
+        assert!(
+            fs::read_dir(&directory)
+                .expect("test directory should remain available")
+                .all(|entry| !entry
+                    .expect("directory entry should be readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".wav"))
+        );
+        fs::remove_dir_all(directory).expect("test directory should be removed");
     }
 
     #[test]

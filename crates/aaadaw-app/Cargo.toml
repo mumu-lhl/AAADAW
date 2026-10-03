@@ -14,3 +14,5 @@ aaadaw-core = { path = "../aaadaw-core" }
 aaadaw-engine = { path = "../aaadaw-engine" }
 aaadaw-media = { path = "../aaadaw-media" }
 aaadaw-storage = { path = "../aaadaw-storage" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
