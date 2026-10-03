@@ -2004,6 +2004,43 @@ fn completed_audio_import_places_item_through_project_action() {
     assert!(!app.import_busy);
 }
 
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let first_track = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddTrack);
+    let second_track = app.project.tracks()[1].id();
+    let _ = app.update(Message::ToggleRecordArm(first_track));
+    let _ = app.update(Message::ToggleRecordArm(second_track));
+    let source = std::env::temp_dir().join(format!(
+        "aaadaw-recorded-take-test-{}-{}.wav",
+        std::process::id(),
+        NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed)
+    ));
+    app.record_import_tracks = Some((vec![first_track, second_track], 96_000, source.clone()));
+    app.import_busy = true;
+
+    app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id: first_track,
+        media_ref: "asset://recorded-take".to_owned(),
+        start_sample: 96_000,
+        source_offset_samples: 0,
+        length_samples: 48_000,
+    }));
+
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert!(app.project.audio_items().iter().all(|item| {
+        item.start_sample() == 96_000 && item.media_ref() == "asset://recorded-take"
+    }));
+    let _ = app.update(Message::Undo);
+    assert!(app.project.audio_items().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert!(app.record_import_tracks.is_none());
+}
+
 #[test]
 fn save_as_target_overrides_the_current_project_path() {
     let current = std::path::Path::new("/projects/current.aaadaw");

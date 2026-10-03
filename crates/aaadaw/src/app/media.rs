@@ -242,12 +242,20 @@ impl App {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
+                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                if let Some((_, _, source_path)) = self.record_import_tracks.take() {
+                    let _ = std::fs::remove_file(source_path);
+                }
                 self.status = format!("Audio import could not start: {error}");
             }
             None => {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
+                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                if let Some((_, _, source_path)) = self.record_import_tracks.take() {
+                    let _ = std::fs::remove_file(source_path);
+                }
                 self.status = "Audio import worker result was unavailable".to_owned();
             }
         }
@@ -566,6 +574,47 @@ impl App {
         self.import_busy = false;
         self.import_finalizing = false;
         self.import_cancel_requested = false;
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        let (result, success_status) =
+            if let Some((tracks, start_sample, source_path)) = self.record_import_tracks.take() {
+                let _ = std::fs::remove_file(source_path);
+                match result {
+                    Ok(DawAction::InsertAudioItem {
+                        media_ref,
+                        source_offset_samples,
+                        length_samples,
+                        ..
+                    }) => {
+                        let track_count = tracks.len();
+                        let actions = tracks
+                            .into_iter()
+                            .map(|track_id| DawAction::InsertAudioItem {
+                                track_id,
+                                media_ref: media_ref.clone(),
+                                start_sample,
+                                source_offset_samples,
+                                length_samples,
+                            })
+                            .collect();
+                        (
+                            Ok(DawAction::BatchTransaction {
+                                tx_id: self.revision,
+                                actions,
+                            }),
+                            Some(format!("Take recorded onto {track_count} armed track(s)")),
+                        )
+                    }
+                    Ok(_) => (
+                        Err("recorded take import returned an unexpected action".to_owned()),
+                        None,
+                    ),
+                    Err(error) => (Err(error), None),
+                }
+            } else {
+                (result, None)
+            };
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        let (result, success_status): (Result<DawAction, String>, Option<String>) = (result, None);
         match result {
             Ok(action) => {
                 let new_media_ref = match &action {
@@ -574,7 +623,9 @@ impl App {
                 };
                 self.apply_action(
                     action,
-                    if new_media_ref.is_some() {
+                    if let Some(status) = success_status.as_deref() {
+                        status
+                    } else if new_media_ref.is_some() {
                         "Changed audio source reimported"
                     } else {
                         "Audio imported and appended to the first track"

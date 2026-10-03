@@ -139,10 +139,27 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 fn playback_controls(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
-    let playback_state = if app.playback_busy {
+    let armed = app
+        .project
+        .tracks()
+        .iter()
+        .any(|track| track.is_record_armed());
+    let playback_state = if app.recording.is_some() {
+        format!(
+            "Recording · {:.2}s",
+            app.playhead_sample as f64 / app.project.settings().sample_rate() as f64
+        )
+    } else if app.recording_starting {
+        format!("Connecting {backend_name} input…")
+    } else if app.recording_stopping {
+        "Finalizing take…".to_owned()
+    } else if app.playback_busy {
         format!("Preparing {backend_name}…")
     } else if app.playback.is_none() {
-        format!("{backend_name} closed")
+        format!(
+            "{} · {backend_name} closed",
+            if armed { "Armed" } else { "Stopped" }
+        )
     } else {
         let seconds = app.playhead_sample as f64 / app.project.settings().sample_rate() as f64;
         let callback_errors = app
@@ -153,6 +170,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             "{} · {seconds:.2}s{}",
             if app.playback_playing {
                 "Playing"
+            } else if armed {
+                "Armed · Stopped"
             } else {
                 "Stopped"
             },
@@ -165,7 +184,31 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
     };
     let controls = row![
         button("Play").on_press(Message::StartPlayback),
-        button("Stop").on_press(Message::StopPlayback),
+        button(if app.recording_starting {
+            "Cancel Input"
+        } else if app.recording.is_some() {
+            "Stop Recording"
+        } else {
+            "Stop"
+        })
+        .on_press(if app.recording.is_some() || app.recording_starting {
+            Message::StopRecording
+        } else {
+            Message::StopPlayback
+        }),
+        button(if app.recording_starting {
+            "Connecting…"
+        } else if app.recording.is_some() {
+            "Recording"
+        } else {
+            "Record"
+        })
+        .style(iced::widget::button::danger)
+        .on_press(if app.recording.is_some() || app.recording_starting {
+            Message::StopRecording
+        } else {
+            Message::StartRecording
+        }),
         button("Restart").on_press(Message::RestartPlayback),
         text_input("Sample", &app.seek_sample_query)
             .on_input(Message::SeekSampleChanged)

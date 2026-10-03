@@ -165,6 +165,14 @@ pub(crate) enum Message {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StopPlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    StartRecording,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    StopRecording,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    RecordingStarted(super::SharedRecordingStart),
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    RecordingStopped(super::SharedRecordingStop),
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     RestartPlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     SeekSampleChanged(String),

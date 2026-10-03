@@ -8,6 +8,7 @@ mod asset_management;
 mod audio_editing;
 mod audio_import;
 mod clap_plugins;
+mod live_recording;
 mod midi_editing;
 mod waveform;
 
@@ -26,6 +27,7 @@ pub use audio_import::{
 pub use clap_plugins::{
     ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,
 };
+pub use live_recording::{AudioRecordingError, AudioRecordingWorker};
 pub use midi_editing::{
     MidiEditError, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
     create_four_beat_midi_item, delete_midi_note, move_midi_item_by_beat,
@@ -52,6 +54,56 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::Path;
+
+pub use aaadaw_engine::{
+    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, audio_capture_stream,
+};
+
+/// Active audio input capture device.
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+pub enum RunningAudioInput {
+    #[cfg(feature = "jack-backend")]
+    Jack(aaadaw_engine::JackAudioInput),
+    #[cfg(feature = "pipewire-backend")]
+    PipeWire(aaadaw_engine::PipeWireAudioInput),
+}
+
+/// Opens the selected native input backend for a stereo take.
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+pub fn open_audio_input(
+    backend: PlaybackBackend,
+    producer: AudioCaptureProducer,
+    control: AudioCaptureControl,
+    sample_rate: u32,
+) -> Result<RunningAudioInput, String> {
+    match backend {
+        #[cfg(feature = "jack-backend")]
+        PlaybackBackend::Jack => {
+            aaadaw_engine::JackAudioInput::open(producer, control, sample_rate)
+                .map(RunningAudioInput::Jack)
+                .map_err(|error| error.to_string())
+        }
+        #[cfg(feature = "pipewire-backend")]
+        PlaybackBackend::PipeWire => {
+            aaadaw_engine::PipeWireAudioInput::open(producer, control, sample_rate)
+                .map(RunningAudioInput::PipeWire)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+impl RunningAudioInput {
+    /// Stops the input callback and releases the device.
+    pub fn shutdown(self) {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(mut input) => input.shutdown(),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(mut input) => input.shutdown(),
+        }
+    }
+}
 
 /// Errors while resolving project media and preparing its render graph.
 #[derive(Debug)]
