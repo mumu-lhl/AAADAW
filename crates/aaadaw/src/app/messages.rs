@@ -120,6 +120,7 @@ pub(crate) enum Message {
     CommitTrackName(TrackId),
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
+    ToggleRecordArm(TrackId),
     AdjustVolume(TrackId, f32),
     AdjustPan(TrackId, f32),
     NudgeAudioItem(ItemId, i8, u32),
@@ -165,6 +166,14 @@ pub(crate) enum Message {
     StartPlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     StopPlayback,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    StartRecording,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    StopRecording,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    RecordingStarted(super::SharedRecordingStart),
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    RecordingStopped(super::SharedRecordingStop),
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     RestartPlayback,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]

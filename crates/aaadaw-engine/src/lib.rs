@@ -4,17 +4,25 @@
 //! transport, MIDI scheduling, CLAP instrument processing, and optional Linux audio backends.
 //! Project-to-plugin assignment remains an application-layer responsibility.
 
+mod capture;
 mod clap_gui;
 mod clap_instrument;
+#[cfg(feature = "jack-backend")]
+mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
 mod midi;
 mod pcm;
 #[cfg(feature = "pipewire-backend")]
+mod pipewire_input;
+#[cfg(feature = "pipewire-backend")]
 mod pipewire_output;
 mod stream;
 mod transport;
 
+pub use capture::{
+    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, audio_capture_stream,
+};
 pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{
     ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
@@ -22,9 +30,13 @@ pub use clap_instrument::{
     StoppedClapInstrumentProcessor, inspect_clap_instrument_entry, inspect_clap_plugin_entry,
 };
 #[cfg(feature = "jack-backend")]
+pub use jack_input::{JackAudioInput, JackInputError};
+#[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
+#[cfg(feature = "pipewire-backend")]
+pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};

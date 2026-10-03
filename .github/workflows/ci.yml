@@ -17,14 +17,16 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: taiki-e/install-action@nextest
-      - name: Install JACK development headers
-        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev
+      - name: Install native audio development headers
+        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check Linux JACK backend
-        run: cargo check --workspace --all-targets --features aaadaw-engine/jack-backend
+        run: cargo check --workspace --all-targets --features aaadaw/jack-backend
+      - name: Check Linux PipeWire backend
+        run: cargo check --workspace --all-targets --features aaadaw/pipewire-backend
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests with nextest
-        run: cargo nextest run --workspace
+        run: cargo nextest run --workspace --features aaadaw/jack-backend

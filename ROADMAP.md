@@ -74,7 +74,8 @@
 - [x] 可选 JACK 输出后端接入播放/停止与设备采样率检查。
 - [x] 将后台 packet 解码、单声道下混、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；音频回调仍不执行解码、锁或 I/O。
 - [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；支持 sample seek refill、JACK 图替换、实际 PCM 渲染与缺失外链报错。
-- [ ] 扩展 JACK 输入/录音、原生 PipeWire 与 Windows WASAPI；明确每个平台的设备枚举、热插拔和延迟语义。
+- [x] 为 Linux JACK/PipeWire 增加默认立体声输入捕获和 armed-track 录音路径；真实设备验证仍待完成。
+- [ ] 增加 Windows WASAPI 输入；明确各平台的设备枚举、热插拔和延迟语义。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
 - [ ] 实现 MIDI 事件调度、Seek 后 CC 状态追逐、停止/跳转时 Note Off 与 Panic 复位。
@@ -117,7 +118,8 @@
 - [x] 增加后台导入的 UI 进度/取消和完成后 placement；目前追加到首条轨道。
 - [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。
 - [x] 为选中的 Audio Item 提供嵌入快照源变化后的重新导入操作（[`docs/tickets/2026-10-02-reimport-changed-embedded-audio.md`](docs/tickets/2026-10-02-reimport-changed-embedded-audio.md)）。
-- [ ] 实现实时录音链路：设备回调经预分配 SPSC 队列传递 PCM，后台线程写入 RF64（或经 ADR 选定的等效格式），保存可恢复的录音元数据。
+- [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
+- [ ] 实现进程异常退出后的未完成录音恢复与录音元数据持久化；当前失败/取消会清理临时文件，但崩溃恢复未覆盖。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
@@ -125,7 +127,8 @@
 - [x] 实现 MIDI 钢琴卷帘窗口：双击或从 Item 上下文菜单/Inspector 打开，按 1/16 网格插入，选择、拖动、延长/缩短及删除音符均走可撤销 Action（[`docs/tickets/2026-10-03-midi-piano-roll.md`](docs/tickets/2026-10-03-midi-piano-roll.md)）。
 - [x] 为钢琴卷帘增加音符复制/粘贴和 velocity lane；复制保留组内 tick 间距、音高、时值和力度，粘贴到原 Item 时从源短语末端开始、重复粘贴顺延，跨 Item 时从当前可视编辑位置吸附到 1/16；velocity lane 支持多选相对力度拖动与悬停反馈，每次操作可撤销（GitHub #6）。
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
-- [ ] 实现录音准备、输入监听和虚拟键盘基础路径；录音不得在音频回调中进行文件操作。
+- [x] 为 track 增加可持久化、可撤销的输入录音准备状态（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)）。
+- [x] 完成基础实时录音与素材入库路径；输入监听仍待实现，且每个后端的真实设备验收仍待完成。
 
 **退出标准**：可导入音频、录制麦克风素材、编辑并播放 MIDI；模拟异常退出后录音仍能按既定恢复策略读取；基础编辑无爆音/咔哒声回归问题。
 

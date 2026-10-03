@@ -74,6 +74,11 @@ enum ProjectEvent {
         before: bool,
         after: bool,
     },
+    TrackRecordArmChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
     TrackInstrumentChanged {
         track_id: TrackId,
         before: Option<TrackInstrument>,
@@ -224,6 +229,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TrackSoloChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackRecordArmChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackRecordArmChanged {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
@@ -481,6 +495,7 @@ impl Project {
                     pan: track.pan,
                     muted: track.muted,
                     solo: track.solo,
+                    record_armed: track.record_armed,
                     instrument: track.instrument.as_ref().map(|instrument| {
                         crate::TrackInstrumentSnapshot {
                             plugin_id: instrument.plugin_id().to_owned(),
@@ -637,6 +652,7 @@ impl Project {
                 pan: track.pan,
                 muted: track.muted,
                 solo: track.solo,
+                record_armed: track.record_armed,
                 instrument,
                 fx_chain,
             });
@@ -763,6 +779,7 @@ impl Project {
                     pan: 0.0,
                     muted: false,
                     solo: false,
+                    record_armed: false,
                     instrument: None,
                     fx_chain: Vec::new(),
                 };
@@ -876,6 +893,18 @@ impl Project {
                     track_id,
                     before: track.solo,
                     after: solo,
+                }
+            }
+            DawAction::SetTrackRecordArm { track_id, armed } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackRecordArmChanged {
+                    track_id,
+                    before: track.record_armed,
+                    after: armed,
                 }
             }
             DawAction::SetTrackInstrument {
@@ -1569,6 +1598,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.solo = *after;
+            }
+            ProjectEvent::TrackRecordArmChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.record_armed != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.record_armed = *after;
             }
             ProjectEvent::TrackInstrumentChanged {
                 track_id,

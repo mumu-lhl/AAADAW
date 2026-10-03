@@ -25,6 +25,8 @@ pub enum DawAction {
     SetTrackMute { track_id: TrackId, muted: bool },
     /// Solo or unsolo a track.
     SetTrackSolo { track_id: TrackId, solo: bool },
+    /// Arm or disarm a track to receive the next live audio take.
+    SetTrackRecordArm { track_id: TrackId, armed: bool },
     /// Assign or clear a track's CLAP instrument reference.
     SetTrackInstrument {
         track_id: TrackId,

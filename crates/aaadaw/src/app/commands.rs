@@ -39,6 +39,7 @@ pub(crate) enum TrackCommand {
     Rename,
     ToggleMute,
     ToggleSolo,
+    ToggleRecordArm,
     MoveUp,
     MoveDown,
     Delete,
@@ -363,6 +364,16 @@ const COMMANDS: &[CommandDefinition] = &[
             "solo selected track",
             "unsolo selected track",
         ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::ToggleRecordArm),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Arm track for recording",
+        aliases: &["arm track", "record arm", "record-enable track"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -697,6 +708,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
+        CommandKind::Track(TrackCommand::ToggleRecordArm) => "track.toggle-record-arm",
         CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
         CommandKind::Track(TrackCommand::MoveDown) => "track.move-down",
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
@@ -772,6 +784,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 TrackCommand::Rename => Message::BeginTrackNameEdit(track_id),
                 TrackCommand::ToggleMute => Message::ToggleMute(track_id),
                 TrackCommand::ToggleSolo => Message::ToggleSolo(track_id),
+                TrackCommand::ToggleRecordArm => Message::ToggleRecordArm(track_id),
                 TrackCommand::MoveUp => Message::MoveTrack(track_id, -1),
                 TrackCommand::MoveDown => Message::MoveTrack(track_id, 1),
                 TrackCommand::Delete => Message::DeleteTrack(track_id),
@@ -813,6 +826,7 @@ struct TrackState {
     index: usize,
     muted: bool,
     solo: bool,
+    record_armed: bool,
 }
 
 fn entry_for(
@@ -826,6 +840,9 @@ fn entry_for(
             "Unmute track"
         }
         (CommandKind::Track(TrackCommand::ToggleSolo), Some(track)) if track.solo => "Unsolo track",
+        (CommandKind::Track(TrackCommand::ToggleRecordArm), Some(track)) if track.record_armed => {
+            "Disarm track"
+        }
         _ => definition.label,
     };
     let binding = binding_for(app, command_kind_id(definition.kind), definition.shortcuts);
@@ -893,6 +910,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     TrackCommand::Rename
                     | TrackCommand::ToggleMute
                     | TrackCommand::ToggleSolo
+                    | TrackCommand::ToggleRecordArm
                     | TrackCommand::Delete => true,
                     TrackCommand::MoveUp => track.index > 0,
                     TrackCommand::MoveDown => track.index + 1 < app.project.tracks().len(),
@@ -913,6 +931,7 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
             index,
             muted: track.is_muted(),
             solo: track.is_solo(),
+            record_armed: track.is_record_armed(),
         })
 }
 
