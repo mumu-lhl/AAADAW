@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -102,6 +102,11 @@ CREATE TABLE track_fx_plugins (
 
 const MIGRATION_5: &str = r#"
 ALTER TABLE tracks ADD COLUMN record_armed INTEGER NOT NULL DEFAULT 0 CHECK (record_armed IN (0, 1));
+"#;
+
+const MIGRATION_6: &str = r#"
+ALTER TABLE tracks ADD COLUMN instrument_state BLOB;
+ALTER TABLE track_fx_plugins ADD COLUMN state BLOB;
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1727,6 +1732,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             3 => transaction.execute_batch(MIGRATION_3)?,
             4 => transaction.execute_batch(MIGRATION_4)?,
             5 => transaction.execute_batch(MIGRATION_5)?,
+            6 => transaction.execute_batch(MIGRATION_6)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1764,8 +1770,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -1776,7 +1782,8 @@ fn write_snapshot(
                 track.solo,
                 track.record_armed,
                 track.instrument.as_ref().map(|instrument| &instrument.plugin_id),
-                track.instrument.as_ref().map(|instrument| &instrument.bundle_path)
+                track.instrument.as_ref().map(|instrument| &instrument.bundle_path),
+                track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref())
             ],
         )?;
     }
@@ -1784,14 +1791,15 @@ fn write_snapshot(
     for track in &snapshot.tracks {
         for (position, plugin) in track.fx_chain.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO track_fx_plugins(track_id, position, plugin_id, plugin_path, enabled) \
-                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO track_fx_plugins(track_id, position, plugin_id, plugin_path, enabled, state) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     to_sql_integer(track.id)?,
                     usize_to_sql(position)?,
                     plugin.plugin_id,
                     plugin.bundle_path,
                     plugin.enabled,
+                    plugin.state.as_deref(),
                 ],
             )?;
         }
@@ -1868,7 +1876,7 @@ fn write_snapshot(
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut fx_statement = connection.prepare(
-        "SELECT track_id, position, plugin_id, plugin_path, enabled \
+        "SELECT track_id, position, plugin_id, plugin_path, enabled, state \
          FROM track_fx_plugins ORDER BY track_id, position",
     )?;
     let fx_rows = fx_statement
@@ -1879,10 +1887,11 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, bool>(4)?,
+                row.get::<_, Option<Vec<u8>>>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    for (track_id, position, plugin_id, bundle_path, enabled) in fx_rows {
+    for (track_id, position, plugin_id, bundle_path, enabled, state) in fx_rows {
         let _ = from_sql_u64(position)?;
         if plugin_id.trim().is_empty() || bundle_path.trim().is_empty() {
             return Err(StorageError::InvalidStoredData("track FX plugin reference"));
@@ -1894,11 +1903,12 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 plugin_id,
                 bundle_path,
                 enabled,
+                state,
             });
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -1914,6 +1924,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, bool>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<Vec<u8>>>(10)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1930,6 +1941,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 record_armed,
                 instrument_id,
                 instrument_path,
+                instrument_state,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -1940,6 +1952,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                         Some(TrackInstrumentSnapshot {
                             plugin_id,
                             bundle_path,
+                            state: instrument_state,
                         })
                     }
                     _ => {

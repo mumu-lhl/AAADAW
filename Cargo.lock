@@ -41,6 +41,7 @@ name = "aaadaw-engine"
 version = "0.1.0"
 dependencies = [
  "aaadaw-core",
+ "clack-common",
  "clack-extensions",
  "clack-host",
  "clack-plugin",

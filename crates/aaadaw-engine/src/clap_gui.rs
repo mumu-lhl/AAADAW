@@ -1,7 +1,9 @@
 use crate::clap_instrument::ClapInstrumentError;
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui, Window as ClapWindow};
+use clack_extensions::state::PluginState;
 use clack_host::prelude::{HostInfo, PluginEntry, PluginInstance};
 use std::ffi::CString;
+use std::io::Cursor;
 use std::os::raw::c_ulong;
 use std::path::Path;
 
@@ -33,6 +35,7 @@ impl ClapPluginGuiOwner {
         requested_width: u32,
         requested_height: u32,
         scale_factor: f32,
+        state: Option<&[u8]>,
     ) -> Result<Self, ClapInstrumentError> {
         // SAFETY: The caller guarantees the selected entry is trusted and valid.
         let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
@@ -70,6 +73,17 @@ impl ClapPluginGuiOwner {
                     ))
                 },
             )?;
+        if let Some(state) = state {
+            let plugin = instance.plugin_handle();
+            let state_extension = plugin.get_extension::<PluginState>().ok_or_else(|| {
+                ClapInstrumentError::new("CLAP plugin does not implement the state extension")
+            })?;
+            state_extension
+                .load(&plugin, &mut Cursor::new(state))
+                .map_err(|error| {
+                    ClapInstrumentError::new(format!("Could not restore CLAP state: {error}"))
+                })?;
+        }
         let gui = instance
             .plugin_shared_handle()
             .get_extension::<PluginGui>()
@@ -147,6 +161,19 @@ impl ClapPluginGuiOwner {
     /// Returns a warning when the plugin rejected the CLAP show callback after being attached.
     pub fn show_warning(&self) -> Option<&str> {
         self.show_warning.as_deref()
+    }
+
+    /// Saves the editor instance's opaque state on the control thread.
+    pub fn save_state(&mut self) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
+        let plugin = self.instance.plugin_handle();
+        let Some(state_extension) = plugin.get_extension::<PluginState>() else {
+            return Ok(None);
+        };
+        let mut state = Vec::new();
+        state_extension.save(&plugin, &mut state).map_err(|error| {
+            ClapInstrumentError::new(format!("Could not save CLAP editor state: {error}"))
+        })?;
+        Ok(Some(state))
     }
 
     /// Returns the plugin's preferred editor size, when provided.

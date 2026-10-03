@@ -119,6 +119,7 @@ impl App {
         prepared: &mut PreparedAudioPlayback,
     ) -> Result<Vec<u64>, String> {
         let mut owners = Vec::new();
+        let mut owner_targets = Vec::new();
         let mut processors = Vec::new();
         let sample_rate = self.project.settings().sample_rate();
         let max_block_frames = prepared.graph().max_block_frames();
@@ -131,23 +132,46 @@ impl App {
             // SAFETY: playback was explicitly requested for a project containing a saved CLAP
             // instrument reference. In-process plugins are trusted native code and are not isolated.
             let loaded = unsafe {
-                aaadaw_engine::ClapInstrumentOwner::load(
+                aaadaw_engine::ClapInstrumentOwner::load_with_state(
                     Path::new(instrument.bundle_path()),
                     instrument.plugin_id(),
+                    instrument.state(),
                     sample_rate,
                     max_block_frames,
                     max_events,
                 )
             };
+            let loaded = match loaded {
+                Err(state_error) if instrument.state().is_some() => {
+                    self.clap_plugin_warnings.push(format!(
+                        "{} state could not be restored; using its default state ({state_error})",
+                        instrument.plugin_id()
+                    ));
+                    // SAFETY: same trusted plugin entry selected by the project; retry only omits
+                    // its optional saved state after the plugin rejected that state.
+                    unsafe {
+                        aaadaw_engine::ClapInstrumentOwner::load(
+                            Path::new(instrument.bundle_path()),
+                            instrument.plugin_id(),
+                            sample_rate,
+                            max_block_frames,
+                            max_events,
+                        )
+                    }
+                }
+                result => result,
+            };
             match loaded {
                 Ok((owner, processor)) => {
+                    owner_targets.push((owner.instance_id(), track.id()));
                     owners.push((owner.instance_id(), owner));
                     processors.push(TrackInstrumentProcessor::new(track.id(), processor));
                 }
                 Err(error) => {
-                    let message = format!("Could not activate {}: {error}", instrument.plugin_id());
-                    deactivate_uninstalled_instruments(owners, processors);
-                    return Err(message);
+                    self.clap_plugin_warnings.push(format!(
+                        "Could not activate instrument {}; its track will be silent ({error})",
+                        instrument.plugin_id()
+                    ));
                 }
             }
         }
@@ -161,6 +185,7 @@ impl App {
         }
 
         let ids = owners.iter().map(|(instance_id, _)| *instance_id).collect();
+        self.clap_instrument_targets.extend(owner_targets);
         for (instance_id, owner) in owners {
             self.clap_instrument_owners.insert(instance_id, owner);
         }
@@ -178,6 +203,7 @@ impl App {
             match result {
                 Some(Ok(())) => {
                     self.clap_instrument_owners.remove(id);
+                    self.clap_instrument_targets.remove(id);
                 }
                 Some(Err(error)) => {
                     error_message = Some(format!(
@@ -198,6 +224,7 @@ impl App {
         for stopped in processors {
             let instance_id = stopped.instance_id();
             if let Some(owner) = self.clap_instrument_owners.remove(&instance_id) {
+                self.clap_instrument_targets.remove(&instance_id);
                 let (_, processor) = stopped.into_parts();
                 owner.deactivate(processor);
             } else {

@@ -48,6 +48,10 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    let plugin_state_warning = app.persist_clap_plugin_states().err();
+    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+    let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
     app.io_busy = true;
@@ -57,7 +61,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         run_blocking("aaadaw-project-save", move || {
             save_project_file(path, snapshot, can_overwrite)
         }),
-        move |result| Message::ProjectSaved(message_path, revision, result),
+        move |result| Message::ProjectSaved(message_path, revision, result, plugin_state_warning),
     )
 }
 

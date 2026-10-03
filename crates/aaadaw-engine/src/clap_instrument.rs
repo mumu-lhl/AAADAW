@@ -7,6 +7,7 @@
 use crate::{MidiEventKind, ScheduledMidiEvent};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
+use clack_extensions::state::PluginState;
 use clack_host::events::Pckn;
 use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent};
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
@@ -17,6 +18,7 @@ use clack_host::prelude::{
 };
 use std::ffi::CString;
 use std::fmt;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -178,9 +180,54 @@ impl ClapInstrumentOwner {
         Self::load_from_entry(entry, plugin_id, sample_rate, max_block_frames, max_events)
     }
 
+    /// Loads a CLAP instrument and restores opaque state before activation when supplied.
+    ///
+    /// # Safety
+    ///
+    /// The entry at `entry_path` must be a valid, trusted CLAP library.
+    pub unsafe fn load_with_state(
+        entry_path: &Path,
+        plugin_id: &str,
+        state: Option<&[u8]>,
+        sample_rate: u32,
+        max_block_frames: usize,
+        max_events: usize,
+    ) -> Result<(Self, ClapInstrumentProcessor), ClapInstrumentError> {
+        // SAFETY: the caller guarantees that the selected file is a trusted CLAP library.
+        let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
+            ClapInstrumentError::new(format!("Could not load CLAP entry: {error}"))
+        })?;
+        Self::load_from_entry_with_state(
+            entry,
+            plugin_id,
+            state,
+            sample_rate,
+            max_block_frames,
+            max_events,
+        )
+    }
+
     fn load_from_entry(
         entry: PluginEntry,
         plugin_id: &str,
+        sample_rate: u32,
+        max_block_frames: usize,
+        max_events: usize,
+    ) -> Result<(Self, ClapInstrumentProcessor), ClapInstrumentError> {
+        Self::load_from_entry_with_state(
+            entry,
+            plugin_id,
+            None,
+            sample_rate,
+            max_block_frames,
+            max_events,
+        )
+    }
+
+    fn load_from_entry_with_state(
+        entry: PluginEntry,
+        plugin_id: &str,
+        state: Option<&[u8]>,
         sample_rate: u32,
         max_block_frames: usize,
         max_events: usize,
@@ -232,6 +279,7 @@ impl ClapInstrumentOwner {
                     ClapInstrumentError::new(format!("Could not create CLAP instrument: {error}"))
                 },
             )?;
+        restore_plugin_state(&mut instance, state)?;
         let input_note_port = validate_stereo_synth_ports(&mut instance)?;
 
         let processor = instance
@@ -288,6 +336,12 @@ impl ClapInstrumentOwner {
         self.instance_id
     }
 
+    /// Saves opaque plugin state on the owner thread. Returns `None` when the plugin has no state
+    /// extension.
+    pub fn save_state(&mut self) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
+        save_plugin_state(&mut self.instance)
+    }
+
     /// Deactivates an instrument whose graph was discarded before audio processing began.
     ///
     /// The processor handle must already have been dropped. Use [`Self::deactivate`] when the
@@ -327,9 +381,38 @@ impl ClapEffectOwner {
         Self::load_from_entry(entry, plugin_id, sample_rate, max_block_frames)
     }
 
+    /// Loads a CLAP effect and restores opaque state before activation when supplied.
+    ///
+    /// # Safety
+    ///
+    /// `entry_path` must be a valid, trusted CLAP library.
+    pub unsafe fn load_with_state(
+        entry_path: &Path,
+        plugin_id: &str,
+        state: Option<&[u8]>,
+        sample_rate: u32,
+        max_block_frames: usize,
+    ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
+        // SAFETY: the caller guarantees the selected entry is valid and trusted.
+        let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
+            ClapInstrumentError::new(format!("Could not load CLAP entry: {error}"))
+        })?;
+        Self::load_from_entry_with_state(entry, plugin_id, state, sample_rate, max_block_frames)
+    }
+
     fn load_from_entry(
         entry: PluginEntry,
         plugin_id: &str,
+        sample_rate: u32,
+        max_block_frames: usize,
+    ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
+        Self::load_from_entry_with_state(entry, plugin_id, None, sample_rate, max_block_frames)
+    }
+
+    fn load_from_entry_with_state(
+        entry: PluginEntry,
+        plugin_id: &str,
+        state: Option<&[u8]>,
         sample_rate: u32,
         max_block_frames: usize,
     ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
@@ -378,6 +461,7 @@ impl ClapEffectOwner {
             PluginInstance::<()>::new(|_| (), |_| (), &entry, &c_plugin_id, &host_info).map_err(
                 |error| ClapInstrumentError::new(format!("Could not create CLAP effect: {error}")),
             )?;
+        restore_plugin_state(&mut instance, state)?;
         validate_stereo_effect_ports(&mut instance)?;
         let processor = instance
             .activate(
@@ -431,6 +515,12 @@ impl ClapEffectOwner {
     /// Returns the identity paired with this owner's activated processor.
     pub fn instance_id(&self) -> u64 {
         self.instance_id
+    }
+
+    /// Saves opaque plugin state on the owner thread. Returns `None` when the plugin has no state
+    /// extension.
+    pub fn save_state(&mut self) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
+        save_plugin_state(&mut self.instance)
     }
 
     /// Deactivates an effect whose graph was discarded before audio processing began.
@@ -830,6 +920,39 @@ pub unsafe fn inspect_clap_instrument_entry(
         .collect())
 }
 
+fn restore_plugin_state(
+    instance: &mut PluginInstance<()>,
+    state: Option<&[u8]>,
+) -> Result<(), ClapInstrumentError> {
+    let Some(state) = state else {
+        return Ok(());
+    };
+    let plugin = instance.plugin_handle();
+    let state_extension = plugin.get_extension::<PluginState>().ok_or_else(|| {
+        ClapInstrumentError::new("CLAP plugin does not implement the state extension")
+    })?;
+    state_extension
+        .load(&plugin, &mut Cursor::new(state))
+        .map_err(|error| ClapInstrumentError::new(format!("Could not restore CLAP state: {error}")))
+}
+
+fn save_plugin_state(
+    instance: &mut Option<PluginInstance<()>>,
+) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
+    let instance = instance
+        .as_mut()
+        .ok_or_else(|| ClapInstrumentError::new("CLAP plugin instance was already destroyed"))?;
+    let plugin = instance.plugin_handle();
+    let Some(state_extension) = plugin.get_extension::<PluginState>() else {
+        return Ok(None);
+    };
+    let mut state = Vec::new();
+    state_extension
+        .save(&plugin, &mut state)
+        .map_err(|error| ClapInstrumentError::new(format!("Could not save CLAP state: {error}")))?;
+    Ok(Some(state))
+}
+
 fn validate_stereo_synth_ports(
     instance: &mut PluginInstance<()>,
 ) -> Result<u16, ClapInstrumentError> {
@@ -934,12 +1057,14 @@ mod tests {
     use aaadaw_core::{
         DawAction, MidiNoteData, NoteId, Project, TrackFxPlugin, TrackId, TrackInstrument,
     };
+    use clack_common::stream::{InputStream, OutputStream};
     use clack_extensions::audio_ports::{
         AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPortsImpl,
     };
     use clack_extensions::note_ports::{
         NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePortsImpl,
     };
+    use clack_extensions::state::PluginStateImpl;
     use clack_plugin::entry::{DefaultPluginFactory, SinglePluginEntry};
     use clack_plugin::events::spaces::CoreEventSpace;
     use clack_plugin::plugin::PluginMainThread;
@@ -951,6 +1076,8 @@ mod tests {
     };
     use clack_plugin::process::audio::ChannelPair;
     use clack_plugin::utils::ClapId;
+    use std::cell::Cell;
+    use std::io::{Read, Write};
 
     const PLUGIN_ID: &str = "org.aaadaw.test.synth";
     const MONO_PLUGIN_ID: &str = "org.aaadaw.test.mono-synth";
@@ -1153,10 +1280,24 @@ mod tests {
     }
 
     struct TestEffect;
-    struct TestEffectMainThread;
+    struct TestEffectMainThread(Cell<u8>);
     struct TestEffectAudioProcessor;
 
     impl PluginMainThread<'_, ()> for TestEffectMainThread {}
+
+    impl PluginStateImpl for TestEffectMainThread {
+        fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
+            output.write_all(&[self.0.get()])?;
+            Ok(())
+        }
+
+        fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
+            let mut state = [0];
+            input.read_exact(&mut state)?;
+            self.0.set(state[0]);
+            Ok(())
+        }
+    }
 
     impl Plugin for TestEffect {
         type AudioProcessor<'a> = TestEffectAudioProcessor;
@@ -1168,6 +1309,7 @@ mod tests {
             _shared: Option<&Self::Shared<'_>>,
         ) {
             builder.register::<clack_extensions::audio_ports::PluginAudioPorts>();
+            builder.register::<clack_extensions::state::PluginState>();
         }
     }
 
@@ -1185,7 +1327,7 @@ mod tests {
             _host: HostMainThreadHandle<'a>,
             _shared: &'a Self::Shared<'a>,
         ) -> Result<Self::MainThread<'a>, PluginError> {
-            Ok(TestEffectMainThread)
+            Ok(TestEffectMainThread(Cell::new(0)))
         }
     }
 
@@ -1295,6 +1437,24 @@ mod tests {
 
         assert_eq!(output, [[0.4, -0.2], [0.1, -0.05]]);
         owner.deactivate(stopped);
+    }
+
+    #[test]
+    fn effect_state_is_restored_before_activation_and_saved_from_its_owner() {
+        let state = [0x27];
+        let (mut owner, processor) = ClapEffectOwner::load_from_entry_with_state(
+            test_effect_entry(),
+            EFFECT_PLUGIN_ID,
+            Some(&state),
+            48_000,
+            16,
+        )
+        .expect("test effect state should restore");
+        drop(processor);
+        assert_eq!(owner.save_state().unwrap(), Some(state.to_vec()));
+        owner
+            .try_deactivate_unused()
+            .expect("unused test effect should deactivate");
     }
 
     #[test]

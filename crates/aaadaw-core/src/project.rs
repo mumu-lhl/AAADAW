@@ -500,6 +500,7 @@ impl Project {
                         crate::TrackInstrumentSnapshot {
                             plugin_id: instrument.plugin_id().to_owned(),
                             bundle_path: instrument.bundle_path().to_owned(),
+                            state: instrument.state().map(<[u8]>::to_vec),
                         }
                     }),
                     fx_chain: track
@@ -509,6 +510,7 @@ impl Project {
                             plugin_id: plugin.plugin_id().to_owned(),
                             bundle_path: plugin.bundle_path().to_owned(),
                             enabled: plugin.is_enabled(),
+                            state: plugin.state().map(<[u8]>::to_vec),
                         })
                         .collect(),
                 })
@@ -624,7 +626,8 @@ impl Project {
             let instrument = match track.instrument {
                 Some(instrument) => Some(
                     TrackInstrument::new(instrument.plugin_id, instrument.bundle_path)
-                        .ok_or(SnapshotError::InvalidProjectData)?,
+                        .ok_or(SnapshotError::InvalidProjectData)?
+                        .with_state(instrument.state),
                 ),
                 None => None,
             };
@@ -633,7 +636,11 @@ impl Project {
                 .into_iter()
                 .map(|plugin| {
                     TrackFxPlugin::new(plugin.plugin_id, plugin.bundle_path)
-                        .map(|plugin_ref| plugin_ref.with_enabled(plugin.enabled))
+                        .map(|plugin_ref| {
+                            plugin_ref
+                                .with_enabled(plugin.enabled)
+                                .with_state(plugin.state)
+                        })
                         .ok_or(SnapshotError::InvalidProjectData)
                 })
                 .collect::<Result<Vec<_>, _>>()?;

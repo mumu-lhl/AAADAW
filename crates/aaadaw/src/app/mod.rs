@@ -35,6 +35,8 @@ use std::time::Duration;
 mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+mod clap_plugin_state;
 mod clap_track_fx;
 mod clap_track_instrument;
 mod commands;
@@ -234,7 +236,13 @@ struct App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_owners: ClapEffectOwners,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_effect_targets: HashMap<u64, (TrackId, usize, String)>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_instrument_owners: ClapInstrumentOwners,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_instrument_targets: HashMap<u64, TrackId>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_plugin_warnings: Vec<String>,
 }
 
 struct PendingAudioImport {
@@ -1477,7 +1485,7 @@ impl App {
                     None => self.status = "Project open result was unavailable".to_owned(),
                 }
             }
-            Message::ProjectSaved(path, revision, result) => {
+            Message::ProjectSaved(path, revision, result, plugin_state_warning) => {
                 self.io_busy = false;
                 match result {
                     Ok(()) => {
@@ -1489,6 +1497,11 @@ impl App {
                         } else {
                             format!("Saved {}; newer edits remain unsaved", path.display())
                         };
+                        if let Some(warning) = plugin_state_warning {
+                            self.status.push_str(&format!(
+                                "; some plugin state was not captured; previously saved state was kept ({warning})"
+                            ));
+                        }
                         let ready = self
                             .pending_recording_cleanup
                             .iter()
@@ -1867,6 +1880,8 @@ impl App {
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     fn close_playback(&mut self) {
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        let state_error = self.persist_clap_plugin_states().err();
         let mut shutdown_error = None;
         if let Some(playback) = self.playback.take() {
             match playback.shutdown() {
@@ -1904,6 +1919,11 @@ impl App {
             || format!("{} output closed", self.playback_name()),
             |error| format!("{} shutdown failed: {error}", self.playback_name()),
         );
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if let Some(error) = state_error {
+            self.status
+                .push_str(&format!("; plugin state save failed: {error}"));
+        }
     }
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -1916,6 +1936,12 @@ impl App {
             self.status = "Save or open project before playback".to_owned();
             return Task::none();
         };
+        self.clap_plugin_warnings.clear();
+        if let Err(error) = self.persist_clap_plugin_states() {
+            self.clap_plugin_warnings.push(format!(
+                "Some plugin state could not be captured; previously saved state will be used ({error})"
+            ));
+        }
         let snapshot = self.project.snapshot();
         self.playback_busy = true;
         self.status = format!("Preparing playback at sample {target_sample}…");
@@ -2058,6 +2084,10 @@ impl App {
         } else {
             format!("{} output ready", self.playback_name())
         };
+        if !self.clap_plugin_warnings.is_empty() {
+            self.status.push_str("; ");
+            self.status.push_str(&self.clap_plugin_warnings.join("; "));
+        }
     }
 
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]

@@ -101,7 +101,8 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
                     "org.example.piano",
                     "/home/user/.clap/piano.clap",
                 )
-                .expect("a plugin ID and bundle path make a valid instrument reference"),
+                .expect("a plugin ID and bundle path make a valid instrument reference")
+                .with_state(Some(vec![0, 1, 2, 255])),
             ),
         })
         .expect("instrument assignment should succeed");
@@ -110,7 +111,8 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             track_id,
             plugins: vec![
                 aaadaw_core::TrackFxPlugin::new("org.example.room", "/home/user/.clap/room.clap")
-                    .expect("first plugin reference should be valid"),
+                    .expect("first plugin reference should be valid")
+                    .with_state(Some(vec![42, 0, 17])),
                 aaadaw_core::TrackFxPlugin::new(
                     "org.example.limiter",
                     "/home/user/.clap/limiter.clap",
@@ -221,7 +223,9 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN instrument_path; \
              ALTER TABLE tracks DROP COLUMN instrument_id; \
+             ALTER TABLE tracks DROP COLUMN instrument_state; \
              ALTER TABLE tracks DROP COLUMN record_armed; \
+             ALTER TABLE track_fx_plugins DROP COLUMN state; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )

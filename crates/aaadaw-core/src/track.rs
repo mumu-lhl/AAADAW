@@ -33,6 +33,7 @@ pub struct Track {
 pub struct TrackInstrument {
     plugin_id: String,
     bundle_path: String,
+    state: Option<Vec<u8>>,
 }
 
 impl TrackInstrument {
@@ -46,6 +47,7 @@ impl TrackInstrument {
         Some(Self {
             plugin_id,
             bundle_path,
+            state: None,
         })
     }
 
@@ -58,6 +60,17 @@ impl TrackInstrument {
     pub fn bundle_path(&self) -> &str {
         &self.bundle_path
     }
+
+    /// Returns the last persisted opaque CLAP state, if the plugin supports state serialization.
+    pub fn state(&self) -> Option<&[u8]> {
+        self.state.as_deref()
+    }
+
+    /// Returns a copy carrying the plugin's serialized state.
+    pub fn with_state(mut self, state: Option<Vec<u8>>) -> Self {
+        self.state = state;
+        self
+    }
 }
 
 /// A CLAP plugin reference inserted in a track's ordered FX chain.
@@ -66,6 +79,7 @@ pub struct TrackFxPlugin {
     plugin_id: String,
     bundle_path: String,
     enabled: bool,
+    state: Option<Vec<u8>>,
 }
 
 impl TrackFxPlugin {
@@ -80,6 +94,7 @@ impl TrackFxPlugin {
             plugin_id,
             bundle_path,
             enabled: true,
+            state: None,
         })
     }
 
@@ -98,9 +113,20 @@ impl TrackFxPlugin {
         self.enabled
     }
 
+    /// Returns the last persisted opaque CLAP state, if the plugin supports state serialization.
+    pub fn state(&self) -> Option<&[u8]> {
+        self.state.as_deref()
+    }
+
     /// Returns a copy with the requested enabled state.
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Returns a copy carrying the plugin's serialized state.
+    pub fn with_state(mut self, state: Option<Vec<u8>>) -> Self {
+        self.state = state;
         self
     }
 }
