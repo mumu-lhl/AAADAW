@@ -1,8 +1,8 @@
 use aaadaw_app::{
-    AudioItemImportError, prepare_audio_playback, start_audio_item_import,
-    start_audio_item_reimport,
+    AudioItemImportError, AudioRecordingWorker, audio_capture_stream, prepare_audio_playback,
+    start_audio_item_import, start_audio_item_reimport,
 };
-use aaadaw_core::{DawAction, Project};
+use aaadaw_core::{DawAction, Project, TrackId};
 use aaadaw_storage::ProjectStore;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +43,131 @@ fn remove_database(path: &PathBuf) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(format!("{}-wal", path.display()));
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+}
+
+#[test]
+fn recorded_take_survives_project_save_reopen_and_undo_redo() {
+    let project_path = unique_path("aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Input A".to_owned(),
+        })
+        .expect("first track should be created");
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Input B".to_owned(),
+        })
+        .expect("second track should be created");
+    let track_ids: Vec<TrackId> = project.tracks().iter().map(|track| track.id()).collect();
+    for track_id in &track_ids {
+        project
+            .apply(DawAction::SetTrackRecordArm {
+                track_id: *track_id,
+                armed: true,
+            })
+            .expect("track should arm");
+    }
+    let mut store = ProjectStore::open(&project_path).expect("project should open");
+    store.save(&project).expect("armed project should save");
+    store.close().expect("project should close before import");
+
+    let (mut producer, consumer, control) = audio_capture_stream(16);
+    let writer = AudioRecordingWorker::start(
+        &project_path,
+        project.settings().sample_rate(),
+        consumer,
+        control.clone(),
+    )
+    .expect("recording writer should start");
+    control.start();
+    producer.push_planar(&[0.25, 0.5, -0.25, -0.5], &[0.25, 0.5, -0.25, -0.5]);
+    control.stop();
+    let recording = writer.finish().expect("take should finalize");
+
+    let worker = start_audio_item_import(
+        &project_path,
+        &recording,
+        track_ids[0],
+        256,
+        project.settings().sample_rate(),
+    )
+    .expect("recorded take import should start");
+    while !worker.is_finished() {
+        let _ = worker.progress().try_iter().count();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let first_action = worker.finish().expect("recording should import");
+    let (media_ref, length_samples) = match first_action {
+        DawAction::InsertAudioItem {
+            media_ref,
+            length_samples,
+            ..
+        } => (media_ref, length_samples),
+        other => panic!("expected InsertAudioItem, got {other:?}"),
+    };
+    project
+        .apply(DawAction::BatchTransaction {
+            tx_id: 1,
+            actions: vec![
+                DawAction::InsertAudioItem {
+                    track_id: track_ids[0],
+                    media_ref: media_ref.clone(),
+                    start_sample: 256,
+                    source_offset_samples: 0,
+                    length_samples,
+                },
+                DawAction::InsertAudioItem {
+                    track_id: track_ids[1],
+                    media_ref: media_ref.clone(),
+                    start_sample: 256,
+                    source_offset_samples: 0,
+                    length_samples,
+                },
+            ],
+        })
+        .expect("take should place on both armed tracks");
+    let mut store = ProjectStore::open(&project_path).expect("project should reopen");
+    store.save(&project).expect("recorded project should save");
+    store.close().expect("project should close");
+
+    let store = ProjectStore::open(&project_path).expect("saved project should reopen");
+    let reopened = store.load().expect("saved project should load");
+    assert_eq!(reopened.audio_items().len(), 2);
+    assert!(
+        reopened
+            .audio_items()
+            .iter()
+            .all(|item| item.media_ref() == media_ref)
+    );
+    let store = store;
+    let prepared = prepare_audio_playback(&reopened, &store, 512, 8)
+        .expect("recorded take should resolve for playback");
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("recorded media feeder should finish");
+    }
+    graph.transport_mut().seek_sample(256);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("reopened take should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(
+        output.iter().flatten().any(|sample| sample.abs() > 0.0),
+        "reopened recording should produce audible samples, got {output:?}"
+    );
+
+    assert!(project.undo().expect("take placement should undo"));
+    assert!(project.audio_items().is_empty());
+    assert!(project.redo().expect("take placement should redo"));
+    assert_eq!(project.audio_items().len(), 2);
+    store.close().expect("store should close");
+    remove_database(&project_path);
+    let _ = std::fs::remove_file(recording);
 }
 
 #[test]
