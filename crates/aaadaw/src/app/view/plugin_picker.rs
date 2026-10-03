@@ -145,6 +145,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             }
         ]
         .spacing(2),
+        container(text(super::CLAP_IN_PROCESS_RISK).size(11)).padding([4, 6]),
         text_input(
             "Filter name, vendor, or plugin ID",
             &app.plugin_picker_search

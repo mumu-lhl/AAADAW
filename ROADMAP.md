@@ -53,7 +53,7 @@
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
 - [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v4、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
-- [ ] 扩展 schema 支持自动化和插件状态，并按工程规模优化全量快照写入；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储，不提升 schema 版本。
+- [ ] 扩展 schema 支持自动化，并按工程规模优化全量快照写入；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [ ] 验收磁盘空间不足时的保存与恢复行为。
 - [x] 验收异常退出后的 WAL 恢复及正常关闭后的单文件复制/迁移（[`docs/tickets/2026-10-02-project-wal-recovery.md`](docs/tickets/2026-10-02-project-wal-recovery.md)）。
@@ -142,8 +142,8 @@
 - [x] 将可撤销的 CLAP 乐器指派接入轨道 MIDI 播放与 FX chain，并在替换渲染图和关闭输出时安全回收（[`docs/tickets/2026-10-02-clap-instrument-playback.md`](docs/tickets/2026-10-02-clap-instrument-playback.md)）。
 - [x] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧嵌入所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
 - [ ] 将插件参数变更接入 Action；提供 begin/perform/end 手势语义，为自动化录制保留一致的接口。
-- [ ] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败。
-- [ ] 显示进程内插件的风险提示；MVP 不承诺插件崩溃隔离，第三方插件不得被误认为运行在安全沙盒中。
+- [x] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）。
+- [x] 在插件选择、FX 编辑器和轨道乐器入口提示进程内执行风险；MVP 不承诺插件崩溃隔离（[Issue #16](https://github.com/mumu-lhl/AAADAW/issues/16)）。
 
 **退出标准**：可加载并使用许可兼容的 CLAP 效果器/乐器，保存并恢复工程状态；插件不可用时工程仍可打开并允许用户恢复操作。
 
