@@ -39,18 +39,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .iter()
         .find(|track| track.id() == item.track_id())
         .map_or("Track", |track| track.name());
-    let toolbar = row![
+    let edit_toolbar = row![
         text(format!(
             "Piano roll · Track {title} · {} notes",
             item.notes().len()
         ))
         .width(Length::Fill),
-        roll_button("− Beat", Message::PianoRollPan(-1)),
-        roll_button("+ Beat", Message::PianoRollPan(1)),
-        roll_button("Zoom −", Message::PianoRollZoom(0.8)),
-        roll_button("Zoom +", Message::PianoRollZoom(1.25)),
-        roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
-        roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
         button("Copy")
             .style(iced::widget::button::secondary)
             .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
@@ -80,7 +74,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
-    let canvas = canvas_widget::Canvas::new(PianoRoll {
+    let navigation_toolbar = row![
+        roll_button("− Beat", Message::PianoRollPan(-1)),
+        roll_button("+ Beat", Message::PianoRollPan(1)),
+        roll_button("Zoom −", Message::PianoRollZoom(0.8)),
+        roll_button("Zoom +", Message::PianoRollZoom(1.25)),
+        roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
+        roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let ticks_per_beat = u64::from(app.project.settings().ppq());
+    let pitch_canvas = canvas_widget::Canvas::new(PianoRoll {
         project: &app.project,
         item,
         item_id,
@@ -88,18 +93,46 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         origin_tick: app.midi_editor_origin_tick,
         high_pitch: app.midi_editor_high_pitch,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
-        ticks_per_beat: u64::from(app.project.settings().ppq()),
+        ticks_per_beat,
+        region: RollRegion::Pitch,
     })
     .width(Length::Fill)
     .height(Length::Fixed(
-        HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT + VELOCITY_LANE_HEIGHT,
+        HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
     ));
-    column![toolbar, scrollable(canvas).height(Length::Fill)]
-        .spacing(ROW_GAP)
-        .padding(PANEL_PADDING)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let velocity_canvas = canvas_widget::Canvas::new(PianoRoll {
+        project: &app.project,
+        item,
+        item_id,
+        selected: &app.midi_editor_selected_notes,
+        origin_tick: app.midi_editor_origin_tick,
+        high_pitch: app.midi_editor_high_pitch,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+        region: RollRegion::Velocity,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
+    let velocity_lane = row![
+        container(text("Velocity"))
+            .width(Length::Fixed(KEY_WIDTH))
+            .height(Length::Fixed(VELOCITY_LANE_HEIGHT))
+            .center_y(Length::Fill)
+            .padding(SPACING_XS),
+        velocity_canvas
+    ]
+    .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
+    column![
+        edit_toolbar,
+        navigation_toolbar,
+        scrollable(pitch_canvas).height(Length::Fill),
+        velocity_lane
+    ]
+    .spacing(ROW_GAP)
+    .padding(PANEL_PADDING)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -146,6 +179,13 @@ struct PianoRoll<'a> {
     high_pitch: u8,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
+    region: RollRegion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RollRegion {
+    Pitch,
+    Velocity,
 }
 
 #[derive(Default)]
@@ -180,9 +220,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             state.modifiers = *modifiers;
             return None;
         }
-        if let Event::Keyboard(keyboard::Event::KeyPressed {
-            key, repeat: false, ..
-        }) = event
+        if self.region == RollRegion::Pitch
+            && let Event::Keyboard(keyboard::Event::KeyPressed {
+                key, repeat: false, ..
+            }) = event
             && (state.modifiers.command() || state.modifiers.control())
             && let keyboard::Key::Character(character) = key.as_ref()
             && character.eq_ignore_ascii_case("c")
@@ -193,9 +234,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 self.selected.iter().copied().collect(),
             )));
         }
-        if let Event::Keyboard(keyboard::Event::KeyPressed {
-            key, repeat: false, ..
-        }) = event
+        if self.region == RollRegion::Pitch
+            && let Event::Keyboard(keyboard::Event::KeyPressed {
+                key, repeat: false, ..
+            }) = event
             && (state.modifiers.command() || state.modifiers.control())
             && let keyboard::Key::Character(character) = key.as_ref()
             && character.eq_ignore_ascii_case("v")
@@ -204,9 +246,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 self.item_id,
             )));
         }
-        if let Event::Keyboard(keyboard::Event::KeyPressed {
-            key, repeat: false, ..
-        }) = event
+        if self.region == RollRegion::Pitch
+            && let Event::Keyboard(keyboard::Event::KeyPressed {
+                key, repeat: false, ..
+            }) = event
             && matches!(
                 key.as_ref(),
                 keyboard::Key::Named(
@@ -222,14 +265,26 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let point = cursor.position_in(bounds)?;
-                let point = Point::new(point.x - KEY_WIDTH, point.y - HEADER_HEIGHT);
+                let position = cursor.position_in(bounds)?;
+                let point = Point::new(
+                    position.x
+                        - if self.region == RollRegion::Pitch {
+                            KEY_WIDTH
+                        } else {
+                            0.0
+                        },
+                    position.y
+                        - if self.region == RollRegion::Pitch {
+                            HEADER_HEIGHT
+                        } else {
+                            0.0
+                        },
+                );
                 if point.x < 0.0 || point.y < 0.0 {
                     return Some(canvas::Action::capture());
                 }
-                let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
-                if point.y >= piano_height {
-                    let lane_y = point.y - piano_height;
+                if self.region == RollRegion::Velocity {
+                    let lane_y = point.y;
                     let Some(note_id) =
                         velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
                     else {
@@ -330,11 +385,23 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 Some(canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture())
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let point = cursor.position_in(bounds)?;
-                let point = Point::new(point.x - KEY_WIDTH, point.y - HEADER_HEIGHT);
+                let position = cursor.position_in(bounds)?;
+                let point = Point::new(
+                    position.x
+                        - if self.region == RollRegion::Pitch {
+                            KEY_WIDTH
+                        } else {
+                            0.0
+                        },
+                    position.y
+                        - if self.region == RollRegion::Pitch {
+                            HEADER_HEIGHT
+                        } else {
+                            0.0
+                        },
+                );
                 if state.drag.is_none() {
-                    let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
-                    let hovered = if point.y >= piano_height {
+                    let hovered = if self.region == RollRegion::Velocity {
                         velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
                     } else {
                         None
@@ -353,11 +420,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
                 drag.delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
                 if drag.velocity {
-                    drag.delta_velocity = velocity_delta_in_lane(
-                        drag.start.y,
-                        point.y,
-                        f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
-                    );
+                    drag.delta_velocity = velocity_delta(drag.start.y, point.y);
                 } else {
                     drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
                 }
@@ -430,6 +493,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
+        if self.region == RollRegion::Velocity {
+            self.draw_velocity(state, &mut frame, bounds);
+            return vec![frame.into_geometry()];
+        }
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
         let grid_left = KEY_WIDTH;
         let grid_top = HEADER_HEIGHT;
@@ -558,39 +625,6 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 Color::from_rgba8(9, 12, 14, 0.4),
             );
         }
-        let velocity_top = grid_top + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
-        frame.fill_rectangle(
-            Point::new(0.0, velocity_top),
-            Size::new(bounds.width, VELOCITY_LANE_HEIGHT),
-            Color::from_rgb8(30, 35, 38),
-        );
-        frame.fill_rectangle(
-            Point::new(0.0, velocity_top),
-            Size::new(KEY_WIDTH, VELOCITY_LANE_HEIGHT),
-            Color::from_rgb8(42, 48, 51),
-        );
-        for fraction in [0.25, 0.5, 0.75] {
-            let y = velocity_top + VELOCITY_LANE_HEIGHT * (1.0 - fraction);
-            let line = canvas::Path::line(Point::new(grid_left, y), Point::new(bounds.width, y));
-            frame.stroke(
-                &line,
-                canvas::Stroke::default()
-                    .with_color(Color::from_rgb8(57, 64, 68))
-                    .with_width(0.7),
-            );
-        }
-        frame.fill_text(Text {
-            content: "Velocity".to_owned(),
-            position: Point::new(KEY_WIDTH - 5.0, velocity_top + 14.0),
-            max_width: KEY_WIDTH - 8.0,
-            color: Color::from_rgb8(190, 197, 201),
-            size: Pixels(10.0),
-            line_height: LineHeight::Relative(1.0),
-            font: Font::default(),
-            align_x: TextAlignment::Right,
-            align_y: iced::alignment::Vertical::Center,
-            shaping: Shaping::Basic,
-        });
         for note in self.item.notes() {
             if note.pitch() > self.high_pitch
                 || note.pitch() < self.high_pitch.saturating_sub(PITCH_COUNT - 1)
@@ -628,16 +662,60 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 );
             }
         }
+        vec![frame.into_geometry()]
+    }
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if cursor.is_over(bounds) {
+            mouse::Interaction::Crosshair
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+}
+
+impl PianoRoll<'_> {
+    fn draw_velocity(
+        &self,
+        state: &Interaction,
+        frame: &mut canvas::Frame<iced::Renderer>,
+        bounds: Rectangle,
+    ) {
+        let mapping = self.mapping();
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(30, 35, 38));
+        for fraction in [0.25, 0.5, 0.75] {
+            let y = VELOCITY_LANE_HEIGHT * (1.0 - fraction);
+            let line = canvas::Path::line(Point::new(0.0, y), Point::new(bounds.width, y));
+            frame.stroke(
+                &line,
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgb8(57, 64, 68))
+                    .with_width(0.7),
+            );
+        }
         let velocity_positions = velocity_handle_positions(self.item.notes(), mapping);
         for note in self.item.notes() {
-            let velocity_x = grid_left
-                + velocity_positions
-                    .get(&note.id())
-                    .copied()
-                    .unwrap_or_default();
-            let velocity_height =
-                f32::from(note.velocity()) / 127.0 * (VELOCITY_LANE_HEIGHT - 20.0);
-            let velocity_y = velocity_top + VELOCITY_LANE_HEIGHT - velocity_height - 2.0;
+            let velocity_x = velocity_positions
+                .get(&note.id())
+                .copied()
+                .unwrap_or_default();
+            let velocity = state
+                .drag
+                .as_ref()
+                .filter(|drag| drag.velocity)
+                .and_then(|drag| {
+                    drag.notes
+                        .iter()
+                        .any(|(id, _)| *id == note.id())
+                        .then(|| apply_velocity_delta(note.velocity(), drag.delta_velocity))
+                })
+                .unwrap_or_else(|| note.velocity());
+            let velocity_height = f32::from(velocity) / 127.0 * (VELOCITY_LANE_HEIGHT - 20.0);
+            let velocity_y = VELOCITY_LANE_HEIGHT - velocity_height - 2.0;
             let velocity_bar = canvas::Path::rectangle(
                 Point::new(velocity_x, velocity_y),
                 Size::new(4.0, velocity_height.max(1.0)),
@@ -654,10 +732,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             );
             if state.hovered_velocity_note == Some(note.id()) {
                 frame.fill_text(Text {
-                    content: note.velocity().to_string(),
+                    content: velocity.to_string(),
                     position: Point::new(
-                        velocity_x + 10.0,
-                        velocity_top + VELOCITY_LANE_HEIGHT - 10.0,
+                        velocity_x + 7.0,
+                        (velocity_y - 6.0).clamp(10.0, VELOCITY_LANE_HEIGHT - 10.0),
                     ),
                     max_width: 28.0,
                     color: Color::from_rgb8(213, 218, 221),
@@ -670,24 +748,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 });
             }
         }
-        vec![frame.into_geometry()]
     }
 
-    fn mouse_interaction(
-        &self,
-        _state: &Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        if cursor.is_over(bounds) {
-            mouse::Interaction::Crosshair
-        } else {
-            mouse::Interaction::default()
-        }
-    }
-}
-
-impl PianoRoll<'_> {
     fn mapping(&self) -> RollMapping {
         RollMapping {
             origin_tick: self.origin_tick,
@@ -759,10 +821,6 @@ fn velocity_handle_positions(
 
 fn velocity_delta(start_y: f32, current_y: f32) -> i16 {
     ((start_y - current_y) * 127.0 / VELOCITY_LANE_HEIGHT).round() as i16
-}
-
-fn velocity_delta_in_lane(start_lane_y: f32, current_canvas_y: f32, piano_height: f32) -> i16 {
-    velocity_delta(start_lane_y, current_canvas_y - piano_height)
 }
 
 fn apply_velocity_delta(velocity: u8, delta: i16) -> u8 {
@@ -864,8 +922,7 @@ mod tests {
 
     #[test]
     fn velocity_drag_uses_one_delta_and_clamps_each_note_to_midi_range() {
-        let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
-        let delta = velocity_delta_in_lane(80.0, piano_height + 64.0, piano_height);
+        let delta = velocity_delta(80.0, 64.0);
         assert_eq!(delta, 20);
         assert_eq!(apply_velocity_delta(70, delta), 90);
         assert_eq!(apply_velocity_delta(120, delta), 127);
