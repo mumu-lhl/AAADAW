@@ -13,6 +13,7 @@ use iced::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 64.0;
 pub(crate) const TIMELINE_RULER_HEIGHT: f32 = 32.0;
@@ -839,6 +840,7 @@ struct TimelineInteractionState {
     pan_last_x: Option<f32>,
     pending_item_drag: Option<PendingItemDrag>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
+    last_item_click: Option<(ItemId, Instant)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1124,18 +1126,50 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(drag) = state.pending_item_drag.take() {
-                    let event = if drag.is_dragging {
-                        TimelineEvent::EndItemDrag
+                    if drag.is_dragging {
+                        state.last_item_click = None;
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::EndItemDrag,
+                            ))
+                            .and_capture(),
+                        )
                     } else {
-                        TimelineEvent::SelectItem {
-                            item_id: Some(drag.item_id),
-                            additive: drag.modifiers.command(),
-                            range: drag.modifiers.shift(),
+                        let now = Instant::now();
+                        let is_double_click =
+                            state.last_item_click.is_some_and(|(item_id, when)| {
+                                item_id == drag.item_id
+                                    && now.duration_since(when) <= Duration::from_millis(400)
+                            });
+                        state.last_item_click = Some((drag.item_id, now));
+                        if is_double_click
+                            && self
+                                .cache
+                                .item_indices
+                                .get(&drag.item_id)
+                                .is_some_and(|index| {
+                                    self.cache.items[*index].kind == ItemKind::Midi
+                                })
+                        {
+                            Some(
+                                shader::Action::publish(crate::app::Message::OpenMidiEditor(
+                                    drag.item_id,
+                                ))
+                                .and_capture(),
+                            )
+                        } else {
+                            Some(
+                                shader::Action::publish(crate::app::Message::Timeline(
+                                    TimelineEvent::SelectItem {
+                                        item_id: Some(drag.item_id),
+                                        additive: drag.modifiers.command(),
+                                        range: drag.modifiers.shift(),
+                                    },
+                                ))
+                                .and_capture(),
+                            )
                         }
-                    };
-                    Some(
-                        shader::Action::publish(crate::app::Message::Timeline(event)).and_capture(),
-                    )
+                    }
                 } else if let Some(drag) = state.pending_time_selection_drag.take() {
                     if drag.mode == TimeSelectionDragMode::Create && !drag.is_dragging {
                         Some(

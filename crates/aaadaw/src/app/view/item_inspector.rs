@@ -117,6 +117,7 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
                 item.length_ticks()
             ))
             .width(Length::Fill),
+            action_button("Piano roll…", Message::OpenMidiEditor(item_id)),
             action_button("− beat", Message::NudgeMidiItem(item_id, -1)),
             action_button("+ beat", Message::NudgeMidiItem(item_id, 1)),
             action_button("Add C4", Message::AddMidiNote(item_id)),
