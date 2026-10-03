@@ -17,6 +17,8 @@ mod plugin_picker;
 mod settings;
 mod tokens;
 
+const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
+
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
     if app.settings_window_id == Some(window_id) {
         settings::view(app)
@@ -307,4 +309,14 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
 #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
 fn playback_controls(_app: &App) -> Element<'_, Message> {
     text("Enable jack-backend or pipewire-backend for audio output").into()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn clap_risk_notice_clearly_describes_the_process_boundary() {
+        assert!(super::CLAP_IN_PROCESS_RISK.contains("app's privileges"));
+        assert!(super::CLAP_IN_PROCESS_RISK.contains("crash or stall"));
+        assert!(super::CLAP_IN_PROCESS_RISK.contains("not sandboxed"));
+    }
 }

@@ -95,6 +95,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             text(format!("{}", track.fx_chain().len())).size(11),
         ]
         .align_y(Alignment::Center),
+        container(text(super::CLAP_IN_PROCESS_RISK).size(11)).padding([4, 6]),
         rule::horizontal(1),
         scrollable(plugin_rows).height(Length::Fill),
         editor_feedback,
