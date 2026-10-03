@@ -37,6 +37,16 @@ pub enum DawAction {
         track_id: TrackId,
         plugins: Vec<TrackFxPlugin>,
     },
+    /// Record a CLAP FX parameter gesture for undo/redo without duplicating plugin-owned state.
+    SetTrackFxParameter {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        before: f64,
+        after: f64,
+        before_state: Option<Vec<u8>>,
+        after_state: Option<Vec<u8>>,
+    },
     /// Rename a track.
     SetTrackName { track_id: TrackId, name: String },
     /// Move a track to a final position in the ordered track list.

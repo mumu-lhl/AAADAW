@@ -26,7 +26,8 @@ pub use capture::{
 pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{
     ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
-    ClapInstrumentOwner, ClapInstrumentProcessor, ClapPluginDescriptor, StoppedClapEffectProcessor,
+    ClapInstrumentOwner, ClapInstrumentProcessor, ClapParameterCommand, ClapParameterInfo,
+    ClapParameterSender, ClapPluginDescriptor, StoppedClapEffectProcessor,
     StoppedClapInstrumentProcessor, inspect_clap_instrument_entry, inspect_clap_plugin_entry,
 };
 #[cfg(feature = "jack-backend")]

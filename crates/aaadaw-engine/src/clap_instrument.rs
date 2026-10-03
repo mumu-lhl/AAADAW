@@ -7,20 +7,74 @@
 use crate::{MidiEventKind, ScheduledMidiEvent};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
 use clack_host::events::Pckn;
 use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent};
+use clack_host::events::event_types::{
+    ParamGestureBeginEvent, ParamGestureEndEvent, ParamValueEvent,
+};
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
 use clack_host::plugin::features;
 use clack_host::prelude::{
     AudioPortBuffer, AudioPortBufferType, AudioPorts, HostInfo, InputAudioBuffers, InputChannel,
     PluginAudioConfiguration, PluginAudioProcessor, PluginEntry, PluginInstance,
 };
+use rtrb::{Consumer, Producer, RingBuffer};
 use std::ffi::CString;
 use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Parameter metadata exposed by a CLAP effect.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClapParameterInfo {
+    pub id: u32,
+    pub name: String,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub default_value: f64,
+    pub value: f64,
+    pub display_value: String,
+    pub stepped: bool,
+    pub read_only: bool,
+}
+
+/// A bounded command sent from the control thread to an active CLAP processor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClapParameterCommand {
+    Begin { id: u32 },
+    Set { id: u32, value: f64 },
+    End { id: u32 },
+}
+
+/// Control-thread endpoint for one effect's parameter event queue.
+pub struct ClapParameterSender(Producer<ClapParameterCommand>);
+
+impl ClapParameterSender {
+    pub fn try_send(&mut self, command: ClapParameterCommand) -> Result<(), ClapParameterCommand> {
+        // Keep one slot available for the matching End while a parameter gesture is active.
+        let reserved_slots = usize::from(!matches!(command, ClapParameterCommand::End { .. }));
+        if self.0.slots() <= reserved_slots {
+            return Err(command);
+        }
+        let valid = match command {
+            ClapParameterCommand::Begin { id } | ClapParameterCommand::End { id } => {
+                clack_host::prelude::ClapId::from_raw(id).is_some()
+            }
+            ClapParameterCommand::Set { id, value } => {
+                clack_host::prelude::ClapId::from_raw(id).is_some() && value.is_finite()
+            }
+        };
+        if !valid {
+            return Err(command);
+        }
+        self.0.push(command).map_err(|error| match error {
+            rtrb::PushError::Full(command) => command,
+        })
+    }
+}
 
 static NEXT_CLAP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -151,6 +205,9 @@ pub struct ClapEffectProcessor {
     output_left: Vec<f32>,
     output_right: Vec<f32>,
     input_events: EventBuffer,
+    parameter_sender: Option<ClapParameterSender>,
+    parameter_commands: Consumer<ClapParameterCommand>,
+    active_parameter_gestures: Vec<u32>,
     max_block_frames: usize,
 }
 
@@ -404,6 +461,7 @@ impl ClapEffectOwner {
         entry_path: &Path,
         plugin_id: &str,
         state: Option<&[u8]>,
+        parameter_values: &[(u32, f64)],
         sample_rate: u32,
         max_block_frames: usize,
     ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
@@ -411,7 +469,14 @@ impl ClapEffectOwner {
         let entry = unsafe { PluginEntry::load(entry_path) }.map_err(|error| {
             ClapInstrumentError::new(format!("Could not load CLAP entry: {error}"))
         })?;
-        Self::load_from_entry_with_state(entry, plugin_id, state, sample_rate, max_block_frames)
+        Self::load_from_entry_with_state(
+            entry,
+            plugin_id,
+            state,
+            parameter_values,
+            sample_rate,
+            max_block_frames,
+        )
     }
 
     fn load_from_entry(
@@ -420,13 +485,14 @@ impl ClapEffectOwner {
         sample_rate: u32,
         max_block_frames: usize,
     ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
-        Self::load_from_entry_with_state(entry, plugin_id, None, sample_rate, max_block_frames)
+        Self::load_from_entry_with_state(entry, plugin_id, None, &[], sample_rate, max_block_frames)
     }
 
     fn load_from_entry_with_state(
         entry: PluginEntry,
         plugin_id: &str,
         state: Option<&[u8]>,
+        parameter_values: &[(u32, f64)],
         sample_rate: u32,
         max_block_frames: usize,
     ) -> Result<(Self, ClapEffectProcessor), ClapInstrumentError> {
@@ -476,6 +542,9 @@ impl ClapEffectOwner {
                 |error| ClapInstrumentError::new(format!("Could not create CLAP effect: {error}")),
             )?;
         restore_plugin_state(&mut instance, state)?;
+        if state.is_none() {
+            restore_parameter_values(&mut instance, parameter_values);
+        }
         validate_stereo_effect_ports(&mut instance)?;
         let processor = instance
             .activate(
@@ -491,6 +560,7 @@ impl ClapEffectOwner {
             })?;
 
         let instance_id = NEXT_CLAP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
+        let (parameter_tx, parameter_commands) = RingBuffer::new(128);
 
         Ok((
             Self {
@@ -506,7 +576,10 @@ impl ClapEffectOwner {
                 input_right: vec![0.0; max_block_frames],
                 output_left: vec![0.0; max_block_frames],
                 output_right: vec![0.0; max_block_frames],
-                input_events: EventBuffer::with_capacity(1),
+                input_events: EventBuffer::with_capacity(128),
+                parameter_sender: Some(ClapParameterSender(parameter_tx)),
+                parameter_commands,
+                active_parameter_gestures: Vec::with_capacity(16),
                 max_block_frames,
             },
         ))
@@ -537,6 +610,65 @@ impl ClapEffectOwner {
         save_plugin_state(&mut self.instance)
     }
 
+    /// Lists visible parameter metadata and values on the CLAP main thread.
+    pub fn parameters(&mut self) -> Vec<ClapParameterInfo> {
+        let Some(instance) = self.instance.as_mut() else {
+            return Vec::new();
+        };
+        let handle = instance.plugin_handle();
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+        let count = params.count(&handle);
+        let mut result = Vec::with_capacity(count as usize);
+        let mut buffer = ParamInfoBuffer::new();
+        for index in 0..count {
+            let Some(info) = params.get_info(&handle, index, &mut buffer) else {
+                continue;
+            };
+            if info.flags.contains(ParamInfoFlags::IS_HIDDEN)
+                || !info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE)
+            {
+                continue;
+            }
+            let id = info.id;
+            let name = String::from_utf8_lossy(info.name).into_owned();
+            let (min_value, max_value, stepped, read_only, default_value) = (
+                info.min_value,
+                info.max_value,
+                info.flags.contains(ParamInfoFlags::IS_STEPPED),
+                info.flags.contains(ParamInfoFlags::IS_READONLY),
+                info.default_value,
+            );
+            let value = params.get_value(&handle, id).unwrap_or(default_value);
+            if !min_value.is_finite()
+                || !max_value.is_finite()
+                || max_value < min_value
+                || !default_value.is_finite()
+                || !value.is_finite()
+            {
+                continue;
+            }
+            let mut display_buffer = [0_u8; 64];
+            let display_value = params
+                .value_to_text(&handle, id, value, &mut display_buffer)
+                .map(|display| String::from_utf8_lossy(display).into_owned())
+                .unwrap_or_else(|_| format!("{value:.3}"));
+            result.push(ClapParameterInfo {
+                id: id.get(),
+                name,
+                min_value,
+                max_value,
+                default_value,
+                value,
+                display_value,
+                stepped,
+                read_only,
+            });
+        }
+        result
+    }
+
     /// Deactivates an effect whose graph was discarded before audio processing began.
     ///
     /// The processor handle must already have been dropped. Use [`Self::deactivate`] when the
@@ -555,6 +687,13 @@ impl ClapEffectOwner {
 }
 
 impl ClapEffectProcessor {
+    /// Takes the producer for this processor's fixed-capacity parameter queue.
+    pub fn take_parameter_sender(&mut self) -> ClapParameterSender {
+        self.parameter_sender
+            .take()
+            .expect("parameter sender is taken once before processor installation")
+    }
+
     /// Runs one interleaved stereo block through the effect.
     pub fn process(&mut self, audio: &mut [[f32; 2]]) -> Result<(), ClapInstrumentError> {
         if audio.len() > self.max_block_frames {
@@ -577,6 +716,45 @@ impl ClapEffectProcessor {
         }
         self.output_left[..audio.len()].fill(0.0);
         self.output_right[..audio.len()].fill(0.0);
+        self.input_events.clear();
+        while let Ok(command) = self.parameter_commands.pop() {
+            match command {
+                ClapParameterCommand::Begin { id } => {
+                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id) {
+                        if self.active_parameter_gestures.len()
+                            < self.active_parameter_gestures.capacity()
+                        {
+                            self.active_parameter_gestures.push(id);
+                            self.input_events
+                                .push(&ParamGestureBeginEvent::new(0, param_id));
+                        }
+                    }
+                }
+                ClapParameterCommand::Set { id, value } => {
+                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id) {
+                        self.input_events.push(&ParamValueEvent::new(
+                            0,
+                            param_id,
+                            Pckn::match_all(),
+                            value,
+                        ));
+                    }
+                }
+                ClapParameterCommand::End { id } => {
+                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id) {
+                        if let Some(index) = self
+                            .active_parameter_gestures
+                            .iter()
+                            .position(|active| *active == id)
+                        {
+                            self.active_parameter_gestures.swap_remove(index);
+                            self.input_events
+                                .push(&ParamGestureEndEvent::new(0, param_id));
+                        }
+                    }
+                }
+            }
+        }
 
         let input_events = InputEvents::from_buffer(&self.input_events);
         let mut plugin_output_events = DiscardPluginOutputEvents;
@@ -952,6 +1130,60 @@ fn restore_plugin_state(
         })
 }
 
+pub(crate) fn restore_parameter_values(instance: &mut PluginInstance<()>, values: &[(u32, f64)]) {
+    if values.is_empty() {
+        return;
+    }
+    let Some(mut handle) = instance.inactive_plugin_handle() else {
+        return;
+    };
+    let Some(params) = handle.get_extension::<PluginParams>() else {
+        return;
+    };
+    let mut events = EventBuffer::with_capacity(values.len());
+    let mut info_buffer = ParamInfoBuffer::new();
+    for (id, value) in values {
+        let Some(id) = clack_host::prelude::ClapId::from_raw(*id) else {
+            continue;
+        };
+        if !value.is_finite() {
+            continue;
+        }
+        let mut range = None;
+        for index in 0..params.count(&handle) {
+            if let Some(info) = params.get_info(&handle, index, &mut info_buffer)
+                && info.id == id
+            {
+                range = Some((
+                    info.min_value,
+                    info.max_value,
+                    info.flags.contains(ParamInfoFlags::IS_READONLY),
+                ));
+                break;
+            }
+        }
+        let Some((min_value, max_value, read_only)) = range else {
+            continue;
+        };
+        if !min_value.is_finite() || !max_value.is_finite() || max_value < min_value || read_only {
+            continue;
+        }
+        events.push(&ParamValueEvent::new(
+            0,
+            id,
+            Pckn::match_all(),
+            value.clamp(min_value, max_value),
+        ));
+    }
+    if events.is_empty() {
+        return;
+    }
+    let input = InputEvents::from_buffer(&events);
+    let mut output = EventBuffer::with_capacity(8);
+    let mut output_events = output.as_output();
+    params.flush(&mut handle, &input, &mut output_events);
+}
+
 fn save_plugin_state(
     instance: &mut Option<PluginInstance<()>>,
 ) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
@@ -1080,6 +1312,10 @@ mod tests {
     use clack_extensions::note_ports::{
         NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePortsImpl,
     };
+    use clack_extensions::params::{
+        ParamDisplayWriter, ParamInfo, ParamInfoFlags, ParamInfoWriter, PluginAudioProcessorParams,
+        PluginMainThreadParams,
+    };
     use clack_extensions::state::PluginStateImpl;
     use clack_plugin::entry::{DefaultPluginFactory, SinglePluginEntry};
     use clack_plugin::events::spaces::CoreEventSpace;
@@ -1092,6 +1328,7 @@ mod tests {
     };
     use clack_plugin::process::audio::ChannelPair;
     use clack_plugin::utils::ClapId;
+    use std::fmt::Write as FmtWrite;
     use std::io::{Read, Write};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU8;
@@ -1099,6 +1336,7 @@ mod tests {
     const PLUGIN_ID: &str = "org.aaadaw.test.synth";
     const MONO_PLUGIN_ID: &str = "org.aaadaw.test.mono-synth";
     const EFFECT_PLUGIN_ID: &str = "org.aaadaw.test.effect";
+    const STATELESS_EFFECT_PLUGIN_ID: &str = "org.aaadaw.test.stateless-effect";
 
     fn test_project(note_duration: u64) -> (Project, TrackId, NoteId) {
         let mut project = Project::new();
@@ -1297,6 +1535,7 @@ mod tests {
     }
 
     struct TestEffect;
+    struct TestStatelessEffect;
     struct TestEffectShared(Arc<AtomicU8>);
     struct TestEffectMainThread(Arc<AtomicU8>);
     struct TestEffectAudioProcessor(Arc<AtomicU8>);
@@ -1304,6 +1543,70 @@ mod tests {
     impl PluginShared<'_> for TestEffectShared {}
 
     impl PluginMainThread<'_, TestEffectShared> for TestEffectMainThread {}
+
+    impl PluginMainThreadParams for TestEffectMainThread {
+        fn count(&self) -> u32 {
+            1
+        }
+
+        fn get_info(&self, index: u32, writer: &mut ParamInfoWriter) {
+            if index == 0 {
+                writer.set(&ParamInfo {
+                    id: ClapId::new(1),
+                    flags: ParamInfoFlags::IS_AUTOMATABLE,
+                    cookie: clack_plugin::utils::Cookie::empty(),
+                    name: b"Amount",
+                    module: b"",
+                    min_value: 0.0,
+                    max_value: 255.0,
+                    default_value: 0.0,
+                });
+            }
+        }
+
+        fn get_value(&self, param_id: ClapId) -> Option<f64> {
+            (param_id.get() == 1).then(|| f64::from(self.0.load(Ordering::Relaxed)))
+        }
+
+        fn value_to_text(
+            &self,
+            _param_id: ClapId,
+            value: f64,
+            writer: &mut ParamDisplayWriter,
+        ) -> std::fmt::Result {
+            write!(writer, "{value:.0}")
+        }
+
+        fn text_to_value(&self, param_id: ClapId, text: &std::ffi::CStr) -> Option<f64> {
+            (param_id.get() == 1)
+                .then(|| text.to_str().ok()?.parse::<f64>().ok())
+                .flatten()
+        }
+
+        fn flush(
+            &self,
+            input: &clack_plugin::events::io::InputEvents,
+            _output: &mut clack_plugin::events::io::OutputEvents,
+        ) {
+            for event in input {
+                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event() {
+                    if value.param_id().is_some_and(|id| id.get() == 1) {
+                        self.0
+                            .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+
+    impl PluginAudioProcessorParams for TestEffectAudioProcessor {
+        fn flush(
+            &mut self,
+            _input: &clack_plugin::events::io::InputEvents,
+            _output: &mut clack_plugin::events::io::OutputEvents,
+        ) {
+        }
+    }
 
     impl PluginStateImpl for TestEffectMainThread {
         fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
@@ -1329,7 +1632,40 @@ mod tests {
             _shared: Option<&Self::Shared<'_>>,
         ) {
             builder.register::<clack_extensions::audio_ports::PluginAudioPorts>();
+            builder.register::<clack_extensions::params::PluginParams>();
             builder.register::<clack_extensions::state::PluginState>();
+        }
+    }
+
+    impl Plugin for TestStatelessEffect {
+        type AudioProcessor<'a> = TestEffectAudioProcessor;
+        type Shared<'a> = TestEffectShared;
+        type MainThread<'a> = TestEffectMainThread;
+
+        fn declare_extensions(
+            builder: &mut PluginExtensions<Self>,
+            _shared: Option<&Self::Shared<'_>>,
+        ) {
+            builder.register::<clack_extensions::audio_ports::PluginAudioPorts>();
+            builder.register::<clack_extensions::params::PluginParams>();
+        }
+    }
+
+    impl DefaultPluginFactory for TestStatelessEffect {
+        fn get_descriptor() -> PluginDescriptor {
+            PluginDescriptor::new(STATELESS_EFFECT_PLUGIN_ID, "AAADAW Stateless Test Effect")
+                .with_features([plugin_features::AUDIO_EFFECT])
+        }
+
+        fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
+            Ok(TestEffectShared(Arc::new(AtomicU8::new(0))))
+        }
+
+        fn new_main_thread<'a>(
+            _host: HostMainThreadHandle<'a>,
+            shared: &'a Self::Shared<'a>,
+        ) -> Result<Self::MainThread<'a>, PluginError> {
+            Ok(TestEffectMainThread(Arc::clone(&shared.0)))
         }
     }
 
@@ -1390,9 +1726,17 @@ mod tests {
             &mut self,
             _process: Process,
             mut audio: Audio,
-            _events: clack_plugin::process::Events,
+            events: clack_plugin::process::Events,
         ) -> Result<ProcessStatus, PluginError> {
             self.0.fetch_add(1, Ordering::Relaxed);
+            for event in events.input {
+                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event() {
+                    if value.param_id().is_some_and(|id| id.get() == 1) {
+                        self.0
+                            .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
+                    }
+                }
+            }
             for mut port in &mut audio {
                 let channels = port
                     .channels()
@@ -1423,6 +1767,11 @@ mod tests {
     fn test_effect_entry() -> PluginEntry {
         PluginEntry::load_from_clack::<SinglePluginEntry<TestEffect>>(c"test")
             .expect("static test effect entry")
+    }
+
+    fn test_stateless_effect_entry() -> PluginEntry {
+        PluginEntry::load_from_clack::<SinglePluginEntry<TestStatelessEffect>>(c"stateless-test")
+            .expect("static stateless test plugin entry")
     }
 
     #[test]
@@ -1469,10 +1818,12 @@ mod tests {
             test_effect_entry(),
             EFFECT_PLUGIN_ID,
             Some(&state),
+            &[(1, 64.0)],
             48_000,
             16,
         )
         .expect("test effect state should restore");
+        assert_eq!(owner.parameters()[0].value, 39.0);
         let mut processor = processor;
         let mut audio = [[0.8, -0.4], [0.2, -0.1]];
         processor
@@ -1486,11 +1837,85 @@ mod tests {
     }
 
     #[test]
+    fn effect_parameters_are_enumerated_and_queue_updates_through_processing() {
+        let (mut owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let parameters = owner.parameters();
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].id, 1);
+        assert_eq!(parameters[0].name, "Amount");
+        assert_eq!(parameters[0].min_value, 0.0);
+        assert_eq!(parameters[0].max_value, 255.0);
+        assert_eq!(parameters[0].value, 0.0);
+
+        let mut sender = processor.take_parameter_sender();
+        sender
+            .try_send(ClapParameterCommand::Begin { id: 1 })
+            .unwrap();
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 42.0 })
+            .unwrap();
+        sender
+            .try_send(ClapParameterCommand::End { id: 1 })
+            .unwrap();
+        processor.process(&mut [[0.0, 0.0]; 4]).unwrap();
+        assert_eq!(owner.parameters()[0].value, 42.0);
+        assert_eq!(owner.save_state().unwrap(), Some(vec![42]));
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn parameter_queue_keeps_room_for_a_gesture_end_event() {
+        let (producer, mut consumer) = RingBuffer::new(4);
+        let mut sender = ClapParameterSender(producer);
+        sender
+            .try_send(ClapParameterCommand::Begin { id: 1 })
+            .unwrap();
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 1.0 })
+            .unwrap();
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 2.0 })
+            .unwrap();
+        assert!(
+            sender
+                .try_send(ClapParameterCommand::Set { id: 1, value: 3.0 })
+                .is_err()
+        );
+        sender
+            .try_send(ClapParameterCommand::End { id: 1 })
+            .unwrap();
+
+        let commands = std::iter::from_fn(|| consumer.pop().ok()).collect::<Vec<_>>();
+        assert_eq!(commands.last(), Some(&ClapParameterCommand::End { id: 1 }));
+        assert_eq!(commands.len(), 4);
+    }
+
+    #[test]
+    fn stored_host_parameters_restore_for_effects_without_state_extension() {
+        let (mut owner, processor) = ClapEffectOwner::load_from_entry_with_state(
+            test_stateless_effect_entry(),
+            STATELESS_EFFECT_PLUGIN_ID,
+            None,
+            &[(1, 64.0)],
+            48_000,
+            16,
+        )
+        .expect("stateless effect should load with stored host parameters");
+
+        assert_eq!(owner.parameters()[0].value, 64.0);
+        assert_eq!(owner.save_state().unwrap(), None);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
     fn restore_errors_are_distinguished_from_plugin_activation_errors() {
         let state_error = ClapEffectOwner::load_from_entry_with_state(
             test_effect_entry(),
             EFFECT_PLUGIN_ID,
             Some(&[]),
+            &[],
             48_000,
             16,
         )

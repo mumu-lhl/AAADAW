@@ -2,6 +2,7 @@ use super::{App, Message};
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackFxPlugin, TrackId};
+use aaadaw_engine::ClapParameterCommand;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_engine::TrackFxProcessor;
 use iced::Task;
@@ -25,6 +26,8 @@ impl App {
     ) -> Result<Vec<u64>, String> {
         let mut owners = Vec::new();
         let mut owner_targets = Vec::new();
+        let mut parameter_targets = Vec::new();
+        let mut parameter_senders = Vec::new();
         let mut processors = Vec::new();
         let sample_rate = self.project.settings().sample_rate();
         let max_block_frames = prepared.graph().max_block_frames();
@@ -34,6 +37,7 @@ impl App {
                 if !plugin.is_enabled() {
                     continue;
                 }
+                let parameter_values = plugin.parameter_values().collect::<Vec<_>>();
                 // SAFETY: this project plugin was explicitly added from the user's scanned CLAP
                 // catalog; in-process CLAP plugins are documented as trusted native code.
                 let loaded = unsafe {
@@ -41,6 +45,7 @@ impl App {
                         Path::new(plugin.bundle_path()),
                         plugin.plugin_id(),
                         plugin.state(),
+                        &parameter_values,
                         sample_rate,
                         max_block_frames,
                     )
@@ -57,9 +62,11 @@ impl App {
                         // omits its optional saved state after the plugin rejected that state.
                         (
                             unsafe {
-                                aaadaw_engine::ClapEffectOwner::load(
+                                aaadaw_engine::ClapEffectOwner::load_with_state(
                                     Path::new(plugin.bundle_path()),
                                     plugin.plugin_id(),
+                                    None,
+                                    &parameter_values,
                                     sample_rate,
                                     max_block_frames,
                                 )
@@ -70,14 +77,17 @@ impl App {
                     result => (result, true),
                 };
                 match loaded {
-                    Ok((owner, processor)) => {
+                    Ok((owner, mut processor)) => {
+                        let instance_id = owner.instance_id();
+                        parameter_targets.push((instance_id, (track.id(), chain_index)));
                         if state_restored {
                             owner_targets.push((
                                 owner.instance_id(),
                                 (track.id(), chain_index, plugin.plugin_id().to_owned()),
                             ));
                         }
-                        owners.push((owner.instance_id(), owner));
+                        owners.push((instance_id, owner));
+                        parameter_senders.push((instance_id, processor.take_parameter_sender()));
                         processors.push(TrackFxProcessor::new(
                             track.id(),
                             chain_index,
@@ -105,6 +115,8 @@ impl App {
 
         let ids = owners.iter().map(|(instance_id, _)| *instance_id).collect();
         self.clap_effect_targets.extend(owner_targets);
+        self.clap_effect_parameter_targets.extend(parameter_targets);
+        self.clap_effect_parameter_senders.extend(parameter_senders);
         for (instance_id, owner) in owners {
             self.clap_effect_owners.insert(instance_id, owner);
         }
@@ -123,6 +135,8 @@ impl App {
                 Some(Ok(())) => {
                     self.clap_effect_owners.remove(id);
                     self.clap_effect_targets.remove(id);
+                    self.clap_effect_parameter_targets.remove(id);
+                    self.clap_effect_parameter_senders.remove(id);
                 }
                 Some(Err(error)) => {
                     error_message = Some(format!(
@@ -144,6 +158,8 @@ impl App {
             let instance_id = stopped.instance_id();
             if let Some(owner) = self.clap_effect_owners.remove(&instance_id) {
                 self.clap_effect_targets.remove(&instance_id);
+                self.clap_effect_parameter_targets.remove(&instance_id);
+                self.clap_effect_parameter_senders.remove(&instance_id);
                 let (_, _, _, processor) = stopped.into_parts();
                 owner.deactivate(processor);
             } else {
@@ -490,6 +506,7 @@ impl App {
         let plugin_id = plugin.plugin_id().to_owned();
         let bundle_path = plugin.bundle_path().to_owned();
         let saved_state = plugin.state().map(<[u8]>::to_vec);
+        let parameter_values = plugin.parameter_values().collect::<Vec<_>>();
         let identity = (track_id, index, plugin_id.clone());
         if self.fx_chain_plugin_gui_identity.as_ref() == Some(&identity) {
             return Task::none();
@@ -511,10 +528,18 @@ impl App {
                 editor_height,
                 self.fx_chain_window_scale_factor,
                 saved_state.as_deref(),
+                &parameter_values,
             )
         };
         match loaded {
             Ok(mut plugin_gui) => {
+                self.fx_chain_parameters = plugin_gui.parameters();
+                self.fx_parameter_value_edits.clear();
+                self.fx_parameter_value_edit_pending.clear();
+                for parameter in &self.fx_chain_parameters {
+                    self.fx_parameter_value_edits
+                        .insert(parameter.id, parameter.value.to_string());
+                }
                 let mut resize_task = Task::none();
                 if let Some(editor_size) = plugin_gui.preferred_size() {
                     let required_size = super::x11_plugin_editor::window_size_for_editor(
@@ -549,6 +574,9 @@ impl App {
     }
 
     pub(super) fn close_selected_fx_plugin_gui(&mut self) {
+        if let Some(gesture) = self.fx_parameter_gesture.as_ref() {
+            self.end_fx_parameter_gesture(gesture.parameter_id);
+        }
         if let Some(mut plugin_gui) = self.fx_chain_plugin_gui.take() {
             let state = plugin_gui.save_state();
             if let Err(error) = &state {
@@ -589,6 +617,292 @@ impl App {
             plugin_gui.close();
         }
         self.fx_chain_plugin_gui_identity = None;
+        self.fx_chain_parameters.clear();
+        self.fx_parameter_value_edits.clear();
+        self.fx_parameter_value_edit_pending.clear();
+    }
+
+    pub(super) fn change_fx_parameter(&mut self, parameter_id: u32, value: f64) {
+        if self.fx_parameter_end_requested || self.pending_fx_parameter_sync.is_some() {
+            self.status = "Waiting for the active CLAP parameter update to finish".to_owned();
+            return;
+        }
+        let (Some(track_id), Some(chain_index)) =
+            (self.fx_chain_track_id, self.fx_chain_selected_index)
+        else {
+            return;
+        };
+        let Some(parameter) = self
+            .fx_chain_parameters
+            .iter()
+            .find(|parameter| parameter.id == parameter_id)
+        else {
+            return;
+        };
+        if parameter.stepped
+            || parameter.read_only
+            || !value.is_finite()
+            || value < parameter.min_value
+            || value > parameter.max_value
+        {
+            return;
+        }
+        let Some(plugin) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .and_then(|track| track.fx_chain().get(chain_index))
+        else {
+            return;
+        };
+        if self.fx_parameter_gesture.is_none() {
+            let before = parameter.value;
+            if (before - value).abs() < f64::EPSILON {
+                return;
+            }
+            let before_state = plugin.state().map(<[u8]>::to_vec);
+            let command = ClapParameterCommand::Begin { id: parameter_id };
+            if !self.send_fx_parameter_command(track_id, chain_index, command) {
+                self.status = "CLAP parameter queue is full; edit was not started".to_owned();
+                return;
+            }
+            if let Some(gui) = self.fx_chain_plugin_gui.as_mut()
+                && let Err(error) = gui.apply_parameter_command(command)
+            {
+                self.status = format!("Could not begin CLAP parameter edit: {error}");
+                return;
+            }
+            self.fx_parameter_gesture = Some(super::FxParameterGesture {
+                track_id,
+                chain_index,
+                parameter_id,
+                before,
+                after: before,
+                before_state,
+            });
+        }
+        let command = ClapParameterCommand::Set {
+            id: parameter_id,
+            value,
+        };
+        if !self.send_fx_parameter_command(track_id, chain_index, command) {
+            self.status = "CLAP parameter queue is full; the latest change was skipped".to_owned();
+            return;
+        }
+        if let Some(gui) = self.fx_chain_plugin_gui.as_mut()
+            && let Err(error) = gui.apply_parameter_command(command)
+        {
+            self.status = format!("Could not update CLAP parameter: {error}");
+            return;
+        }
+        if let Some(parameter) = self
+            .fx_chain_parameters
+            .iter_mut()
+            .find(|parameter| parameter.id == parameter_id)
+        {
+            parameter.value = value;
+            parameter.display_value = format!("{value:.3}");
+        }
+        if !self.fx_parameter_value_edit_pending.contains(&parameter_id) {
+            self.fx_parameter_value_edits
+                .insert(parameter_id, value.to_string());
+        }
+        if let Some(gesture) = &mut self.fx_parameter_gesture {
+            gesture.after = value;
+        }
+    }
+
+    pub(super) fn commit_fx_parameter_value(&mut self, parameter_id: u32) {
+        let Some(text) = self.fx_parameter_value_edits.get(&parameter_id).cloned() else {
+            return;
+        };
+        let parsed = text.trim().parse::<f64>();
+        let Some(parameter) = self
+            .fx_chain_parameters
+            .iter()
+            .find(|parameter| parameter.id == parameter_id)
+        else {
+            return;
+        };
+        let Ok(value) = parsed else {
+            self.status = "Enter a valid numeric parameter value".to_owned();
+            return;
+        };
+        if !value.is_finite() || value < parameter.min_value || value > parameter.max_value {
+            self.status = format!(
+                "Value must be between {} and {}",
+                parameter.min_value, parameter.max_value
+            );
+            return;
+        }
+        self.change_fx_parameter(parameter_id, value);
+        self.end_fx_parameter_gesture(parameter_id);
+        self.fx_parameter_value_edit_pending.remove(&parameter_id);
+        self.fx_parameter_value_edits
+            .insert(parameter_id, value.to_string());
+    }
+
+    pub(super) fn reset_fx_parameter_value(&mut self, parameter_id: u32) {
+        let Some(value) = self
+            .fx_chain_parameters
+            .iter()
+            .find(|parameter| parameter.id == parameter_id)
+            .map(|parameter| parameter.default_value)
+        else {
+            return;
+        };
+        self.change_fx_parameter(parameter_id, value);
+        self.end_fx_parameter_gesture(parameter_id);
+        self.fx_parameter_value_edit_pending.remove(&parameter_id);
+        self.fx_parameter_value_edits
+            .insert(parameter_id, value.to_string());
+    }
+
+    pub(super) fn end_fx_parameter_gesture(&mut self, parameter_id: u32) {
+        let Some(gesture) = self.fx_parameter_gesture.take() else {
+            return;
+        };
+        if gesture.parameter_id != parameter_id {
+            self.fx_parameter_gesture = Some(gesture);
+            return;
+        }
+        let command = ClapParameterCommand::End { id: parameter_id };
+        if !self.send_fx_parameter_command(gesture.track_id, gesture.chain_index, command) {
+            self.fx_parameter_gesture = Some(gesture);
+            self.fx_parameter_end_requested = true;
+            self.status =
+                "CLAP parameter queue is full; the edit will finish when the audio thread catches up"
+                    .to_owned();
+            return;
+        }
+        self.fx_parameter_end_requested = false;
+        if let Some(gui) = self.fx_chain_plugin_gui.as_mut() {
+            if let Err(error) = gui.apply_parameter_command(command) {
+                self.status = format!("Could not finish CLAP parameter edit: {error}");
+            }
+        }
+        if (gesture.after - gesture.before).abs() < f64::EPSILON {
+            return;
+        }
+        let after_state = match self
+            .fx_chain_plugin_gui
+            .as_mut()
+            .map(|gui| gui.save_state())
+        {
+            Some(Ok(state)) => state,
+            Some(Err(error)) => {
+                self.status = format!("Could not capture edited CLAP state: {error}");
+                gesture.before_state.clone()
+            }
+            None => gesture.before_state.clone(),
+        };
+        self.apply_action(
+            DawAction::SetTrackFxParameter {
+                track_id: gesture.track_id,
+                chain_index: gesture.chain_index,
+                parameter_id,
+                before: gesture.before,
+                after: gesture.after,
+                before_state: gesture.before_state,
+                after_state,
+            },
+            "Effect parameter changed",
+        );
+    }
+
+    fn send_fx_parameter_command(
+        &mut self,
+        track_id: TrackId,
+        chain_index: usize,
+        command: ClapParameterCommand,
+    ) -> bool {
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        {
+            let instance_id =
+                self.clap_effect_parameter_targets
+                    .iter()
+                    .find_map(|(instance_id, target)| {
+                        (*target == (track_id, chain_index)).then_some(*instance_id)
+                    });
+            if let Some(sender) = instance_id
+                .and_then(|instance_id| self.clap_effect_parameter_senders.get_mut(&instance_id))
+                && sender.try_send(command).is_err()
+            {
+                return false;
+            }
+            true
+        }
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        {
+            let _ = (track_id, chain_index, command);
+            true
+        }
+    }
+
+    pub(super) fn sync_fx_parameter_cache_from_project(&mut self) {
+        let Some(change) = self.project.last_fx_parameter_change() else {
+            return;
+        };
+        self.sync_fx_parameter_change(change);
+    }
+
+    pub(super) fn sync_fx_parameter_change(&mut self, change: aaadaw_core::FxParameterChange) {
+        let begin = ClapParameterCommand::Begin {
+            id: change.parameter_id,
+        };
+        let begin_queued =
+            self.send_fx_parameter_command(change.track_id, change.chain_index, begin);
+        let gui_matches_target =
+            self.fx_chain_plugin_gui_identity
+                .as_ref()
+                .is_some_and(|identity| {
+                    identity.0 == change.track_id && identity.1 == change.chain_index
+                });
+        let set = ClapParameterCommand::Set {
+            id: change.parameter_id,
+            value: change.value,
+        };
+        let end = ClapParameterCommand::End {
+            id: change.parameter_id,
+        };
+        let (set_queued, end_queued) = if begin_queued {
+            let set_queued =
+                self.send_fx_parameter_command(change.track_id, change.chain_index, set);
+            // Always close a gesture after Begin, even if a full queue rejected Set.
+            let end_queued =
+                self.send_fx_parameter_command(change.track_id, change.chain_index, end);
+            (set_queued, end_queued)
+        } else {
+            (false, false)
+        };
+        if gui_matches_target && let Some(gui) = self.fx_chain_plugin_gui.as_mut() {
+            let _ = gui.apply_parameter_command(begin);
+            let _ = gui.apply_parameter_command(set);
+            let _ = gui.apply_parameter_command(end);
+        }
+        if !begin_queued || !set_queued || !end_queued {
+            self.pending_fx_parameter_sync = Some(change);
+            self.status = "CLAP parameter queue is full; undo/redo sync will retry".to_owned();
+        } else {
+            self.pending_fx_parameter_sync = None;
+        }
+        if self.fx_chain_track_id == Some(change.track_id)
+            && self.fx_chain_selected_index == Some(change.chain_index)
+        {
+            if let Some(parameter) = self
+                .fx_chain_parameters
+                .iter_mut()
+                .find(|parameter| parameter.id == change.parameter_id)
+            {
+                parameter.value = change.value;
+                parameter.display_value = format!("{:.3}", change.value);
+            }
+            self.fx_parameter_value_edits
+                .insert(change.parameter_id, change.value.to_string());
+            self.fx_parameter_value_edit_pending
+                .remove(&change.parameter_id);
+        }
     }
 
     pub(super) fn close_fx_editor_resources(&mut self) {

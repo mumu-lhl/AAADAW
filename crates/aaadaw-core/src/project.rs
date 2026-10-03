@@ -1,6 +1,7 @@
 use crate::snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackFxPluginSnapshot, TrackSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    TrackSnapshot,
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
@@ -18,6 +19,16 @@ pub struct Project {
     ids: IdAllocator,
     history: Vec<ProjectEvent>,
     history_cursor: usize,
+    last_fx_parameter_change: Option<FxParameterChange>,
+}
+
+/// The parameter value affected by the most recent history operation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FxParameterChange {
+    pub track_id: TrackId,
+    pub chain_index: usize,
+    pub parameter_id: u32,
+    pub value: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -88,6 +99,15 @@ enum ProjectEvent {
         track_id: TrackId,
         before: Vec<TrackFxPlugin>,
         after: Vec<TrackFxPlugin>,
+    },
+    TrackFxParameterChanged {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        before: f64,
+        after: f64,
+        before_state: Option<Vec<u8>>,
+        after_state: Option<Vec<u8>>,
     },
     TrackRenamed {
         track_id: TrackId,
@@ -260,6 +280,23 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::TrackFxParameterChanged {
+                track_id,
+                chain_index,
+                parameter_id,
+                before,
+                after,
+                before_state,
+                after_state,
+            } => Self::TrackFxParameterChanged {
+                track_id: *track_id,
+                chain_index: *chain_index,
+                parameter_id: *parameter_id,
+                before: *after,
+                after: *before,
+                before_state: after_state.clone(),
+                after_state: before_state.clone(),
+            },
             Self::TrackRenamed {
                 track_id,
                 before,
@@ -366,6 +403,27 @@ impl ProjectEvent {
     }
 }
 
+fn fx_parameter_change(event: &ProjectEvent) -> Option<FxParameterChange> {
+    match event {
+        ProjectEvent::TrackFxParameterChanged {
+            track_id,
+            chain_index,
+            parameter_id,
+            after,
+            ..
+        } => Some(FxParameterChange {
+            track_id: *track_id,
+            chain_index: *chain_index,
+            parameter_id: *parameter_id,
+            value: *after,
+        }),
+        ProjectEvent::Transaction { events, .. } => {
+            events.iter().rev().find_map(fx_parameter_change)
+        }
+        _ => None,
+    }
+}
+
 impl Project {
     /// Creates an empty project with 48 kHz, 960 PPQ and 120 BPM defaults.
     pub fn new() -> Self {
@@ -433,6 +491,7 @@ impl Project {
         self.history.truncate(self.history_cursor);
         self.history.push(event);
         self.history_cursor += 1;
+        self.last_fx_parameter_change = fx_parameter_change(self.history.last().unwrap());
         Ok(())
     }
 
@@ -449,6 +508,7 @@ impl Project {
 
         self.state = state;
         self.history_cursor -= 1;
+        self.last_fx_parameter_change = fx_parameter_change(&event);
         Ok(true)
     }
 
@@ -462,7 +522,13 @@ impl Project {
 
         self.state = state;
         self.history_cursor += 1;
+        self.last_fx_parameter_change = fx_parameter_change(event);
         Ok(true)
+    }
+
+    /// Returns the parameter affected by the last apply, undo, or redo operation.
+    pub fn last_fx_parameter_change(&self) -> Option<FxParameterChange> {
+        self.last_fx_parameter_change
     }
 
     /// Returns the project's tracks in timeline order.
@@ -511,6 +577,13 @@ impl Project {
                             bundle_path: plugin.bundle_path().to_owned(),
                             enabled: plugin.is_enabled(),
                             state: plugin.state().map(<[u8]>::to_vec),
+                            parameter_values: plugin
+                                .parameter_values()
+                                .map(|(parameter_id, value)| TrackFxParameterValueSnapshot {
+                                    parameter_id,
+                                    value,
+                                })
+                                .collect(),
                         })
                         .collect(),
                 })
@@ -635,13 +708,24 @@ impl Project {
                 .fx_chain
                 .into_iter()
                 .map(|plugin| {
-                    TrackFxPlugin::new(plugin.plugin_id, plugin.bundle_path)
+                    let mut plugin_ref = TrackFxPlugin::new(plugin.plugin_id, plugin.bundle_path)
                         .map(|plugin_ref| {
                             plugin_ref
                                 .with_enabled(plugin.enabled)
                                 .with_state(plugin.state)
                         })
-                        .ok_or(SnapshotError::InvalidProjectData)
+                        .ok_or(SnapshotError::InvalidProjectData)?;
+                    let mut parameter_ids = HashSet::with_capacity(plugin.parameter_values.len());
+                    for parameter in plugin.parameter_values {
+                        if !parameter.value.is_finite()
+                            || !parameter_ids.insert(parameter.parameter_id)
+                        {
+                            return Err(SnapshotError::InvalidProjectData);
+                        }
+                        plugin_ref = plugin_ref
+                            .with_parameter_value(parameter.parameter_id, parameter.value);
+                    }
+                    Ok(plugin_ref)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if !track_ids.insert(track.id)
@@ -748,6 +832,7 @@ impl Project {
             },
             history: Vec::new(),
             history_cursor: 0,
+            last_fx_parameter_change: None,
         })
     }
 
@@ -949,6 +1034,49 @@ impl Project {
                     track_id,
                     before: track.fx_chain.clone(),
                     after: plugins,
+                }
+            }
+            DawAction::SetTrackFxParameter {
+                track_id,
+                chain_index,
+                parameter_id,
+                before,
+                after,
+                before_state,
+                after_state,
+            } => {
+                if !before.is_finite() || !after.is_finite() || before == after {
+                    return Err(ActionError::InvalidTrackFxParameter);
+                }
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let plugin = track
+                    .fx_chain
+                    .get_mut(chain_index)
+                    .ok_or(ActionError::InvalidTrackFxParameter)?;
+                if plugin.state() != before_state.as_deref() {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                // The loaded plugin can report a newer effective value after a plugin update or
+                // a restored CLAP State. Treat the host's observed `before` value as the current
+                // baseline; undo then restores what the user actually saw in the plugin.
+                if plugin
+                    .parameter_value(parameter_id)
+                    .is_some_and(|stored| stored != before)
+                {
+                    *plugin = plugin.clone().with_parameter_value(parameter_id, before);
+                }
+                ProjectEvent::TrackFxParameterChanged {
+                    track_id,
+                    chain_index,
+                    parameter_id,
+                    before,
+                    after,
+                    before_state,
+                    after_state,
                 }
             }
             DawAction::SetTrackName { track_id, name } => {
@@ -1650,6 +1778,35 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.fx_chain.clone_from(after);
+            }
+            ProjectEvent::TrackFxParameterChanged {
+                track_id,
+                chain_index,
+                parameter_id,
+                before: _,
+                after,
+                before_state,
+                after_state,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let plugin = track
+                    .fx_chain
+                    .get_mut(*chain_index)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                // A live plugin can change independently (for example through its native
+                // editor or after a plugin update), so history restores recorded values even
+                // when the current host cache no longer matches this event's expected value.
+                if plugin.state() != before_state.as_deref() {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                *plugin = plugin
+                    .clone()
+                    .with_state(after_state.clone())
+                    .with_parameter_value(*parameter_id, *after);
             }
             ProjectEvent::TrackRenamed {
                 track_id,

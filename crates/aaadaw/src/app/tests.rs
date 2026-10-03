@@ -3,9 +3,7 @@ use super::commands::{self, CommandId, TrackCommand};
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
 use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-use aaadaw_core::TrackFxPlugin;
-use aaadaw_core::{DawAction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
@@ -790,6 +788,103 @@ fn track_fx_add_button_opens_a_scanned_plugin_picker_and_chain_edits_use_actions
     assert!(!app.project.tracks()[0].fx_chain()[0].is_enabled());
     let _ = app.update(Message::RemoveSelectedFxPlugin);
     assert!(app.project.tracks()[0].fx_chain().is_empty());
+}
+
+#[test]
+fn fx_parameter_slider_commits_one_undoable_gesture() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Guitar".to_owned(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("org.example.eq", "/plugins/eq.clap").unwrap()],
+        })
+        .unwrap();
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(0);
+    app.fx_chain_parameters = vec![aaadaw_engine::ClapParameterInfo {
+        id: 12,
+        name: "Gain".to_owned(),
+        min_value: -24.0,
+        max_value: 24.0,
+        default_value: 0.0,
+        value: 0.0,
+        display_value: "0 dB".to_owned(),
+        stepped: false,
+        read_only: false,
+    }];
+
+    let _ = app.update(Message::FxParameterChanged(12, 6.0));
+    let _ = app.update(Message::FxParameterChanged(12, 12.0));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        None
+    );
+    let _ = app.update(Message::FxParameterEnded(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(12.0)
+    );
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(0.0)
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(12.0)
+    );
+
+    let _ = app.update(Message::FxParameterValueTextChanged(
+        12,
+        "-3.125".to_owned(),
+    ));
+    let _ = app.update(Message::CommitFxParameterValue(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(-3.125)
+    );
+
+    let _ = app.update(Message::ResetFxParameterValue(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(0.0)
+    );
+
+    let _ = app.update(Message::FxParameterValueTextChanged(12, "2.5".to_owned()));
+    let _ = app.update(Message::FxParameterChanged(12, 8.0));
+    assert_eq!(
+        app.fx_parameter_value_edits.get(&12).map(String::as_str),
+        Some("2.5")
+    );
+    let _ = app.update(Message::FxParameterEnded(12));
+    let _ = app.update(Message::CommitFxParameterValue(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(2.5)
+    );
+
+    let _ = app.update(Message::FxParameterValueTextChanged(12, "999".to_owned()));
+    let _ = app.update(Message::CommitFxParameterValue(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(2.5)
+    );
+
+    let _ = app.update(Message::FxParameterChanged(12, 15.0));
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(2.5)
+    );
 }
 
 #[test]

@@ -123,6 +123,17 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("track FX chain should be assigned");
     project
+        .apply(DawAction::SetTrackFxParameter {
+            track_id,
+            chain_index: 1,
+            parameter_id: 23,
+            before: 0.0,
+            after: 0.375,
+            before_state: None,
+            after_state: None,
+        })
+        .expect("host parameter value should be stored independently of CLAP State");
+    project
         .apply(DawAction::InsertAudioItem {
             track_id,
             media_ref: "asset://room-tone".to_owned(),
@@ -226,6 +237,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN instrument_state; \
              ALTER TABLE tracks DROP COLUMN record_armed; \
              ALTER TABLE track_fx_plugins DROP COLUMN state; \
+             DROP TABLE track_fx_parameter_values; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -1177,5 +1189,22 @@ fn files_from_newer_schema_versions_are_rejected_without_downgrade() {
         .expect("schema version should still be available");
     assert_eq!(version, future_version);
     drop(connection);
+    remove_database(&path);
+}
+
+#[test]
+fn schema_six_projects_migrate_host_fx_parameter_storage() {
+    let path = project_path();
+    let store = ProjectStore::open(&path).expect("new project should open");
+    store.close().expect("project should close");
+    let connection = Connection::open(&path).expect("project should be SQLite");
+    connection
+        .execute_batch("DROP TABLE track_fx_parameter_values; PRAGMA user_version = 6;")
+        .expect("project should resemble a schema-six database");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("schema six should migrate to seven");
+    assert_eq!(store.schema_version().unwrap(), 7);
+    store.close().expect("migrated project should close");
     remove_database(&path);
 }

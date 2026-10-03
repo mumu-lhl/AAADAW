@@ -80,6 +80,7 @@ pub struct TrackFxPlugin {
     bundle_path: String,
     enabled: bool,
     state: Option<Vec<u8>>,
+    parameter_values: Vec<(u32, u64)>,
 }
 
 impl TrackFxPlugin {
@@ -95,6 +96,7 @@ impl TrackFxPlugin {
             bundle_path,
             enabled: true,
             state: None,
+            parameter_values: Vec::new(),
         })
     }
 
@@ -127,6 +129,32 @@ impl TrackFxPlugin {
     /// Returns a copy carrying the plugin's serialized state.
     pub fn with_state(mut self, state: Option<Vec<u8>>) -> Self {
         self.state = state;
+        self
+    }
+
+    /// Returns the host's stored value for a CLAP parameter, when available.
+    pub fn parameter_value(&self, id: u32) -> Option<f64> {
+        self.parameter_values
+            .iter()
+            .find(|(parameter_id, _)| *parameter_id == id)
+            .map(|(_, value)| f64::from_bits(*value))
+    }
+
+    /// Returns all host parameter values for snapshot and plugin restoration.
+    pub fn parameter_values(&self) -> impl Iterator<Item = (u32, f64)> + '_ {
+        self.parameter_values
+            .iter()
+            .map(|(parameter_id, bits)| (*parameter_id, f64::from_bits(*bits)))
+    }
+
+    pub(crate) fn with_parameter_value(mut self, id: u32, value: f64) -> Self {
+        match self
+            .parameter_values
+            .binary_search_by_key(&id, |(parameter_id, _)| *parameter_id)
+        {
+            Ok(index) => self.parameter_values[index].1 = value.to_bits(),
+            Err(index) => self.parameter_values.insert(index, (id, value.to_bits())),
+        }
         self
     }
 }

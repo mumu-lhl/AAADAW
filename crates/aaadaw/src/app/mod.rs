@@ -16,10 +16,10 @@ use aaadaw_app::{
 };
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_core::ProjectSnapshot;
-use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem, Project, TrackId};
-use aaadaw_engine::ClapPluginGuiOwner;
+use aaadaw_core::{AudioItem, DawAction, FxParameterChange, ItemId, MidiItem, Project, TrackId};
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner};
+use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
+use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -154,6 +154,11 @@ struct App {
     fx_chain_plugin_gui: Option<ClapPluginGuiOwner>,
     fx_chain_plugin_gui_identity: Option<(TrackId, usize, String)>,
     fx_chain_editor_status: String,
+    fx_chain_parameters: Vec<ClapParameterInfo>,
+    fx_parameter_gesture: Option<FxParameterGesture>,
+    fx_parameter_end_requested: bool,
+    fx_parameter_value_edits: HashMap<u32, String>,
+    fx_parameter_value_edit_pending: HashSet<u32>,
     midi_editor_window_id: Option<iced::window::Id>,
     midi_editor_item_id: Option<ItemId>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
@@ -238,7 +243,12 @@ struct App {
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_owners: ClapEffectOwners,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_effect_parameter_senders: HashMap<u64, ClapParameterSender>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_targets: HashMap<u64, (TrackId, usize, String)>,
+    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    clap_effect_parameter_targets: HashMap<u64, (TrackId, usize)>,
+    pending_fx_parameter_sync: Option<FxParameterChange>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_effect_state_overrides: HashSet<(TrackId, usize, String)>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -247,6 +257,16 @@ struct App {
     clap_instrument_targets: HashMap<u64, TrackId>,
     #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
     clap_plugin_warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct FxParameterGesture {
+    track_id: TrackId,
+    chain_index: usize,
+    parameter_id: u32,
+    before: f64,
+    after: f64,
+    before_state: Option<Vec<u8>>,
 }
 
 struct PendingAudioImport {
@@ -1056,6 +1076,14 @@ impl App {
                 task = self.select_scanned_instrument(&plugin_id)
             }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
+            Message::FxParameterChanged(id, value) => self.change_fx_parameter(id, value),
+            Message::FxParameterEnded(id) => self.end_fx_parameter_gesture(id),
+            Message::FxParameterValueTextChanged(id, value) => {
+                self.fx_parameter_value_edits.insert(id, value);
+                self.fx_parameter_value_edit_pending.insert(id);
+            }
+            Message::CommitFxParameterValue(id) => self.commit_fx_parameter_value(id),
+            Message::ResetFxParameterValue(id) => self.reset_fx_parameter_value(id),
             Message::ToggleFxChainPlugin(index) => self.toggle_fx_chain_plugin(index),
             Message::RemoveSelectedFxPlugin => task = self.remove_selected_fx_plugin(),
             Message::FxChainWindowNativeHandle(window_id, handle) => {
@@ -1402,6 +1430,14 @@ impl App {
             Message::BackgroundTick => {
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 {
+                    if self.fx_parameter_end_requested
+                        && let Some(gesture) = self.fx_parameter_gesture.as_ref()
+                    {
+                        self.end_fx_parameter_gesture(gesture.parameter_id);
+                    }
+                    if let Some(change) = self.pending_fx_parameter_sync {
+                        self.sync_fx_parameter_change(change);
+                    }
                     self.update_playback_stats();
                     let recording_failed = self
                         .recording
@@ -2436,12 +2472,24 @@ impl App {
     }
 
     fn undo(&mut self) {
+        if let Some(parameter_id) = self
+            .fx_parameter_gesture
+            .as_ref()
+            .map(|gesture| gesture.parameter_id)
+        {
+            self.end_fx_parameter_gesture(parameter_id);
+        }
+        if self.fx_parameter_end_requested || self.pending_fx_parameter_sync.is_some() {
+            self.status = "Waiting for the active CLAP parameter update to finish".to_owned();
+            return;
+        }
         self.audio_item_start_edits.clear();
         self.status = match self.project.undo() {
             Ok(true) => {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                self.sync_fx_parameter_cache_from_project();
                 "Action undone".to_owned()
             }
             Ok(false) => "Nothing to undo".to_owned(),
@@ -2450,6 +2498,17 @@ impl App {
     }
 
     fn redo(&mut self) {
+        if let Some(parameter_id) = self
+            .fx_parameter_gesture
+            .as_ref()
+            .map(|gesture| gesture.parameter_id)
+        {
+            self.end_fx_parameter_gesture(parameter_id);
+        }
+        if self.fx_parameter_end_requested || self.pending_fx_parameter_sync.is_some() {
+            self.status = "Waiting for the active CLAP parameter update to finish".to_owned();
+            return;
+        }
         self.audio_item_start_edits.clear();
         self.status = match self.project.redo() {
             Ok(true) => {
@@ -2460,6 +2519,7 @@ impl App {
                     });
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                self.sync_fx_parameter_cache_from_project();
                 "Action redone".to_owned()
             }
             Ok(false) => "Nothing to redo".to_owned(),
