@@ -8,7 +8,7 @@ use aaadaw_core::TrackFxPlugin;
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
@@ -1339,6 +1339,87 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
     assert!(app.project.midi_items().is_empty());
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].notes().len(), 4);
+}
+
+#[test]
+fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 240,
+            duration: 240,
+            velocity: 90,
+        },
+    ));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 64,
+            tick: 960,
+            duration: 480,
+            velocity: 110,
+        },
+    ));
+    let source_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+
+    let _ = app.update(Message::CopyMidiNotes(item_id, source_ids.clone()));
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 4);
+    assert_eq!(notes[2].tick(), 1_200);
+    assert_eq!(notes[3].tick(), 1_920);
+    assert_ne!(notes[2].id(), source_ids[0]);
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([notes[2].id(), notes[3].id()])
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes().len(), 2);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes().len(), 4);
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    assert_eq!(app.project.midi_items()[0].notes()[4].tick(), 2_400);
+    assert_eq!(app.project.midi_items()[0].notes()[5].tick(), 3_120);
+
+    let pasted = app.project.midi_items()[0].notes()[4..]
+        .iter()
+        .map(|note| {
+            (
+                note.id(),
+                MidiNoteData {
+                    pitch: note.pitch(),
+                    tick: note.tick(),
+                    duration: note.duration(),
+                    velocity: 100,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let _ = app.update(Message::EditMidiNotes(item_id, pasted));
+    assert!(
+        app.project.midi_items()[0].notes()[4..]
+            .iter()
+            .all(|note| note.velocity() == 100)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes()[4].velocity(), 90);
+    assert_eq!(app.project.midi_items()[0].notes()[5].velocity(), 110);
+    let _ = app.update(Message::Redo);
+    assert!(
+        app.project.midi_items()[0].notes()[4..]
+            .iter()
+            .all(|note| note.velocity() == 100)
+    );
 }
 
 #[test]

@@ -7,12 +7,13 @@ use iced::widget::{button, canvas as canvas_widget, column, container, row, scro
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const KEY_WIDTH: f32 = 56.0;
 const HEADER_HEIGHT: f32 = 28.0;
 const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
+const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
@@ -50,6 +51,22 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         roll_button("Zoom +", Message::PianoRollZoom(1.25)),
         roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
         roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
+        button("Copy")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
+                Message::CopyMidiNotes(
+                    item_id,
+                    app.midi_editor_selected_notes.iter().copied().collect()
+                ),
+            ))
+            .padding([SPACING_XS / 2.0, SPACING_XS]),
+        button("Paste")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(
+                (!app.midi_note_clipboard.notes.is_empty())
+                    .then_some(Message::PasteMidiNotes(item_id))
+            )
+            .padding([SPACING_XS / 2.0, SPACING_XS]),
         button("Delete notes")
             .style(iced::widget::button::danger)
             .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
@@ -75,7 +92,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     })
     .width(Length::Fill)
     .height(Length::Fixed(
-        HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+        HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT + VELOCITY_LANE_HEIGHT,
     ));
     column![toolbar, scrollable(canvas).height(Length::Fill)]
         .spacing(ROW_GAP)
@@ -135,6 +152,7 @@ struct PianoRoll<'a> {
 struct Interaction {
     modifiers: keyboard::Modifiers,
     drag: Option<NoteDrag>,
+    hovered_velocity_note: Option<NoteId>,
 }
 
 #[derive(Clone)]
@@ -144,6 +162,8 @@ struct NoteDrag {
     resize: bool,
     delta_tick: i64,
     delta_pitch: i16,
+    velocity: bool,
+    delta_velocity: i16,
 }
 
 impl canvas::Program<Message> for PianoRoll<'_> {
@@ -159,6 +179,30 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             return None;
+        }
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key, repeat: false, ..
+        }) = event
+            && (state.modifiers.command() || state.modifiers.control())
+            && let keyboard::Key::Character(character) = key.as_ref()
+            && character.eq_ignore_ascii_case("c")
+            && !self.selected.is_empty()
+        {
+            return Some(canvas::Action::publish(Message::CopyMidiNotes(
+                self.item_id,
+                self.selected.iter().copied().collect(),
+            )));
+        }
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key, repeat: false, ..
+        }) = event
+            && (state.modifiers.command() || state.modifiers.control())
+            && let keyboard::Key::Character(character) = key.as_ref()
+            && character.eq_ignore_ascii_case("v")
+        {
+            return Some(canvas::Action::publish(Message::PasteMidiNotes(
+                self.item_id,
+            )));
         }
         if let Event::Keyboard(keyboard::Event::KeyPressed {
             key, repeat: false, ..
@@ -182,6 +226,46 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let point = Point::new(point.x - KEY_WIDTH, point.y - HEADER_HEIGHT);
                 if point.x < 0.0 || point.y < 0.0 {
                     return Some(canvas::Action::capture());
+                }
+                let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
+                if point.y >= piano_height {
+                    let lane_y = point.y - piano_height;
+                    let Some(note_id) =
+                        velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
+                    else {
+                        return Some(canvas::Action::capture());
+                    };
+                    let note = self.item.notes().iter().find(|note| note.id() == note_id)?;
+                    let selected = selection_after_click(
+                        self.selected,
+                        note.id(),
+                        state.modifiers.command() || state.modifiers.control(),
+                    );
+                    if (state.modifiers.command() || state.modifiers.control())
+                        && !selected.contains(&note.id())
+                    {
+                        return Some(canvas::Action::publish(Message::SelectMidiNotes(selected)));
+                    }
+                    let note_ids = selected;
+                    let notes = self
+                        .item
+                        .notes()
+                        .iter()
+                        .filter(|candidate| note_ids.contains(&candidate.id()))
+                        .map(|candidate| (candidate.id(), note_data(candidate)))
+                        .collect();
+                    state.drag = Some(NoteDrag {
+                        start: Point::new(point.x, lane_y),
+                        notes,
+                        resize: false,
+                        delta_tick: 0,
+                        delta_pitch: 0,
+                        velocity: true,
+                        delta_velocity: 0,
+                    });
+                    return Some(
+                        canvas::Action::publish(Message::SelectMidiNotes(note_ids)).and_capture(),
+                    );
                 }
                 let mapping = self.mapping();
                 let hit = self.item.notes().iter().rev().find(|note| {
@@ -232,17 +316,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .notes()
                     .iter()
                     .filter(|candidate| note_ids.contains(&candidate.id()))
-                    .map(|candidate| {
-                        (
-                            candidate.id(),
-                            MidiNoteData {
-                                pitch: candidate.pitch(),
-                                tick: candidate.tick(),
-                                duration: candidate.duration(),
-                                velocity: candidate.velocity(),
-                            },
-                        )
-                    })
+                    .map(|candidate| (candidate.id(), note_data(candidate)))
                     .collect();
                 state.drag = Some(NoteDrag {
                     start: point,
@@ -250,12 +324,26 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     resize,
                     delta_tick: 0,
                     delta_pitch: 0,
+                    velocity: false,
+                    delta_velocity: 0,
                 });
                 Some(canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture())
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 let point = cursor.position_in(bounds)?;
                 let point = Point::new(point.x - KEY_WIDTH, point.y - HEADER_HEIGHT);
+                if state.drag.is_none() {
+                    let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
+                    let hovered = if point.y >= piano_height {
+                        velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
+                    } else {
+                        None
+                    };
+                    if hovered != state.hovered_velocity_note {
+                        state.hovered_velocity_note = hovered;
+                        return Some(canvas::Action::request_redraw());
+                    }
+                }
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
@@ -264,16 +352,28 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .round() as i64;
                 let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
                 drag.delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
-                drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+                if drag.velocity {
+                    drag.delta_velocity = velocity_delta_in_lane(
+                        drag.start.y,
+                        point.y,
+                        f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+                    );
+                } else {
+                    drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+                }
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let drag = state.drag.take()?;
+                state.hovered_velocity_note = None;
                 let edits = drag
                     .notes
                     .into_iter()
                     .map(|(note_id, mut data)| {
-                        if drag.resize {
+                        if drag.velocity {
+                            data.velocity =
+                                apply_velocity_delta(data.velocity, drag.delta_velocity);
+                        } else if drag.resize {
                             data.duration = (i128::from(data.duration)
                                 + i128::from(drag.delta_tick))
                             .max(1) as u64;
@@ -303,6 +403,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             note.tick() != data.tick
                                 || note.duration() != data.duration
                                 || note.pitch() != data.pitch
+                                || note.velocity() != data.velocity
                         })
                 }) {
                     Some(canvas::Action::publish(Message::EditMidiNotes(
@@ -457,6 +558,39 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 Color::from_rgba8(9, 12, 14, 0.4),
             );
         }
+        let velocity_top = grid_top + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
+        frame.fill_rectangle(
+            Point::new(0.0, velocity_top),
+            Size::new(bounds.width, VELOCITY_LANE_HEIGHT),
+            Color::from_rgb8(30, 35, 38),
+        );
+        frame.fill_rectangle(
+            Point::new(0.0, velocity_top),
+            Size::new(KEY_WIDTH, VELOCITY_LANE_HEIGHT),
+            Color::from_rgb8(42, 48, 51),
+        );
+        for fraction in [0.25, 0.5, 0.75] {
+            let y = velocity_top + VELOCITY_LANE_HEIGHT * (1.0 - fraction);
+            let line = canvas::Path::line(Point::new(grid_left, y), Point::new(bounds.width, y));
+            frame.stroke(
+                &line,
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgb8(57, 64, 68))
+                    .with_width(0.7),
+            );
+        }
+        frame.fill_text(Text {
+            content: "Velocity".to_owned(),
+            position: Point::new(KEY_WIDTH - 5.0, velocity_top + 14.0),
+            max_width: KEY_WIDTH - 8.0,
+            color: Color::from_rgb8(190, 197, 201),
+            size: Pixels(10.0),
+            line_height: LineHeight::Relative(1.0),
+            font: Font::default(),
+            align_x: TextAlignment::Right,
+            align_y: iced::alignment::Vertical::Center,
+            shaping: Shaping::Basic,
+        });
         for note in self.item.notes() {
             if note.pitch() > self.high_pitch
                 || note.pitch() < self.high_pitch.saturating_sub(PITCH_COUNT - 1)
@@ -494,6 +628,48 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 );
             }
         }
+        let velocity_positions = velocity_handle_positions(self.item.notes(), mapping);
+        for note in self.item.notes() {
+            let velocity_x = grid_left
+                + velocity_positions
+                    .get(&note.id())
+                    .copied()
+                    .unwrap_or_default();
+            let velocity_height =
+                f32::from(note.velocity()) / 127.0 * (VELOCITY_LANE_HEIGHT - 20.0);
+            let velocity_y = velocity_top + VELOCITY_LANE_HEIGHT - velocity_height - 2.0;
+            let velocity_bar = canvas::Path::rectangle(
+                Point::new(velocity_x, velocity_y),
+                Size::new(4.0, velocity_height.max(1.0)),
+            );
+            frame.fill(
+                &velocity_bar,
+                if self.selected.contains(&note.id()) {
+                    Color::from_rgb8(244, 184, 93)
+                } else if state.hovered_velocity_note == Some(note.id()) {
+                    Color::from_rgb8(221, 171, 91)
+                } else {
+                    Color::from_rgb8(174, 125, 66)
+                },
+            );
+            if state.hovered_velocity_note == Some(note.id()) {
+                frame.fill_text(Text {
+                    content: note.velocity().to_string(),
+                    position: Point::new(
+                        velocity_x + 10.0,
+                        velocity_top + VELOCITY_LANE_HEIGHT - 10.0,
+                    ),
+                    max_width: 28.0,
+                    color: Color::from_rgb8(213, 218, 221),
+                    size: Pixels(9.0),
+                    line_height: LineHeight::Relative(1.0),
+                    font: Font::default(),
+                    align_x: TextAlignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: Shaping::Basic,
+                });
+            }
+        }
         vec![frame.into_geometry()]
     }
 
@@ -524,6 +700,73 @@ impl PianoRoll<'_> {
 
 fn snap_tick(tick: u64, grid_ticks: u64) -> u64 {
     (tick.saturating_add(grid_ticks / 2) / grid_ticks) * grid_ticks
+}
+
+fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
+    MidiNoteData {
+        pitch: note.pitch(),
+        tick: note.tick(),
+        duration: note.duration(),
+        velocity: note.velocity(),
+    }
+}
+
+fn velocity_note_at_x(
+    notes: &[aaadaw_core::MidiNote],
+    mapping: RollMapping,
+    x: f32,
+) -> Option<NoteId> {
+    let positions = velocity_handle_positions(notes, mapping);
+    notes
+        .iter()
+        .min_by(|left, right| {
+            let left_x = positions.get(&left.id()).copied().unwrap_or_default() + 2.0;
+            let right_x = positions.get(&right.id()).copied().unwrap_or_default() + 2.0;
+            (left_x - x).abs().total_cmp(&(right_x - x).abs())
+        })
+        .filter(|note| {
+            (positions.get(&note.id()).copied().unwrap_or_default() + 2.0 - x).abs() <= 4.0
+        })
+        .map(|note| note.id())
+}
+
+fn velocity_handle_positions(
+    notes: &[aaadaw_core::MidiNote],
+    mapping: RollMapping,
+) -> HashMap<NoteId, f32> {
+    let mut ordered = notes.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|note| (note.tick(), note.pitch()));
+    let mut positions = HashMap::with_capacity(notes.len());
+    let mut group_start = 0;
+    while group_start < ordered.len() {
+        let tick = ordered[group_start].tick();
+        let group_end = ordered[group_start..]
+            .iter()
+            .position(|note| note.tick() != tick)
+            .map_or(ordered.len(), |offset| group_start + offset);
+        let group_len = group_end - group_start;
+        let onset_x = mapping.x_at_tick(tick) + 1.0;
+        let leftmost_offset = -((group_len.saturating_sub(1)) as f32 * 5.0 / 2.0);
+        let shift_from_item_edge = (1.0 - onset_x - leftmost_offset).max(0.0);
+        for (index, note) in ordered[group_start..group_end].iter().enumerate() {
+            let offset = leftmost_offset + index as f32 * 5.0 + shift_from_item_edge;
+            positions.insert(note.id(), onset_x + offset);
+        }
+        group_start = group_end;
+    }
+    positions
+}
+
+fn velocity_delta(start_y: f32, current_y: f32) -> i16 {
+    ((start_y - current_y) * 127.0 / VELOCITY_LANE_HEIGHT).round() as i16
+}
+
+fn velocity_delta_in_lane(start_lane_y: f32, current_canvas_y: f32, piano_height: f32) -> i16 {
+    velocity_delta(start_lane_y, current_canvas_y - piano_height)
+}
+
+fn apply_velocity_delta(velocity: u8, delta: i16) -> u8 {
+    (i16::from(velocity) + delta).clamp(1, 127) as u8
 }
 
 fn selection_after_click<T: Copy + Eq + std::hash::Hash>(
@@ -616,6 +859,74 @@ mod tests {
         assert_eq!(
             selection_after_click(&selected, first, true),
             HashSet::new()
+        );
+    }
+
+    #[test]
+    fn velocity_drag_uses_one_delta_and_clamps_each_note_to_midi_range() {
+        let piano_height = f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT;
+        let delta = velocity_delta_in_lane(80.0, piano_height + 64.0, piano_height);
+        assert_eq!(delta, 20);
+        assert_eq!(apply_velocity_delta(70, delta), 90);
+        assert_eq!(apply_velocity_delta(120, delta), 127);
+        assert_eq!(apply_velocity_delta(10, -20), 1);
+    }
+
+    #[test]
+    fn same_onset_velocity_handles_are_spread_around_the_note_tick() {
+        let mapping = RollMapping {
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            high_pitch: 84,
+        };
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    MidiNoteData {
+                        pitch: 60,
+                        tick: 0,
+                        duration: 240,
+                        velocity: 90,
+                    },
+                    MidiNoteData {
+                        pitch: 64,
+                        tick: 0,
+                        duration: 240,
+                        velocity: 90,
+                    },
+                ],
+            })
+            .unwrap();
+        let notes = project.midi_items()[0].notes();
+        let positions = velocity_handle_positions(notes, mapping);
+        let first = positions[&notes[0].id()];
+        let second = positions[&notes[1].id()];
+        assert_eq!(second - first, 5.0);
+        assert_eq!(
+            velocity_note_at_x(notes, mapping, first + 4.0),
+            Some(notes[0].id())
+        );
+        assert_eq!(
+            velocity_note_at_x(notes, mapping, second + 4.0),
+            Some(notes[1].id())
         );
     }
 }
