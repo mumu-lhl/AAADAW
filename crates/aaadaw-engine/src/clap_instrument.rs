@@ -2330,7 +2330,7 @@ mod tests {
         graph
             .render_into(&mut output)
             .expect("playback can resume after note release");
-        assert_eq!(output, [[0.0; 2]; 8]);
+        assert!(output[0][0] > 0.0, "sustained notes resume after restart");
 
         assert_eq!(graph.stop_instruments(), 0);
         let mut retired = graph.take_stopped_instruments();

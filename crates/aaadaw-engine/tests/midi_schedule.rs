@@ -112,6 +112,103 @@ fn event_blocks_exclude_the_end_sample_and_short_buffers_are_atomic() {
 }
 
 #[test]
+fn active_note_query_chases_only_notes_strictly_inside_their_sample_range() {
+    let (project, track_id) = project_with_note(60, 0, 480);
+    let note = project.midi_items()[0].notes()[0].id();
+    let end_sample = project.sample_at_tick(480).expect("note end should map");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 2];
+
+    assert_eq!(
+        plan.active_notes_at(0, &mut output)
+            .expect("note attack belongs to the regular schedule"),
+        0
+    );
+    assert_eq!(
+        plan.active_notes_at(1, &mut output)
+            .expect("sustained note should be chased"),
+        1
+    );
+    let chased = output[0].expect("chased note should be initialized");
+    assert_eq!(chased.kind, MidiEventKind::NoteOn);
+    assert_eq!(chased.sample_offset, 0);
+    assert_eq!(chased.track_id, track_id);
+    assert_eq!(chased.note_id, note);
+    assert_eq!(
+        plan.active_notes_at(end_sample, &mut output)
+            .expect("note end belongs to the regular schedule"),
+        0
+    );
+
+    let mut too_small = [];
+    assert_eq!(
+        plan.active_notes_at(1, &mut too_small),
+        Err(MidiScheduleError::OutputBufferTooSmall {
+            required: 1,
+            available: 0,
+        })
+    );
+}
+
+#[test]
+fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 5_000,
+        })
+        .expect("MIDI item insertion should succeed");
+    let item_id = project.midi_items()[0].id();
+    let notes: Vec<_> = (0..64)
+        .map(|index| MidiNoteData {
+            pitch: index,
+            tick: u64::from(index) * 37,
+            duration: 83 + u64::from(index % 11) * 41,
+            velocity: 90,
+        })
+        .collect();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: notes.clone(),
+        })
+        .expect("MIDI notes should be accepted");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 64];
+
+    for tick in (0..3_000).step_by(19) {
+        let sample = project
+            .sample_at_tick(tick)
+            .expect("query tick should map to a sample");
+        let mut expected: Vec<_> = notes
+            .iter()
+            .filter(|note| note.tick < tick && tick < note.tick + note.duration)
+            .map(|note| note.pitch)
+            .collect();
+        let count = plan
+            .active_notes_at(sample, &mut output)
+            .expect("interval query should fit its preallocated note buffer");
+        let mut actual: Vec<_> = output[..count]
+            .iter()
+            .flatten()
+            .map(|event| event.pitch)
+            .collect();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "active notes at tick {tick}");
+    }
+}
+
+#[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
     let mut project = Project::new();
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {
@@ -171,5 +268,15 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
             .iter()
             .flatten()
             .all(|event| event.track_id == track_ids[1])
+    );
+    let mut chased = [None; 2];
+    assert_eq!(
+        plan.active_notes_at(1, &mut chased)
+            .expect("active notes should be queryable at seek positions"),
+        1
+    );
+    assert_eq!(
+        chased[0].expect("solo note should be chased").track_id,
+        track_ids[1]
     );
 }

@@ -27,6 +27,7 @@ impl std::error::Error for TransportPositionOverflow {}
 pub struct Transport {
     position_samples: u64,
     is_playing: bool,
+    chase_generation: u64,
 }
 
 impl Transport {
@@ -45,24 +46,38 @@ impl Transport {
         self.is_playing
     }
 
+    /// Returns the generation used to detect playback starts and playhead jumps.
+    pub(crate) fn chase_generation(&self) -> u64 {
+        self.chase_generation
+    }
+
     /// Starts or resumes playback from the current position.
     pub fn start(&mut self) {
+        if !self.is_playing {
+            self.chase_generation = self.chase_generation.wrapping_add(1);
+        }
         self.is_playing = true;
     }
 
     /// Stops playback without resetting the playhead.
     pub fn stop(&mut self) {
+        if self.is_playing {
+            self.chase_generation = self.chase_generation.wrapping_add(1);
+        }
         self.is_playing = false;
     }
 
     /// Moves the playhead to an absolute sample position.
     pub fn seek_sample(&mut self, position_samples: u64) {
+        if self.position_samples != position_samples {
+            self.chase_generation = self.chase_generation.wrapping_add(1);
+        }
         self.position_samples = position_samples;
     }
 
     /// Seeks to a musical tick using the project's current tempo map.
     pub fn seek_tick(&mut self, project: &Project, tick: u64) -> Result<(), TimebaseError> {
-        self.position_samples = project.sample_at_tick(tick)?;
+        self.seek_sample(project.sample_at_tick(tick)?);
         Ok(())
     }
 
