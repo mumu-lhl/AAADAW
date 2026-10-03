@@ -16,6 +16,7 @@ use std::time::Duration;
 
 const WAV_HEADER_SIZE: u64 = 44;
 const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - WAV_HEADER_SIZE;
+const MAX_SEGMENT_DATA_BYTES: u64 = MAX_RIFF_DATA_BYTES - MAX_RIFF_DATA_BYTES % 6;
 const DRAIN_FRAMES: usize = 4096;
 static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -77,7 +78,7 @@ impl From<io::Error> for AudioRecordingError {
 /// backend, so no callback can publish frames after the worker drains the queue.
 pub struct AudioRecordingWorker {
     command: Sender<Command>,
-    thread: Option<JoinHandle<Result<PathBuf, AudioRecordingError>>>,
+    thread: Option<JoinHandle<Result<Vec<PathBuf>, AudioRecordingError>>>,
     control: AudioCaptureControl,
 }
 
@@ -89,30 +90,50 @@ impl AudioRecordingWorker {
         consumer: AudioCaptureConsumer,
         control: AudioCaptureControl,
     ) -> Result<Self, AudioRecordingError> {
+        Self::start_with_segment_limit(
+            project_path,
+            sample_rate,
+            consumer,
+            control,
+            MAX_SEGMENT_DATA_BYTES,
+        )
+    }
+
+    fn start_with_segment_limit(
+        project_path: impl AsRef<Path>,
+        sample_rate: u32,
+        consumer: AudioCaptureConsumer,
+        control: AudioCaptureControl,
+        segment_data_limit: u64,
+    ) -> Result<Self, AudioRecordingError> {
         if sample_rate == 0 {
             return Err(AudioRecordingError::InvalidSampleRate);
+        }
+        if segment_data_limit < 6 || segment_data_limit % 6 != 0 {
+            return Err(AudioRecordingError::TakeTooLarge);
         }
         let project_path = project_path.as_ref();
         let directory = project_path
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
+            .unwrap_or(Path::new("."))
+            .to_owned();
         if !directory.is_dir() {
             return Err(AudioRecordingError::ProjectDirectoryUnavailable(
                 directory.to_owned(),
             ));
         }
-        let (part_path, final_path) = loop {
+        let stem = loop {
             let id = NEXT_RECORDING_ID.fetch_add(1, Ordering::Relaxed);
             let stem = project_path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("project");
             let base = format!(".{stem}-take-{}-{id}", std::process::id());
-            let part = directory.join(format!("{base}.wav.part"));
-            let final_path = directory.join(format!("{base}.wav"));
-            if !part.exists() && !final_path.exists() {
-                break (part, final_path);
+            let first_part = directory.join(format!("{base}-000000.wav.part"));
+            let first_final = directory.join(format!("{base}-000000.wav"));
+            if !first_part.exists() && !first_final.exists() {
+                break base;
             }
         };
         let (command, commands) = mpsc::channel();
@@ -121,9 +142,10 @@ impl AudioRecordingWorker {
             .name("aaadaw-recording-writer".to_owned())
             .spawn(move || {
                 write_take(
-                    part_path,
-                    final_path,
+                    directory,
+                    stem,
                     sample_rate,
+                    segment_data_limit,
                     consumer,
                     worker_control,
                     commands,
@@ -138,7 +160,7 @@ impl AudioRecordingWorker {
     }
 
     /// Requests finalization and waits for all queued frames to be written.
-    pub fn finish(mut self) -> Result<PathBuf, AudioRecordingError> {
+    pub fn finish(mut self) -> Result<Vec<PathBuf>, AudioRecordingError> {
         let _ = self.command.send(Command::Finish);
         self.thread
             .take()
@@ -168,25 +190,19 @@ impl Drop for AudioRecordingWorker {
 }
 
 fn write_take(
-    part_path: PathBuf,
-    final_path: PathBuf,
+    directory: PathBuf,
+    stem: String,
     sample_rate: u32,
+    segment_data_limit: u64,
     mut consumer: AudioCaptureConsumer,
     control: AudioCaptureControl,
     commands: Receiver<Command>,
-) -> Result<PathBuf, AudioRecordingError> {
-    let mut owns_part_file = false;
-    let mut published_final_file = false;
+) -> Result<Vec<PathBuf>, AudioRecordingError> {
+    let mut completed_segments = Vec::new();
+    let mut current_segment = None;
     let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&part_path)?;
-        owns_part_file = true;
-        file.write_all(&[0; WAV_HEADER_SIZE as usize])?;
         let mut frames = [[0.0_f32; 2]; DRAIN_FRAMES];
         let mut bytes = Vec::with_capacity(DRAIN_FRAMES * 6);
-        let mut frame_count = 0_u64;
         let mut finishing = false;
         loop {
             if !finishing {
@@ -202,62 +218,121 @@ fn write_take(
                 }
                 continue;
             }
-            let chunk_bytes = (count as u64) * 6;
-            if frame_count.saturating_mul(6).saturating_add(chunk_bytes) > MAX_RIFF_DATA_BYTES {
-                control.fail();
-                return Err(AudioRecordingError::TakeTooLarge);
-            }
-            bytes.clear();
-            for frame in &frames[..count] {
-                for sample in frame {
-                    let sample = if sample.is_finite() {
-                        sample.clamp(-1.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let pcm = if sample <= -1.0 {
-                        -8_388_608_i32
-                    } else {
-                        (sample * 8_388_607.0).round() as i32
-                    };
-                    bytes.extend_from_slice(&pcm.to_le_bytes()[..3]);
+            let mut frame_offset = 0;
+            while frame_offset < count {
+                if current_segment.is_none() {
+                    current_segment = Some(OpenRecordingSegment::create(
+                        &directory,
+                        &stem,
+                        completed_segments.len(),
+                    )?);
+                }
+                let segment = current_segment.as_mut().expect("segment was created");
+                let remaining_frames = ((segment_data_limit - segment.data_bytes) / 6) as usize;
+                let write_frames = remaining_frames.min(count - frame_offset);
+                bytes.clear();
+                for frame in &frames[frame_offset..frame_offset + write_frames] {
+                    for sample in frame {
+                        let sample = if sample.is_finite() {
+                            sample.clamp(-1.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let pcm = if sample <= -1.0 {
+                            -8_388_608_i32
+                        } else {
+                            (sample * 8_388_607.0).round() as i32
+                        };
+                        bytes.extend_from_slice(&pcm.to_le_bytes()[..3]);
+                    }
+                }
+                segment
+                    .file
+                    .as_mut()
+                    .expect("open segment retains its file")
+                    .write_all(&bytes)?;
+                segment.data_bytes += (write_frames as u64) * 6;
+                frame_offset += write_frames;
+                if segment.data_bytes == segment_data_limit {
+                    let segment = current_segment.take().expect("full segment exists");
+                    completed_segments.push(segment.finish(sample_rate)?);
                 }
             }
-            file.write_all(&bytes)?;
-            frame_count += count as u64;
         }
         if control.has_failed() {
             return Err(AudioRecordingError::CaptureFailed {
                 overflow_frames: control.overflow_frames(),
             });
         }
-        if frame_count == 0 {
+        if current_segment.is_none() && completed_segments.is_empty() {
             return Err(AudioRecordingError::EmptyTake);
         }
-        let data_bytes =
-            u32::try_from(frame_count * 6).map_err(|_| AudioRecordingError::TakeTooLarge)?;
-        let riff_size = 36_u32
-            .checked_add(data_bytes)
-            .ok_or(AudioRecordingError::TakeTooLarge)?;
-        file.seek(SeekFrom::Start(0))?;
-        write_wav_header(&mut file, sample_rate, riff_size, data_bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::hard_link(&part_path, &final_path)?;
-        published_final_file = true;
-        fs::remove_file(&part_path)?;
-        Ok(final_path.clone())
+        if let Some(segment) = current_segment.take() {
+            completed_segments.push(segment.finish(sample_rate)?);
+        }
+        Ok(completed_segments.clone())
     })();
     if result.is_err() {
         control.fail();
-        if owns_part_file {
-            let _ = fs::remove_file(part_path);
-        }
-        if published_final_file {
-            let _ = fs::remove_file(final_path);
+        drop(current_segment);
+        for path in completed_segments {
+            let _ = fs::remove_file(path);
         }
     }
     result
+}
+
+struct OpenRecordingSegment {
+    part_path: PathBuf,
+    final_path: PathBuf,
+    file: Option<File>,
+    data_bytes: u64,
+}
+
+impl OpenRecordingSegment {
+    fn create(directory: &Path, stem: &str, index: usize) -> io::Result<Self> {
+        let part_path = directory.join(format!("{stem}-{index:06}.wav.part"));
+        let final_path = directory.join(format!("{stem}-{index:06}.wav"));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part_path)?;
+        if let Err(error) = file.write_all(&[0; WAV_HEADER_SIZE as usize]) {
+            let _ = fs::remove_file(&part_path);
+            return Err(error);
+        }
+        Ok(Self {
+            part_path,
+            final_path,
+            file: Some(file),
+            data_bytes: 0,
+        })
+    }
+
+    fn finish(mut self, sample_rate: u32) -> Result<PathBuf, AudioRecordingError> {
+        let data_len =
+            u32::try_from(self.data_bytes).map_err(|_| AudioRecordingError::TakeTooLarge)?;
+        let riff_len = 36_u32
+            .checked_add(data_len)
+            .ok_or(AudioRecordingError::TakeTooLarge)?;
+        let mut file = self.file.take().expect("open segment retains its file");
+        file.seek(SeekFrom::Start(0))?;
+        write_wav_header(&mut file, sample_rate, riff_len, data_len)?;
+        file.sync_all()?;
+        drop(file);
+        fs::hard_link(&self.part_path, &self.final_path)?;
+        if let Err(error) = fs::remove_file(&self.part_path) {
+            let _ = fs::remove_file(&self.final_path);
+            return Err(AudioRecordingError::Io(error));
+        }
+        Ok(self.final_path.clone())
+    }
+}
+
+impl Drop for OpenRecordingSegment {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.part_path);
+    }
 }
 
 fn write_wav_header(
@@ -316,8 +391,9 @@ mod tests {
         producer.push_planar(&[0.25, -0.5], &[-0.25, 0.5]);
         control.stop();
 
-        let recording = worker.finish().expect("take should finalize");
-        let mut decoder = AudioStreamDecoder::open(&recording).expect("WAV should decode");
+        let recordings = worker.finish().expect("take should finalize");
+        assert_eq!(recordings.len(), 1);
+        let mut decoder = AudioStreamDecoder::open(&recordings[0]).expect("WAV should decode");
         let metadata = decoder.metadata();
         assert_eq!(metadata.sample_rate, Some(48_000));
         assert_eq!(metadata.channel_count, Some(2));
@@ -336,6 +412,42 @@ mod tests {
                 .filter_map(Result::ok)
                 .all(|entry| !entry.file_name().to_string_lossy().ends_with(".part"))
         );
+        fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn recording_worker_rolls_over_into_contiguous_decodable_segments() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(16);
+        let worker = AudioRecordingWorker::start_with_segment_limit(
+            &project,
+            48_000,
+            consumer,
+            control.clone(),
+            12,
+        )
+        .expect("recording worker should start");
+        control.start();
+        producer.push_planar(&[0.1, 0.2, 0.3, 0.4, 0.5], &[0.1, 0.2, 0.3, 0.4, 0.5]);
+        control.stop();
+
+        let recordings = worker.finish().expect("take segments should finalize");
+        assert_eq!(recordings.len(), 3);
+        let mut decoded = Vec::new();
+        for (index, recording) in recordings.iter().enumerate() {
+            let mut decoder = AudioStreamDecoder::open(recording).expect("segment should decode");
+            assert_eq!(decoder.metadata().sample_rate, Some(48_000));
+            assert_eq!(decoder.metadata().channel_count, Some(2));
+            let chunk = decoder
+                .next_chunk()
+                .expect("segment should decode")
+                .expect("segment should contain frames");
+            assert_eq!(chunk.samples().len(), if index == 2 { 2 } else { 4 });
+            decoded.extend(chunk.samples().iter().step_by(2).copied());
+        }
+        for (actual, expected) in decoded.iter().zip([0.1_f32, 0.2, 0.3, 0.4, 0.5]) {
+            assert!((actual - expected).abs() < 0.001);
+        }
         fs::remove_dir_all(directory).expect("test files should be removed");
     }
 

@@ -85,11 +85,12 @@ fn recorded_take_survives_project_save_reopen_and_undo_redo() {
     control.start();
     producer.push_planar(&[0.25, 0.5, -0.25, -0.5], &[0.25, 0.5, -0.25, -0.5]);
     control.stop();
-    let recording = writer.finish().expect("take should finalize");
+    let recordings = writer.finish().expect("take should finalize");
+    assert_eq!(recordings.len(), 1);
 
     let worker = start_audio_item_import(
         &project_path,
-        &recording,
+        &recordings[0],
         track_ids[0],
         256,
         project.settings().sample_rate(),
@@ -167,7 +168,9 @@ fn recorded_take_survives_project_save_reopen_and_undo_redo() {
     assert_eq!(project.audio_items().len(), 2);
     store.close().expect("store should close");
     remove_database(&project_path);
-    let _ = std::fs::remove_file(recording);
+    for recording in recordings {
+        let _ = std::fs::remove_file(recording);
+    }
 }
 
 #[test]

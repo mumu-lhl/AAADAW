@@ -1015,6 +1015,57 @@ fn audio_assets_are_imported_in_chunks_and_read_back_with_seeking() {
 }
 
 #[test]
+fn unreferenced_audio_asset_cleanup_preserves_assets_used_by_saved_items() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    let mut store = ProjectStore::open(&path).expect("project store should open");
+    store.save(&project).expect("project should be persisted");
+
+    store
+        .import_audio_asset("asset://unplaced", "unused.wav", Cursor::new([1, 2, 3]))
+        .expect("unplaced asset should import");
+    assert!(
+        store
+            .remove_unreferenced_audio_asset("asset://unplaced")
+            .expect("unreferenced asset should be removed")
+    );
+    assert!(matches!(
+        store.audio_asset_reader("asset://unplaced"),
+        Err(StorageError::AudioAssetNotFound(_))
+    ));
+
+    store
+        .import_audio_asset("asset://placed", "used.wav", Cursor::new([4, 5, 6]))
+        .expect("placed asset should import");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://placed".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1,
+        })
+        .expect("item should reference asset");
+    store.save(&project).expect("placement should be persisted");
+    assert!(
+        !store
+            .remove_unreferenced_audio_asset("asset://placed")
+            .expect("referenced asset should be retained")
+    );
+    assert!(store.audio_asset_reader("asset://placed").is_ok());
+
+    store.close().expect("project store should close");
+    remove_database(&path);
+}
+
+#[test]
 fn legacy_chunks_remain_readable_and_crashed_imports_can_be_cleaned() {
     let path = project_path();
     let store = ProjectStore::open(&path).expect("project database should open");

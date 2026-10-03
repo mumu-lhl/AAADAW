@@ -237,8 +237,12 @@ struct ActiveRecording {
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 struct RecordImportTarget {
     track_ids: Vec<TrackId>,
-    start_sample: u64,
-    source_path: PathBuf,
+    source_paths: Vec<PathBuf>,
+    next_segment_index: usize,
+    next_start_sample: u64,
+    imported_actions: Vec<DawAction>,
+    project_path: PathBuf,
+    sample_rate: u32,
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -253,8 +257,11 @@ impl std::fmt::Debug for SharedRecordingStart {
 }
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+type RecordingStopResult = Result<Vec<PathBuf>, String>;
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 #[derive(Clone)]
-pub(super) struct SharedRecordingStop(Arc<Mutex<Option<Result<PathBuf, String>>>>);
+pub(super) struct SharedRecordingStop(Arc<Mutex<Option<RecordingStopResult>>>);
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 impl std::fmt::Debug for SharedRecordingStop {
@@ -1193,7 +1200,7 @@ impl App {
             Message::ReimportAudioItem(item_id) => task = self.reimport_audio_item(item_id),
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
-            Message::AudioImportFinished(result) => self.finish_audio_import(result),
+            Message::AudioImportFinished(result) => task = self.finish_audio_import(result),
             Message::RunAudioAssetManagement(operation) => {
                 task = self.start_audio_asset_management(operation);
             }

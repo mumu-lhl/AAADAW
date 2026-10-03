@@ -1283,6 +1283,48 @@ impl ProjectStore {
         })
     }
 
+    /// Removes a project audio asset only when no persisted audio item references it.
+    ///
+    /// This is used to roll back multi-file imports that fail before their placement action is
+    /// committed. Assets are immutable; normal editing should use undoable project actions.
+    pub fn remove_unreferenced_audio_asset(
+        &mut self,
+        media_ref: &str,
+    ) -> Result<bool, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let referenced: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM audio_items WHERE media_ref = ?1)",
+            [media_ref],
+            |row| row.get(0),
+        )?;
+        if referenced {
+            return Ok(false);
+        }
+        let storage_key: Option<String> = transaction
+            .query_row(
+                "SELECT storage_key FROM audio_assets WHERE media_ref = ?1",
+                [media_ref],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(storage_key) = storage_key {
+            transaction.execute(
+                "DELETE FROM audio_asset_storage_chunks WHERE storage_key = ?1",
+                [storage_key],
+            )?;
+        }
+        let removed =
+            transaction.execute("DELETE FROM audio_assets WHERE media_ref = ?1", [media_ref])?;
+        transaction.execute(
+            "DELETE FROM audio_asset_links WHERE media_ref = ?1",
+            [media_ref],
+        )?;
+        transaction.commit()?;
+        Ok(removed > 0)
+    }
+
     /// Stores decoder-discovered metadata for a complete embedded asset.
     pub fn set_audio_asset_metadata(
         &mut self,

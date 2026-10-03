@@ -2021,12 +2021,16 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     ));
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
-        start_sample: 96_000,
-        source_path: source.clone(),
+        source_paths: vec![source.clone()],
+        next_segment_index: 0,
+        next_start_sample: 96_000,
+        imported_actions: Vec::new(),
+        project_path: source.with_extension("aaadaw"),
+        sample_rate: app.project.settings().sample_rate(),
     });
     app.import_busy = true;
 
-    app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+    let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
         track_id: first_track,
         media_ref: "asset://recorded-take".to_owned(),
         start_sample: 96_000,
@@ -2043,6 +2047,78 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items().len(), 2);
     assert!(app.record_import_tracks.is_none());
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let first_track = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddTrack);
+    let second_track = app.project.tracks()[1].id();
+    let source_paths = vec![
+        std::env::temp_dir().join("aaadaw-segment-one.wav"),
+        std::env::temp_dir().join("aaadaw-segment-two.wav"),
+    ];
+    app.record_import_tracks = Some(super::RecordImportTarget {
+        track_ids: vec![first_track, second_track],
+        source_paths,
+        next_segment_index: 0,
+        next_start_sample: 4_800,
+        imported_actions: Vec::new(),
+        project_path: std::env::temp_dir().join("aaadaw-segmented-test.aaadaw"),
+        sample_rate: app.project.settings().sample_rate(),
+    });
+    app.import_busy = true;
+
+    let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id: first_track,
+        media_ref: "asset://segment-one".to_owned(),
+        start_sample: 4_800,
+        source_offset_samples: 0,
+        length_samples: 2_400,
+    }));
+    let target = app
+        .record_import_tracks
+        .as_ref()
+        .expect("next segment is pending");
+    assert_eq!(target.next_segment_index, 1);
+    assert_eq!(target.next_start_sample, 7_200);
+
+    let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id: first_track,
+        media_ref: "asset://segment-two".to_owned(),
+        start_sample: 7_200,
+        source_offset_samples: 0,
+        length_samples: 1_200,
+    }));
+    assert_eq!(app.project.audio_items().len(), 4);
+    assert!(app.project.audio_items().iter().any(|item| {
+        item.track_id() == first_track
+            && item.start_sample() == 4_800
+            && item.media_ref() == "asset://segment-one"
+    }));
+    assert!(app.project.audio_items().iter().any(|item| {
+        item.track_id() == first_track
+            && item.start_sample() == 7_200
+            && item.media_ref() == "asset://segment-two"
+    }));
+    assert!(app.project.audio_items().iter().any(|item| {
+        item.track_id() == second_track
+            && item.start_sample() == 4_800
+            && item.media_ref() == "asset://segment-one"
+    }));
+    assert!(app.project.audio_items().iter().any(|item| {
+        item.track_id() == second_track
+            && item.start_sample() == 7_200
+            && item.media_ref() == "asset://segment-two"
+    }));
+    assert!(app.record_import_tracks.is_none());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.audio_items().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items().len(), 4);
 }
 
 #[test]

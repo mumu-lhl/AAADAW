@@ -163,25 +163,30 @@ impl App {
         self.recording_stopping = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
-            Some(Ok(path)) => {
+            Some(Ok(paths)) => {
                 self.close_playback();
                 let tracks = std::mem::take(&mut self.recording_tracks);
                 let start_sample = self.recording_start_sample;
                 let Some(project_path) = self.project_path.clone() else {
-                    let _ = std::fs::remove_file(path);
+                    remove_recording_files(&paths);
                     self.status = "Project path disappeared before take import".to_owned();
                     return Task::none();
                 };
                 let Some(first_track) = tracks.first().copied() else {
-                    let _ = std::fs::remove_file(path);
+                    remove_recording_files(&paths);
                     self.status = "No armed tracks remain for this take".to_owned();
                     return Task::none();
                 };
+                let first_path = paths[0].clone();
                 let sample_rate = self.project.settings().sample_rate();
                 self.record_import_tracks = Some(RecordImportTarget {
                     track_ids: tracks,
-                    start_sample,
-                    source_path: path.clone(),
+                    source_paths: paths,
+                    next_segment_index: 0,
+                    next_start_sample: start_sample,
+                    imported_actions: Vec::new(),
+                    project_path: project_path.clone(),
+                    sample_rate,
                 });
                 self.import_busy = true;
                 self.import_finalizing = false;
@@ -193,7 +198,7 @@ impl App {
                     run_blocking("aaadaw-recording-import-start", move || {
                         start_audio_item_import(
                             project_path,
-                            path,
+                            first_path,
                             first_track,
                             start_sample,
                             sample_rate,
@@ -263,4 +268,10 @@ fn discard_recording(recording: ActiveRecording) {
     recording.control.stop();
     recording.input.shutdown();
     recording.writer.cancel();
+}
+
+fn remove_recording_files(paths: &[std::path::PathBuf]) {
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
 }

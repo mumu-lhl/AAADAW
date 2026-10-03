@@ -244,7 +244,7 @@ impl App {
                 self.import_cancel_requested = false;
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 if let Some(target) = self.record_import_tracks.take() {
-                    let _ = std::fs::remove_file(target.source_path);
+                    cleanup_recorded_import(&target);
                 }
                 self.status = format!("Audio import could not start: {error}");
             }
@@ -254,7 +254,7 @@ impl App {
                 self.import_cancel_requested = false;
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 if let Some(target) = self.record_import_tracks.take() {
-                    let _ = std::fs::remove_file(target.source_path);
+                    cleanup_recorded_import(&target);
                 }
                 self.status = "Audio import worker result was unavailable".to_owned();
             }
@@ -570,13 +570,18 @@ impl App {
         )
     }
 
-    pub(super) fn finish_audio_import(&mut self, result: Result<DawAction, String>) {
+    pub(super) fn finish_audio_import(
+        &mut self,
+        result: Result<DawAction, String>,
+    ) -> Task<Message> {
         self.import_busy = false;
         self.import_finalizing = false;
         self.import_cancel_requested = false;
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-        let (result, success_status) = if let Some(target) = self.record_import_tracks.take() {
-            let _ = std::fs::remove_file(target.source_path);
+        let (result, success_status) = if let Some(mut target) = self.record_import_tracks.take() {
+            if let Some(path) = target.source_paths.get(target.next_segment_index) {
+                let _ = std::fs::remove_file(path);
+            }
             match result {
                 Ok(DawAction::InsertAudioItem {
                     media_ref,
@@ -584,31 +589,84 @@ impl App {
                     length_samples,
                     ..
                 }) => {
-                    let track_count = target.track_ids.len();
-                    let actions = target
-                        .track_ids
-                        .into_iter()
-                        .map(|track_id| DawAction::InsertAudioItem {
-                            track_id,
+                    for track_id in &target.track_ids {
+                        target.imported_actions.push(DawAction::InsertAudioItem {
+                            track_id: *track_id,
                             media_ref: media_ref.clone(),
-                            start_sample: target.start_sample,
+                            start_sample: target.next_start_sample,
                             source_offset_samples,
                             length_samples,
-                        })
-                        .collect();
+                        });
+                    }
+                    target.next_start_sample =
+                        match target.next_start_sample.checked_add(length_samples) {
+                            Some(next_start) => next_start,
+                            None => {
+                                cleanup_recorded_import(&target);
+                                self.status =
+                                    "Recorded take exceeds the project timeline range".to_owned();
+                                return Task::none();
+                            }
+                        };
+                    target.next_segment_index += 1;
+                    if target.next_segment_index < target.source_paths.len() {
+                        let source_path = target.source_paths[target.next_segment_index].clone();
+                        let Some(first_track) = target.track_ids.first().copied() else {
+                            cleanup_recorded_import(&target);
+                            self.status = "No armed tracks remain for this take".to_owned();
+                            return Task::none();
+                        };
+                        let project_path = target.project_path.clone();
+                        let sample_rate = target.sample_rate;
+                        let start_sample = target.next_start_sample;
+                        let segment_index = target.next_segment_index + 1;
+                        let segment_count = target.source_paths.len();
+                        self.record_import_tracks = Some(target);
+                        self.import_busy = true;
+                        self.import_bytes = 0;
+                        self.import_total_bytes = None;
+                        self.status = format!(
+                            "Embedding recorded take segment {segment_index}/{segment_count}…"
+                        );
+                        return Task::perform(
+                            run_blocking("aaadaw-recording-import-start", move || {
+                                start_audio_item_import(
+                                    project_path,
+                                    source_path,
+                                    first_track,
+                                    start_sample,
+                                    sample_rate,
+                                )
+                                .map_err(|error| error.to_string())
+                            }),
+                            |result| {
+                                Message::AudioImportStarted(SharedAudioImportWorker(Arc::new(
+                                    Mutex::new(Some(result)),
+                                )))
+                            },
+                        );
+                    }
+                    let track_count = target.track_ids.len();
+                    remove_recorded_import_files(&target.source_paths);
                     (
                         Ok(DawAction::BatchTransaction {
                             tx_id: self.revision,
-                            actions,
+                            actions: target.imported_actions,
                         }),
                         Some(format!("Take recorded onto {track_count} armed track(s)")),
                     )
                 }
                 Ok(_) => (
-                    Err("recorded take import returned an unexpected action".to_owned()),
+                    {
+                        cleanup_recorded_import(&target);
+                        Err("recorded take import returned an unexpected action".to_owned())
+                    },
                     None,
                 ),
-                Err(error) => (Err(error), None),
+                Err(error) => {
+                    cleanup_recorded_import(&target);
+                    (Err(error), None)
+                }
             }
         } else {
             (result, None)
@@ -645,5 +703,27 @@ impl App {
             }
             Err(error) => self.status = format!("Audio import could not be finalized: {error}"),
         }
+        Task::none()
     }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+fn remove_recorded_import_files(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+fn cleanup_recorded_import(target: &super::RecordImportTarget) {
+    remove_recorded_import_files(&target.source_paths);
+    let Ok(mut store) = aaadaw_storage::ProjectStore::open(&target.project_path) else {
+        return;
+    };
+    for action in &target.imported_actions {
+        if let DawAction::InsertAudioItem { media_ref, .. } = action {
+            let _ = store.remove_unreferenced_audio_asset(media_ref);
+        }
+    }
+    let _ = store.close();
 }

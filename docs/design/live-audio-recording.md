@@ -5,25 +5,26 @@ bounded SPSC queue carries interleaved stereo `f32` frames to one recording work
 does not allocate, lock, wait, log, or access files. If the queue fills, the producer counts the
 dropped frames, disables capture, and marks the take failed. A failed take cannot be re-armed.
 
-The recording worker owns the queue consumer and the temporary PCM24 WAV file. It drains frames in
-fixed-size batches, sanitizes non-finite samples, and writes outside the realtime callback. The WAV
-header is initially reserved and patched only after a complete, non-empty take has drained. The
-worker syncs the finalized file and renames it from `.wav.part` to `.wav` in the project directory.
-The RIFF size limit is checked before every write; an oversized take fails and its partial file is
-removed. PCM24 was selected because the existing media decoder reads it and it preserves normal
-studio capture resolution without adding a new container parser.
+The recording worker owns the queue consumer and temporary PCM24 WAV segments. It drains frames in
+fixed-size batches, sanitizes non-finite samples, and writes outside the realtime callback. Each
+segment stays below the RIFF size limit; its header is patched only after that segment is complete,
+then the file is synced and published from `.wav.part` to `.wav` in the project directory. This
+keeps long takes in the existing decoder's supported PCM24 WAV format without one file exceeding
+RIFF's 32-bit size fields.
 
 Stop ordering is deliberate:
 
 1. Atomically disable queue writes.
 2. Stop and join the JACK or PipeWire input callback/thread.
-3. Ask the file worker to drain the remaining queue, patch the WAV header, sync, and publish.
-4. Import the completed WAV into the project asset store.
-5. Apply one `BatchTransaction` that places the shared asset on every track armed when recording
-   began.
-6. Remove the temporary WAV after the asset import finishes.
+3. Ask the file worker to drain the remaining queue, patch each WAV header, sync, and publish every
+   segment in order.
+4. Import the WAV segments into the project asset store in order.
+5. Apply one `BatchTransaction` that places each segment contiguously on every track armed when
+   recording began.
+6. Remove the temporary WAV segments after their asset imports finish.
 
 Any input, queue, file, or finalization failure invalidates the take and removes its temporary
-file. Empty recordings are discarded. The successful project action is applied only after storage
-has embedded the full asset, so undo removes all placements together while the embedded source
-remains available for redo.
+segments. If importing a later segment fails, the app removes already imported assets that have no
+persisted item references. Empty recordings are discarded. The successful project action is applied
+only after storage has embedded every segment, so undo removes all placements together while the
+embedded sources remain available for redo.
