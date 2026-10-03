@@ -39,6 +39,7 @@ impl App {
             self.status = "Arm at least one track before recording".to_owned();
             return Task::none();
         }
+        let recovery_track_ids = tracks.iter().map(|track| track.value()).collect();
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
         self.recording_tracks = tracks;
@@ -52,7 +53,7 @@ impl App {
                 let writer = aaadaw_app::AudioRecordingWorker::start_recoverable(
                     project_path,
                     sample_rate,
-                    tracks.iter().map(|track| track.value()).collect(),
+                    recovery_track_ids,
                     consumer,
                     control.clone(),
                 )
