@@ -640,7 +640,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             let velocity_y = velocity_top + VELOCITY_LANE_HEIGHT - velocity_height - 2.0;
             let velocity_bar = canvas::Path::rectangle(
                 Point::new(velocity_x, velocity_y),
-                Size::new(8.0, velocity_height.max(1.0)),
+                Size::new(4.0, velocity_height.max(1.0)),
             );
             frame.fill(
                 &velocity_bar,
@@ -720,12 +720,12 @@ fn velocity_note_at_x(
     notes
         .iter()
         .min_by(|left, right| {
-            let left_x = positions.get(&left.id()).copied().unwrap_or_default() + 4.0;
-            let right_x = positions.get(&right.id()).copied().unwrap_or_default() + 4.0;
+            let left_x = positions.get(&left.id()).copied().unwrap_or_default() + 2.0;
+            let right_x = positions.get(&right.id()).copied().unwrap_or_default() + 2.0;
             (left_x - x).abs().total_cmp(&(right_x - x).abs())
         })
         .filter(|note| {
-            (positions.get(&note.id()).copied().unwrap_or_default() + 4.0 - x).abs() <= 5.0
+            (positions.get(&note.id()).copied().unwrap_or_default() + 2.0 - x).abs() <= 4.0
         })
         .map(|note| note.id())
 }
@@ -744,9 +744,13 @@ fn velocity_handle_positions(
             .iter()
             .position(|note| note.tick() != tick)
             .map_or(ordered.len(), |offset| group_start + offset);
+        let group_len = group_end - group_start;
+        let onset_x = mapping.x_at_tick(tick) + 1.0;
+        let leftmost_offset = -((group_len.saturating_sub(1)) as f32 * 5.0 / 2.0);
+        let shift_from_item_edge = (1.0 - onset_x - leftmost_offset).max(0.0);
         for (index, note) in ordered[group_start..group_end].iter().enumerate() {
-            let offset = index as f32 * 6.0;
-            positions.insert(note.id(), mapping.x_at_tick(tick) + 1.0 + offset);
+            let offset = leftmost_offset + index as f32 * 5.0 + shift_from_item_edge;
+            positions.insert(note.id(), onset_x + offset);
         }
         group_start = group_end;
     }
@@ -915,7 +919,7 @@ mod tests {
         let positions = velocity_handle_positions(notes, mapping);
         let first = positions[&notes[0].id()];
         let second = positions[&notes[1].id()];
-        assert_eq!(second - first, 6.0);
+        assert_eq!(second - first, 5.0);
         assert_eq!(
             velocity_note_at_x(notes, mapping, first + 4.0),
             Some(notes[0].id())
