@@ -18,4 +18,4 @@ Native Iced GUI rendering has not been visually reviewed in this environment.
 
 ## Status
 
-Implementation complete; awaiting review and CI.
+Merged in PR #35 (`c2ca34d`). Issue #34 is closed. Linux, PipeWire, JACK, Windows, Clippy, formatting, and test CI passed.
