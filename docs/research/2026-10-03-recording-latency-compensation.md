@@ -2,7 +2,7 @@
 
 ## Current project behavior
 
-The capture callbacks currently copy stereo samples into an SPSC queue with no frame timestamp (`crates/aaadaw-engine/src/capture.rs`). JACK's callback ignores its `ProcessScope`; PipeWire reads `spa_chunk` offset/size/stride but discards the buffer metadata and stream clock (`jack_input.rs`, `pipewire_input.rs`). When capture is enabled, the app separately snapshots the playback playhead and later places the entire take at that one sample (`crates/aaadaw/src/app/recording.rs`). This gives a deterministic contiguous file, but cannot account for the input-to-callback delay, callback start time, or a gap between starting transport and enabling capture.
+The capture callbacks currently copy stereo samples into an SPSC queue with no frame timestamp (`crates/aaadaw-engine/src/capture.rs`). JACK's callback ignores its `ProcessScope`; PipeWire reads `spa_chunk` offset/size/stride but discards the buffer metadata and stream clock (`jack_input.rs`, `pipewire_input.rs`). The app places the take from one project-sample anchor, so it cannot account for input-to-callback delay, later block timing, or a gap in capture. Issue #36 fixes one concrete part: after the initial recovery-manifest sync, the app resamples the playhead immediately before enabling capture and queues a durable manifest correction on the writer thread. If a crash happens before that correction is flushed, recovery labels and warns that the older persisted position is only an estimate. Backend callback timestamps, discontinuity preservation, and hardware latency correction remain unimplemented.
 
 ## Timing terms that must stay separate
 

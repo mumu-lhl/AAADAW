@@ -32,6 +32,9 @@ pub struct RecordingRecoveryManifest {
     /// Stable numeric `TrackId::value()` values; the core ID type intentionally stays opaque.
     pub track_ids: Vec<u64>,
     pub start_sample: Option<u64>,
+    /// True until the capture-start playhead sample is durably refined by the writer.
+    #[serde(default = "default_true")]
+    pub start_sample_is_estimate: bool,
     pub stem: String,
     pub segments: Vec<RecordingSegment>,
     pub finalized: bool,
@@ -58,7 +61,12 @@ pub struct RecordingRecoveryCandidate {
 }
 
 enum Command {
+    RefineStartSample(u64),
     Finish,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Errors while recording or finalizing a take.
@@ -218,6 +226,7 @@ impl AudioRecordingWorker {
                 sample_rate,
                 track_ids,
                 start_sample: None,
+                start_sample_is_estimate: true,
                 stem: stem.clone(),
                 segments: Vec::new(),
                 finalized: false,
@@ -260,14 +269,25 @@ impl AudioRecordingWorker {
         })
     }
 
-    /// Records the transport position before the input callback is allowed to publish frames.
+    /// Persists a provisional transport position before capture is activated.
     pub fn set_start_sample(&self, sample: u64) -> Result<(), AudioRecordingError> {
         let Some((path, manifest)) = &self.recovery_manifest else {
             return Ok(());
         };
         let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
         manifest.start_sample = Some(sample);
+        manifest.start_sample_is_estimate = true;
         write_recovery_manifest(path, &manifest)
+    }
+
+    /// Queues the capture-start position for durable update without blocking capture activation.
+    pub fn refine_start_sample(&self, sample: u64) -> Result<(), AudioRecordingError> {
+        if self.recovery_manifest.is_none() {
+            return Ok(());
+        }
+        self.command
+            .send(Command::RefineStartSample(sample))
+            .map_err(|_| AudioRecordingError::WorkerPanicked)
     }
 
     /// Returns the durable recovery sidecar path, if this writer is recoverable.
@@ -342,6 +362,9 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
             if !finishing {
                 match commands.recv_timeout(Duration::from_millis(5)) {
                     Ok(Command::Finish) | Err(RecvTimeoutError::Disconnected) => finishing = true,
+                    Ok(Command::RefineStartSample(sample)) => {
+                        refine_recovery_start_sample(&recovery_manifest, sample)?;
+                    }
                     Err(RecvTimeoutError::Timeout) => {}
                 }
             }
@@ -428,6 +451,19 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
         }
     }
     result
+}
+
+fn refine_recovery_start_sample(
+    recovery_manifest: &Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
+    sample: u64,
+) -> Result<(), AudioRecordingError> {
+    let Some((path, manifest)) = recovery_manifest else {
+        return Ok(());
+    };
+    let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
+    manifest.start_sample = Some(sample);
+    manifest.start_sample_is_estimate = false;
+    write_recovery_manifest(path, &manifest)
 }
 
 fn record_finalized_segment(
@@ -807,8 +843,9 @@ fn write_wav_header(
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioRecordingError, AudioRecordingWorker, discard_recording_recovery,
-        recover_recording_candidate, scan_recording_recoveries, write_recovery_manifest,
+        AudioRecordingError, AudioRecordingWorker, RecordingRecoveryManifest,
+        discard_recording_recovery, recover_recording_candidate, scan_recording_recoveries,
+        write_recovery_manifest,
     };
     use crate::{audio_capture_stream, prepare_audio_playback, start_audio_item_import};
     use aaadaw_core::{DawAction, Project};
@@ -952,6 +989,63 @@ mod tests {
                     .ends_with(".wav"))
         );
         fs::remove_dir_all(directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn capture_start_position_refines_provisional_recovery_anchor_in_worker_order() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(8);
+        let worker = AudioRecordingWorker::start_recoverable(
+            &project,
+            48_000,
+            vec![41],
+            consumer,
+            control.clone(),
+        )
+        .expect("recoverable writer should start");
+        let manifest_path = worker
+            .recovery_manifest_path()
+            .expect("manifest should be available")
+            .to_path_buf();
+
+        worker
+            .set_start_sample(96_000)
+            .expect("provisional position should be durable before setup work");
+        // Model a delayed capture setup: the transport advances before input is enabled.
+        let capture_start_sample = 96_512;
+        control.start();
+        worker
+            .refine_start_sample(capture_start_sample)
+            .expect("refined position should queue without waiting for disk I/O");
+        producer.push_planar(&[0.25, 0.5], &[-0.25, -0.5]);
+        control.stop();
+        worker.finish().expect("take should finalize");
+
+        let manifest: RecordingRecoveryManifest = serde_json::from_slice(
+            &fs::read(&manifest_path).expect("updated manifest should be readable"),
+        )
+        .expect("manifest should decode");
+        assert_eq!(manifest.start_sample, Some(capture_start_sample));
+        assert!(!manifest.start_sample_is_estimate);
+
+        let mut legacy_json = serde_json::to_value(&manifest).expect("manifest should serialize");
+        legacy_json
+            .as_object_mut()
+            .expect("manifest should serialize as an object")
+            .remove("start_sample_is_estimate");
+        let legacy_manifest: RecordingRecoveryManifest =
+            serde_json::from_value(legacy_json).expect("older manifest should remain readable");
+        assert!(legacy_manifest.start_sample_is_estimate);
+
+        let candidates =
+            scan_recording_recoveries(&project).expect("finalized take should be discoverable");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].manifest.start_sample,
+            Some(capture_start_sample)
+        );
+        assert!(!candidates[0].manifest.start_sample_is_estimate);
+        fs::remove_dir_all(directory).expect("test files should be removed");
     }
 
     #[test]

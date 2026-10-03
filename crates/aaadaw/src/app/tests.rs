@@ -2250,6 +2250,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         project_generation: app.project_generation,
         recovery_discarded_frames: 0,
         recovery_discarded_tail_bytes: 0,
+        recovery_start_sample_is_estimate: false,
     });
     app.import_busy = true;
 
@@ -2321,6 +2322,7 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
         project_generation: app.project_generation,
         recovery_discarded_frames: 0,
         recovery_discarded_tail_bytes: 0,
+        recovery_start_sample_is_estimate: true,
     });
     app.import_busy = true;
 
@@ -2366,6 +2368,7 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
             && item.start_sample() == 7_200
             && item.media_ref() == "asset://segment-two"
     }));
+    assert!(app.status.contains("start position is approximate"));
     assert!(app.record_import_tracks.is_none());
     let _ = app.update(Message::Undo);
     assert!(app.project.audio_items().is_empty());
@@ -2414,6 +2417,7 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
         project_generation: app.project_generation,
         recovery_discarded_frames: 0,
         recovery_discarded_tail_bytes: 0,
+        recovery_start_sample_is_estimate: false,
     });
     app.import_busy = true;
     let _ = app.finish_audio_import(Err("simulated interrupted import".to_owned()));
