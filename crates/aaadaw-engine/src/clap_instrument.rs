@@ -998,9 +998,6 @@ impl ClapInstrumentProcessor {
             return Ok(());
         }
         self.input_events.clear();
-        if let Some(port) = self.input_midi_port {
-            self.push_midi_controller_all_channels(port, 64);
-        }
         for note in &self.active_notes {
             self.input_events.push(&NoteOffEvent::new(
                 0,
@@ -1014,6 +1011,7 @@ impl ClapInstrumentProcessor {
             ));
         }
         if let Some(port) = self.input_midi_port {
+            self.push_midi_controller_all_channels(port, 64);
             self.push_midi_controller_all_channels(port, 123);
             self.push_midi_controller_all_channels(port, 120);
         }

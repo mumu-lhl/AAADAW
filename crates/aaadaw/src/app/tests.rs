@@ -1173,7 +1173,7 @@ fn midi_panic_without_an_open_output_reports_the_missing_backend() {
     assert_eq!(panic_command.label, "MIDI Panic · release all notes");
     assert!(!panic_command.enabled);
 
-    let _ = app.update(Message::PanicMidi);
+    let _ = commands::dispatch(&mut app, CommandId::PanicMidi);
 
     assert!(app.status.contains("output is not open"));
 }
