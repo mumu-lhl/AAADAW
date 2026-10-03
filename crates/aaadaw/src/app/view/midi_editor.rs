@@ -111,8 +111,7 @@ impl RollMapping {
     }
 
     fn x_at_tick(self, tick: u64) -> f32 {
-        (i128::from(tick) - i128::from(self.origin_tick)) as f32
-            / self.ticks_per_beat as f32
+        (i128::from(tick) - i128::from(self.origin_tick)) as f32 / self.ticks_per_beat as f32
             * self.pixels_per_beat
     }
 
@@ -264,8 +263,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     * self.ticks_per_beat as f64)
                     .round() as i64;
                 let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
-                drag.delta_tick =
-                    (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
+                drag.delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
                 drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
                 Some(canvas::Action::request_redraw())
             }
@@ -615,6 +613,9 @@ mod tests {
             selection_after_click(&selected, second, true),
             HashSet::from([first, second])
         );
-        assert_eq!(selection_after_click(&selected, first, true), HashSet::new());
+        assert_eq!(
+            selection_after_click(&selected, first, true),
+            HashSet::new()
+        );
     }
 }
