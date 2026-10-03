@@ -15,8 +15,9 @@ const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
-const SUSTAIN_CONTEXT_WIDTH: f32 = 112.0;
-const SUSTAIN_CONTEXT_HEIGHT: f32 = 24.0;
+const MODULATION_LANE_HEIGHT: f32 = 72.0;
+const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
+const CONTROLLER_CONTEXT_HEIGHT: f32 = 24.0;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
@@ -125,9 +126,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         velocity_canvas
     ]
     .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
-    let sustain_canvas = canvas_widget::Canvas::new(SustainLane {
+    let sustain_canvas = canvas_widget::Canvas::new(ControllerLane {
         item,
         item_id,
+        controller: 64,
+        lane_height: SUSTAIN_LANE_HEIGHT,
         origin_tick: app.midi_editor_origin_tick,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
@@ -143,12 +146,33 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         sustain_canvas
     ]
     .height(Length::Fixed(SUSTAIN_LANE_HEIGHT));
+    let modulation_canvas = canvas_widget::Canvas::new(ControllerLane {
+        item,
+        item_id,
+        controller: 1,
+        lane_height: MODULATION_LANE_HEIGHT,
+        origin_tick: app.midi_editor_origin_tick,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(MODULATION_LANE_HEIGHT));
+    let modulation_lane = row![
+        container(text("Mod CC1"))
+            .width(Length::Fixed(KEY_WIDTH))
+            .height(Length::Fixed(MODULATION_LANE_HEIGHT))
+            .center_y(Length::Fill)
+            .padding(SPACING_XS),
+        modulation_canvas
+    ]
+    .height(Length::Fixed(MODULATION_LANE_HEIGHT));
     column![
         edit_toolbar,
         navigation_toolbar,
         scrollable(pitch_canvas).height(Length::Fill),
         velocity_lane,
-        sustain_lane
+        sustain_lane,
+        modulation_lane
     ]
     .spacing(ROW_GAP)
     .padding(PANEL_PADDING)
@@ -157,28 +181,30 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-struct SustainLane<'a> {
+struct ControllerLane<'a> {
     item: &'a MidiItem,
     item_id: ItemId,
+    controller: u8,
+    lane_height: f32,
     origin_tick: u64,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
 }
 
 #[derive(Default)]
-struct SustainInteraction {
-    drag: Option<SustainDrag>,
+struct ControllerLaneInteraction {
+    drag: Option<ControllerDrag>,
     context_menu: Option<(usize, Point)>,
 }
 
-struct SustainDrag {
+struct ControllerDrag {
     controllers: Vec<MidiControllerData>,
     index: Option<usize>,
     original: Option<MidiControllerData>,
     current: MidiControllerData,
 }
 
-impl SustainLane<'_> {
+impl ControllerLane<'_> {
     fn mapping(&self) -> RollMapping {
         RollMapping {
             origin_tick: self.origin_tick,
@@ -191,14 +217,18 @@ impl SustainLane<'_> {
     fn point_data(&self, point: Point) -> MidiControllerData {
         let mapping = self.mapping();
         MidiControllerData {
-            controller: 64,
+            controller: self.controller,
             tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
                 .min(self.item.length_ticks().saturating_sub(1)),
-            value: if point.y < SUSTAIN_LANE_HEIGHT / 2.0 {
-                127
-            } else {
-                0
-            },
+            value: self.value_at_y(point.y),
+        }
+    }
+
+    fn value_at_y(&self, y: f32) -> u8 {
+        if self.controller == 64 {
+            if y < self.lane_height / 2.0 { 127 } else { 0 }
+        } else {
+            value_at_y(y, self.lane_height)
         }
     }
 
@@ -208,10 +238,10 @@ impl SustainLane<'_> {
             .controllers()
             .iter()
             .enumerate()
-            .filter(|(_, controller)| controller.controller == 64)
+            .filter(|(_, controller)| controller.controller == self.controller)
             .filter_map(|(index, controller)| {
                 let x_distance = mapping.x_at_tick(controller.tick) - point.x;
-                let y_distance = sustain_y(controller.value, SUSTAIN_LANE_HEIGHT) - point.y;
+                let y_distance = controller_y(controller.value, self.lane_height) - point.y;
                 let distance = x_distance.hypot(y_distance);
                 (distance <= 12.0).then_some((index, distance))
             })
@@ -220,8 +250,8 @@ impl SustainLane<'_> {
     }
 }
 
-impl canvas::Program<Message> for SustainLane<'_> {
-    type State = SustainInteraction;
+impl canvas::Program<Message> for ControllerLane<'_> {
+    type State = ControllerLaneInteraction;
 
     fn update(
         &self,
@@ -236,7 +266,7 @@ impl canvas::Program<Message> for SustainLane<'_> {
                 if let Some((index, origin)) = state.context_menu.take() {
                     let menu_bounds = Rectangle::new(
                         origin,
-                        Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                        Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
                     );
                     if menu_bounds.contains(point) {
                         let mut controllers = self.item.controllers().to_vec();
@@ -256,14 +286,14 @@ impl canvas::Program<Message> for SustainLane<'_> {
                 let controllers = self.item.controllers().to_vec();
                 if let Some(index) = self.closest_point(point) {
                     let original = controllers[index];
-                    state.drag = Some(SustainDrag {
+                    state.drag = Some(ControllerDrag {
                         controllers,
                         index: Some(index),
                         original: Some(original),
                         current: original,
                     });
                 } else {
-                    state.drag = Some(SustainDrag {
+                    state.drag = Some(ControllerDrag {
                         controllers,
                         index: None,
                         original: None,
@@ -279,10 +309,12 @@ impl canvas::Program<Message> for SustainLane<'_> {
                     return Some(canvas::Action::capture());
                 };
                 let origin = Point::new(
-                    point.x.min((bounds.width - SUSTAIN_CONTEXT_WIDTH).max(0.0)),
+                    point
+                        .x
+                        .min((bounds.width - CONTROLLER_CONTEXT_WIDTH).max(0.0)),
                     point
                         .y
-                        .min((bounds.height - SUSTAIN_CONTEXT_HEIGHT).max(0.0)),
+                        .min((bounds.height - CONTROLLER_CONTEXT_HEIGHT).max(0.0)),
                 );
                 state.context_menu = Some((index, origin));
                 Some(canvas::Action::request_redraw())
@@ -294,14 +326,10 @@ impl canvas::Program<Message> for SustainLane<'_> {
                 };
                 let mapping = self.mapping();
                 drag.current = MidiControllerData {
-                    controller: 64,
+                    controller: self.controller,
                     tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
                         .min(self.item.length_ticks().saturating_sub(1)),
-                    value: if point.y < SUSTAIN_LANE_HEIGHT / 2.0 {
-                        127
-                    } else {
-                        0
-                    },
+                    value: self.value_at_y(point.y),
                 };
                 Some(canvas::Action::request_redraw())
             }
@@ -369,18 +397,20 @@ impl canvas::Program<Message> for SustainLane<'_> {
         let controllers = self.item.controllers();
         let mut value = controllers
             .iter()
-            .filter(|controller| controller.controller == 64 && controller.tick < self.origin_tick)
+            .filter(|controller| {
+                controller.controller == self.controller && controller.tick < self.origin_tick
+            })
             .max_by_key(|controller| controller.tick)
             .map_or(0, |controller| controller.value);
         let mut segment_start = 0.0;
         for controller in controllers.iter().filter(|controller| {
-            controller.controller == 64
+            controller.controller == self.controller
                 && self.origin_tick <= controller.tick
                 && controller.tick <= end_tick
         }) {
             let x = mapping.x_at_tick(controller.tick).clamp(0.0, bounds.width);
-            let old_y = sustain_y(value, bounds.height);
-            let new_y = sustain_y(controller.value, bounds.height);
+            let old_y = controller_y(value, bounds.height);
+            let new_y = controller_y(controller.value, bounds.height);
             let path = canvas::Path::line(Point::new(segment_start, old_y), Point::new(x, old_y));
             frame.stroke(
                 &path,
@@ -409,7 +439,7 @@ impl canvas::Program<Message> for SustainLane<'_> {
             let current_x = mapping
                 .x_at_tick(drag.current.tick)
                 .clamp(0.0, bounds.width);
-            let current_y = sustain_y(drag.current.value, bounds.height);
+            let current_y = controller_y(drag.current.value, bounds.height);
             let path = canvas::Path::line(
                 Point::new(segment_start, current_y),
                 Point::new(bounds.width, current_y),
@@ -426,7 +456,7 @@ impl canvas::Program<Message> for SustainLane<'_> {
                 Color::WHITE,
             );
         } else {
-            let y = sustain_y(value, bounds.height);
+            let y = controller_y(value, bounds.height);
             let path =
                 canvas::Path::line(Point::new(segment_start, y), Point::new(bounds.width, y));
             frame.stroke(
@@ -439,18 +469,18 @@ impl canvas::Program<Message> for SustainLane<'_> {
         if let Some((_, origin)) = state.context_menu {
             frame.fill_rectangle(
                 origin,
-                Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
                 Color::from_rgb8(49, 54, 59),
             );
             frame.stroke_rectangle(
                 origin,
-                Size::new(SUSTAIN_CONTEXT_WIDTH, SUSTAIN_CONTEXT_HEIGHT),
+                Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
                 canvas::Stroke::default().with_color(Color::from_rgb8(104, 112, 118)),
             );
             frame.fill_text(Text {
-                content: "Delete CC64 point".to_owned(),
+                content: format!("Delete CC{} point", self.controller),
                 position: Point::new(origin.x + 7.0, origin.y + 2.0),
-                max_width: SUSTAIN_CONTEXT_WIDTH - 12.0,
+                max_width: CONTROLLER_CONTEXT_WIDTH - 12.0,
                 color: Color::WHITE,
                 size: Pixels(11.0),
                 line_height: LineHeight::Relative(1.0),
@@ -464,8 +494,14 @@ impl canvas::Program<Message> for SustainLane<'_> {
     }
 }
 
-fn sustain_y(value: u8, height: f32) -> f32 {
+fn controller_y(value: u8, height: f32) -> f32 {
     height - 10.0 - (f32::from(value) / 127.0) * (height - 20.0)
+}
+
+fn value_at_y(y: f32, height: f32) -> u8 {
+    (((height - 10.0 - y) / (height - 20.0)) * 127.0)
+        .round()
+        .clamp(0.0, 127.0) as u8
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1258,14 +1294,16 @@ mod tests {
             .unwrap();
         let item_id = project.midi_items()[0].id();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, SUSTAIN_LANE_HEIGHT));
-        let lane = SustainLane {
+        let lane = ControllerLane {
             item: &project.midi_items()[0],
             item_id,
+            controller: 64,
+            lane_height: SUSTAIN_LANE_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
         };
-        let mut interaction = SustainInteraction::default();
+        let mut interaction = ControllerLaneInteraction::default();
         let pressed = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let released = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         let cursor = mouse::Cursor::Available(Point::new(96.0, 10.0));
@@ -1296,14 +1334,16 @@ mod tests {
             })
             .unwrap();
 
-        let lane = SustainLane {
+        let lane = ControllerLane {
             item: &project.midi_items()[0],
             item_id,
+            controller: 64,
+            lane_height: SUSTAIN_LANE_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
         };
-        let mut interaction = SustainInteraction::default();
+        let mut interaction = ControllerLaneInteraction::default();
         lane.update(
             &mut interaction,
             &pressed,
@@ -1347,14 +1387,16 @@ mod tests {
             })
             .unwrap();
 
-        let lane = SustainLane {
+        let lane = ControllerLane {
             item: &project.midi_items()[0],
             item_id,
+            controller: 64,
+            lane_height: SUSTAIN_LANE_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
         };
-        let mut interaction = SustainInteraction::default();
+        let mut interaction = ControllerLaneInteraction::default();
         let action = lane
             .update(
                 &mut interaction,
@@ -1377,6 +1419,161 @@ mod tests {
             panic!("context menu should publish a controller replacement");
         };
         assert_eq!(deleted_item, item_id);
+        assert!(controllers.is_empty());
+    }
+
+    #[test]
+    fn modulation_lane_uses_continuous_values_for_cc1() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 1,
+            lane_height: MODULATION_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let point = lane.point_data(Point::new(96.0, 36.0));
+        assert_eq!(
+            point,
+            MidiControllerData {
+                controller: 1,
+                tick: 960,
+                value: 64,
+            }
+        );
+        assert_eq!(value_at_y(10.0, MODULATION_LANE_HEIGHT), 127);
+        assert_eq!(value_at_y(62.0, MODULATION_LANE_HEIGHT), 0);
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, MODULATION_LANE_HEIGHT));
+        let mut interaction = ControllerLaneInteraction::default();
+        let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("click should begin a CC1 edit");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("click release should submit the CC1 point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(changed_item, controllers) = message.unwrap() else {
+            panic!("modulation lane should submit a controller replacement");
+        };
+        assert_eq!(changed_item, item_id);
+        assert_eq!(controllers, vec![point]);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 1,
+            lane_height: MODULATION_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = ControllerLaneInteraction::default();
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("existing CC1 point should start a drag");
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(192.0, 20.0),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(192.0, 20.0)),
+        )
+        .expect("drag should update the CC1 preview");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(192.0, 20.0)),
+            )
+            .expect("drag release should submit the CC1 point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(_, controllers) = message.unwrap() else {
+            panic!("modulation drag should submit a controller replacement");
+        };
+        assert_eq!(
+            controllers,
+            vec![MidiControllerData {
+                controller: 1,
+                tick: 1_920,
+                value: 103,
+            }]
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 1,
+            lane_height: MODULATION_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = ControllerLaneInteraction::default();
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            bounds,
+            mouse::Cursor::Available(Point::new(192.0, 20.0)),
+        )
+        .expect("right-click should open CC1 context menu");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(200.0, 28.0)),
+            )
+            .expect("Delete CC1 point should remove the point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(_, controllers) = message.unwrap() else {
+            panic!("modulation deletion should submit a controller replacement");
+        };
         assert!(controllers.is_empty());
     }
 

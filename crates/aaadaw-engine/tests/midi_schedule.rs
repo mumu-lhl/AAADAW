@@ -219,6 +219,12 @@ fn sustain_controller_schedule_is_sample_accurate_and_chases_latest_state() {
             .flatten()
             .any(|event| { event.controller == Some(64) && event.velocity == 0 })
     );
+    assert!(
+        output[..2]
+            .iter()
+            .flatten()
+            .any(|event| { event.controller == Some(1) && event.velocity == 64 })
+    );
 }
 
 #[test]

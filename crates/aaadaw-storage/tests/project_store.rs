@@ -175,6 +175,11 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
                     tick: 960,
                     value: 0,
                 },
+                MidiControllerData {
+                    controller: 1,
+                    tick: 480,
+                    value: 64,
+                },
             ],
         })
         .expect("MIDI sustain events should be stored in the project");
