@@ -13,6 +13,7 @@ mod fx_chain;
 mod item_inspector;
 mod media;
 mod menu;
+mod midi_editor;
 mod plugin_picker;
 mod settings;
 mod tokens;
@@ -24,6 +25,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         fx_chain::view(app)
     } else if app.plugin_picker_window_id == Some(window_id) {
         plugin_picker::view(app)
+    } else if app.midi_editor_window_id == Some(window_id) {
+        midi_editor::view(app)
     } else {
         view(app)
     }

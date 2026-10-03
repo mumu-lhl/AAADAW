@@ -1342,6 +1342,52 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
 }
 
 #[test]
+fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 72,
+            tick: 480,
+            duration: 240,
+            velocity: 96,
+        },
+    ));
+    let note = &app.project.midi_items()[0].notes()[0];
+    let note_id = note.id();
+    assert_eq!((note.pitch(), note.tick(), note.duration()), (72, 480, 240));
+
+    let _ = app.update(Message::EditMidiNotes(
+        item_id,
+        vec![(
+            note_id,
+            MidiNoteData {
+                pitch: 74,
+                tick: 720,
+                duration: 480,
+                velocity: 96,
+            },
+        )],
+    ));
+    let note = &app.project.midi_items()[0].notes()[0];
+    assert_eq!((note.pitch(), note.tick(), note.duration()), (74, 720, 480));
+    let _ = app.update(Message::Undo);
+    let note = &app.project.midi_items()[0].notes()[0];
+    assert_eq!((note.pitch(), note.tick(), note.duration()), (72, 480, 240));
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 720);
+
+    let _ = app.update(Message::DeleteMidiNotes(item_id, vec![note_id]));
+    assert!(app.project.midi_items()[0].notes().is_empty());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].id(), note_id);
+}
+
+#[test]
 fn track_rename_is_undoable() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

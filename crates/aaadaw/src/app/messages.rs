@@ -4,7 +4,8 @@ use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
 use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
-use aaadaw_core::{DawAction, ItemId, NoteId, Project, TrackId};
+use aaadaw_core::{DawAction, ItemId, MidiNoteData, NoteId, Project, TrackId};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -50,6 +51,15 @@ pub(crate) enum Message {
     OpenSettings,
     OpenTrackFxChain(TrackId),
     OpenTrackInstrumentPicker(TrackId),
+    OpenMidiEditor(ItemId),
+    CloseMidiEditor,
+    SelectMidiNotes(HashSet<NoteId>),
+    AddMidiNoteAt(ItemId, MidiNoteData),
+    EditMidiNotes(ItemId, Vec<(NoteId, MidiNoteData)>),
+    DeleteMidiNotes(ItemId, Vec<NoteId>),
+    PianoRollPan(i8),
+    PianoRollZoom(f32),
+    PianoRollPitchScroll(i8),
     ClearTrackInstrument(TrackId),
     OpenPluginPicker,
     CloseTrackFxChain,

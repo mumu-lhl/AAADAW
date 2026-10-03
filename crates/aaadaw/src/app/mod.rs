@@ -139,6 +139,12 @@ struct App {
     fx_chain_plugin_gui: Option<ClapPluginGuiOwner>,
     fx_chain_plugin_gui_identity: Option<(TrackId, usize, String)>,
     fx_chain_editor_status: String,
+    midi_editor_window_id: Option<iced::window::Id>,
+    midi_editor_item_id: Option<ItemId>,
+    midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
+    midi_editor_origin_tick: u64,
+    midi_editor_high_pitch: u8,
+    midi_editor_pixels_per_beat: f32,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
     plugin_picker_instrument_track_id: Option<TrackId>,
@@ -357,6 +363,16 @@ impl App {
                 .unwrap_or_else(|| "Track FX Chain".to_owned())
         } else if self.plugin_picker_window_id == Some(window_id) {
             "Add a CLAP Plugin".to_owned()
+        } else if self.midi_editor_window_id == Some(window_id) {
+            self.midi_editor_item_id
+                .and_then(|item_id| {
+                    self.project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .map(|_| "MIDI Editor".to_owned())
+                })
+                .unwrap_or_else(|| "MIDI Editor".to_owned())
         } else {
             "AAADAW".to_owned()
         }
@@ -420,6 +436,8 @@ impl App {
                 | Message::OpenTrackFxChain(_)
                 | Message::OpenTrackInstrumentPicker(_)
                 | Message::OpenPluginPicker
+                | Message::OpenMidiEditor(_)
+                | Message::CloseMidiEditor
                 | Message::CloseTrackFxChain
                 | Message::ClosePluginPicker
                 | Message::PluginPickerSearchChanged(_)
@@ -559,6 +577,9 @@ impl App {
                     Message::AddTrack
                         | Message::AddMidiItem
                         | Message::AddMidiNote(_)
+                        | Message::AddMidiNoteAt(..)
+                        | Message::EditMidiNotes(..)
+                        | Message::DeleteMidiNotes(..)
                         | Message::DeleteMidiItem(_)
                         | Message::NudgeMidiItem(..)
                         | Message::NudgeMidiNote(..)
@@ -641,6 +662,10 @@ impl App {
                     self.plugin_picker_track_id = None;
                     self.plugin_picker_instrument_track_id = None;
                     self.plugin_picker_search.clear();
+                } else if self.midi_editor_window_id == Some(window_id) {
+                    self.midi_editor_window_id = None;
+                    self.midi_editor_item_id = None;
+                    self.midi_editor_selected_notes.clear();
                 } else if self.main_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                     task = iced::exit();
@@ -654,6 +679,68 @@ impl App {
                 }
             }
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
+            Message::OpenMidiEditor(item_id) => task = self.open_midi_editor(item_id),
+            Message::CloseMidiEditor => {
+                if let Some(window_id) = self.midi_editor_window_id.take() {
+                    self.midi_editor_item_id = None;
+                    self.midi_editor_selected_notes.clear();
+                    task = iced::window::close(window_id);
+                }
+            }
+            Message::SelectMidiNotes(note_ids) => {
+                self.midi_editor_selected_notes = note_ids;
+            }
+            Message::AddMidiNoteAt(item_id, data) => {
+                self.apply_action(
+                    DawAction::AddMidiNotes {
+                        item_id,
+                        notes: vec![data],
+                    },
+                    "MIDI note added",
+                );
+            }
+            Message::EditMidiNotes(item_id, edits) => {
+                let actions = edits
+                    .into_iter()
+                    .map(|(note_id, data)| DawAction::EditMidiNote {
+                        item_id,
+                        note_id,
+                        data,
+                    })
+                    .collect();
+                self.apply_action(
+                    DawAction::BatchTransaction {
+                        tx_id: item_id.value(),
+                        actions,
+                    },
+                    "MIDI notes edited",
+                );
+            }
+            Message::DeleteMidiNotes(item_id, note_ids) => {
+                if !note_ids.is_empty() {
+                    self.apply_action(
+                        DawAction::DeleteMidiNotes { item_id, note_ids },
+                        "MIDI notes deleted",
+                    );
+                    self.midi_editor_selected_notes.clear();
+                }
+            }
+            Message::PianoRollPan(beats) => {
+                let delta = i128::from(beats) * i128::from(self.project.settings().ppq());
+                self.midi_editor_origin_tick = (i128::from(self.midi_editor_origin_tick) + delta)
+                    .clamp(0, i128::from(u64::MAX))
+                    as u64;
+            }
+            Message::PianoRollZoom(factor) if factor.is_finite() && factor > 0.0 => {
+                self.midi_editor_pixels_per_beat =
+                    (self.midi_editor_pixels_per_beat * factor).clamp(24.0, 300.0);
+            }
+            Message::PianoRollZoom(_) => {}
+            Message::PianoRollPitchScroll(delta) => {
+                self.midi_editor_high_pitch = (i16::from(self.midi_editor_high_pitch)
+                    + i16::from(delta))
+                .clamp(35, 127) as u8;
+            }
             Message::OpenTrackInstrumentPicker(track_id) => {
                 task = self.open_track_instrument_picker(track_id)
             }
@@ -1183,6 +1270,38 @@ impl App {
             ..iced::window::Settings::default()
         });
         self.settings_window_id = Some(window_id);
+        task.discard()
+    }
+
+    fn open_midi_editor(&mut self, item_id: ItemId) -> Task<Message> {
+        if !self
+            .project
+            .midi_items()
+            .iter()
+            .any(|item| item.id() == item_id)
+        {
+            self.status = "The selected MIDI item no longer exists".to_owned();
+            return Task::none();
+        }
+        if let Some(window_id) = self.midi_editor_window_id {
+            if self.midi_editor_item_id != Some(item_id) {
+                self.midi_editor_origin_tick = 0;
+            }
+            self.midi_editor_item_id = Some(item_id);
+            self.midi_editor_selected_notes.clear();
+            return iced::window::gain_focus(window_id);
+        }
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(1000.0, 620.0),
+            min_size: Some(iced::Size::new(720.0, 420.0)),
+            ..iced::window::Settings::default()
+        });
+        self.midi_editor_window_id = Some(window_id);
+        self.midi_editor_item_id = Some(item_id);
+        self.midi_editor_selected_notes.clear();
+        self.midi_editor_origin_tick = 0;
+        self.midi_editor_high_pitch = 84;
+        self.midi_editor_pixels_per_beat = 96.0;
         task.discard()
     }
 

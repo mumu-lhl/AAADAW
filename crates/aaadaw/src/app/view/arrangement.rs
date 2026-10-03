@@ -288,6 +288,12 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
         }
         actions = actions.push(context_item_command(entry));
     }
+    if is_midi {
+        actions = actions.push(action_button(
+            "Open piano roll",
+            Message::OpenMidiEditor(item_id),
+        ));
+    }
     let contents =
         column![heading, actions.spacing(super::tokens::ROW_GAP)].spacing(super::tokens::ROW_GAP);
     container(contents)
