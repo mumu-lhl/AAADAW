@@ -23,6 +23,7 @@ pub(crate) const TIMELINE_SCROLL_ID: &str = "aaadaw-timeline-scroll";
 const MIN_PIXELS_PER_TICK: f32 = 0.002;
 const MAX_PIXELS_PER_TICK: f32 = 1.5;
 const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
+const ITEM_TRIM_EDGE_HIT_RADIUS_PX: f64 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArrangementPane {
@@ -175,6 +176,18 @@ pub(crate) enum TimelineEvent {
     },
     EndItemDrag,
     CancelItemDrag,
+    BeginItemTrim {
+        item_id: ItemId,
+        edge: ItemTrimEdge,
+        target_tick: u64,
+        ignore_snap: bool,
+    },
+    UpdateItemTrim {
+        target_tick: u64,
+        ignore_snap: bool,
+    },
+    EndItemTrim,
+    CancelItemTrim,
     SelectTrack(TrackId),
     OpenTrackContextMenu(TrackId),
     ToggleTrackContextMenu(TrackId),
@@ -223,6 +236,7 @@ struct TimelineItem {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct WaveformBinGeometry {
+    pub(super) item_id: ItemId,
     pub(super) start_tick: u64,
     pub(super) end_tick: u64,
     pub(super) track_index: usize,
@@ -391,6 +405,7 @@ impl TimelineCache {
                     continue;
                 };
                 bins.push(WaveformBinGeometry {
+                    item_id: item.id,
                     start_tick,
                     end_tick,
                     track_index: item.track_index,
@@ -432,6 +447,7 @@ pub(crate) struct TimelineState {
     pan_fractional_tick: f64,
     selection_anchor: Option<ItemId>,
     drag_preview: Option<ItemDragPreview>,
+    item_trim_preview: Option<ItemTrimPreview>,
     pub(crate) volume_automation_tracks: HashSet<TrackId>,
     pub(crate) hidden_volume_automation_tracks: HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -443,6 +459,21 @@ pub(crate) struct ItemDragPreview {
     pub(crate) delta_ticks: i128,
     pub(crate) track_delta: i32,
     pub(crate) target_track_index: Option<usize>,
+    pub(crate) valid: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemTrimEdge {
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ItemTrimPreview {
+    pub(crate) item_id: ItemId,
+    pub(crate) edge: ItemTrimEdge,
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
     pub(crate) valid: bool,
 }
 
@@ -488,6 +519,7 @@ impl Default for TimelineState {
             pan_fractional_tick: 0.0,
             selection_anchor: None,
             drag_preview: None,
+            item_trim_preview: None,
             volume_automation_tracks: HashSet::new(),
             hidden_volume_automation_tracks: HashSet::new(),
             selected_volume_automation_point: None,
@@ -687,6 +719,27 @@ impl TimelineState {
             }
             TimelineEvent::EndItemDrag => self.drag_preview = None,
             TimelineEvent::CancelItemDrag => self.drag_preview = None,
+            TimelineEvent::BeginItemTrim {
+                item_id,
+                edge,
+                target_tick,
+                ignore_snap,
+            } => {
+                self.select_item(Some(item_id), false, false, false);
+                self.drag_preview = None;
+                self.update_item_trim(item_id, edge, target_tick, ignore_snap);
+            }
+            TimelineEvent::UpdateItemTrim {
+                target_tick,
+                ignore_snap,
+            } => {
+                if let Some(preview) = self.item_trim_preview {
+                    self.update_item_trim(preview.item_id, preview.edge, target_tick, ignore_snap);
+                }
+            }
+            TimelineEvent::EndItemTrim | TimelineEvent::CancelItemTrim => {
+                self.item_trim_preview = None;
+            }
             TimelineEvent::SelectTrack(track_id) => self.selected_track = Some(track_id),
             TimelineEvent::OpenTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
@@ -824,8 +877,61 @@ impl TimelineState {
         });
     }
 
+    fn update_item_trim(
+        &mut self,
+        item_id: ItemId,
+        edge: ItemTrimEdge,
+        target_tick: u64,
+        ignore_snap: bool,
+    ) {
+        let Some(&item_index) = self.cache.item_indices.get(&item_id) else {
+            self.item_trim_preview = None;
+            return;
+        };
+        let item = &self.cache.items[item_index];
+        if item.kind != ItemKind::Audio {
+            self.item_trim_preview = None;
+            return;
+        }
+        let target_tick = snap_tick_to_grid(
+            target_tick,
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+        );
+        let (start_tick, end_tick, valid) = match edge {
+            ItemTrimEdge::Start => {
+                let start_tick = target_tick.max(item.start_tick);
+                (
+                    start_tick,
+                    item.end_tick,
+                    start_tick > item.start_tick && start_tick < item.end_tick,
+                )
+            }
+            ItemTrimEdge::End => {
+                let end_tick = target_tick.min(item.end_tick);
+                (
+                    item.start_tick,
+                    end_tick,
+                    end_tick < item.end_tick && end_tick > item.start_tick,
+                )
+            }
+        };
+        self.item_trim_preview = Some(ItemTrimPreview {
+            item_id,
+            edge,
+            start_tick,
+            end_tick,
+            valid,
+        });
+    }
+
     pub(crate) fn drag_preview(&self) -> Option<ItemDragPreview> {
         self.drag_preview
+    }
+
+    pub(crate) fn item_trim_preview(&self) -> Option<ItemTrimPreview> {
+        self.item_trim_preview
     }
 
     pub(crate) fn has_snap_grid(&self) -> bool {
@@ -871,6 +977,7 @@ impl TimelineState {
             snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
+            item_trim_preview: self.item_trim_preview,
             volume_automation_tracks: &self.volume_automation_tracks,
             hidden_volume_automation_tracks: &self.hidden_volume_automation_tracks,
             selected_volume_automation_point: self.selected_volume_automation_point,
@@ -903,6 +1010,7 @@ struct TimelineProgram<'a> {
     snap_enabled: bool,
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
+    item_trim_preview: Option<ItemTrimPreview>,
     volume_automation_tracks: &'a HashSet<TrackId>,
     hidden_volume_automation_tracks: &'a HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -913,6 +1021,7 @@ struct TimelineInteractionState {
     modifiers: keyboard::Modifiers,
     pan_last_x: Option<f32>,
     pending_item_drag: Option<PendingItemDrag>,
+    pending_item_trim: Option<PendingItemTrim>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
@@ -933,6 +1042,15 @@ struct PendingItemDrag {
     pointer_start_x: f32,
     pointer_start_y: f32,
     modifiers: keyboard::Modifiers,
+    is_dragging: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingItemTrim {
+    item_id: ItemId,
+    edge: ItemTrimEdge,
+    pointer_start_x: f32,
+    pointer_start_y: f32,
     is_dragging: bool,
 }
 
@@ -1007,6 +1125,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_item_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
+            let cancel_trim = state
+                .pending_item_trim
+                .take()
+                .is_some_and(|trim| trim.is_dragging);
             let cancel_time_selection_drag = state
                 .pending_time_selection_drag
                 .take()
@@ -1015,6 +1137,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 Some(
                     shader::Action::publish(crate::app::Message::Timeline(
                         TimelineEvent::CancelItemDrag,
+                    ))
+                    .and_capture(),
+                )
+            } else if cancel_trim {
+                Some(
+                    shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::CancelItemTrim,
                     ))
                     .and_capture(),
                 )
@@ -1119,6 +1248,44 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
+                } else if let Some(mut trim) = state.pending_item_trim {
+                    let local_x = position.x - bounds.x;
+                    let local_y = position.y - bounds.y;
+                    let distance =
+                        (local_x - trim.pointer_start_x).hypot(local_y - trim.pointer_start_y);
+                    let was_dragging = trim.is_dragging;
+                    if !was_dragging && distance < 3.0 {
+                        None
+                    } else {
+                        trim.is_dragging = true;
+                        state.pending_item_trim = Some(trim);
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                if was_dragging {
+                                    TimelineEvent::UpdateItemTrim {
+                                        target_tick: tick_at_x(
+                                            self.origin_tick,
+                                            self.pixels_per_tick,
+                                            local_x,
+                                        ),
+                                        ignore_snap: state.modifiers.shift(),
+                                    }
+                                } else {
+                                    TimelineEvent::BeginItemTrim {
+                                        item_id: trim.item_id,
+                                        edge: trim.edge,
+                                        target_tick: tick_at_x(
+                                            self.origin_tick,
+                                            self.pixels_per_tick,
+                                            local_x,
+                                        ),
+                                        ignore_snap: state.modifiers.shift(),
+                                    }
+                                },
+                            ))
+                            .and_capture(),
+                        )
+                    }
                 } else if let Some(mut drag) = state.pending_item_drag {
                     let local_x = position.x - bounds.x;
                     let local_y = position.y - bounds.y;
@@ -1244,6 +1411,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     );
                 }
                 let hit = self.cache.item_at(track_index, tick);
+                let trim_edge = item_trim_edge_at_x(
+                    self.cache,
+                    track_index,
+                    position.x,
+                    self.origin_tick,
+                    self.pixels_per_tick,
+                );
                 let selection_edge = self.time_selection.and_then(|selection| {
                     time_selection_edge_at_tick(selection, tick, self.pixels_per_tick)
                 });
@@ -1262,6 +1436,17 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         mode,
                         anchor_tick: tick,
                         fixed_tick,
+                        pointer_start_x: position.x,
+                        pointer_start_y: position.y,
+                        is_dragging: false,
+                    });
+                    Some(shader::Action::capture())
+                } else if let Some((item_id, edge)) = trim_edge {
+                    state.pending_item_drag = None;
+                    state.pending_time_selection_drag = None;
+                    state.pending_item_trim = Some(PendingItemTrim {
+                        item_id,
+                        edge,
                         pointer_start_x: position.x,
                         pointer_start_y: position.y,
                         is_dragging: false,
@@ -1339,6 +1524,27 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
+                } else if let Some(trim) = state.pending_item_trim.take() {
+                    if trim.is_dragging {
+                        state.last_item_click = None;
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::EndItemTrim,
+                            ))
+                            .and_capture(),
+                        )
+                    } else {
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SelectItem {
+                                    item_id: Some(trim.item_id),
+                                    additive: state.modifiers.command(),
+                                    range: state.modifiers.shift(),
+                                },
+                            ))
+                            .and_capture(),
+                        )
+                    }
                 } else if let Some(drag) = state.pending_item_drag.take() {
                     if drag.is_dragging {
                         state.last_item_click = None;
@@ -1426,6 +1632,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             waveform_bins: Arc::clone(&self.cache.waveform_bins),
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,
+            item_trim_preview: self.item_trim_preview,
             volume_automation: self
                 .project
                 .tracks()
@@ -1483,6 +1690,17 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 return mouse::Interaction::ResizingHorizontally;
             }
             let row_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
+            if item_trim_edge_at_x(
+                self.cache,
+                row_index,
+                position.x,
+                self.origin_tick,
+                self.pixels_per_tick,
+            )
+            .is_some()
+            {
+                return mouse::Interaction::ResizingHorizontally;
+            }
             if self.cache.item_at(row_index, tick).is_some() {
                 return mouse::Interaction::Pointer;
             }
@@ -1490,6 +1708,33 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         }
         mouse::Interaction::default()
     }
+}
+
+fn item_trim_edge_at_x(
+    cache: &TimelineCache,
+    track_index: usize,
+    x: f32,
+    origin_tick: u64,
+    pixels_per_tick: f32,
+) -> Option<(ItemId, ItemTrimEdge)> {
+    cache
+        .items
+        .iter()
+        .filter(|item| item.track_index == track_index && item.kind == ItemKind::Audio)
+        .flat_map(|item| {
+            [
+                (item.start_tick, ItemTrimEdge::Start),
+                (item.end_tick, ItemTrimEdge::End),
+            ]
+            .map(move |(tick, edge)| (item, tick, edge))
+        })
+        .filter_map(|(item, tick, edge)| {
+            let edge_x = (tick as f64 - origin_tick as f64) * f64::from(pixels_per_tick);
+            let distance = (f64::from(x) - edge_x).abs();
+            (distance <= ITEM_TRIM_EDGE_HIT_RADIUS_PX).then_some((item.id, edge, distance))
+        })
+        .min_by(|left, right| left.2.total_cmp(&right.2))
+        .map(|(item_id, edge, _)| (item_id, edge))
 }
 
 fn track_index_at_y(y: f32, track_count: usize) -> Option<usize> {
@@ -1718,23 +1963,27 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 .state
                 .drag_preview
                 .filter(|_| self.state.selected_items.contains(&item.id));
-            let (start_tick, end_tick, track_index) = preview.map_or(
+            let trim = self
+                .state
+                .item_trim_preview
+                .filter(|trim| trim.item_id == item.id);
+            let (start_tick, end_tick, track_index) = if let Some(trim) = trim {
+                (trim.start_tick, trim.end_tick, item.track_index as i128)
+            } else if let Some(preview) = preview {
+                let start_tick = u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
+                    .unwrap_or(item.start_tick);
+                let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
+                    .unwrap_or(item.end_tick);
+                let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
+                    + i128::from(preview.track_delta);
+                (start_tick, end_tick, track_index)
+            } else {
                 (
                     item.start_tick,
                     item.end_tick,
                     i128::try_from(item.track_index).unwrap_or(i128::MAX),
-                ),
-                |preview| {
-                    let start_tick =
-                        u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
-                            .unwrap_or(item.start_tick);
-                    let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
-                        .unwrap_or(item.end_tick);
-                    let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
-                        + i128::from(preview.track_delta);
-                    (start_tick, end_tick, track_index)
-                },
-            );
+                )
+            };
             if track_index < first_visible_track as i128 || track_index >= end_visible_track as i128
             {
                 continue;

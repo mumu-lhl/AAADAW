@@ -2176,6 +2176,113 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
 }
 
 #[test]
+fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let start = app.project.sample_at_tick(480).unwrap();
+    let end = app.project.sample_at_tick(1_440).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://trim-test".to_owned(),
+            start_sample: start,
+            source_offset_samples: 256,
+            length_samples: end - start,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = app.project.audio_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::Start,
+            target_tick: 700,
+            ignore_snap: true,
+        });
+    assert_eq!(app.timeline.item_trim_preview().unwrap().start_tick, 700);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::CancelItemTrim);
+    assert!(app.timeline.item_trim_preview().is_none());
+    assert_eq!(app.project.audio_items()[0], original);
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::Start,
+            target_tick: 650,
+            ignore_snap: false,
+        });
+    let preview = app.timeline.item_trim_preview().unwrap();
+    assert!(preview.valid);
+    assert_eq!(preview.start_tick, 720);
+    app.finish_item_trim();
+
+    let trimmed = &app.project.audio_items()[0];
+    let trimmed_start = app.project.sample_at_tick(720).unwrap();
+    let trimmed_source_offset = trimmed.source_offset_samples();
+    assert_eq!(trimmed.start_sample(), trimmed_start);
+    assert_eq!(trimmed.source_offset_samples(), 256 + trimmed_start - start);
+    assert_eq!(trimmed.start_sample() + trimmed.length_samples(), end);
+    assert_eq!(app.revision, 2);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].start_sample(), trimmed_start);
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::End,
+            target_tick: 1_200,
+            ignore_snap: false,
+        });
+    app.finish_item_trim();
+    let right_trimmed = &app.project.audio_items()[0];
+    assert_eq!(right_trimmed.start_sample(), trimmed_start);
+    assert_eq!(right_trimmed.source_offset_samples(), trimmed_source_offset);
+    assert_eq!(
+        right_trimmed.start_sample() + right_trimmed.length_samples(),
+        app.project.sample_at_tick(1_200).unwrap()
+    );
+}
+
+#[test]
+fn invalid_audio_item_trim_changes_neither_project_nor_history() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://trim-invalid".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = app.project.audio_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::Start,
+            target_tick: 0,
+            ignore_snap: true,
+        });
+    assert!(!app.timeline.item_trim_preview().unwrap().valid);
+    let revision = app.revision;
+    app.finish_item_trim();
+    assert_eq!(app.project.audio_items()[0], original);
+    assert_eq!(app.revision, revision);
+    assert!(app.status.contains("at least one sample"));
+}
+
+#[test]
 fn invalid_item_drop_does_not_change_project_or_create_history() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

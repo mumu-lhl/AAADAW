@@ -746,6 +746,9 @@ impl App {
                 timeline::TimelineEvent::BeginItemDrag { .. }
                     | timeline::TimelineEvent::UpdateItemDrag { .. }
                     | timeline::TimelineEvent::EndItemDrag
+                    | timeline::TimelineEvent::BeginItemTrim { .. }
+                    | timeline::TimelineEvent::UpdateItemTrim { .. }
+                    | timeline::TimelineEvent::EndItemTrim
             )
         ) && let Some(status) = item_drag_edit_guard_status(
             self.path_picker_busy,
@@ -757,6 +760,8 @@ impl App {
         ) {
             self.timeline
                 .handle(timeline::TimelineEvent::CancelItemDrag);
+            self.timeline
+                .handle(timeline::TimelineEvent::CancelItemTrim);
             self.status = status.to_owned();
             return Task::none();
         }
@@ -1325,10 +1330,16 @@ impl App {
             }
             Message::NewProject => self.new_project(),
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
+            Message::Timeline(timeline::TimelineEvent::EndItemTrim) => self.finish_item_trim(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
                 self.timeline
                     .handle(timeline::TimelineEvent::CancelItemDrag);
                 self.status = "Item drag cancelled".to_owned();
+            }
+            Message::Timeline(timeline::TimelineEvent::CancelItemTrim) => {
+                self.timeline
+                    .handle(timeline::TimelineEvent::CancelItemTrim);
+                self.status = "Audio item trim cancelled".to_owned();
             }
             Message::Timeline(timeline::TimelineEvent::InsertVolumeAutomationAt {
                 track_index,
@@ -2966,6 +2977,80 @@ impl App {
             Ok(None) => {}
             Err(error) => self.status = format!("Drop rejected: {error}"),
         }
+    }
+
+    fn finish_item_trim(&mut self) {
+        let preview = self.timeline.item_trim_preview();
+        self.timeline.handle(timeline::TimelineEvent::EndItemTrim);
+        let Some(preview) = preview else {
+            return;
+        };
+        if !preview.valid {
+            self.status =
+                "Trim rejected: audio items must remain at least one sample long".to_owned();
+            return;
+        }
+        match self.item_trim_action(preview) {
+            Ok(Some(action)) => self.apply_action(action, "Audio item trimmed"),
+            Ok(None) => {}
+            Err(error) => self.status = format!("Trim rejected: {error}"),
+        }
+    }
+
+    fn item_trim_action(
+        &self,
+        preview: timeline::ItemTrimPreview,
+    ) -> Result<Option<DawAction>, String> {
+        let item = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == preview.item_id)
+            .ok_or_else(|| format!("audio item {} no longer exists", preview.item_id.value()))?;
+        let old_start = item.start_sample();
+        let old_end = old_start
+            .checked_add(item.length_samples())
+            .ok_or_else(|| "audio item range overflows sample time".to_owned())?;
+        let (start_sample, source_offset_samples, length_samples) = match preview.edge {
+            timeline::ItemTrimEdge::Start => {
+                let start = self
+                    .project
+                    .sample_at_tick(preview.start_tick)
+                    .map_err(|error| error.to_string())?;
+                if start <= old_start || start >= old_end {
+                    return Err(
+                        "left trim must move inward and leave at least one sample".to_owned()
+                    );
+                }
+                let source_offset = item
+                    .source_offset_samples()
+                    .checked_add(start - old_start)
+                    .ok_or_else(|| "source offset overflows sample time".to_owned())?;
+                (start, source_offset, old_end - start)
+            }
+            timeline::ItemTrimEdge::End => {
+                let end = self
+                    .project
+                    .sample_at_tick(preview.end_tick)
+                    .map_err(|error| error.to_string())?;
+                if end <= old_start || end >= old_end {
+                    return Err(
+                        "right trim must move inward and leave at least one sample".to_owned()
+                    );
+                }
+                (old_start, item.source_offset_samples(), end - old_start)
+            }
+        };
+        if length_samples == 0 || start_sample.checked_add(length_samples).is_none() {
+            return Err("trimmed audio range is invalid".to_owned());
+        }
+        Ok(Some(DawAction::EditAudioItem {
+            item_id: preview.item_id,
+            media_ref: item.media_ref().to_owned(),
+            start_sample,
+            source_offset_samples,
+            length_samples,
+        }))
     }
 
     fn playback_busy(&self) -> bool {

@@ -1,5 +1,5 @@
 use super::{
-    ItemDragPreview, ItemKind, SelectedItemGeometry, TimeSelection, TimelineItem,
+    ItemDragPreview, ItemKind, ItemTrimPreview, SelectedItemGeometry, TimeSelection, TimelineItem,
     WaveformBinGeometry,
 };
 use bytemuck::{Pod, Zeroable, cast_slice};
@@ -45,6 +45,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) waveform_bins: Arc<[WaveformBinGeometry]>,
     pub(super) time_selection: Option<TimeSelection>,
     pub(super) drag_preview: Option<ItemDragPreview>,
+    pub(super) item_trim_preview: Option<ItemTrimPreview>,
     pub(super) selected_track_index: u32,
     pub(super) width: f32,
     pub(super) height: f32,
@@ -117,6 +118,7 @@ pub(super) struct TimelinePipeline {
     static_count: u32,
     static_generation: Option<u64>,
     previewed_indices: Vec<usize>,
+    previewed_waveform_indices: Vec<usize>,
     dynamic_buffer: wgpu::Buffer,
     dynamic_capacity: usize,
     dynamic_count: u32,
@@ -218,6 +220,7 @@ impl Pipeline for TimelinePipeline {
             static_count: 0,
             static_generation: None,
             previewed_indices: Vec::new(),
+            previewed_waveform_indices: Vec::new(),
             dynamic_buffer: empty_buffer(),
             dynamic_capacity: 1,
             dynamic_count: 0,
@@ -238,6 +241,7 @@ impl Primitive for TimelinePrimitive {
     ) {
         if pipeline.static_generation != Some(self.generation) {
             pipeline.previewed_indices.clear();
+            pipeline.previewed_waveform_indices.clear();
             let mut instances = Vec::with_capacity(
                 self.track_count as usize
                     + self.items.len()
@@ -294,21 +298,7 @@ impl Primitive for TimelinePrimitive {
                     .volume_automation
                     .iter()
                     .any(|lane| lane.track_index == bin.track_index as u32);
-                let height = (self.row_height * if has_automation { 0.35 } else { 0.56 }).max(1.0);
-                let center = bin.track_index as f32 * self.row_height
-                    + self.row_height * if has_automation { 0.38 } else { 0.62 };
-                let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
-                let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
-                instances.push(GpuRect::new(GpuRectSpec {
-                    start_tick: bin.start_tick,
-                    end_tick: bin.end_tick,
-                    y: top.min(bottom),
-                    height: (bottom - top).abs().max(1.0),
-                    color: [150, 177, 190, 255],
-                    item_id: 0,
-                    track_index: bin.track_index as u32,
-                    kind: AUDIO_WAVEFORM,
-                }));
+                instances.push(waveform_rect(*bin, self.row_height, has_automation));
             }
             for lane in &self.volume_automation {
                 let y = |db: f32| {
@@ -387,11 +377,23 @@ impl Primitive for TimelinePrimitive {
             pipeline.static_generation = Some(self.generation);
         }
 
-        let previewed_indices = if self.drag_preview.is_some() {
-            self.selected_items
+        let previewed_indices = if self.drag_preview.is_some() || self.item_trim_preview.is_some() {
+            let mut indices = self
+                .selected_items
                 .iter()
                 .map(|item| item.cache_index)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            if let Some(preview) = self.item_trim_preview
+                && let Some(index) = self
+                    .items
+                    .iter()
+                    .position(|item| item.id == preview.item_id)
+            {
+                indices.push(index);
+            }
+            indices.sort_unstable();
+            indices.dedup();
+            indices
         } else {
             Vec::new()
         };
@@ -436,12 +438,88 @@ impl Primitive for TimelinePrimitive {
                 );
             }
         }
+        if let Some(preview) = self.item_trim_preview
+            && let Some((cache_index, item)) = self
+                .items
+                .iter()
+                .enumerate()
+                .find(|(_, item)| item.id == preview.item_id)
+        {
+            let rect = selected_item_rect(
+                preview.start_tick,
+                preview.end_tick,
+                item.track_index as u32,
+                item.id.value(),
+                item.kind,
+                self.row_height,
+            );
+            write_item_rect(
+                queue,
+                &pipeline.static_buffer,
+                self.track_count,
+                cache_index,
+                &rect,
+            );
+        }
+        let waveform_instance_start = self.track_count as usize + self.items.len();
+        for index in pipeline.previewed_waveform_indices.iter().copied() {
+            if let Some(bin) = self.waveform_bins.get(index) {
+                write_static_instance(
+                    queue,
+                    &pipeline.static_buffer,
+                    waveform_instance_start + index,
+                    &waveform_rect(
+                        *bin,
+                        self.row_height,
+                        self.volume_automation
+                            .iter()
+                            .any(|lane| lane.track_index == bin.track_index as u32),
+                    ),
+                );
+            }
+        }
+        let mut previewed_waveform_indices = Vec::new();
+        if let Some(preview) = self.item_trim_preview {
+            for (index, bin) in self.waveform_bins.iter().enumerate() {
+                if bin.item_id != preview.item_id {
+                    continue;
+                }
+                let (start_tick, end_tick) = if preview.valid {
+                    (
+                        bin.start_tick.max(preview.start_tick),
+                        bin.end_tick.min(preview.end_tick),
+                    )
+                } else {
+                    (preview.start_tick, preview.start_tick)
+                };
+                let clipped = WaveformBinGeometry {
+                    start_tick,
+                    end_tick,
+                    ..*bin
+                };
+                write_static_instance(
+                    queue,
+                    &pipeline.static_buffer,
+                    waveform_instance_start + index,
+                    &waveform_rect(
+                        clipped,
+                        self.row_height,
+                        self.volume_automation
+                            .iter()
+                            .any(|lane| lane.track_index == bin.track_index as u32),
+                    ),
+                );
+                previewed_waveform_indices.push(index);
+            }
+        }
+        pipeline.previewed_waveform_indices = previewed_waveform_indices;
         pipeline.previewed_indices = previewed_indices;
 
         let mut dynamic = Vec::with_capacity(
             self.grid_lines.len()
                 + 3
                 + self.selected_items.len()
+                + usize::from(self.item_trim_preview.is_some())
                 + if self.time_selection.is_some() { 3 } else { 0 },
         );
         if let Some(selection) = self.time_selection {
@@ -488,12 +566,25 @@ impl Primitive for TimelinePrimitive {
         }
         for selected in &self.selected_items {
             let preview = self.drag_preview;
-            let start_tick = preview
-                .and_then(|preview| shift_tick(selected.start_tick, preview.delta_ticks))
-                .unwrap_or(selected.start_tick);
-            let end_tick = preview
-                .and_then(|preview| shift_tick(selected.end_tick, preview.delta_ticks))
-                .unwrap_or(selected.end_tick);
+            let trim = self
+                .item_trim_preview
+                .filter(|trim| trim.item_id == selected.item_id);
+            let start_tick = trim.map_or_else(
+                || {
+                    preview
+                        .and_then(|preview| shift_tick(selected.start_tick, preview.delta_ticks))
+                        .unwrap_or(selected.start_tick)
+                },
+                |trim| trim.start_tick,
+            );
+            let end_tick = trim.map_or_else(
+                || {
+                    preview
+                        .and_then(|preview| shift_tick(selected.end_tick, preview.delta_ticks))
+                        .unwrap_or(selected.end_tick)
+                },
+                |trim| trim.end_tick,
+            );
             let row = i128::try_from(selected.track_index).unwrap_or(i128::MAX)
                 + preview.map_or(0, |preview| i128::from(preview.track_delta));
             let track_index = u32::try_from(row).unwrap_or(u32::MAX);
@@ -502,7 +593,11 @@ impl Primitive for TimelinePrimitive {
                 end_tick,
                 y: track_index as f32 * self.row_height + 7.0,
                 height: self.row_height - 14.0,
-                color: [245, 185, 92, 255],
+                color: if trim.is_some_and(|trim| !trim.valid) {
+                    [218, 80, 71, 255]
+                } else {
+                    [245, 185, 92, 255]
+                },
                 item_id: selected.item_id.value(),
                 track_index,
                 kind: SELECTED_ITEM,
@@ -643,6 +738,24 @@ fn selected_item_rect(
     })
 }
 
+fn waveform_rect(bin: WaveformBinGeometry, row_height: f32, has_automation: bool) -> GpuRect {
+    let height = (row_height * if has_automation { 0.35 } else { 0.56 }).max(1.0);
+    let center =
+        bin.track_index as f32 * row_height + row_height * if has_automation { 0.38 } else { 0.62 };
+    let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
+    let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
+    GpuRect::new(GpuRectSpec {
+        start_tick: bin.start_tick,
+        end_tick: bin.end_tick,
+        y: top.min(bottom),
+        height: (bottom - top).abs().max(1.0),
+        color: [150, 177, 190, 255],
+        item_id: 0,
+        track_index: bin.track_index as u32,
+        kind: AUDIO_WAVEFORM,
+    })
+}
+
 fn write_item_rect(
     queue: &wgpu::Queue,
     buffer: &wgpu::Buffer,
@@ -651,6 +764,15 @@ fn write_item_rect(
     rect: &GpuRect,
 ) {
     let instance_index = track_count as usize + cache_index;
+    write_static_instance(queue, buffer, instance_index, rect);
+}
+
+fn write_static_instance(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    instance_index: usize,
+    rect: &GpuRect,
+) {
     let byte_offset = (instance_index * std::mem::size_of::<GpuRect>()) as u64;
     queue.write_buffer(buffer, byte_offset, bytemuck::bytes_of(rect));
 }
