@@ -1480,10 +1480,12 @@ fn saved_macros_run_ordered_commands_from_actions_search_and_shortcuts() {
 
 #[test]
 fn malformed_macro_config_blocks_create_and_delete_overwrites() {
-    let mut app = App::default();
-    app.action_macro_config_error = Some("invalid macro config".to_owned());
-    app.action_macro_name = "Do not overwrite".to_owned();
-    app.action_macro_steps = vec!["view.mixer-workspace".to_owned()];
+    let mut app = App {
+        action_macro_config_error: Some("invalid macro config".to_owned()),
+        action_macro_name: "Do not overwrite".to_owned(),
+        action_macro_steps: vec!["view.mixer-workspace".to_owned()],
+        ..App::default()
+    };
     let _ = app.update(Message::SaveActionMacro);
     assert!(app.action_macros.is_empty());
     assert!(
