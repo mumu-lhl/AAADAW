@@ -36,6 +36,8 @@ pub enum ActionError {
     TempoPointNotFound {
         start_tick: u64,
     },
+    /// The required tempo point at tick zero cannot be removed.
+    CannotRemoveInitialTempo,
     /// The time signature is invalid or cannot be represented at this PPQ.
     InvalidTimeSignature,
     /// A time-signature change must occur on a bar line.
@@ -131,6 +133,9 @@ impl fmt::Display for ActionError {
             }
             Self::TempoPointNotFound { start_tick } => {
                 write!(formatter, "tempo point at tick {start_tick} does not exist")
+            }
+            Self::CannotRemoveInitialTempo => {
+                formatter.write_str("the initial tempo point at tick zero cannot be removed")
             }
             Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
             Self::MeterChangeNotOnBarBoundary => {

@@ -27,6 +27,7 @@ mod menu;
 mod midi_editor;
 mod plugin_picker;
 mod settings;
+mod tempo_map;
 mod tokens;
 
 const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
@@ -70,6 +71,8 @@ pub(super) fn playback_diagnostic_suffix(
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
     if app.settings_window_id == Some(window_id) {
         settings::view(app)
+    } else if app.tempo_map_window_id == Some(window_id) {
+        tempo_map::view(app)
     } else if app.fx_chain_window_id == Some(window_id) {
         fx_chain::view(app)
     } else if app.plugin_picker_window_id == Some(window_id) {
@@ -145,6 +148,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let transport = container(
         row![
             text("Transport").size(14),
+            button(
+                text(format!(
+                    "{:.2} BPM",
+                    app.project.tempo_at_tick(app.timeline.edit_cursor_tick)
+                ))
+                .size(12)
+            )
+            .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+            .on_press(Message::OpenTempoMap),
             playback_controls(app),
             iced::widget::Space::new().width(Length::Fill),
             time_selection_readout(app),

@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, Project, TempoCurve};
+use aaadaw_core::{ActionError, DawAction, Project, TempoCurve};
 
 #[test]
 fn sample_and_ppq_positions_follow_tempo_changes() {
@@ -30,6 +30,31 @@ fn sample_and_ppq_positions_follow_tempo_changes() {
             .expect("a valid sample should convert"),
         1920
     );
+}
+
+#[test]
+fn tempo_points_can_be_removed_and_the_initial_point_is_protected() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 960,
+            bpm: 80.0,
+        })
+        .expect("a tempo point should be accepted");
+    assert_eq!(
+        project.apply(DawAction::DeleteTempoPoint { start_tick: 0 }),
+        Err(ActionError::CannotRemoveInitialTempo)
+    );
+    project
+        .apply(DawAction::DeleteTempoPoint { start_tick: 960 })
+        .expect("noninitial tempo points should be removable");
+    assert_eq!(project.tempo_points().count(), 1);
+    assert!(
+        project
+            .undo()
+            .expect("deleting a tempo point should be undoable")
+    );
+    assert_eq!(project.tempo_at_tick(960), 80.0);
 }
 
 #[test]
