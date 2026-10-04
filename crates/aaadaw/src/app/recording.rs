@@ -339,30 +339,36 @@ impl App {
                 Task::none()
             }
             Some(Ok((recording, _provisional_start_sample))) => {
-                let input_shares_frame_clock = recording.input.has_shared_frame_clock();
                 let playback_stats = self.playback.as_ref().map(|playback| playback.stats());
                 let jack_clock_anchor =
                     playback_stats.and_then(|stats| stats.transport_clock_anchor);
-                let transport_sample = if input_shares_frame_clock {
-                    let Some(anchor) = jack_clock_anchor else {
+                let frame_clock_mapping = recording
+                    .input
+                    .map_shared_frame_time(jack_clock_anchor.map(|anchor| anchor.backend_frame));
+                let transport_sample = match frame_clock_mapping {
+                    aaadaw_app::SharedFrameClockMapping::Mapped(_) => {
+                        jack_clock_anchor
+                            .expect("a mapped clock requires an output anchor")
+                            .project_sample
+                    }
+                    aaadaw_app::SharedFrameClockMapping::Unavailable => {
                         recording.control.fail();
                         discard_recording(recording);
                         self.recording_starting = false;
                         self.recording_tracks.clear();
                         self.status =
-                            "JACK transport clock is not ready; recording was not started"
+                            "JACK transport/input clock is unavailable; recording was not started"
                                 .to_owned();
                         return Task::none();
-                    };
-                    anchor.project_sample
-                } else {
-                    jack_clock_anchor.map_or_else(
-                        || {
-                            playback_stats
-                                .map_or(self.playhead_sample, |stats| stats.playhead_sample)
-                        },
-                        |anchor| anchor.project_sample,
-                    )
+                    }
+                    aaadaw_app::SharedFrameClockMapping::Unsupported => jack_clock_anchor
+                        .map_or_else(
+                            || {
+                                playback_stats
+                                    .map_or(self.playhead_sample, |stats| stats.playhead_sample)
+                            },
+                            |anchor| anchor.project_sample,
+                        ),
                 };
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
@@ -377,9 +383,8 @@ impl App {
                     self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
                     return Task::none();
                 };
-                if let Some(capture_frame) = jack_clock_anchor
-                    .filter(|_| input_shares_frame_clock)
-                    .and_then(|anchor| recording.input.map_shared_frame_time(anchor.backend_frame))
+                if let aaadaw_app::SharedFrameClockMapping::Mapped(capture_frame) =
+                    frame_clock_mapping
                 {
                     let Some(anchor) = aaadaw_app::CaptureTimelineAnchor::new(
                         capture_frame,
@@ -417,14 +422,6 @@ impl App {
                             )
                         },
                     );
-                } else if input_shares_frame_clock {
-                    recording.control.fail_timing();
-                    discard_recording(recording);
-                    self.recording_starting = false;
-                    self.recording_tracks.clear();
-                    self.status =
-                        "JACK input clock is unavailable; recording was not started".to_owned();
-                    return Task::none();
                 } else if let Err(error) = recording.writer.refine_start_sample(start_sample) {
                     recording.control.fail();
                     discard_recording(recording);

@@ -85,6 +85,18 @@ pub enum RunningAudioInput {
     Wasapi(WasapiAudioInput),
 }
 
+/// Result of mapping the output clock into the active input clock domain.
+#[cfg(feature = "audio-device")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SharedFrameClockMapping {
+    /// The input backend does not share an output frame clock.
+    Unsupported,
+    /// The backend shares the clock, but either the output anchor or input clock sample is absent.
+    Unavailable,
+    /// The output frame expressed in the input backend's extended clock domain.
+    Mapped(u64),
+}
+
 /// Opens the selected native input backend for a stereo take.
 #[cfg(feature = "audio-device")]
 #[allow(unused_variables)]
@@ -125,39 +137,26 @@ pub fn open_audio_input(
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioInput {
-    /// Returns whether this input shares a backend frame clock with the output transport.
-    pub fn has_shared_frame_clock(&self) -> bool {
+    /// Maps an optional playback frame anchor into the input backend's extended clock domain.
+    pub fn map_shared_frame_time(&self, _frame: Option<u32>) -> SharedFrameClockMapping {
         match self {
             #[cfg(feature = "jack-backend")]
-            Self::Jack(_) => true,
+            Self::Jack(input) => _frame
+                .and_then(|frame| input.map_shared_frame_time(frame))
+                .map_or(
+                    SharedFrameClockMapping::Unavailable,
+                    SharedFrameClockMapping::Mapped,
+                ),
             #[cfg(feature = "pipewire-backend")]
-            Self::PipeWire(_) => false,
+            Self::PipeWire(_) => SharedFrameClockMapping::Unsupported,
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Self::Wasapi(_) => false,
+            Self::Wasapi(_) => SharedFrameClockMapping::Unsupported,
             #[cfg(not(any(
                 feature = "jack-backend",
                 feature = "pipewire-backend",
                 all(feature = "wasapi-backend", target_os = "windows")
             )))]
-            _ => false,
-        }
-    }
-
-    /// Maps a playback frame-clock value into the input backend's extended clock domain.
-    pub fn map_shared_frame_time(&self, _frame: u32) -> Option<u64> {
-        match self {
-            #[cfg(feature = "jack-backend")]
-            Self::Jack(input) => input.map_shared_frame_time(_frame),
-            #[cfg(feature = "pipewire-backend")]
-            Self::PipeWire(_) => None,
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Self::Wasapi(_) => None,
-            #[cfg(not(any(
-                feature = "jack-backend",
-                feature = "pipewire-backend",
-                all(feature = "wasapi-backend", target_os = "windows")
-            )))]
-            _ => None,
+            _ => SharedFrameClockMapping::Unsupported,
         }
     }
 
