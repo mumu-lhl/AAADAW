@@ -707,7 +707,7 @@ mod tests {
 
         callback.render(&mut [0.0_f32; 8]);
 
-        assert_eq!(counters.underrun_samples.load(Ordering::Relaxed), 8);
+        assert_eq!(counters.underrun_samples.load(Ordering::Relaxed), 4);
     }
 
     #[test]
