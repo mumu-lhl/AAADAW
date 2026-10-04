@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, Project};
+use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_storage::ProjectStore;
 use serde_json::{Value, json};
 use std::io::Write;
@@ -16,6 +16,25 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         })
         .unwrap();
     let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 960,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
     let store = ProjectStore::open(&project_path).unwrap();
     let mut store = store;
     store.save(&project).unwrap();
@@ -47,6 +66,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
         json!({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}),
         json!({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}),
+        json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"}),
         json!({
             "jsonrpc": "2.0",
             "id": 4,
@@ -64,6 +84,19 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "id": 6,
             "method": "resources/read",
             "params": {"uri": "daw://project/track/999999/midi_summary"}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_scoped_query_notes",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "start_tick": 0,
+                    "end_tick": 3840
+                }
+            }
         }),
         Value::String("{malformed json".to_owned()),
     ];
@@ -106,6 +139,10 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         response_for(3)["result"]["resourceTemplates"][0]["uriTemplate"],
         "daw://project/track/{track_id}/midi_summary"
     );
+    assert_eq!(
+        response_for(7)["result"]["tools"][0]["name"],
+        "daw_scoped_query_notes"
+    );
     let structure = response_for(4)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
@@ -117,8 +154,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         .unwrap();
     let midi: Value = serde_json::from_str(midi).unwrap();
     assert_eq!(midi["track_id"], track_id.value());
-    assert_eq!(midi["midi_item_count"], 0);
+    assert_eq!(midi["midi_item_count"], 1);
     assert_eq!(response_for(6)["error"]["code"], -32602);
+    assert_eq!(response_for(8)["result"]["isError"], false);
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["notes"][0]["tick"],
+        960
+    );
     assert!(
         responses
             .iter()

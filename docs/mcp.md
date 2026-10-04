@@ -26,6 +26,7 @@ The server provides:
 
 - `daw://project/structure`: sample rate, PPQ, track IDs/names/types, and tempo/meter points. At most 512 tracks and 256 points per map are returned; the response marks truncated collections.
 - `daw://project/track/{track_id}/midi_summary`: a per-track MIDI item and note count with the overall project-tick range. It returns aggregates rather than individual notes.
+- `daw_scoped_query_notes`: accepts `track_id`, `start_tick`, and `end_tick` for a half-open project-tick range `[start_tick, end_tick)`. It returns notes ordered by absolute tick, item ID, then note ID. The default response cap is 256 notes; callers may request up to 512. Ranges may span at most 245,760 project ticks. The result includes `truncated` when more matching notes exist than the requested limit.
 
 ## Snapshot and access boundary
 

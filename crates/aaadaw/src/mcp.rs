@@ -3,10 +3,10 @@ use aaadaw_storage::ProjectStore;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        Implementation, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-        ProtocolVersion, RawResource, RawResourceTemplate, ReadResourceRequestParams,
-        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ServerCapabilities,
-        ServerInfo,
+        CallToolRequestParams, CallToolResult, Implementation, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion, RawResource,
+        RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource,
+        ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
     },
     service::{RequestContext, RoleServer},
 };
@@ -17,6 +17,10 @@ const STRUCTURE_URI: &str = "daw://project/structure";
 const MIDI_SUMMARY_TEMPLATE: &str = "daw://project/track/{track_id}/midi_summary";
 const MAX_MAP_POINTS: usize = 256;
 const MAX_TRACKS: usize = 512;
+const MIDI_QUERY_TOOL: &str = "daw_scoped_query_notes";
+const MAX_NOTE_RESULTS: usize = 512;
+const DEFAULT_NOTE_RESULTS: usize = 256;
+const MAX_NOTE_QUERY_TICKS: u64 = 245_760;
 
 pub fn run(project_path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
     let project = ProjectStore::load_read_only(project_path)?;
@@ -37,12 +41,17 @@ struct ProjectMcpServer {
 
 impl ServerHandler for ProjectMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_resources().build())
-            .with_server_info(Implementation::new("aaadaw", env!("CARGO_PKG_VERSION")))
-            .with_protocol_version(ProtocolVersion::default())
-            .with_instructions(
-                "Read-only snapshot of the saved AAADAW project loaded at server startup.",
-            )
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+        )
+        .with_server_info(Implementation::new("aaadaw", env!("CARGO_PKG_VERSION")))
+        .with_protocol_version(ProtocolVersion::default())
+        .with_instructions(
+            "Read-only snapshot of the saved AAADAW project loaded at server startup.",
+        )
     }
 
     fn list_resources(
@@ -105,6 +114,200 @@ impl ServerHandler for ProjectMcpServer {
                 ResourceContents::text(text, uri).with_mime_type("application/json"),
             ])
         }))
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        std::future::ready(Ok(ListToolsResult::with_all_items(vec![midi_query_tool()])))
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        (name == MIDI_QUERY_TOOL).then(midi_query_tool)
+    }
+
+    fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+        let result = if request.name != MIDI_QUERY_TOOL {
+            Err("unknown tool".to_owned())
+        } else {
+            parse_note_query_arguments(request.arguments.as_ref()).and_then(
+                |(track_id, start_tick, end_tick, limit)| {
+                    scoped_query_notes(&self.project, track_id, start_tick, end_tick, limit)
+                },
+            )
+        };
+        std::future::ready(Ok(match result {
+            Ok(value) => CallToolResult::structured(value),
+            Err(message) => CallToolResult::structured_error(json!({"error": message})),
+        }))
+    }
+}
+
+fn midi_query_tool() -> Tool {
+    Tool::new(
+        MIDI_QUERY_TOOL,
+        "Read MIDI note events whose absolute start tick falls within a bounded project range.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 1},
+                "start_tick": {"type": "integer", "minimum": 0},
+                "end_tick": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_NOTE_RESULTS}
+            },
+            "required": ["track_id", "start_tick", "end_tick"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_note_query_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, u64, usize), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    let read_integer = |name: &str| {
+        arguments
+            .get(name)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{name} must be a non-negative integer"))
+    };
+    let track_id = read_integer("track_id")?;
+    let start_tick = read_integer("start_tick")?;
+    let end_tick = read_integer("end_tick")?;
+    let limit = arguments
+        .get("limit")
+        .map(|_| read_integer("limit"))
+        .transpose()?
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| "limit is too large".to_owned())?
+        .unwrap_or(DEFAULT_NOTE_RESULTS);
+    if arguments
+        .keys()
+        .any(|key| !["track_id", "start_tick", "end_tick", "limit"].contains(&key.as_str()))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    if !(1..=MAX_NOTE_RESULTS).contains(&limit) {
+        return Err(format!("limit must be between 1 and {MAX_NOTE_RESULTS}"));
+    }
+    Ok((track_id, start_tick, end_tick, limit))
+}
+
+fn scoped_query_notes(
+    project: &Project,
+    track_id: u64,
+    start_tick: u64,
+    end_tick: u64,
+    limit: usize,
+) -> Result<Value, String> {
+    if !(1..=MAX_NOTE_RESULTS).contains(&limit) {
+        return Err(format!("limit must be between 1 and {MAX_NOTE_RESULTS}"));
+    }
+    if end_tick <= start_tick {
+        return Err("end_tick must be greater than start_tick".to_owned());
+    }
+    if end_tick - start_tick > MAX_NOTE_QUERY_TICKS {
+        return Err(format!(
+            "requested range exceeds {MAX_NOTE_QUERY_TICKS} ticks"
+        ));
+    }
+    let track_id = project
+        .tracks()
+        .iter()
+        .find(|track| track.id().value() == track_id)
+        .map(|track| track.id())
+        .ok_or_else(|| "unknown track id".to_owned())?;
+    let mut notes = std::collections::BinaryHeap::with_capacity(limit);
+    let mut truncated = false;
+    for item in project
+        .midi_items()
+        .iter()
+        .filter(|item| item.track_id() == track_id)
+    {
+        for note in item.notes() {
+            let absolute_tick = item.start_tick().saturating_add(note.tick());
+            if !(start_tick..end_tick).contains(&absolute_tick) {
+                continue;
+            }
+            let candidate = NoteCandidate {
+                absolute_tick,
+                item_id: item.id().value(),
+                note_id: note.id().value(),
+                pitch: note.pitch(),
+                duration: note.duration(),
+                velocity: note.velocity(),
+            };
+            if notes.len() < limit {
+                notes.push(candidate);
+            } else {
+                truncated = true;
+                if notes.peek().is_some_and(|latest| candidate < *latest) {
+                    notes.pop();
+                    notes.push(candidate);
+                }
+            }
+        }
+    }
+    let notes = notes
+        .into_sorted_vec()
+        .into_iter()
+        .map(|note| {
+            json!({
+                "item_id": note.item_id,
+                "note_id": note.note_id,
+                "tick": note.absolute_tick,
+                "pitch": note.pitch,
+                "duration": note.duration,
+                "velocity": note.velocity,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "track_id": track_id.value(),
+        "start_tick": start_tick,
+        "end_tick": end_tick,
+        "limit": limit,
+        "truncated": truncated,
+        "notes": notes,
+    }))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NoteCandidate {
+    absolute_tick: u64,
+    item_id: u64,
+    note_id: u64,
+    pitch: u8,
+    duration: u64,
+    velocity: u8,
+}
+
+impl Ord for NoteCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.absolute_tick, self.item_id, self.note_id).cmp(&(
+            other.absolute_tick,
+            other.item_id,
+            other.note_id,
+        ))
+    }
+}
+
+impl PartialOrd for NoteCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -194,7 +397,9 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_TRACKS, parse_track_summary_uri, structure_summary, track_midi_summary,
+        MAX_MAP_POINTS, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACKS,
+        parse_note_query_arguments, parse_track_summary_uri, scoped_query_notes, structure_summary,
+        track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
 
@@ -310,5 +515,163 @@ mod tests {
         assert_eq!(summary["note_tick_range"]["start"], 1080);
         assert_eq!(summary["note_tick_range"]["end"], 1920);
         assert!(summary.get("notes").is_none());
+    }
+
+    fn project_with_notes(notes: Vec<MidiNoteData>) -> (Project, aaadaw_core::TrackId) {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Piano".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 480,
+                length_ticks: 16_000,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes { item_id, notes })
+            .unwrap();
+        (project, track_id)
+    }
+
+    #[test]
+    fn scoped_query_uses_half_open_project_ranges_and_stable_ordering() {
+        let (project, track_id) = project_with_notes(vec![
+            MidiNoteData {
+                pitch: 67,
+                tick: 480,
+                duration: 120,
+                velocity: 90,
+            },
+            MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            },
+            MidiNoteData {
+                pitch: 64,
+                tick: 240,
+                duration: 120,
+                velocity: 80,
+            },
+        ]);
+
+        let result = scoped_query_notes(&project, track_id.value(), 720, 960, 10).unwrap();
+        let notes = result["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0]["tick"], 720);
+        assert_eq!(notes[0]["pitch"], 64);
+        assert_eq!(result["truncated"], false);
+    }
+
+    #[test]
+    fn scoped_query_breaks_equal_tick_ties_by_item_then_note_id() {
+        let (mut project, track_id) = project_with_notes(vec![
+            MidiNoteData {
+                pitch: 67,
+                tick: 480,
+                duration: 120,
+                velocity: 90,
+            },
+            MidiNoteData {
+                pitch: 60,
+                tick: 480,
+                duration: 120,
+                velocity: 90,
+            },
+        ]);
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 480,
+                length_ticks: 16_000,
+            })
+            .unwrap();
+        let second_item_id = project.midi_items()[1].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id: second_item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 72,
+                    tick: 480,
+                    duration: 120,
+                    velocity: 90,
+                }],
+            })
+            .unwrap();
+
+        let result = scoped_query_notes(&project, track_id.value(), 960, 961, 10).unwrap();
+        let notes = result["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[0]["item_id"], project.midi_items()[0].id().value());
+        assert_eq!(notes[1]["item_id"], project.midi_items()[0].id().value());
+        assert!(notes[0]["note_id"].as_u64().unwrap() < notes[1]["note_id"].as_u64().unwrap());
+        assert_eq!(notes[2]["item_id"], second_item_id.value());
+    }
+
+    #[test]
+    fn scoped_query_keeps_the_earliest_notes_and_caps_its_output() {
+        let notes = (0..600)
+            .rev()
+            .map(|tick| MidiNoteData {
+                pitch: 60,
+                tick,
+                duration: 1,
+                velocity: 100,
+            })
+            .collect();
+        let (project, track_id) = project_with_notes(notes);
+
+        let result = scoped_query_notes(&project, track_id.value(), 0, 1000, 3).unwrap();
+        let notes = result["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[0]["tick"], 480);
+        assert_eq!(notes[1]["tick"], 481);
+        assert_eq!(notes[2]["tick"], 482);
+        assert!(result["truncated"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn scoped_query_rejects_bad_ids_ranges_and_limits() {
+        let (project, track_id) = project_with_notes(Vec::new());
+        for (start, end) in [(100, 100), (200, 100), (0, MAX_NOTE_QUERY_TICKS + 1)] {
+            assert!(scoped_query_notes(&project, track_id.value(), start, end, 10).is_err());
+        }
+        assert!(scoped_query_notes(&project, track_id.value() + 1, 0, 100, 10).is_err());
+        assert!(scoped_query_notes(&project, track_id.value(), 0, 100, 0).is_err());
+        assert!(
+            scoped_query_notes(&project, track_id.value(), 0, 100, MAX_NOTE_RESULTS + 1).is_err()
+        );
+    }
+
+    #[test]
+    fn tool_arguments_require_nonnegative_integers_and_known_fields() {
+        let arguments = serde_json::from_value(serde_json::json!({
+            "track_id": 1,
+            "start_tick": 0,
+            "end_tick": 100
+        }))
+        .unwrap();
+        assert_eq!(
+            parse_note_query_arguments(Some(&arguments)).unwrap(),
+            (1, 0, 100, 256)
+        );
+
+        for value in [
+            serde_json::json!({"track_id": -1, "start_tick": 0, "end_tick": 1}),
+            serde_json::json!({"track_id": 1, "start_tick": 2.5, "end_tick": 3}),
+            serde_json::json!({"track_id": 1, "start_tick": 0, "end_tick": 1, "extra": true}),
+        ] {
+            let arguments = serde_json::from_value(value).unwrap();
+            assert!(parse_note_query_arguments(Some(&arguments)).is_err());
+        }
+        assert!(parse_note_query_arguments(None).is_err());
     }
 }
