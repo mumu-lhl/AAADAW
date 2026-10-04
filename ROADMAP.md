@@ -127,9 +127,10 @@
 - [x] 增加后台导入的 UI 进度/取消和完成后 placement；目前追加到首条轨道。
 - [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。
 - [x] 为选中的 Audio Item 提供嵌入快照源变化后的重新导入操作（[`docs/tickets/2026-10-02-reimport-changed-embedded-audio.md`](docs/tickets/2026-10-02-reimport-changed-embedded-audio.md)）。
+- [x] 为已编排的 Audio/MIDI 工程离线渲染立体声 PCM24 WAV：复用完整渲染图及 Master ceiling、追加 2 秒固定效果尾音、后台增量写盘并报告进度/支持取消（[Issue #64](https://github.com/mumu-lhl/AAADAW/issues/64)）。
 - [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
 - [x] 实现进程异常退出后的未完成录音恢复：项目旁路 manifest 持久化录音轨道、起点和已完成分段；打开工程后异步扫描，用户可显式恢复/丢弃，校验完整可解码分段并报告缺失帧/截断尾部，工程成功保存前保留恢复源（[Issue #8](https://github.com/mumu-lhl/AAADAW/issues/8)）。录音起点在恢复元数据同步后、启用捕获前重新取样，并由写入线程异步精确更新；崩溃发生在更新完成前时，恢复流程明确提示采用的是估算位置（[Issue #36](https://github.com/mumu-lhl/AAADAW/issues/36)）。
-- [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为（首个 JACK 输入切片：[`Issue #58`](https://github.com/mumu-lhl/AAADAW/issues/58)）。
+- [x] 计算并补偿可靠的 JACK 输入设备延迟；当设备数据为零、含糊或不一致时只应用用户校准，并明确报告自动补偿不可用（[`Issue #58`](https://github.com/mumu-lhl/AAADAW/issues/58)）。PipeWire/WASAPI 适配仍待单独实现。
 - [x] 将 JACK capture frame clock 映射到工程 transport sample，让第一块输入回调的时间差也能进入录音、恢复和导入位置（[Issue #56](https://github.com/mumu-lhl/AAADAW/issues/56)）。该映射不代替设备 latency 补偿。
 - [x] 增加带符号的用户录音放置校准值，并让录音导入和崩溃恢复使用同一修正锚点（[Issue #54](https://github.com/mumu-lhl/AAADAW/issues/54)）。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
@@ -140,7 +141,7 @@
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
 - [x] 为 track 增加可持久化、可撤销的输入录音准备状态（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)）。
 - [x] 完成基础实时录音与素材入库路径；录音期间可按 armed 轨道启用默认关闭的输入监听，并经过对应 track mix、mute/solo、FX 与 master 路径（[Issue #60](https://github.com/mumu-lhl/AAADAW/issues/60)）。
-- [ ] 支持正式录音前在 armed 轨道监听输入；待机输入在 transport 停止/播放时经过完整 track mix/FX/Master 路径，并在 Record 时复用输入流且排除 pre-roll（[Issue #62](https://github.com/mumu-lhl/AAADAW/issues/62)）。各后端真实设备与 latency 验收仍跟踪在 [Issue #7](https://github.com/mumu-lhl/AAADAW/issues/7)。
+- [x] 支持正式录音前在 armed 轨道监听输入；待机输入在 transport 停止/播放时经过完整 track mix/FX/Master 路径，并在 Record 时复用输入流且排除 pre-roll（[Issue #62](https://github.com/mumu-lhl/AAADAW/issues/62)）。各后端真实设备与 latency 验收仍跟踪在 [Issue #7](https://github.com/mumu-lhl/AAADAW/issues/7)。
 
 **退出标准**：可导入音频、录制麦克风素材、编辑并播放 MIDI；模拟异常退出后录音仍能按既定恢复策略读取；基础编辑无爆音/咔哒声回归问题。
 

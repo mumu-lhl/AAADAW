@@ -19,6 +19,7 @@ impl App {
             || self.audio_asset_management_busy
             || self.playback_busy
             || self.standby_monitor_starting
+            || self.offline_render_busy
         {
             self.status = "Wait for the current operation to finish before recording".to_owned();
             return Task::none();

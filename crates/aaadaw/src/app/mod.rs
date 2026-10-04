@@ -28,11 +28,13 @@ use std::collections::{HashMap, HashSet};
 #[cfg(feature = "audio-device")]
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod audio_config;
+mod audio_export;
 mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
@@ -198,6 +200,9 @@ struct App {
     audio_asset_management_cancel_requested: bool,
     audio_asset_management_operation: Option<AudioAssetManagementOperation>,
     audio_asset_management_status: String,
+    offline_render_busy: bool,
+    offline_render_cancel: Option<Arc<AtomicBool>>,
+    offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
     audio_waveform_worker: Option<AudioWaveformWorker>,
     relink_source_path_query: String,
@@ -612,6 +617,7 @@ impl App {
         let background_ticks = if self.import_busy
             || playback_active
             || recording_active
+            || self.offline_render_busy
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
             || self.track_mix_gesture.is_some()
@@ -712,6 +718,8 @@ impl App {
                 | Message::RescanClapPlugins
                 | Message::ClapPluginsScanned(_)
                 | Message::PickPath(PathPickerTarget::AddClapPluginPath)
+                | Message::CancelOfflineRender
+                | Message::OfflineRenderFinished(_)
         );
         let allowed_during_io = standby_input_completion
             || window_safe_message
@@ -727,6 +735,8 @@ impl App {
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
                     | Message::PathPicked(..)
+                    | Message::CancelOfflineRender
+                    | Message::OfflineRenderFinished(_)
                     | Message::AudioItemRelinked(..)
                     | Message::BackgroundTick
             );
@@ -1575,6 +1585,8 @@ impl App {
             }
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
+            Message::CancelOfflineRender => self.cancel_offline_render(),
+            Message::OfflineRenderFinished(result) => self.finish_offline_render(result),
             Message::OpenProject => task = self.open_project_command(),
             Message::SaveProject => {
                 task = self.save_project_command();
@@ -1601,6 +1613,7 @@ impl App {
                 self.finish_audio_item_relink(item_id, result);
             }
             Message::BackgroundTick => {
+                self.update_offline_render_progress();
                 if self
                     .track_mix_commit_at
                     .is_some_and(|deadline| Instant::now() >= deadline)
