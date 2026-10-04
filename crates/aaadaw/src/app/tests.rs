@@ -1835,6 +1835,21 @@ fn track_pan_adjustment_is_undoable() {
 }
 
 #[test]
+fn resetting_track_pan_is_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackPan { track_id, pan: 0.4 })
+        .expect("track pan should be set");
+
+    let _ = app.update(Message::ResetTrackPan(track_id));
+    assert_eq!(app.project.tracks()[0].pan(), 0.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].pan(), 0.4);
+}
+
+#[test]
 fn dragging_track_volume_commits_one_undoable_action() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

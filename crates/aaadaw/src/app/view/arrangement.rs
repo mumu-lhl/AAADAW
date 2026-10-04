@@ -473,7 +473,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     .align_y(Alignment::Center);
     let pan_controls = row![
         text(format!("Pan {}", pan_label(pan))).size(11),
-        pan_slider,
+        mouse_area(pan_slider).on_double_click(Message::ResetTrackPan(track_id)),
         text_input("-1 to 1", &pan_text)
             .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
             .on_submit(Message::CommitTrackPanText(track_id))
