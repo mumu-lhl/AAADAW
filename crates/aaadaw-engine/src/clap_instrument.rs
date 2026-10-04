@@ -21,6 +21,7 @@ use clack_host::prelude::{
     PluginAudioConfiguration, PluginAudioProcessor, PluginEntry, PluginInstance,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
+use std::borrow::Cow;
 use std::ffi::CString;
 use std::fmt;
 use std::io::Cursor;
@@ -121,19 +122,19 @@ impl ClapPluginDescriptor {
 /// A CLAP host setup or processing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClapInstrumentError {
-    message: String,
+    message: Cow<'static, str>,
     state_restore: bool,
 }
 
 impl ClapInstrumentError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             message: message.into(),
             state_restore: false,
         }
     }
 
-    pub(crate) fn state_restore(message: impl Into<String>) -> Self {
+    pub(crate) fn state_restore(message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             message: message.into(),
             state_restore: true,
@@ -148,7 +149,7 @@ impl ClapInstrumentError {
 
 impl fmt::Display for ClapInstrumentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(self.message.as_ref())
     }
 }
 
@@ -701,11 +702,9 @@ impl ClapEffectProcessor {
     /// Runs one interleaved stereo block through the effect.
     pub fn process(&mut self, audio: &mut [[f32; 2]]) -> Result<(), ClapInstrumentError> {
         if audio.len() > self.max_block_frames {
-            return Err(ClapInstrumentError::new(format!(
-                "CLAP block has {} frames; maximum is {}",
-                audio.len(),
-                self.max_block_frames
-            )));
+            return Err(ClapInstrumentError::new(
+                "CLAP effect block exceeds its prepared frame capacity",
+            ));
         }
         if audio.is_empty() {
             return Ok(());
@@ -786,9 +785,7 @@ impl ClapEffectProcessor {
         let audio_processor = self
             .processor
             .ensure_processing_started()
-            .map_err(|error| {
-                ClapInstrumentError::new(format!("Could not start CLAP processing: {error}"))
-            })?;
+            .map_err(|_| ClapInstrumentError::new("Could not start CLAP effect processing"))?;
         audio_processor
             .process(
                 &input_audio,
@@ -798,9 +795,7 @@ impl ClapEffectProcessor {
                 None,
                 None,
             )
-            .map_err(|error| {
-                ClapInstrumentError::new(format!("CLAP effect processing failed: {error}"))
-            })?;
+            .map_err(|_| ClapInstrumentError::new("CLAP effect processing failed"))?;
 
         let frame_count = audio.len();
         for (frame, (left, right)) in audio.iter_mut().zip(
@@ -843,18 +838,14 @@ impl ClapInstrumentProcessor {
         output: &mut [[f32; 2]],
     ) -> Result<(), ClapInstrumentError> {
         if output.len() > self.max_block_frames {
-            return Err(ClapInstrumentError::new(format!(
-                "CLAP block has {} frames; maximum is {}",
-                output.len(),
-                self.max_block_frames
-            )));
+            return Err(ClapInstrumentError::new(
+                "CLAP instrument block exceeds its prepared frame capacity",
+            ));
         }
         if events.len() > self.max_events {
-            return Err(ClapInstrumentError::new(format!(
-                "CLAP block has {} note events; preallocated capacity is {}",
-                events.len(),
-                self.max_events
-            )));
+            return Err(ClapInstrumentError::new(
+                "CLAP instrument event block exceeds its prepared event capacity",
+            ));
         }
         if events
             .iter()
@@ -1052,9 +1043,7 @@ impl ClapInstrumentProcessor {
         let audio_processor = self
             .processor
             .ensure_processing_started()
-            .map_err(|error| {
-                ClapInstrumentError::new(format!("Could not start CLAP processing: {error}"))
-            })?;
+            .map_err(|_| ClapInstrumentError::new("Could not start CLAP instrument processing"))?;
         audio_processor
             .process(
                 &InputAudioBuffers::empty(),
@@ -1064,9 +1053,7 @@ impl ClapInstrumentProcessor {
                 None,
                 None,
             )
-            .map_err(|error| {
-                ClapInstrumentError::new(format!("CLAP instrument processing failed: {error}"))
-            })?;
+            .map_err(|_| ClapInstrumentError::new("CLAP instrument processing failed"))?;
 
         for (frame, (left, right)) in output
             .iter_mut()
@@ -1397,12 +1384,23 @@ mod tests {
         PluginAudioProcessor as ClackPluginAudioProcessor, PluginError, PluginExtensions, Process,
         ProcessStatus,
     };
+
     use clack_plugin::process::audio::ChannelPair;
     use clack_plugin::utils::ClapId;
     use std::fmt::Write as FmtWrite;
     use std::io::{Read, Write};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU8;
+
+    #[test]
+    fn static_processor_errors_borrow_their_message() {
+        let error = ClapInstrumentError::new("CLAP processing failed");
+
+        assert!(matches!(
+            error.message,
+            Cow::Borrowed("CLAP processing failed")
+        ));
+    }
 
     const PLUGIN_ID: &str = "org.aaadaw.test.synth";
     const MONO_PLUGIN_ID: &str = "org.aaadaw.test.mono-synth";
@@ -2079,7 +2077,7 @@ mod tests {
                 .process(&mut input)
                 .expect_err("oversized block should fail")
                 .to_string()
-                .contains("maximum is 1")
+                .contains("prepared frame capacity")
         );
         assert_eq!(input, [[1.0, -1.0]; 2]);
         owner.deactivate(processor.stop());
