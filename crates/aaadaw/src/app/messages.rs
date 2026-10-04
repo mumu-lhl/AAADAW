@@ -116,6 +116,8 @@ pub(crate) enum Message {
     PickPath(PathPickerTarget),
     PathPicked(PathPickerTarget, Result<Option<PathBuf>, String>),
     AddTrack,
+    AddBusTrack,
+    SetTrackOutput(TrackId, Option<TrackId>),
     AddMidiItem,
     AddMidiNote(ItemId),
     DeleteMidiItem(ItemId),

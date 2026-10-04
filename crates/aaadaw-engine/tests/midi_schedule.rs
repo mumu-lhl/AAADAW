@@ -385,3 +385,59 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
         track_ids[1]
     );
 }
+
+#[test]
+fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 2);
+    let mut events = [None; 2];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
+    assert_eq!(events[0].unwrap().track_id, source);
+}

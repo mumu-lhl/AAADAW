@@ -20,7 +20,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -146,6 +146,12 @@ CREATE TABLE track_volume_automation (
 );
 CREATE INDEX track_volume_automation_by_sample
     ON track_volume_automation(track_id, sample);
+"#;
+
+const MIGRATION_10: &str = r#"
+ALTER TABLE tracks ADD COLUMN is_bus INTEGER NOT NULL DEFAULT 0 CHECK (is_bus IN (0, 1));
+ALTER TABLE tracks ADD COLUMN output_track_id INTEGER REFERENCES tracks(id)
+    DEFERRABLE INITIALLY DEFERRED;
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1932,6 +1938,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             7 => transaction.execute_batch(MIGRATION_7)?,
             8 => transaction.execute_batch(MIGRATION_8)?,
             9 => transaction.execute_batch(MIGRATION_9)?,
+            10 => transaction.execute_batch(MIGRATION_10)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1971,8 +1978,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -1984,7 +1991,9 @@ fn write_snapshot(
                 track.record_armed,
                 track.instrument.as_ref().map(|instrument| &instrument.plugin_id),
                 track.instrument.as_ref().map(|instrument| &instrument.bundle_path),
-                track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref())
+                track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref()),
+                track.is_bus,
+                track.output_track_id.map(to_sql_integer).transpose()?
             ],
         )?;
     }
@@ -2188,7 +2197,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2205,6 +2214,8 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<Vec<u8>>>(10)?,
+                row.get::<_, bool>(11)?,
+                row.get::<_, Option<i64>>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2222,6 +2233,8 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 instrument_id,
                 instrument_path,
                 instrument_state,
+                is_bus,
+                output_track_id,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2244,6 +2257,8 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 Ok(TrackSnapshot {
                     id: from_sql_u64(id)?,
                     name,
+                    is_bus,
+                    output_track_id: output_track_id.map(from_sql_u64).transpose()?,
                     volume_db: volume_db as f32,
                     pan: pan as f32,
                     muted,

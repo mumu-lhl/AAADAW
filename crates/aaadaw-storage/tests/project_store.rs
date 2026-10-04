@@ -72,6 +72,19 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         .expect("track creation should succeed");
     let track_id = project.tracks()[0].id();
     project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Submix".to_owned(),
+        })
+        .expect("bus creation should succeed");
+    let bus_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id,
+            output_track: Some(bus_id),
+        })
+        .expect("track output should route to the bus");
+    project
         .apply(DawAction::SetTrackVolume {
             track_id,
             volume_db: -3.0,
@@ -278,6 +291,8 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              DROP TABLE track_fx_parameter_values; \
              DROP TABLE midi_controllers; \
              DROP TABLE track_volume_automation; \
+             ALTER TABLE tracks DROP COLUMN output_track_id; \
+             ALTER TABLE tracks DROP COLUMN is_bus; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -1240,7 +1255,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE track_volume_automation; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
+            "DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1287,7 +1302,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; DROP TABLE midi_controllers; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_controllers; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1314,13 +1329,38 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
     let store = ProjectStore::open(&path).expect("schema eight should migrate");
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn schema_nine_projects_migrate_tracks_to_master_by_default() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy".to_owned(),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).expect("project should open");
+    store.save(&project).expect("project should save");
+    store.close().expect("project should close");
+
+    let connection = Connection::open(&path).expect("project should be SQLite");
+    connection.execute_batch("ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; PRAGMA user_version = 9;").unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).expect("schema nine should migrate");
+    let restored = store.load().unwrap();
+    assert!(!restored.tracks()[0].is_bus());
+    assert_eq!(restored.tracks()[0].output_track(), None);
     store.close().expect("migrated project should close");
     remove_database(&path);
 }

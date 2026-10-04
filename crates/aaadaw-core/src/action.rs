@@ -8,6 +8,8 @@ use crate::{
 pub enum DawAction {
     /// Create a track at `index` in the project's ordered track list.
     CreateTrack { index: usize, name: String },
+    /// Create a subgroup bus at `index` in the project's ordered track list.
+    CreateBusTrack { index: usize, name: String },
     /// Set or insert a tempo point at the given project tick.
     SetTempo { start_tick: u64, bpm: f64 },
     /// Set the interpolation curve from one tempo point to the next.
@@ -23,6 +25,11 @@ pub enum DawAction {
     SetTrackVolumeAutomation {
         track_id: TrackId,
         points: Vec<VolumeAutomationPoint>,
+    },
+    /// Route a track to a bus, or directly to Master when `output_track` is `None`.
+    SetTrackOutput {
+        track_id: TrackId,
+        output_track: Option<TrackId>,
     },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.
     SetTrackPan { track_id: TrackId, pan: f32 },

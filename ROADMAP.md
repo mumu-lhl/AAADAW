@@ -46,14 +46,14 @@
 - [x] 实现稳定 ID、轨道、MIDI Item 和 MIDI 音符的基础领域模型。
 - [x] 实现轨道静音/独奏状态和撤销/重做，并纳入当前开发 schema。
 - [x] 实现 sample-clock 锚定的 `AudioItem`，媒体引用保持不透明，并支持 Action、Undo/Redo、快照和 SQLite 往返；Storage 可将引用解析到工程内音频资产。
-- [ ] 实现自动化和路由引用领域模型。
+- [x] 实现轨道音量自动化点和轨道输出总线路由领域模型，使用 Action 校验并支持撤销/重做；route targets 仅允许 bus tracks，并拒绝自路由、环路和删除仍有下游引用的总线（[Issue #68](https://github.com/mumu-lhl/AAADAW/issues/68)）。
 - [x] 实现类型化 `DawAction`、现有操作的输入验证、原子批量事务、撤销/重做和 Action 历史；失败事务不得留下部分状态。
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [ ] 增加贝塞尔/对数 BPM 曲线、长时间轴精度验证与时基属性测试。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v8、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
-- [ ] 扩展 schema 支持自动化，并按工程规模优化全量快照写入；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v10、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 扩展 schema 保存 sample-clock 轨道音量自动化（v9）和总线类型/输出目标（v10）；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。全量快照写入仍待按工程规模优化。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [x] 验收 SQLite 页数上限触发磁盘满时的原子保存回滚、旧工程恢复和解除限制后的重试（[Issue #24](https://github.com/mumu-lhl/AAADAW/issues/24)）。
 - [x] 验收异常退出后的 WAL 恢复及正常关闭后的单文件复制/迁移（[`docs/tickets/2026-10-02-project-wal-recovery.md`](docs/tickets/2026-10-02-project-wal-recovery.md)）。
@@ -79,8 +79,8 @@
 - [x] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
 - [x] 增加 Windows WASAPI 默认立体声输出，让 Windows 工程可播放且记录设备格式协商、默认设备变化和移除行为（[Issue #50](https://github.com/mumu-lhl/AAADAW/issues/50)）。
 - [x] 增加 Windows WASAPI 输入，让用户可在 armed track 上录制、保留采集时间戳并通过现有 WAV/recovery/import 路径回放（[Issue #52](https://github.com/mumu-lhl/AAADAW/issues/52)）。
-- [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
-- [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
+- [x] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出；轨道可经一个或多个 subgroup bus 串接，bus 处理自己的 FX/fader 后继续输出至下游或 Master（[Issue #68](https://github.com/mumu-lhl/AAADAW/issues/68)）。Send/sidechain/feedback routing 不在本项范围。
+- [x] 采用静态拓扑分层调度；预分配每轨累加缓冲和 scratch 空间，控制线程与音频线程通过无锁队列/只读快照交接状态。总线创建、路由引用、迁移、撤销/重做和固定回调图有自动化覆盖。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
 - [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。
 - [x] 为钢琴卷帘增加连续 MIDI Modulation Wheel（CC1）lane；复用通用控制器编辑、存储、sample-accurate 播放和 seek chase（[Issue #28](https://github.com/mumu-lhl/AAADAW/issues/28)）。
