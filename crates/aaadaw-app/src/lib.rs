@@ -41,11 +41,11 @@ pub use midi_editing::{
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
 use aaadaw_core::Project;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::MasterOutputSafetyController;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::StoppedTrackFxProcessor;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackMixController;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
@@ -54,6 +54,8 @@ use aaadaw_engine::{
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 #[cfg(feature = "pipewire-backend")]
 use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+use aaadaw_engine::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
@@ -69,7 +71,7 @@ pub use aaadaw_engine::{
 };
 
 /// Active audio input capture device.
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 pub enum RunningAudioInput {
     #[cfg(feature = "jack-backend")]
     Jack(aaadaw_engine::JackAudioInput),
@@ -78,7 +80,8 @@ pub enum RunningAudioInput {
 }
 
 /// Opens the selected native input backend for a stereo take.
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
+#[allow(unused_variables)]
 pub fn open_audio_input(
     backend: PlaybackBackend,
     producer: AudioCaptureProducer,
@@ -98,10 +101,21 @@ pub fn open_audio_input(
                 .map(RunningAudioInput::PipeWire)
                 .map_err(|error| error.to_string())
         }
+        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        PlaybackBackend::Wasapi => Err("WASAPI input capture is not available yet".to_owned()),
+        #[cfg(all(
+            feature = "audio-device",
+            not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(feature = "wasapi-backend", target_os = "windows")
+            ))
+        ))]
+        PlaybackBackend::Unavailable => Err("WASAPI is only available on Windows".to_owned()),
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl RunningAudioInput {
     /// Stops the input callback and releases the device.
     pub fn shutdown(self) {
@@ -121,10 +135,21 @@ pub enum PlaybackBuildError {
     Media(MediaError),
     PcmStream(PcmStreamError),
     AudioGraph(AudioGraphBuildError),
+    #[cfg(all(
+        feature = "audio-device",
+        not(any(
+            feature = "jack-backend",
+            feature = "pipewire-backend",
+            all(feature = "wasapi-backend", target_os = "windows")
+        ))
+    ))]
+    NoAudioOutputBackend,
     #[cfg(feature = "jack-backend")]
     Jack(JackOutputError),
     #[cfg(feature = "pipewire-backend")]
     PipeWire(PipeWireOutputError),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    Wasapi(WasapiOutputError),
     ExternalSourceUnavailable {
         media_ref: String,
     },
@@ -137,10 +162,23 @@ impl fmt::Display for PlaybackBuildError {
             Self::Media(error) => write!(formatter, "audio feeder could not start: {error}"),
             Self::PcmStream(error) => write!(formatter, "PCM stream setup failed: {error}"),
             Self::AudioGraph(error) => write!(formatter, "render graph setup failed: {error}"),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            Self::NoAudioOutputBackend => {
+                formatter.write_str("no audio output backend is available on this platform")
+            }
             #[cfg(feature = "jack-backend")]
             Self::Jack(error) => write!(formatter, "JACK output setup failed: {error}"),
             #[cfg(feature = "pipewire-backend")]
             Self::PipeWire(error) => write!(formatter, "PipeWire output setup failed: {error}"),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(error) => write!(formatter, "WASAPI output setup failed: {error}"),
             Self::ExternalSourceUnavailable { media_ref } => {
                 write!(
                     formatter,
@@ -162,6 +200,17 @@ impl StdError for PlaybackBuildError {
             Self::Jack(error) => Some(error),
             #[cfg(feature = "pipewire-backend")]
             Self::PipeWire(error) => Some(error),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(error) => Some(error),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            Self::NoAudioOutputBackend => None,
             Self::ExternalSourceUnavailable { .. } => None,
         }
     }
@@ -225,7 +274,11 @@ impl PreparedAudioPlayback {
     }
 
     /// Opens the selected device output and retains feeder workers for its lifetime.
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(any(
+        feature = "jack-backend",
+        feature = "pipewire-backend",
+        all(feature = "wasapi-backend", target_os = "windows")
+    ))]
     pub fn into_output(
         self,
         backend: PlaybackBackend,
@@ -242,6 +295,10 @@ impl PreparedAudioPlayback {
             PlaybackBackend::PipeWire => DeviceAudioOutput::PipeWire(
                 PipeWireAudioOutput::open(graph).map_err(PlaybackBuildError::PipeWire)?,
             ),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            PlaybackBackend::Wasapi => DeviceAudioOutput::Wasapi(
+                WasapiAudioOutput::open(graph).map_err(PlaybackBuildError::Wasapi)?,
+            ),
         };
         Ok(RunningAudioPlayback {
             output,
@@ -254,21 +311,59 @@ impl PreparedAudioPlayback {
             is_playing: false,
         })
     }
+
+    #[cfg(all(
+        feature = "audio-device",
+        not(any(
+            feature = "jack-backend",
+            feature = "pipewire-backend",
+            all(feature = "wasapi-backend", target_os = "windows")
+        ))
+    ))]
+    pub fn into_output(
+        self,
+        _backend: PlaybackBackend,
+    ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
+        Err(PlaybackBuildError::NoAudioOutputBackend)
+    }
 }
 
 /// Available native output backends in this build.
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PlaybackBackend {
     #[cfg(feature = "jack-backend")]
     #[cfg_attr(feature = "jack-backend", default)]
     Jack,
     #[cfg(feature = "pipewire-backend")]
-    #[cfg_attr(not(feature = "jack-backend"), default)]
+    #[cfg_attr(
+        all(
+            not(feature = "jack-backend"),
+            not(all(feature = "wasapi-backend", target_os = "windows"))
+        ),
+        default
+    )]
     PipeWire,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    #[cfg_attr(
+        all(not(feature = "jack-backend"), not(feature = "pipewire-backend")),
+        default
+    )]
+    Wasapi,
+    #[cfg(all(
+        feature = "audio-device",
+        not(any(
+            feature = "jack-backend",
+            feature = "pipewire-backend",
+            all(feature = "wasapi-backend", target_os = "windows")
+        ))
+    ))]
+    #[default]
+    #[allow(dead_code)]
+    Unavailable,
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl PlaybackBackend {
     pub fn name(self) -> &'static str {
         match self {
@@ -276,20 +371,43 @@ impl PlaybackBackend {
             Self::Jack => "JACK",
             #[cfg(feature = "pipewire-backend")]
             Self::PipeWire => "PipeWire",
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi => "WASAPI",
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            Self::Unavailable => "Unavailable",
         }
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 enum DeviceAudioOutput {
     #[cfg(feature = "jack-backend")]
     Jack(JackAudioOutput),
     #[cfg(feature = "pipewire-backend")]
     PipeWire(PipeWireAudioOutput),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    Wasapi(WasapiAudioOutput),
+    #[cfg(all(
+        feature = "audio-device",
+        not(any(
+            feature = "jack-backend",
+            feature = "pipewire-backend",
+            all(feature = "wasapi-backend", target_os = "windows")
+        ))
+    ))]
+    #[allow(dead_code)]
+    Unavailable,
 }
 
 /// Active device playback and its source feeder workers.
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
@@ -301,7 +419,7 @@ pub struct RunningAudioPlayback {
     is_playing: bool,
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl RunningAudioPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
@@ -319,6 +437,17 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Jack(_) => PlaybackBackend::Jack,
             #[cfg(feature = "pipewire-backend")]
             DeviceAudioOutput::PipeWire(_) => PlaybackBackend::PipeWire,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(_) => PlaybackBackend::Wasapi,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => PlaybackBackend::Unavailable,
         }
     }
 
@@ -330,6 +459,17 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => {
                 output.play().map_err(PlaybackBuildError::PipeWire)
             }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => output.play().map_err(PlaybackBuildError::Wasapi),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => Err(PlaybackBuildError::NoAudioOutputBackend),
         }?;
         self.is_playing = true;
         Ok(())
@@ -343,6 +483,17 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => {
                 output.stop().map_err(PlaybackBuildError::PipeWire)
             }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => output.stop().map_err(PlaybackBuildError::Wasapi),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => Err(PlaybackBuildError::NoAudioOutputBackend),
         }?;
         self.is_playing = false;
         Ok(())
@@ -359,6 +510,19 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => {
                 output.panic_midi().map_err(PlaybackBuildError::PipeWire)
             }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => {
+                output.panic_midi().map_err(PlaybackBuildError::Wasapi)
+            }
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => Err(PlaybackBuildError::NoAudioOutputBackend),
         }
     }
 
@@ -377,12 +541,34 @@ impl RunningAudioPlayback {
                 PlaybackBackend::PipeWire => {
                     PlaybackBuildError::PipeWire(PipeWireOutputError::GraphReplacementInFlight)
                 }
+                #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+                PlaybackBackend::Wasapi => {
+                    PlaybackBuildError::Wasapi(WasapiOutputError::GraphReplacementInFlight)
+                }
+                #[cfg(all(
+                    feature = "audio-device",
+                    not(any(
+                        feature = "jack-backend",
+                        feature = "pipewire-backend",
+                        all(feature = "wasapi-backend", target_os = "windows")
+                    ))
+                ))]
+                PlaybackBackend::Unavailable => PlaybackBuildError::NoAudioOutputBackend,
             });
         }
         let mix_controller = prepared.graph.track_mix_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
+        #[cfg(all(
+            feature = "audio-device",
+            not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(feature = "wasapi-backend", target_os = "windows")
+            ))
+        ))]
+        let _ = graph;
         match &mut self.output {
             #[cfg(feature = "jack-backend")]
             DeviceAudioOutput::Jack(output) => output
@@ -392,6 +578,19 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => output
                 .replace_graph(graph, self.is_playing)
                 .map_err(PlaybackBuildError::PipeWire)?,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => output
+                .replace_graph(graph, self.is_playing)
+                .map_err(PlaybackBuildError::Wasapi)?,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => {}
         }
         self.mix_controller = mix_controller;
         self.master_output_safety = master_output_safety;
@@ -418,11 +617,22 @@ impl RunningAudioPlayback {
     }
 
     pub fn collect_retired_graphs(&mut self) -> bool {
-        let mut retired = match &mut self.output {
+        let mut retired: Vec<AudioRenderGraph> = match &mut self.output {
             #[cfg(feature = "jack-backend")]
             DeviceAudioOutput::Jack(output) => output.take_retired_graphs(),
             #[cfg(feature = "pipewire-backend")]
             DeviceAudioOutput::PipeWire(output) => output.take_retired_graphs(),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => output.take_retired_graphs(),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => Vec::new(),
         };
         let collected = !retired.is_empty();
         for graph in &mut retired {
@@ -465,7 +675,7 @@ impl RunningAudioPlayback {
         self.collect_retired_graphs();
         let mut instruments = std::mem::take(&mut self.retired_instrument_processors);
         let mut stopped = std::mem::take(&mut self.retired_fx_processors);
-        let mut graphs = match self.output {
+        let mut graphs: Vec<AudioRenderGraph> = match self.output {
             #[cfg(feature = "jack-backend")]
             DeviceAudioOutput::Jack(mut output) => {
                 output.shutdown().map_err(PlaybackBuildError::Jack)?
@@ -474,6 +684,19 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(mut output) => {
                 output.shutdown().map_err(PlaybackBuildError::PipeWire)?
             }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(mut output) => {
+                output.shutdown().map_err(PlaybackBuildError::Wasapi)?
+            }
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => Vec::new(),
         };
         for graph in &mut graphs {
             instruments.append(&mut graph.take_stopped_instruments());
@@ -491,11 +714,22 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Jack(output) => output.stats().into(),
             #[cfg(feature = "pipewire-backend")]
             DeviceAudioOutput::PipeWire(output) => output.stats().into(),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            DeviceAudioOutput::Wasapi(output) => output.stats().into(),
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => PlaybackStats::default(),
         }
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PlaybackStats {
     pub rendered_blocks: u64,
@@ -506,6 +740,8 @@ pub struct PlaybackStats {
     pub jack_xruns: Option<u64>,
     pub callback_errors: u64,
     pub playhead_sample: u64,
+    /// True after Windows invalidates the active stream because its device changed or disappeared.
+    pub output_device_lost: bool,
 }
 
 #[cfg(feature = "jack-backend")]
@@ -519,6 +755,7 @@ impl From<JackOutputStats> for PlaybackStats {
             jack_xruns: Some(stats.device_xruns),
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
+            output_device_lost: false,
         }
     }
 }
@@ -534,6 +771,23 @@ impl From<PipeWireOutputStats> for PlaybackStats {
             jack_xruns: None,
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
+            output_device_lost: false,
+        }
+    }
+}
+
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+impl From<WasapiOutputStats> for PlaybackStats {
+    fn from(stats: WasapiOutputStats) -> Self {
+        Self {
+            rendered_blocks: stats.rendered_blocks,
+            underrun_samples: stats.underrun_samples,
+            master_guarded_samples: stats.master_guarded_samples,
+            master_non_finite_samples: stats.master_non_finite_samples,
+            jack_xruns: None,
+            callback_errors: stats.callback_errors,
+            playhead_sample: stats.playhead_sample,
+            output_device_lost: stats.device_lost,
         }
     }
 }

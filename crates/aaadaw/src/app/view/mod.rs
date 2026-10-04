@@ -1,8 +1,21 @@
 use super::{App, Message};
-#[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(any(
+    all(feature = "jack-backend", feature = "pipewire-backend"),
+    all(feature = "wasapi-backend", target_os = "windows"),
+    all(
+        feature = "jack-backend",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    ),
+    all(
+        feature = "pipewire-backend",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    )
+))]
 use aaadaw_app::PlaybackBackend;
 use iced::widget::button;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use iced::widget::text_input;
 use iced::widget::{column, container, float, mouse_area, pane_grid, row, stack, text};
 use iced::{Alignment, Element, Length};
@@ -19,7 +32,7 @@ mod tokens;
 
 const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+#[cfg(any(feature = "audio-device", test))]
 pub(super) fn playback_diagnostic_suffix(
     backend_name: &str,
     underrun_samples: u64,
@@ -27,8 +40,12 @@ pub(super) fn playback_diagnostic_suffix(
     master_non_finite_samples: u64,
     jack_xruns: Option<u64>,
     callback_errors: u64,
+    output_device_lost: bool,
 ) -> String {
     let mut diagnostics = String::new();
+    if output_device_lost {
+        diagnostics.push_str(" · output device unavailable; close playback and reopen it after selecting a default device");
+    }
     if underrun_samples > 0 {
         diagnostics.push_str(&format!(" · stream underrun: {underrun_samples} samples"));
     }
@@ -228,15 +245,23 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 fn playback_controls(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
+    let playback_available = !cfg!(all(
+        feature = "wasapi-backend",
+        not(target_os = "windows"),
+        not(feature = "jack-backend"),
+        not(feature = "pipewire-backend")
+    ));
     let armed = app
         .project
         .tracks()
         .iter()
         .any(|track| track.is_record_armed());
-    let playback_state = if app.recording.is_some() {
+    let playback_state = if !playback_available {
+        "WASAPI output is available on Windows only".to_owned()
+    } else if app.recording.is_some() {
         format!(
             "Recording · {:.2}s",
             app.playhead_sample as f64 / app.project.settings().sample_rate() as f64
@@ -280,13 +305,26 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                 stats.master_non_finite_samples,
                 stats.jack_xruns,
                 stats.callback_errors,
+                stats.output_device_lost,
             )
         )
     } else {
         playback_state
     };
+    #[cfg(all(
+        feature = "audio-device",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    ))]
+    let can_record = app.selected_playback_backend() != PlaybackBackend::Wasapi;
+    #[cfg(not(all(
+        feature = "audio-device",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    )))]
+    let can_record = playback_available;
     let controls = row![
-        button("Play").on_press(Message::StartPlayback),
+        button("Play").on_press_maybe(playback_available.then_some(Message::StartPlayback)),
         button(if app.recording_starting {
             "Cancel Input"
         } else if app.recording.is_some() {
@@ -294,38 +332,58 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             "Stop"
         })
-        .on_press(if app.recording.is_some() || app.recording_starting {
-            Message::StopRecording
+        .on_press_maybe(if app.recording.is_some() || app.recording_starting {
+            Some(Message::StopRecording)
         } else {
-            Message::StopPlayback
+            playback_available.then_some(Message::StopPlayback)
         }),
         button("MIDI Panic")
             .style(iced::widget::button::danger)
-            .on_press_maybe(app.playback.is_some().then_some(Message::PanicMidi)),
+            .on_press_maybe(
+                (playback_available && app.playback.is_some()).then_some(Message::PanicMidi)
+            ),
         button(if app.recording_starting {
             "Connecting…"
         } else if app.recording.is_some() {
             "Recording"
+        } else if !can_record {
+            "Record unavailable"
         } else {
             "Record"
         })
         .style(iced::widget::button::danger)
-        .on_press(if app.recording.is_some() || app.recording_starting {
-            Message::StopRecording
+        .on_press_maybe(if app.recording.is_some() || app.recording_starting {
+            Some(Message::StopRecording)
+        } else if can_record {
+            Some(Message::StartRecording)
         } else {
-            Message::StartRecording
+            None
         }),
-        button("Restart").on_press(Message::RestartPlayback),
+        button("Restart").on_press_maybe(playback_available.then_some(Message::RestartPlayback),),
         text_input("Sample", &app.seek_sample_query)
             .on_input(Message::SeekSampleChanged)
             .width(100),
-        button("Seek").on_press(Message::SeekToSample),
+        button("Seek").on_press_maybe(playback_available.then_some(Message::SeekToSample)),
         button(text(format!("Close {backend_name}"))).on_press(Message::ClosePlayback),
         text(playback_state),
     ];
-    #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
-    let controls = controls
-        .push(
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
+    let controls = {
+        let controls = controls;
+        #[cfg(feature = "jack-backend")]
+        let controls = controls.push(
             button(
                 if app.selected_playback_backend() == PlaybackBackend::Jack {
                     "● JACK"
@@ -334,8 +392,9 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                 },
             )
             .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Jack)),
-        )
-        .push(
+        );
+        #[cfg(feature = "pipewire-backend")]
+        let controls = controls.push(
             button(
                 if app.selected_playback_backend() == PlaybackBackend::PipeWire {
                     "● PipeWire"
@@ -345,12 +404,25 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             )
             .on_press(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
         );
+        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        let controls = controls.push(
+            button(
+                if app.selected_playback_backend() == PlaybackBackend::Wasapi {
+                    "● WASAPI"
+                } else {
+                    "WASAPI"
+                },
+            )
+            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Wasapi)),
+        );
+        controls
+    };
     controls.spacing(8).align_y(Alignment::Center).into()
 }
 
-#[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+#[cfg(not(feature = "audio-device"))]
 fn playback_controls(_app: &App) -> Element<'_, Message> {
-    text("Enable jack-backend or pipewire-backend for audio output").into()
+    text("Enable an audio backend for playback").into()
 }
 
 #[cfg(test)]

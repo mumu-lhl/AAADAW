@@ -1,11 +1,11 @@
 use super::{App, Message};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackId, TrackInstrument};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackInstrumentProcessor;
 use iced::Task;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use std::path::Path;
 
 impl App {
@@ -113,7 +113,7 @@ impl App {
             .map_or_else(Task::none, iced::window::close)
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn install_track_instrument_processors(
         &mut self,
         prepared: &mut PreparedAudioPlayback,
@@ -199,7 +199,7 @@ impl App {
         Ok(ids)
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn discard_unused_instrument_owners(&mut self, ids: &[u64]) -> Option<String> {
         let mut error_message = None;
         for id in ids {
@@ -223,7 +223,7 @@ impl App {
         error_message
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn deactivate_stopped_instruments(
         &mut self,
         processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -243,7 +243,7 @@ impl App {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 fn deactivate_uninstalled_instruments(
     owners: Vec<(u64, aaadaw_engine::ClapInstrumentOwner)>,
     processors: Vec<TrackInstrumentProcessor>,

@@ -1,13 +1,13 @@
 use super::{App, Message};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackFxPlugin, TrackId};
 use aaadaw_engine::ClapParameterCommand;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackFxProcessor;
 use iced::Task;
 use iced::window::raw_window_handle::RawWindowHandle;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use std::path::Path;
 
 #[allow(clippy::useless_conversion)]
@@ -19,7 +19,7 @@ fn x11_window_id(handle: RawWindowHandle) -> Option<u64> {
 }
 
 impl App {
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn install_track_fx_processors(
         &mut self,
         prepared: &mut PreparedAudioPlayback,
@@ -123,7 +123,7 @@ impl App {
         Ok(ids)
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn discard_unused_effect_owners(&mut self, ids: &[u64]) -> Option<String> {
         let mut error_message = None;
         for id in ids {
@@ -149,7 +149,7 @@ impl App {
         error_message
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pub(super) fn deactivate_stopped_effects(
         &mut self,
         processors: Vec<aaadaw_engine::StoppedTrackFxProcessor>,
@@ -171,7 +171,7 @@ impl App {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 fn deactivate_uninstalled_fx(
     owners: Vec<(u64, aaadaw_engine::ClapEffectOwner)>,
     processors: Vec<TrackFxProcessor>,
@@ -584,7 +584,7 @@ impl App {
             if let (Some((track_id, chain_index, plugin_id)), Ok(Some(state))) =
                 (self.fx_chain_plugin_gui_identity.clone(), state)
             {
-                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                #[cfg(feature = "audio-device")]
                 self.clap_effect_state_overrides
                     .insert((track_id, chain_index, plugin_id.clone()));
                 if let Some(track) = self
@@ -599,13 +599,13 @@ impl App {
                             && plugin.state() != Some(state.as_slice())
                         {
                             *plugin = plugin.clone().with_state(Some(state));
-                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            #[cfg(feature = "audio-device")]
                             let previous_revision = self.revision;
                             self.apply_action(
                                 DawAction::SetTrackFxChain { track_id, plugins },
                                 "Saved CLAP editor state",
                             );
-                            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                            #[cfg(feature = "audio-device")]
                             if self.revision != previous_revision {
                                 self.playback_graph_dirty = true;
                             }
@@ -816,7 +816,7 @@ impl App {
         chain_index: usize,
         command: ClapParameterCommand,
     ) -> bool {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             let instance_id =
                 self.clap_effect_parameter_targets
@@ -832,7 +832,7 @@ impl App {
             }
             true
         }
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         {
             let _ = (track_id, chain_index, command);
             true

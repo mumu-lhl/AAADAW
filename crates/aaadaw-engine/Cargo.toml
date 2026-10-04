@@ -7,8 +7,10 @@ license.workspace = true
 
 [features]
 default = []
-jack-backend = ["dep:jack"]
-pipewire-backend = ["dep:pipewire"]
+audio-device = []
+jack-backend = ["audio-device", "dep:jack"]
+pipewire-backend = ["audio-device", "dep:pipewire"]
+wasapi-backend = ["audio-device", "dep:cpal"]
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
@@ -17,6 +19,9 @@ clack-extensions = { version = "0.2.0", default-features = false, features = ["a
 jack = { version = "0.13.5", optional = true }
 pipewire = { version = "0.10", optional = true }
 rtrb = "0.4.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+cpal = { version = "0.18.2", optional = true }
 
 [dev-dependencies]
 clack-common = "0.2.0"

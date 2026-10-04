@@ -36,12 +36,13 @@ track mixer, final Master guard, callback counters, and the CLAP processor calls
 | --- | --- | --- |
 | JACK process handler | Read the bounded command queue, move retired graphs into a bounded SPSC queue, render into preallocated scratch, copy output, update atomics. | Graph construction and command production are control-thread work. Retired graph destruction and processor deactivation are control-thread work. |
 | PipeWire process listener | Dequeue a server buffer, validate its fixed output slice, render into preallocated scratch, encode stereo `f32`, set chunk metadata, update atomics. | Stream setup/negotiation and graph construction happen before playback. Callback-owned graphs are collected and destroyed by the control thread. |
+| WASAPI output callback (via CPAL) | Read the bounded command queue, retire replaced graphs through a bounded SPSC queue, render into preallocated stereo scratch, convert to the negotiated PCM type, silence invalid or lost-device blocks, and update atomics. The requested block size is clamped to the device range and graph capacity; configurations without a reported buffer size or a viable range are rejected before playback. | Device/configuration negotiation and graph construction happen before playback. Retired graphs are collected and destroyed by the control thread. An output error marks the device unavailable; the UI stops transport and asks the user to close playback and reopen it after selecting a default device. Automatic rebinding is not attempted. |
 | Render graph | Schedule into preallocated MIDI buffers, consume SPSC PCM, mix fixed topology, process prepared effects/instruments, run the in-place Master guard, and return value counters. | Media decode/refill, project compilation, processor loading/activation/deactivation, filesystem access, and UI diagnostics are outside the callback. |
 | CLAP call | Host buffers and event storage are prepared before playback; host-side error values on processing paths borrow static messages. | Third-party plugin code executes inside the callback and must itself obey the CLAP realtime contract. In-process plugins can still allocate, block, or stall the host; the current host cannot enforce isolation. |
 
-Applying `ReplaceGraph` and `Shutdown` commands also runs in the callback. The JACK and PipeWire
-handlers send all-notes-off and stop active CLAP processors before retiring a graph; this can call
-plugin code, including another process call to flush MIDI state. The CLAP host transition is
+Applying `ReplaceGraph` and `Shutdown` commands also runs in the JACK, PipeWire, and WASAPI callbacks.
+These handlers send all-notes-off and stop active CLAP processors before retiring a graph; this can
+call plugin code, including another process call to flush MIDI state. The CLAP host transition is
 required on the audio thread, so it is an explicit exception to host-only bounded work. Plugins
 must keep this transition realtime-safe too. A future asynchronous transition protocol would need
 to preserve note release and safe processor ownership before moving this work off the callback.

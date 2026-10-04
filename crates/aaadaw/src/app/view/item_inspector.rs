@@ -41,7 +41,7 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
             danger_button("Delete", Message::DeleteAudioItem(item_id)),
         ]
         .spacing(6);
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             actions = actions.push(action_button(
                 "Seek",

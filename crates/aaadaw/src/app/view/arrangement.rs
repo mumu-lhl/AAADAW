@@ -218,11 +218,11 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
 
 fn timeline_content(app: &App) -> Element<'_, Message> {
     let playhead_sample = {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             app.playback.as_ref().map(|_| app.playhead_sample)
         }
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         {
             None
         }
@@ -406,9 +406,9 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         track_id,
         command: TrackCommand::ToggleRecordArm,
     };
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     let is_recording = app.recording.is_some() && app.recording_tracks.contains(&track_id);
-    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+    #[cfg(not(feature = "audio-device"))]
     let is_recording = false;
     let record_arm = button(if is_recording { "REC" } else { "R" })
         .on_press_maybe(

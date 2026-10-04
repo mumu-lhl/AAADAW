@@ -20,6 +20,8 @@ mod pipewire_input;
 mod pipewire_output;
 mod stream;
 mod transport;
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+mod wasapi_output;
 
 pub use capture::{
     AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, CapturedFrames,
@@ -48,6 +50,8 @@ pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+pub use wasapi_output::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 
 use aaadaw_core::{ItemId, Track, TrackId};
 use std::f64::consts::FRAC_PI_4;
@@ -1328,7 +1332,12 @@ impl AudioRenderGraph {
 
     /// Releases held MIDI voices and resets controller-capable instruments without
     /// changing the transport state.
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    #[cfg(any(
+        feature = "jack-backend",
+        feature = "pipewire-backend",
+        all(feature = "wasapi-backend", target_os = "windows"),
+        test
+    ))]
     pub(crate) fn release_midi_notes(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.instruments {
@@ -1344,7 +1353,12 @@ impl AudioRenderGraph {
     }
 
     /// Stops processors on the audio thread before their graph moves to the retirement queue.
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    #[cfg(any(
+        feature = "jack-backend",
+        feature = "pipewire-backend",
+        all(feature = "wasapi-backend", target_os = "windows"),
+        test
+    ))]
     pub(crate) fn stop_instruments(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.instruments {
@@ -1358,7 +1372,12 @@ impl AudioRenderGraph {
     }
 
     /// Stops track FX processors on the audio thread before graph retirement.
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+    #[cfg(any(
+        feature = "jack-backend",
+        feature = "pipewire-backend",
+        all(feature = "wasapi-backend", target_os = "windows"),
+        test
+    ))]
     pub(crate) fn stop_fx_processors(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.effects {

@@ -30,9 +30,9 @@ pub(crate) enum CommandId {
         track_id: TrackId,
         command: TrackCommand,
     },
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     TogglePlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     PanicMidi,
 }
 
@@ -66,9 +66,9 @@ enum CommandKind {
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
     Track(TrackCommand),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     TogglePlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     PanicMidi,
 }
 
@@ -156,7 +156,7 @@ const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::Command('n')];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
 const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
 
 const COMMANDS: &[CommandDefinition] = &[
@@ -412,7 +412,7 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: true,
         separator_before: false,
     },
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     CommandDefinition {
         kind: CommandKind::TogglePlayback,
         menu: None,
@@ -423,7 +423,7 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: false,
         separator_before: false,
     },
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     CommandDefinition {
         kind: CommandKind::PanicMidi,
         menu: Some(MainMenu::Actions),
@@ -727,9 +727,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
         CommandKind::Track(TrackCommand::MoveDown) => "track.move-down",
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => "transport.toggle-playback",
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => "transport.panic-midi",
     }
 }
@@ -807,9 +807,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 TrackCommand::Delete => Message::DeleteTrack(track_id),
             }
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandId::TogglePlayback => Message::TogglePlayback,
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandId::PanicMidi => Message::PanicMidi,
     };
     app.update(message)
@@ -941,9 +941,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     TrackCommand::MoveDown => track.index + 1 < app.project.tracks().len(),
                 })
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => true,
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => app.playback.is_some(),
     }
 }
@@ -983,9 +983,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         }
         CommandKind::AddTrack => CommandId::AddTrack,
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => CommandId::PanicMidi,
     }
 }

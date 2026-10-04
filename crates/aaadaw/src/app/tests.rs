@@ -1,5 +1,5 @@
 use super::commands::{self, CommandId, TrackCommand};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use super::prepare_project_playback_file;
 use super::project_io::{load_project_file, save_project_file};
 use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
@@ -72,28 +72,32 @@ fn view_builder_has_app_view_signature() {
 #[test]
 fn playback_diagnostics_distinguish_stream_underruns_from_backend_errors() {
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 0, 0, 0, Some(0), 0),
+        super::view::playback_diagnostic_suffix("JACK", 0, 0, 0, Some(0), 0, false),
         ""
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 256, 0, 0, Some(0), 0),
+        super::view::playback_diagnostic_suffix("JACK", 256, 0, 0, Some(0), 0, false),
         " · stream underrun: 256 samples"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("PipeWire", 0, 0, 0, None, 2),
+        super::view::playback_diagnostic_suffix("PipeWire", 0, 0, 0, None, 2, false),
         " · PipeWire errors: 2"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 256, 3, 1, Some(2), 2),
+        super::view::playback_diagnostic_suffix("JACK", 256, 3, 1, Some(2), 2, false),
         " · stream underrun: 256 samples · JACK XRuns: 2 · Master ceiling (total): 3 samples · non-finite Master samples silenced (total): 1 · JACK errors: 2"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 0, 0, 0, Some(2), 0),
+        super::view::playback_diagnostic_suffix("JACK", 0, 0, 0, Some(2), 0, false),
         " · JACK XRuns: 2"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("PipeWire", 256, 0, 0, None, 2),
+        super::view::playback_diagnostic_suffix("PipeWire", 256, 0, 0, None, 2, false),
         " · stream underrun: 256 samples · PipeWire errors: 2"
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("WASAPI", 0, 0, 0, None, 1, true),
+        " · output device unavailable; close playback and reopen it after selecting a default device · WASAPI errors: 1"
     );
 }
 
@@ -391,7 +395,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         ),
         Some(Message::Escape)
     ));
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     assert!(matches!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
@@ -400,7 +404,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         ),
         Some(Message::ExecuteCommand(CommandId::TogglePlayback))
     ));
-    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+    #[cfg(not(feature = "audio-device"))]
     assert!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Space),
@@ -1191,7 +1195,7 @@ fn action_search_dispatches_supported_commands() {
     assert!(app.project.midi_items().is_empty());
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[test]
 fn midi_panic_without_an_open_output_reports_the_missing_backend() {
     let mut app = App::default();
@@ -1270,12 +1274,12 @@ fn opening_missing_path_does_not_create_a_project_file() {
     let _ = std::fs::remove_file(&path);
 
     assert!(load_project_file(path.clone()).is_err());
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     assert!(prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0).is_err());
     assert!(!path.exists());
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[test]
 fn jack_feature_prepares_offline_graph_without_opening_device() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
@@ -1298,7 +1302,7 @@ fn jack_feature_prepares_offline_graph_without_opening_device() {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[test]
 fn missing_clap_effect_is_skipped_without_failing_playback_preparation() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
@@ -1349,7 +1353,7 @@ fn missing_clap_effect_is_skipped_without_failing_playback_preparation() {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[test]
 fn missing_clap_instrument_is_skipped_without_failing_playback_preparation() {
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);

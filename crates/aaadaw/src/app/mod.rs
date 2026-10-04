@@ -7,17 +7,17 @@ use aaadaw_app::{
     move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
     set_audio_item_start_sample,
 };
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_app::{AudioCaptureControl, AudioRecordingWorker, RunningAudioInput};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_app::{
     PlaybackBackend, PlaybackBuildError, PreparedAudioPlayback, RunningAudioPlayback,
     prepare_audio_playback_at,
 };
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{AudioItem, DawAction, FxParameterChange, ItemId, MidiItem, Project, TrackId};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
@@ -25,7 +25,7 @@ use aaadaw_storage::ProjectStore;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet};
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -36,7 +36,7 @@ mod audio_config;
 mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 mod clap_plugin_state;
 mod clap_track_fx;
 mod clap_track_instrument;
@@ -46,7 +46,7 @@ mod keyboard_config;
 mod media;
 mod messages;
 mod project_io;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
 #[cfg(test)]
@@ -64,15 +64,15 @@ pub(crate) fn run() -> iced::Result {
         .run()
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Default)]
 struct ClapEffectOwners(HashMap<u64, ClapEffectOwner>);
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Default)]
 struct ClapInstrumentOwners(HashMap<u64, ClapInstrumentOwner>);
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl Deref for ClapEffectOwners {
     type Target = HashMap<u64, ClapEffectOwner>;
 
@@ -81,14 +81,14 @@ impl Deref for ClapEffectOwners {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl DerefMut for ClapEffectOwners {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl Drop for ClapEffectOwners {
     fn drop(&mut self) {
         for owner in self.0.values_mut() {
@@ -97,7 +97,7 @@ impl Drop for ClapEffectOwners {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl Deref for ClapInstrumentOwners {
     type Target = HashMap<u64, ClapInstrumentOwner>;
 
@@ -106,14 +106,14 @@ impl Deref for ClapInstrumentOwners {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl DerefMut for ClapInstrumentOwners {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl Drop for ClapInstrumentOwners {
     fn drop(&mut self) {
         for owner in self.0.values_mut() {
@@ -215,54 +215,66 @@ struct App {
     recording_recovery_scanning: bool,
     recording_recovery_busy: bool,
     pending_recording_cleanup: Vec<PendingRecordingCleanup>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording: Option<ActiveRecording>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     pending_recording: Option<ActiveRecording>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_starting: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_cancel_requested: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_stopping: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_cancelled_transport_start: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_start_sample: u64,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     recording_tracks: Vec<TrackId>,
     record_import_tracks: Option<RecordImportTarget>,
     status: String,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     playback: Option<RunningAudioPlayback>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     playback_graph_dirty: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     playback_busy: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     playback_playing: bool,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     playhead_sample: u64,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     seek_sample_query: String,
-    #[cfg(all(feature = "pipewire-backend", feature = "jack-backend"))]
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
     playback_backend: PlaybackBackend,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_effect_owners: ClapEffectOwners,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_effect_parameter_senders: HashMap<u64, ClapParameterSender>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_effect_targets: HashMap<u64, (TrackId, usize, String)>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_effect_parameter_targets: HashMap<u64, (TrackId, usize)>,
     pending_fx_parameter_sync: Option<FxParameterChange>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_effect_state_overrides: HashSet<(TrackId, usize, String)>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_instrument_owners: ClapInstrumentOwners,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_instrument_targets: HashMap<u64, TrackId>,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     clap_plugin_warnings: Vec<String>,
 }
 
@@ -296,7 +308,7 @@ struct PendingAudioImport {
     worker: AudioItemImportWorker,
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 struct ActiveRecording {
     input: RunningAudioInput,
     writer: AudioRecordingWorker,
@@ -326,38 +338,39 @@ struct PendingRecordingCleanup {
     media_refs: Vec<String>,
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Clone)]
 pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, String>>>>);
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl std::fmt::Debug for SharedRecordingStart {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingStart(..)")
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-#[derive(Clone)]
-pub(super) struct SharedRecordingPositionSaved(
-    Arc<Mutex<Option<Result<(ActiveRecording, u64), String>>>>,
-);
+#[cfg(feature = "audio-device")]
+type RecordingPositionSavedResult = Arc<Mutex<Option<Result<(ActiveRecording, u64), String>>>>;
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
+#[derive(Clone)]
+pub(super) struct SharedRecordingPositionSaved(RecordingPositionSavedResult);
+
+#[cfg(feature = "audio-device")]
 impl std::fmt::Debug for SharedRecordingPositionSaved {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingPositionSaved(..)")
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 type RecordingStopResult = Result<(Vec<PathBuf>, PathBuf), String>;
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Clone)]
 pub(super) struct SharedRecordingStop(Arc<Mutex<Option<RecordingStopResult>>>);
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl std::fmt::Debug for SharedRecordingStop {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingStop(..)")
@@ -434,11 +447,11 @@ impl std::fmt::Debug for SharedAudioAssetManagementWorker {
     }
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 #[derive(Clone)]
 pub(crate) struct SharedPreparedPlayback(Arc<Mutex<Option<Result<PreparedAudioPlayback, String>>>>);
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 impl std::fmt::Debug for SharedPreparedPlayback {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedPreparedPlayback(..)")
@@ -545,14 +558,14 @@ impl App {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         let playback_active = self.playback.is_some();
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         let playback_active = false;
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         let recording_active =
             self.recording.is_some() || self.recording_starting || self.recording_stopping;
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         let recording_active = false;
 
         let background_tick_interval = if self.track_mix_gesture.is_some() {
@@ -762,7 +775,7 @@ impl App {
             self.status = "Wait for audio asset maintenance to finish or cancel it".to_owned();
             return Task::none();
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             if (self.recording.is_some() || self.recording_starting || self.recording_stopping)
                 && !window_safe_message
@@ -1260,7 +1273,7 @@ impl App {
                     task = scroll_arrangement_to(timeline::TCP_SCROLL_ID, offset);
                 }
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::TogglePlayback => {
                 if self.playback_playing {
                     self.stop_playback();
@@ -1504,7 +1517,7 @@ impl App {
                 {
                     self.commit_track_mix_gesture();
                 }
-                #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+                #[cfg(feature = "audio-device")]
                 {
                     if self.fx_parameter_end_requested
                         && let Some(gesture) = self.fx_parameter_gesture.as_ref()
@@ -1534,7 +1547,7 @@ impl App {
                         ])
                     };
                 }
-                #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+                #[cfg(not(feature = "audio-device"))]
                 {
                     self.update_audio_waveforms();
                     task = Task::batch([
@@ -1697,9 +1710,9 @@ impl App {
                     );
                 }
             },
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::StartPlayback => task = self.start_playback(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::StopPlayback => {
                 if self.recording.is_some() {
                     task = self.stop_recording();
@@ -1707,34 +1720,34 @@ impl App {
                     self.stop_playback();
                 }
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::PanicMidi => self.panic_midi(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::StartRecording => task = self.start_recording(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::StopRecording => task = self.stop_recording(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::RecordingPositionSaved(result) => {
                 self.finish_recording_position_saved(result);
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::RecordingStopped(result) => task = self.finish_recording_stop(result),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::RestartPlayback => task = self.restart_playback(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::SeekSampleChanged(sample) => self.seek_sample_query = sample,
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::SeekToItem(sample) => {
                 self.seek_sample_query = sample.to_string();
                 task = self.prepare_playback(sample, self.playback_playing);
             }
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::SeekToSample => task = self.seek_to_sample(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::ClosePlayback => self.close_playback(),
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             Message::PlaybackPrepared {
                 target_sample,
                 start_when_ready,
@@ -1745,7 +1758,19 @@ impl App {
                     task = self.begin_pending_recording();
                 }
             }
-            #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(any(
+                all(feature = "jack-backend", feature = "pipewire-backend"),
+                all(
+                    feature = "jack-backend",
+                    feature = "wasapi-backend",
+                    target_os = "windows"
+                ),
+                all(
+                    feature = "pipewire-backend",
+                    feature = "wasapi-backend",
+                    target_os = "windows"
+                )
+            ))]
             Message::SelectPlaybackBackend(backend) => {
                 if self.playback.is_some() {
                     self.status = "Close the current output before switching backends".to_owned();
@@ -1775,7 +1800,7 @@ impl App {
             self.status = "Save the current project before creating a new one".to_owned();
             return;
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before creating a new project",
@@ -1932,28 +1957,66 @@ impl App {
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn selected_playback_backend(&self) -> PlaybackBackend {
-        #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(any(
+            all(feature = "jack-backend", feature = "pipewire-backend"),
+            all(
+                feature = "jack-backend",
+                feature = "wasapi-backend",
+                target_os = "windows"
+            ),
+            all(
+                feature = "pipewire-backend",
+                feature = "wasapi-backend",
+                target_os = "windows"
+            )
+        ))]
         {
             self.playback_backend
         }
-        #[cfg(all(feature = "jack-backend", not(feature = "pipewire-backend")))]
+        #[cfg(all(
+            feature = "jack-backend",
+            not(feature = "pipewire-backend"),
+            not(all(feature = "wasapi-backend", target_os = "windows"))
+        ))]
         {
             PlaybackBackend::Jack
         }
-        #[cfg(all(feature = "pipewire-backend", not(feature = "jack-backend")))]
+        #[cfg(all(
+            feature = "pipewire-backend",
+            not(feature = "jack-backend"),
+            not(all(feature = "wasapi-backend", target_os = "windows"))
+        ))]
         {
             PlaybackBackend::PipeWire
         }
+        #[cfg(all(
+            feature = "wasapi-backend",
+            target_os = "windows",
+            not(feature = "jack-backend"),
+            not(feature = "pipewire-backend")
+        ))]
+        {
+            PlaybackBackend::Wasapi
+        }
+        #[cfg(all(
+            feature = "wasapi-backend",
+            not(target_os = "windows"),
+            not(feature = "jack-backend"),
+            not(feature = "pipewire-backend")
+        ))]
+        {
+            PlaybackBackend::Unavailable
+        }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn playback_name(&self) -> &'static str {
         self.selected_playback_backend().name()
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn start_playback(&mut self) -> Task<Message> {
         self.recording_cancelled_transport_start = false;
         if self.playback.is_some() && !self.playback_graph_dirty {
@@ -1987,7 +2050,7 @@ impl App {
         self.prepare_playback(self.playhead_sample, true)
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn stop_playback(&mut self) {
         let Some(playback) = self.playback.as_mut() else {
             self.status = format!("{} output is not open", self.playback_name());
@@ -2002,7 +2065,7 @@ impl App {
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn panic_midi(&mut self) {
         let Some(playback) = self.playback.as_mut() else {
             self.status = format!("{} output is not open", self.playback_name());
@@ -2018,13 +2081,13 @@ impl App {
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn restart_playback(&mut self) -> Task<Message> {
         let start_when_ready = self.playback.is_none() || self.playback_playing;
         self.prepare_playback(0, start_when_ready)
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn seek_to_sample(&mut self) -> Task<Message> {
         match self.seek_sample_query.trim().parse::<u64>() {
             Ok(target_sample) => self.prepare_playback(target_sample, self.playback_playing),
@@ -2035,9 +2098,9 @@ impl App {
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn close_playback(&mut self) {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         let state_error = self.persist_clap_plugin_states().err();
         let mut shutdown_error = None;
         if let Some(playback) = self.playback.take() {
@@ -2076,14 +2139,14 @@ impl App {
             || format!("{} output closed", self.playback_name()),
             |error| format!("{} shutdown failed: {error}", self.playback_name()),
         );
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if let Some(error) = state_error {
             self.status
                 .push_str(&format!("; plugin state save failed: {error}"));
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn prepare_playback(&mut self, target_sample: u64, start_when_ready: bool) -> Task<Message> {
         if self.playback_busy || self.io_busy {
             self.status = "Wait for current operation to finish".to_owned();
@@ -2121,7 +2184,7 @@ impl App {
         )
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn finish_playback_preparation(
         &mut self,
         target_sample: u64,
@@ -2250,21 +2313,27 @@ impl App {
         }
     }
 
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     fn update_playback_stats(&mut self) {
-        let (retired_instruments, retired_effects) = if let Some(playback) = self.playback.as_mut()
-        {
-            self.playhead_sample = playback.stats().playhead_sample;
-            playback.collect_retired_graphs();
-            (
-                playback.take_retired_instrument_processors(),
-                playback.take_retired_fx_processors(),
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (retired_instruments, retired_effects, output_device_lost) =
+            if let Some(playback) = self.playback.as_mut() {
+                let stats = playback.stats();
+                self.playhead_sample = stats.playhead_sample;
+                playback.collect_retired_graphs();
+                (
+                    playback.take_retired_instrument_processors(),
+                    playback.take_retired_fx_processors(),
+                    stats.output_device_lost,
+                )
+            } else {
+                (Vec::new(), Vec::new(), false)
+            };
         self.deactivate_stopped_instruments(retired_instruments);
         self.deactivate_stopped_effects(retired_effects);
+        if output_device_lost {
+            self.playback_playing = false;
+            self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
+        }
     }
 
     fn add_track(&mut self) {
@@ -2311,7 +2380,7 @@ impl App {
     }
 
     fn sync_track_mix_to_playback(&self, track_id: TrackId) {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if let Some(track) = self
             .project
             .tracks()
@@ -2321,7 +2390,7 @@ impl App {
         {
             let _ = playback.set_track_mix(track_id, track.volume_db(), track.pan());
         }
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         let _ = track_id;
     }
 
@@ -2368,7 +2437,7 @@ impl App {
             TrackMixParameter::Volume => gesture.after_volume_db = value.clamp(-60.0, 6.0),
             TrackMixParameter::Pan => gesture.after_pan = value.clamp(-1.0, 1.0),
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if let Some(playback) = &self.playback
             && !playback.set_track_mix(track_id, gesture.after_volume_db, gesture.after_pan)
         {
@@ -2446,7 +2515,7 @@ impl App {
     fn cancel_track_mix_gesture(&mut self) {
         self.track_mix_commit_at = None;
         if let Some(_gesture) = self.track_mix_gesture.take() {
-            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            #[cfg(feature = "audio-device")]
             if let Some(playback) = &self.playback {
                 let _ = playback.set_track_mix(
                     _gesture.track_id,
@@ -2582,22 +2651,22 @@ impl App {
     }
 
     fn playback_busy(&self) -> bool {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             self.playback_busy
         }
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         {
             false
         }
     }
 
     fn playback_active(&self) -> bool {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         {
             self.playback.is_some()
         }
-        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        #[cfg(not(feature = "audio-device"))]
         {
             false
         }
@@ -2971,7 +3040,7 @@ impl App {
         let settings = audio_config::AudioOutputSettings {
             master_output_ceiling: ceiling,
         };
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if let Some(playback) = &self.playback {
             playback.set_master_output_ceiling_dbfs(ceiling);
         }
@@ -3339,7 +3408,7 @@ impl App {
     }
 
     fn open_project_command(&mut self) -> Task<Message> {
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before opening another project",
@@ -3502,7 +3571,7 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|_| format!("{name} worker panicked"))?
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 fn prepare_project_playback_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
