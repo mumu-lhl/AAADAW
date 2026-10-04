@@ -35,6 +35,7 @@ const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
 const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
+const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
     let project_path = project_path.as_ref();
@@ -172,6 +173,7 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(insert_midi_notes_tool());
             tools.push(quantize_midi_item_tool());
             tools.push(set_volume_automation_point_tool());
+            tools.push(set_track_record_arm_tool());
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -185,6 +187,7 @@ impl ServerHandler for ProjectMcpServer {
             SET_VOLUME_AUTOMATION_POINT_TOOL if self.writable => {
                 Some(set_volume_automation_point_tool())
             }
+            SET_TRACK_RECORD_ARM_TOOL if self.writable => Some(set_track_record_arm_tool()),
             _ => None,
         }
     }
@@ -227,6 +230,10 @@ impl ServerHandler for ProjectMcpServer {
                         self.set_volume_automation_point(track_id, sample, gain_db)
                     },
                 )
+            }
+            SET_TRACK_RECORD_ARM_TOOL if self.writable => {
+                parse_record_arm_arguments(request.arguments.as_ref())
+                    .and_then(|(track_id, armed)| self.set_track_record_arm(track_id, armed))
             }
             _ => Err("unknown or unavailable tool".to_owned()),
         };
@@ -417,6 +424,40 @@ impl ProjectMcpServer {
             .apply(DawAction::SetTrackVolumeAutomation { track_id, points })
             .map_err(|error| error.to_string())?;
         persist_project_edit(&mut project, store, "set volume automation point")?;
+        Ok(result)
+    }
+
+    fn set_track_record_arm(&self, track_id: u64, armed: bool) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id().value() == track_id)
+            .ok_or_else(|| "unknown track id".to_owned())?;
+        let track_id = track.id();
+        let changed = track.is_record_armed() != armed;
+        let result = json!({
+            "track_id": track_id.value(),
+            "armed": armed,
+            "changed": changed,
+        });
+        if !changed {
+            return Ok(result);
+        }
+        project
+            .apply(DawAction::SetTrackRecordArm { track_id, armed })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "set track record arm")?;
         Ok(result)
     }
 }
@@ -614,6 +655,49 @@ fn parse_volume_automation_point_arguments(
         .ok_or_else(|| "gain_db must be finite and within -60..=6".to_owned())?
         as f32;
     Ok((track_id, sample, gain_db))
+}
+
+fn set_track_record_arm_tool() -> Tool {
+    Tool::new(
+        SET_TRACK_RECORD_ARM_TOOL,
+        "Arm or disarm an existing track for a later recording take.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "armed": {"type": "boolean"}
+            },
+            "required": ["track_id", "armed"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_record_arm_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, bool), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "track_id" | "armed"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let track_id = arguments
+        .get("track_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "track_id must be a non-negative integer".to_owned())?;
+    let armed = arguments
+        .get("armed")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "armed must be a boolean".to_owned())?;
+    Ok((track_id, armed))
 }
 
 fn parse_create_track_arguments(
