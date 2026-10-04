@@ -38,10 +38,14 @@ fn resetting_track_meters_clears_the_visible_peak_values() {
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
     app.track_peak_levels.insert(track_id, [0.75, 0.5]);
+    app.master_peak_level = [0.9, 0.8];
+    app.master_guard_ticks_remaining = 5;
 
     app.reset_track_meters();
 
     assert!(app.track_peak_levels.is_empty());
+    assert_eq!(app.master_peak_level, [0.0; 2]);
+    assert_eq!(app.master_guard_ticks_remaining, 0);
 }
 
 #[test]
@@ -51,6 +55,8 @@ fn output_device_loss_stops_transport_and_clears_track_meters() {
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
     app.track_peak_levels.insert(track_id, [0.9, 0.8]);
+    app.master_peak_level = [0.95, 0.85];
+    app.master_guard_ticks_remaining = 4;
     app.playback_playing = true;
     app.playback_paused = true;
 
@@ -59,6 +65,8 @@ fn output_device_loss_stops_transport_and_clears_track_meters() {
     assert!(!app.playback_playing);
     assert!(!app.playback_paused);
     assert!(app.track_peak_levels.is_empty());
+    assert_eq!(app.master_peak_level, [0.0; 2]);
+    assert_eq!(app.master_guard_ticks_remaining, 0);
     assert!(app.status.contains("output device unavailable"));
 }
 

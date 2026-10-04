@@ -889,6 +889,8 @@ fn master_sample_peak_ceiling_applies_after_mixing_and_updates_live() {
     assert_eq!(output[2], [-ceiling; 2]);
     assert_eq!(stats.master_guarded_samples, 4);
     assert_eq!(stats.master_non_finite_samples, 0);
+    assert_eq!(safety.take_output_peak(), [ceiling; 2]);
+    assert!(safety.take_guard_active());
 }
 
 #[test]

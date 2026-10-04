@@ -58,6 +58,9 @@ impl std::error::Error for MasterOutputSafetyError {}
 #[derive(Clone, Debug)]
 pub struct MasterOutputSafetyController {
     ceiling_linear: Arc<AtomicU32>,
+    output_peak_left: Arc<AtomicU32>,
+    output_peak_right: Arc<AtomicU32>,
+    guard_active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MasterOutputSafetyController {
@@ -73,11 +76,34 @@ impl MasterOutputSafetyController {
         let dbfs = (20.0 * linear.log10()).round() as i8;
         MasterOutputCeiling::new(dbfs).expect("controller stores only validated ceilings")
     }
+
+    /// Takes the accumulated post-guard stereo output peaks, clearing the interval.
+    pub fn take_output_peak(&self) -> [f32; 2] {
+        [
+            f32::from_bits(self.output_peak_left.swap(0, Ordering::Relaxed)),
+            f32::from_bits(self.output_peak_right.swap(0, Ordering::Relaxed)),
+        ]
+    }
+
+    /// Takes and clears the guard-activity flag accumulated since the previous poll.
+    pub fn take_guard_active(&self) -> bool {
+        self.guard_active.swap(false, Ordering::Relaxed)
+    }
+
+    /// Clears accumulated Master output meter telemetry.
+    pub fn reset_meter(&self) {
+        self.output_peak_left.store(0, Ordering::Relaxed);
+        self.output_peak_right.store(0, Ordering::Relaxed);
+        self.guard_active.store(false, Ordering::Relaxed);
+    }
 }
 
 #[derive(Debug)]
 pub(super) struct MasterOutputSafety {
     ceiling_linear: Arc<AtomicU32>,
+    output_peak_left: Arc<AtomicU32>,
+    output_peak_right: Arc<AtomicU32>,
+    guard_active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for MasterOutputSafety {
@@ -86,6 +112,9 @@ impl Default for MasterOutputSafety {
             ceiling_linear: Arc::new(AtomicU32::new(
                 MasterOutputCeiling::default().linear_amplitude().to_bits(),
             )),
+            output_peak_left: Arc::new(AtomicU32::new(0)),
+            output_peak_right: Arc::new(AtomicU32::new(0)),
+            guard_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -94,23 +123,37 @@ impl MasterOutputSafety {
     pub(super) fn controller(&self) -> MasterOutputSafetyController {
         MasterOutputSafetyController {
             ceiling_linear: Arc::clone(&self.ceiling_linear),
+            output_peak_left: Arc::clone(&self.output_peak_left),
+            output_peak_right: Arc::clone(&self.output_peak_right),
+            guard_active: Arc::clone(&self.guard_active),
         }
     }
 
     pub(super) fn process(&self, output: &mut [[f32; 2]]) -> MasterOutputGuardStats {
         let ceiling = f32::from_bits(self.ceiling_linear.load(Ordering::Relaxed));
         let mut stats = MasterOutputGuardStats::default();
-        for sample in output.iter_mut().flatten() {
-            if !sample.is_finite() {
-                *sample = 0.0;
-                stats.non_finite_samples += 1;
-            } else if *sample > ceiling {
-                *sample = ceiling;
-                stats.guarded_samples += 1;
-            } else if *sample < -ceiling {
-                *sample = -ceiling;
-                stats.guarded_samples += 1;
+        let mut output_peaks = [0.0_f32; 2];
+        for frame in output {
+            for (channel_index, sample) in frame.iter_mut().enumerate() {
+                if !sample.is_finite() {
+                    *sample = 0.0;
+                    stats.non_finite_samples += 1;
+                } else if *sample > ceiling {
+                    *sample = ceiling;
+                    stats.guarded_samples += 1;
+                } else if *sample < -ceiling {
+                    *sample = -ceiling;
+                    stats.guarded_samples += 1;
+                }
+                output_peaks[channel_index] = output_peaks[channel_index].max(sample.abs());
             }
+        }
+        self.output_peak_left
+            .fetch_max(output_peaks[0].to_bits(), Ordering::Relaxed);
+        self.output_peak_right
+            .fetch_max(output_peaks[1].to_bits(), Ordering::Relaxed);
+        if stats.guarded_samples > 0 || stats.non_finite_samples > 0 {
+            self.guard_active.store(true, Ordering::Relaxed);
         }
         stats
     }
@@ -149,6 +192,26 @@ mod tests {
         assert_eq!(stats.guarded_samples, 0);
         assert_eq!(stats.non_finite_samples, 3);
         assert_eq!(output, [[0.0, 0.0], [0.0, 0.25]]);
+    }
+
+    #[test]
+    fn controller_reports_post_guard_stereo_peak_and_guard_activity() {
+        let safety = MasterOutputSafety::default();
+        let controller = safety.controller();
+        let mut output = [[0.25, -0.5], [1.0, f32::NAN]];
+
+        safety.process(&mut output);
+
+        let ceiling = 10.0_f32.powf(-1.0 / 20.0);
+        assert_eq!(controller.take_output_peak(), [ceiling, 0.5]);
+        assert!(controller.take_guard_active());
+        assert_eq!(controller.take_output_peak(), [0.0; 2]);
+        assert!(!controller.take_guard_active());
+
+        safety.process(&mut output[..1]);
+        controller.reset_meter();
+        assert_eq!(controller.take_output_peak(), [0.0; 2]);
+        assert!(!controller.take_guard_active());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::super::commands::{self, CommandId};
 use super::arrangement::{
-    track_fx_button, track_mix_controls, track_name_input, track_output_selector, track_peak_meter,
-    track_selection_background,
+    stereo_peak_meter, track_fx_button, track_mix_controls, track_name_input,
+    track_output_selector, track_peak_meter, track_selection_background,
 };
 use super::tokens;
 use super::{App, Message};
@@ -95,10 +95,22 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
 
 fn master_strip(app: &App) -> Element<'_, Message> {
     let ceiling = app.audio_settings.master_output_ceiling;
+    let guard_indicator = if app.master_guard_ticks_remaining > 0 {
+        text("GUARD ACTIVE").style(|_| text::Style {
+            color: Some(iced::Color::from_rgb8(237, 77, 68)),
+        })
+    } else {
+        text("Guard idle").style(|_| text::Style {
+            color: Some(iced::Color::from_rgb8(145, 158, 164)),
+        })
+    };
     container(
         column![
             text("MASTER").size(12),
             rule::horizontal(1),
+            text("Output · L/R").size(11),
+            stereo_peak_meter(app.master_peak_level),
+            guard_indicator.size(10),
             text("Output ceiling").size(11),
             text(format!("{ceiling}")).size(14),
             text("Stereo output · sample peak guard").size(10),
