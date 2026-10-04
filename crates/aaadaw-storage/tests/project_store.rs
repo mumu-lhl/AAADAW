@@ -246,6 +246,30 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("tempo curve change should succeed");
     project
+        .apply(DawAction::SetTempo {
+            start_tick: 1920,
+            bpm: 105.0,
+        })
+        .expect("second tempo point should be accepted");
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 960,
+            curve: aaadaw_core::TempoCurve::Logarithmic,
+        })
+        .expect("logarithmic tempo curve should be accepted");
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 2880,
+            bpm: 120.0,
+        })
+        .expect("third tempo point should be accepted");
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 1920,
+            curve: aaadaw_core::TempoCurve::Bézier,
+        })
+        .expect("Bézier tempo curve should be accepted");
+    project
         .apply(DawAction::SetTimeSignature {
             start_tick: 3840,
             signature: TimeSignature::new(7, 8).expect("7/8 is valid"),
@@ -285,6 +309,54 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
     copy.close().expect("copied project should close cleanly");
     remove_database(&path);
     remove_database(&copy_path);
+}
+
+#[test]
+fn schema_twelve_migrates_v11_tempo_curve_values() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 1920,
+            bpm: 80.0,
+        })
+        .expect("tempo point should be accepted");
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .expect("linear tempo curve should be accepted");
+
+    let mut store = ProjectStore::open(&path).expect("database should open");
+    store.save(&project).expect("project should save");
+    store.close().expect("database should close");
+
+    let connection = Connection::open(&path).expect("closed project should be editable");
+    connection
+        .execute_batch(
+            "PRAGMA user_version = 11;
+             CREATE TABLE tempo_points_v11 (
+                 start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
+                 bpm REAL NOT NULL CHECK (bpm > 0),
+                 curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next IN (0, 1))
+             );
+             INSERT INTO tempo_points_v11 SELECT * FROM tempo_points;
+             DROP TABLE tempo_points;
+             ALTER TABLE tempo_points_v11 RENAME TO tempo_points;",
+        )
+        .expect("database should match the v11 tempo schema");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("v11 project should migrate");
+    assert_eq!(
+        store.schema_version().expect("schema should be readable"),
+        12
+    );
+    let restored = store.load().expect("v11 project state should load");
+    assert_eq!(restored.snapshot(), project.snapshot());
+    store.close().expect("migrated project should close");
+    remove_database(&path);
 }
 
 #[test]

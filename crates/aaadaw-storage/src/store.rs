@@ -20,7 +20,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -164,6 +164,18 @@ CREATE TABLE midi_pitch_bends (
     UNIQUE (item_id, tick)
 );
 CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick);
+"#;
+
+const MIGRATION_12: &str = r#"
+CREATE TABLE tempo_points_v12 (
+    start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
+    bpm REAL NOT NULL CHECK (bpm > 0),
+    curve_to_next INTEGER NOT NULL DEFAULT 0 CHECK (curve_to_next BETWEEN 0 AND 3)
+);
+INSERT INTO tempo_points_v12(start_tick, bpm, curve_to_next)
+    SELECT start_tick, bpm, curve_to_next FROM tempo_points;
+DROP TABLE tempo_points;
+ALTER TABLE tempo_points_v12 RENAME TO tempo_points;
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1953,6 +1965,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             9 => transaction.execute_batch(MIGRATION_9)?,
             10 => transaction.execute_batch(MIGRATION_10)?,
             11 => transaction.execute_batch(MIGRATION_11)?,
+            12 => transaction.execute_batch(MIGRATION_12)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2543,6 +2556,8 @@ fn tempo_curve_to_sql(curve: TempoCurve) -> i64 {
     match curve {
         TempoCurve::Step => 0,
         TempoCurve::Linear => 1,
+        TempoCurve::Logarithmic => 2,
+        TempoCurve::Bézier => 3,
     }
 }
 
@@ -2550,6 +2565,8 @@ fn tempo_curve_from_sql(value: i64) -> Result<TempoCurve, StorageError> {
     match value {
         0 => Ok(TempoCurve::Step),
         1 => Ok(TempoCurve::Linear),
+        2 => Ok(TempoCurve::Logarithmic),
+        3 => Ok(TempoCurve::Bézier),
         _ => Err(StorageError::InvalidStoredData("unknown tempo curve")),
     }
 }
