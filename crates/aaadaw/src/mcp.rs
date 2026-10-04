@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, Project, TempoCurve, TrackId};
+use aaadaw_core::{DawAction, MidiNoteData, Project, TempoCurve, TrackId};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
@@ -28,6 +28,8 @@ const DEFAULT_NOTE_RESULTS: usize = 256;
 const MAX_NOTE_QUERY_TICKS: u64 = 245_760;
 const CREATE_TRACK_TOOL: &str = "daw_create_track";
 const MAX_TRACK_NAME_CHARS: usize = 128;
+const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
+const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
     let project_path = project_path.as_ref();
@@ -162,6 +164,7 @@ impl ServerHandler for ProjectMcpServer {
         let mut tools = vec![midi_query_tool()];
         if self.writable {
             tools.push(create_track_tool());
+            tools.push(insert_midi_notes_tool());
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -170,6 +173,7 @@ impl ServerHandler for ProjectMcpServer {
         match name {
             MIDI_QUERY_TOOL => Some(midi_query_tool()),
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
+            INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
             _ => None,
         }
     }
@@ -194,6 +198,11 @@ impl ServerHandler for ProjectMcpServer {
             CREATE_TRACK_TOOL if self.writable => {
                 parse_create_track_arguments(request.arguments.as_ref())
                     .and_then(|name| self.create_track(name))
+            }
+            INSERT_MIDI_NOTES_TOOL if self.writable => {
+                parse_insert_midi_notes_arguments(request.arguments.as_ref()).and_then(
+                    |(track_id, item_id, notes)| self.insert_midi_notes(track_id, item_id, notes),
+                )
             }
             _ => Err("unknown or unavailable tool".to_owned()),
         };
@@ -228,16 +237,78 @@ impl ProjectMcpServer {
             "index": index,
             "name": track.name(),
         });
-        if let Err(error) = store.save(&project) {
-            if let Err(undo_error) = project.undo() {
-                return Err(format!(
-                    "failed to save created track: {error}; rollback failed: {undo_error}"
-                ));
-            }
-            return Err(format!("failed to save created track: {error}"));
-        }
+        persist_project_edit(&mut project, store, "created track")?;
         Ok(result)
     }
+
+    fn insert_midi_notes(
+        &self,
+        track_id: u64,
+        item_id: u64,
+        notes: Vec<MidiNoteData>,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id().value() == track_id)
+            .ok_or_else(|| "unknown track id".to_owned())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == item_id)
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        if item.track_id() != track.id() {
+            return Err("MIDI item does not belong to the specified track".to_owned());
+        }
+        let item_id = item.id();
+        let first_note_index = item.notes().len();
+        project
+            .apply(DawAction::AddMidiNotes { item_id, notes })
+            .map_err(|error| error.to_string())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .ok_or_else(|| "MIDI item disappeared after note insertion".to_owned())?;
+        let note_ids = item.notes()[first_note_index..]
+            .iter()
+            .map(|note| note.id().value())
+            .collect::<Vec<_>>();
+        let result = json!({
+            "track_id": track_id,
+            "item_id": item_id.value(),
+            "note_ids": note_ids,
+        });
+        persist_project_edit(&mut project, store, "inserted MIDI notes")?;
+        Ok(result)
+    }
+}
+
+fn persist_project_edit(
+    project: &mut Project,
+    store: &mut ProjectStore,
+    operation: &str,
+) -> Result<(), String> {
+    if let Err(error) = store.save(project) {
+        if let Err(undo_error) = project.undo() {
+            return Err(format!(
+                "failed to save {operation}: {error}; rollback failed: {undo_error}"
+            ));
+        }
+        return Err(format!("failed to save {operation}: {error}"));
+    }
+    Ok(())
 }
 
 fn midi_query_tool() -> Tool {
@@ -285,6 +356,44 @@ fn create_track_tool() -> Tool {
     )
 }
 
+fn insert_midi_notes_tool() -> Tool {
+    Tool::new(
+        INSERT_MIDI_NOTES_TOOL,
+        "Insert a bounded batch of notes into an existing MIDI item.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "item_id": {"type": "integer", "minimum": 0},
+                "notes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_MIDI_NOTES_PER_INSERT,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                            "tick": {"type": "integer", "minimum": 0},
+                            "duration": {"type": "integer", "minimum": 1},
+                            "velocity": {"type": "integer", "minimum": 0, "maximum": 127}
+                        },
+                        "required": ["pitch", "tick", "duration", "velocity"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["track_id", "item_id", "notes"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
 fn parse_create_track_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<String, String> {
@@ -306,6 +415,71 @@ fn parse_create_track_arguments(
         ));
     }
     Ok(name.to_owned())
+}
+
+fn parse_insert_midi_notes_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, Vec<MidiNoteData>), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "track_id" | "item_id" | "notes"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let integer = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{key} must be a non-negative integer"))
+    };
+    let track_id = integer("track_id")?;
+    let item_id = integer("item_id")?;
+    let notes = arguments
+        .get("notes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "notes must be an array".to_owned())?;
+    if notes.is_empty() {
+        return Err("notes must not be empty".to_owned());
+    }
+    if notes.len() > MAX_MIDI_NOTES_PER_INSERT {
+        return Err(format!(
+            "notes must contain at most {MAX_MIDI_NOTES_PER_INSERT} entries"
+        ));
+    }
+    let notes = notes
+        .iter()
+        .enumerate()
+        .map(|(index, note)| {
+            let note = note
+                .as_object()
+                .ok_or_else(|| format!("notes[{index}] must be an object"))?;
+            if note
+                .keys()
+                .any(|key| !matches!(key.as_str(), "pitch" | "tick" | "duration" | "velocity"))
+            {
+                return Err(format!("notes[{index}] contains an unknown field"));
+            }
+            let unsigned = |key: &str| {
+                note.get(key)
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("notes[{index}].{key} must be a non-negative integer"))
+            };
+            let pitch = u8::try_from(unsigned("pitch")?)
+                .map_err(|_| format!("notes[{index}].pitch must be in 0..=127"))?;
+            let tick = unsigned("tick")?;
+            let duration = unsigned("duration")?;
+            let velocity = u8::try_from(unsigned("velocity")?)
+                .map_err(|_| format!("notes[{index}].velocity must be in 0..=127"))?;
+            Ok(MidiNoteData {
+                pitch,
+                tick,
+                duration,
+                velocity,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((track_id, item_id, notes))
 }
 
 fn parse_note_query_arguments(
@@ -532,8 +706,9 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
-        parse_create_track_arguments, parse_note_query_arguments, parse_track_summary_uri,
+        MAX_MAP_POINTS, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS,
+        MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_track_arguments,
+        parse_insert_midi_notes_arguments, parse_note_query_arguments, parse_track_summary_uri,
         scoped_query_notes, structure_summary, track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
@@ -556,6 +731,45 @@ mod tests {
             .is_err()
         );
         assert!(parse_create_track_arguments(None).is_err());
+    }
+
+    #[test]
+    fn insert_midi_notes_arguments_require_a_bounded_non_empty_batch() {
+        let arguments = |notes: Value| {
+            serde_json::Map::from_iter([
+                ("track_id".to_owned(), json!(1)),
+                ("item_id".to_owned(), json!(2)),
+                ("notes".to_owned(), notes),
+            ])
+        };
+        let valid_note = json!({
+            "pitch": 60,
+            "tick": 0,
+            "duration": 480,
+            "velocity": 100
+        });
+        let parsed =
+            parse_insert_midi_notes_arguments(Some(&arguments(json!([valid_note.clone()]))))
+                .unwrap();
+        assert_eq!(parsed.0, 1);
+        assert_eq!(parsed.1, 2);
+        assert_eq!(parsed.2.len(), 1);
+        assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([])))).is_err());
+        assert!(
+            parse_insert_midi_notes_arguments(Some(&arguments(json!(vec![
+                valid_note.clone();
+                MAX_MIDI_NOTES_PER_INSERT
+                    + 1
+            ]))))
+            .is_err()
+        );
+        for invalid in [
+            json!({"pitch": -1, "tick": 0, "duration": 1, "velocity": 1}),
+            json!({"pitch": 60, "tick": 0, "duration": 1}),
+            json!({"pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
+        ] {
+            assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([invalid])))).is_err());
+        }
     }
 
     #[test]
