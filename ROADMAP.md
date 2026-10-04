@@ -23,7 +23,7 @@
 ### 工作项
 
 - [x] 建立 Cargo workspace、基础 crate 边界，并为 `aaadaw-core` 建立统一 Action 错误类型；模块边界保持精简。
-- [x] 统一日志约定：桌面与 MCP 共用结构化启动/退出日志，使用按平台定位、单份最多 10 MiB 且总计最多七份的用户日志文件，并提供 `RUST_LOG`/`AAADAW_LOG_DIR` 配置；日志初始化失败退回 stderr，realtime 路径禁止日志（[Issue #149](https://github.com/mumu-lhl/AAADAW/issues/149)）。
+- [x] 统一日志约定：桌面与 MCP 共用结构化启动/退出日志，使用按平台定位、每日轮转且最多保留七份的用户日志文件，并提供 `RUST_LOG`/`AAADAW_LOG_DIR` 配置；日志初始化失败退回 stderr，realtime 路径禁止日志（[Issue #149](https://github.com/mumu-lhl/AAADAW/issues/149)）。
 - [x] 配置格式化、Clippy、nextest 单元测试和 Linux CI；添加本地开发命令与 nextest 约定。
 - [ ] 增加 Windows 构建检查，并记录各平台本地开发与打包步骤。
 - [x] 固定 Rust edition/MSRV 声明（Rust 2024 / 1.88）并配置 stable 工具链。

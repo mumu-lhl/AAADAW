@@ -562,12 +562,14 @@ impl App {
                 )
             }
             Some(Err(error)) => {
+                tracing::error!(error = %error, "recording finalization failed; recoverable take retained");
                 self.recording_tracks.clear();
                 self.status =
                     format!("Recording stopped with an error; recoverable take retained: {error}");
                 Task::none()
             }
             None => {
+                tracing::error!("recording finalization result was unavailable");
                 self.recording_tracks.clear();
                 self.status = "Recording finalization result was unavailable".to_owned();
                 Task::none()

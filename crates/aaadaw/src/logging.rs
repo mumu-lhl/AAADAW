@@ -1,17 +1,18 @@
 use directories::ProjectDirs;
 use std::{
-    env, fs,
-    fs::File,
-    io::{self, Write},
+    env, fs, io,
+    io::Write,
     path::{Path, PathBuf},
 };
-use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
+use tracing_appender::{
+    non_blocking::{NonBlocking, WorkerGuard},
+    rolling::{RollingFileAppender, Rotation},
+};
 use tracing_subscriber::EnvFilter;
 
 const LOG_DIRECTORY_ENV: &str = "AAADAW_LOG_DIR";
 const LOG_FILE_PREFIX: &str = "aaadaw";
 const MAX_LOG_FILES: usize = 7;
-const MAX_LOG_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
 struct LoggingWriter {
     writer: NonBlocking,
@@ -82,7 +83,11 @@ fn make_writer(log_directory: Result<PathBuf, String>) -> LoggingWriter {
         create_file_appender(&directory).map(|appender| (directory, appender))
     }) {
         Ok((directory, appender)) => {
-            let (writer, guard) = tracing_appender::non_blocking(appender);
+            let (writer, guard) = tracing_appender::non_blocking(FailoverWriter {
+                file_writer: Some(appender),
+                fallback: io::stderr(),
+                fallback_reported: false,
+            });
             LoggingWriter {
                 writer,
                 guard,
@@ -99,6 +104,44 @@ fn make_writer(log_directory: Result<PathBuf, String>) -> LoggingWriter {
                 warning: Some(format!("{warning}; using stderr fallback")),
             }
         }
+    }
+}
+
+struct FailoverWriter<W, F> {
+    file_writer: Option<W>,
+    fallback: F,
+    fallback_reported: bool,
+}
+
+impl<W: Write, F: Write> FailoverWriter<W, F> {
+    fn fall_back(&mut self, error: &io::Error) {
+        self.file_writer = None;
+        if !self.fallback_reported {
+            eprintln!("AAADAW logging: file sink failed ({error}); using stderr fallback");
+            self.fallback_reported = true;
+        }
+    }
+}
+
+impl<W: Write, F: Write> Write for FailoverWriter<W, F> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if let Some(writer) = self.file_writer.as_mut() {
+            match writer.write(buffer) {
+                Ok(written) => return Ok(written),
+                Err(error) => self.fall_back(&error),
+            }
+        }
+        self.fallback.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(writer) = self.file_writer.as_mut() {
+            match writer.flush() {
+                Ok(()) => return Ok(()),
+                Err(error) => self.fall_back(&error),
+            }
+        }
+        self.fallback.flush()
     }
 }
 
@@ -121,105 +164,16 @@ fn configured_filter(value: Option<&std::ffi::OsStr>) -> (EnvFilter, Option<Stri
     }
 }
 
-fn create_file_appender(directory: &Path) -> Result<BoundedRollingWriter, String> {
+fn create_file_appender(directory: &Path) -> Result<RollingFileAppender, String> {
     fs::create_dir_all(directory)
         .map_err(|error| format!("cannot create log directory: {error}"))?;
-    BoundedRollingWriter::open(directory, MAX_LOG_FILE_BYTES, MAX_LOG_FILES)
+    RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix(LOG_FILE_PREFIX)
+        .filename_suffix("log")
+        .max_log_files(MAX_LOG_FILES)
+        .build(directory)
         .map_err(|error| format!("cannot create log files: {error}"))
-}
-
-struct BoundedRollingWriter {
-    directory: PathBuf,
-    file: File,
-    file_bytes: u64,
-    max_file_bytes: u64,
-    max_files: usize,
-}
-
-impl BoundedRollingWriter {
-    fn open(directory: &Path, max_file_bytes: u64, max_files: usize) -> io::Result<Self> {
-        let active_path = directory.join(format!("{LOG_FILE_PREFIX}.log"));
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&active_path)?;
-        let file_bytes = file.metadata()?.len();
-        let mut writer = Self {
-            directory: directory.to_path_buf(),
-            file,
-            file_bytes,
-            max_file_bytes: max_file_bytes.max(1),
-            max_files: max_files.max(1),
-        };
-        if writer.file_bytes >= writer.max_file_bytes {
-            writer.rotate()?;
-        }
-        Ok(writer)
-    }
-
-    fn rotate(&mut self) -> io::Result<()> {
-        let active_path = self.directory.join(format!("{LOG_FILE_PREFIX}.log"));
-        self.file.flush()?;
-        if self.max_files > 1 {
-            let oldest_path = self.backup_path(self.max_files - 1);
-            remove_if_exists(&oldest_path)?;
-            for index in (1..self.max_files - 1).rev() {
-                let source = self.backup_path(index);
-                if source.exists() {
-                    let target = self.backup_path(index + 1);
-                    remove_if_exists(&target)?;
-                    fs::rename(source, target)?;
-                }
-            }
-            if active_path.exists() {
-                let newest_backup = self.backup_path(1);
-                remove_if_exists(&newest_backup)?;
-                fs::rename(&active_path, newest_backup)?;
-            }
-        } else {
-            remove_if_exists(&active_path)?;
-        }
-        self.file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(active_path)?;
-        self.file_bytes = 0;
-        Ok(())
-    }
-
-    fn backup_path(&self, index: usize) -> PathBuf {
-        self.directory
-            .join(format!("{LOG_FILE_PREFIX}.{index}.log"))
-    }
-}
-
-fn remove_if_exists(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-impl Write for BoundedRollingWriter {
-    fn write(&mut self, mut buffer: &[u8]) -> io::Result<usize> {
-        let original_len = buffer.len();
-        while !buffer.is_empty() {
-            if self.file_bytes >= self.max_file_bytes {
-                self.rotate()?;
-            }
-            let available = (self.max_file_bytes - self.file_bytes) as usize;
-            let chunk_len = buffer.len().min(available);
-            self.file.write_all(&buffer[..chunk_len])?;
-            self.file_bytes += chunk_len as u64;
-            buffer = &buffer[chunk_len..];
-        }
-        Ok(original_len)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.file.flush()
-    }
 }
 
 #[cfg(test)]
@@ -289,24 +243,42 @@ mod tests {
     }
 
     #[test]
-    fn rolling_writer_bounds_file_size_and_retained_file_count() {
+    fn daily_appender_uses_the_configured_prefix_and_creates_its_directory() {
         let directory = tempfile::tempdir().unwrap();
-        let mut writer = BoundedRollingWriter::open(directory.path(), 4, 3).unwrap();
-        writer.write_all(b"abcdefghijk").unwrap();
+        let appender = create_file_appender(directory.path()).unwrap();
+        drop(appender);
+        assert!(fs::read_dir(directory.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(LOG_FILE_PREFIX)
+        }));
+    }
+
+    #[test]
+    fn file_write_failure_switches_to_stderr_sink() {
+        struct BrokenWriter;
+        impl Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("injected write failure"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::other("injected flush failure"))
+            }
+        }
+
+        let mut writer = FailoverWriter {
+            file_writer: Some(BrokenWriter),
+            fallback: Vec::new(),
+            fallback_reported: false,
+        };
+        writer.write_all(b"first").unwrap();
+        writer.write_all(b" second").unwrap();
         writer.flush().unwrap();
 
-        let files = [
-            directory.path().join("aaadaw.log"),
-            directory.path().join("aaadaw.1.log"),
-            directory.path().join("aaadaw.2.log"),
-            directory.path().join("aaadaw.3.log"),
-        ];
-        assert!(files[..3].iter().all(|path| path.exists()));
-        assert!(!files[3].exists());
-        assert!(
-            files[..3]
-                .iter()
-                .all(|path| fs::metadata(path).unwrap().len() <= 4)
-        );
+        assert!(writer.file_writer.is_none());
+        assert!(writer.fallback_reported);
+        assert_eq!(writer.fallback, b"first second");
     }
 }
