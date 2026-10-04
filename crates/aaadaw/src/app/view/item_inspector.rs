@@ -4,7 +4,16 @@ use aaadaw_core::ItemId;
 use iced::widget::{Button, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
+const EMPTY_INSPECTOR_HEIGHT: f32 = 52.0;
+const SELECTED_INSPECTOR_HEIGHT: f32 = 156.0;
+
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    let has_selection = app.timeline.selected_item.is_some();
+    let height = if has_selection {
+        SELECTED_INSPECTOR_HEIGHT
+    } else {
+        EMPTY_INSPECTOR_HEIGHT
+    };
     let content = match app.timeline.selected_item {
         Some(item_id) => selected_item_view(app, item_id),
         None => column![
@@ -14,17 +23,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(6)
         .into(),
     };
-    container(scrollable(
-        container(content).padding(iced::Padding::default().right(12.0)),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fixed(156.0))
-    .padding([8, 10])
-    .style(|_| container::Style {
-        background: Some(iced::Color::from_rgb8(30, 34, 37).into()),
-        ..container::Style::default()
-    })
-    .into()
+    let content = container(content).padding(iced::Padding::default().right(12.0));
+    let content: Element<'_, Message> = if has_selection {
+        scrollable(content).into()
+    } else {
+        content.into()
+    };
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .padding([8, 10])
+        .style(|_| container::Style {
+            background: Some(iced::Color::from_rgb8(30, 34, 37).into()),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
