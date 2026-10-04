@@ -281,6 +281,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             "{} · {seconds:.2}s",
             if app.playback_playing {
                 "Playing"
+            } else if app.playback_paused {
+                "Paused"
             } else if armed {
                 "Armed · Stopped"
             } else {
@@ -307,7 +309,16 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
     };
     let can_record = playback_available;
     let controls = row![
-        button("Play").on_press_maybe(playback_available.then_some(Message::StartPlayback)),
+        button(if app.playback_playing {
+            "Pause"
+        } else {
+            "Play"
+        })
+        .on_press_maybe(playback_available.then_some(if app.playback_playing {
+            Message::TogglePlayback
+        } else {
+            Message::StartPlayback
+        })),
         button(if app.recording_starting {
             "Cancel Input"
         } else if app.recording.is_some() {
