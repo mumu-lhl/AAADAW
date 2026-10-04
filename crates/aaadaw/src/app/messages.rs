@@ -1,4 +1,4 @@
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
@@ -188,40 +188,52 @@ pub(crate) enum Message {
     RecordingRecoveryPrepared(Result<aaadaw_app::RecordingRecoveryCandidate, String>),
     RecordingRecoveryDiscarded(PathBuf, Result<(), String>),
     RecordingRecoveryCleaned(Result<Vec<PathBuf>, String>),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     TogglePlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     StartPlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     StopPlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     PanicMidi,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     StartRecording,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     StopRecording,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     RecordingStarted(super::SharedRecordingStart),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     RecordingPositionSaved(super::SharedRecordingPositionSaved),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     RecordingStopped(super::SharedRecordingStop),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     RestartPlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     SeekSampleChanged(String),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     SeekToItem(u64),
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     SeekToSample,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     ClosePlayback,
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     PlaybackPrepared {
         target_sample: u64,
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     },
-    #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),
 }

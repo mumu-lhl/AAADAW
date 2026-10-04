@@ -1,8 +1,20 @@
 use super::{App, Message};
-#[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(any(
+    all(feature = "jack-backend", feature = "pipewire-backend"),
+    all(
+        feature = "jack-backend",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    ),
+    all(
+        feature = "pipewire-backend",
+        feature = "wasapi-backend",
+        target_os = "windows"
+    )
+))]
 use aaadaw_app::PlaybackBackend;
 use iced::widget::button;
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 use iced::widget::text_input;
 use iced::widget::{column, container, float, mouse_area, pane_grid, row, stack, text};
 use iced::{Alignment, Element, Length};
@@ -19,7 +31,7 @@ mod tokens;
 
 const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend", test))]
+#[cfg(any(feature = "audio-device", test))]
 pub(super) fn playback_diagnostic_suffix(
     backend_name: &str,
     underrun_samples: u64,
@@ -27,8 +39,12 @@ pub(super) fn playback_diagnostic_suffix(
     master_non_finite_samples: u64,
     jack_xruns: Option<u64>,
     callback_errors: u64,
+    output_device_lost: bool,
 ) -> String {
     let mut diagnostics = String::new();
+    if output_device_lost {
+        diagnostics.push_str(" · output device unavailable; close playback and reopen it after selecting a default device");
+    }
     if underrun_samples > 0 {
         diagnostics.push_str(&format!(" · stream underrun: {underrun_samples} samples"));
     }
@@ -228,7 +244,7 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+#[cfg(feature = "audio-device")]
 fn playback_controls(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
     let armed = app
@@ -280,6 +296,7 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                 stats.master_non_finite_samples,
                 stats.jack_xruns,
                 stats.callback_errors,
+                stats.output_device_lost,
             )
         )
     } else {
@@ -323,9 +340,23 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         button(text(format!("Close {backend_name}"))).on_press(Message::ClosePlayback),
         text(playback_state),
     ];
-    #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
-    let controls = controls
-        .push(
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
+    let controls = {
+        let controls = controls;
+        #[cfg(feature = "jack-backend")]
+        let controls = controls.push(
             button(
                 if app.selected_playback_backend() == PlaybackBackend::Jack {
                     "● JACK"
@@ -334,8 +365,9 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                 },
             )
             .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Jack)),
-        )
-        .push(
+        );
+        #[cfg(feature = "pipewire-backend")]
+        let controls = controls.push(
             button(
                 if app.selected_playback_backend() == PlaybackBackend::PipeWire {
                     "● PipeWire"
@@ -345,12 +377,25 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             )
             .on_press(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
         );
+        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        let controls = controls.push(
+            button(
+                if app.selected_playback_backend() == PlaybackBackend::Wasapi {
+                    "● WASAPI"
+                } else {
+                    "WASAPI"
+                },
+            )
+            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Wasapi)),
+        );
+        controls
+    };
     controls.spacing(8).align_y(Alignment::Center).into()
 }
 
-#[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+#[cfg(not(feature = "audio-device"))]
 fn playback_controls(_app: &App) -> Element<'_, Message> {
-    text("Enable jack-backend or pipewire-backend for audio output").into()
+    text("Enable an audio backend for playback").into()
 }
 
 #[cfg(test)]

@@ -109,7 +109,7 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before importing audio",
@@ -169,7 +169,7 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before reimporting audio",
@@ -292,7 +292,7 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before maintaining audio assets",
@@ -475,7 +475,7 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
                 "Close {} output before relinking audio",

@@ -6,8 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-jack-backend = ["aaadaw-engine/jack-backend"]
-pipewire-backend = ["aaadaw-engine/pipewire-backend"]
+audio-device = ["aaadaw-engine/audio-device"]
+jack-backend = ["audio-device", "aaadaw-engine/jack-backend"]
+pipewire-backend = ["audio-device", "aaadaw-engine/pipewire-backend"]
+wasapi-backend = ["audio-device", "aaadaw-engine/wasapi-backend"]
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }

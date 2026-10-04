@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub(super) fn open_project(app: &mut App) -> Task<Message> {
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     if app.playback.is_some() {
         app.status = format!(
             "Close {} output before opening another project",
@@ -48,9 +48,9 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
-    #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+    #[cfg(feature = "audio-device")]
     let plugin_state_warning = app.persist_clap_plugin_states().err();
-    #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+    #[cfg(not(feature = "audio-device"))]
     let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
