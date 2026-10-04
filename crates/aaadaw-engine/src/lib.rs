@@ -47,6 +47,8 @@ pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
 use aaadaw_core::{ItemId, Track, TrackId};
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Precomputed per-track mix coefficients, built outside the audio callback.
 #[derive(Clone, Debug)]
@@ -56,14 +58,125 @@ pub struct MixerPlan {
     has_solo: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct TrackGains {
+    track_id: TrackId,
     left: f32,
     right: f32,
     stereo_left: f32,
     stereo_right: f32,
+    live: Arc<LiveTrackGains>,
     muted: bool,
     solo: bool,
+}
+
+#[derive(Debug)]
+struct LiveTrackGains {
+    version: AtomicU32,
+    left: AtomicU32,
+    right: AtomicU32,
+    stereo_left: AtomicU32,
+    stereo_right: AtomicU32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GainCoefficients {
+    left: f32,
+    right: f32,
+    stereo_left: f32,
+    stereo_right: f32,
+}
+
+/// Control-thread handle for updating the active graph's per-track volume and pan.
+///
+/// Values are fully converted to gain coefficients on the caller thread. The audio callback
+/// performs only bounded atomic loads and falls back to the graph's compiled coefficients if it
+/// observes an update in progress.
+#[derive(Clone, Debug)]
+pub struct TrackMixController {
+    tracks: Vec<(TrackId, Arc<LiveTrackGains>)>,
+}
+
+impl TrackMixController {
+    /// Updates one track's volume and pan without rebuilding the render graph.
+    pub fn set_track_mix(&self, track_id: TrackId, volume_db: f32, pan: f32) -> bool {
+        let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
+            return false;
+        };
+        let Some(gains) = gain_coefficients(volume_db, pan) else {
+            return false;
+        };
+
+        live.version.fetch_add(1, Ordering::SeqCst);
+        live.left.store(gains.left.to_bits(), Ordering::SeqCst);
+        live.right.store(gains.right.to_bits(), Ordering::SeqCst);
+        live.stereo_left
+            .store(gains.stereo_left.to_bits(), Ordering::SeqCst);
+        live.stereo_right
+            .store(gains.stereo_right.to_bits(), Ordering::SeqCst);
+        live.version.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+}
+
+impl LiveTrackGains {
+    fn new(gains: GainCoefficients) -> Self {
+        Self {
+            version: AtomicU32::new(0),
+            left: AtomicU32::new(gains.left.to_bits()),
+            right: AtomicU32::new(gains.right.to_bits()),
+            stereo_left: AtomicU32::new(gains.stereo_left.to_bits()),
+            stereo_right: AtomicU32::new(gains.stereo_right.to_bits()),
+        }
+    }
+
+    fn snapshot(&self, fallback: GainCoefficients) -> GainCoefficients {
+        let before = self.version.load(Ordering::SeqCst);
+        if before % 2 != 0 {
+            return fallback;
+        }
+        let gains = GainCoefficients {
+            left: f32::from_bits(self.left.load(Ordering::SeqCst)),
+            right: f32::from_bits(self.right.load(Ordering::SeqCst)),
+            stereo_left: f32::from_bits(self.stereo_left.load(Ordering::SeqCst)),
+            stereo_right: f32::from_bits(self.stereo_right.load(Ordering::SeqCst)),
+        };
+        if self.version.load(Ordering::SeqCst) == before {
+            gains
+        } else {
+            fallback
+        }
+    }
+}
+
+fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
+    if !volume_db.is_finite() || !(-1.0..=1.0).contains(&pan) {
+        return None;
+    }
+    let linear_gain = 10.0_f64.powf(f64::from(volume_db) / 20.0);
+    if !linear_gain.is_finite() || linear_gain > f64::from(f32::MAX) {
+        return None;
+    }
+    let gain = linear_gain as f32;
+    let (left, right) = match pan {
+        -1.0 => (gain, 0.0),
+        1.0 => (0.0, gain),
+        pan => {
+            let angle = (f64::from(pan) + 1.0) * FRAC_PI_4;
+            (angle.cos() as f32 * gain, angle.sin() as f32 * gain)
+        }
+    };
+    let (stereo_left, stereo_right) = if pan < 0.0 {
+        (gain, (1.0 + pan) * gain)
+    } else {
+        ((1.0 - pan) * gain, gain)
+    };
+    Some(GainCoefficients {
+        left,
+        right,
+        stereo_left,
+        stereo_right,
+    })
 }
 
 /// The mix plan could not be compiled from project track controls.
@@ -143,31 +256,18 @@ impl MixerPlan {
         let has_solo = tracks.iter().any(Track::is_solo);
         let mut compiled = Vec::with_capacity(tracks.len());
         for track in tracks {
-            let linear_gain = 10.0_f64.powf(f64::from(track.volume_db()) / 20.0);
-            if !linear_gain.is_finite() || linear_gain > f64::from(f32::MAX) {
+            let Some(gains) = gain_coefficients(track.volume_db(), track.pan()) else {
                 return Err(MixerPlanError::InvalidTrackGain {
                     track_id: track.id().value(),
                 });
-            }
-            let gain = linear_gain as f32;
-            let (left, right) = match track.pan() {
-                -1.0 => (gain, 0.0),
-                1.0 => (0.0, gain),
-                pan => {
-                    let angle = (f64::from(pan) + 1.0) * FRAC_PI_4;
-                    (angle.cos() as f32 * gain, angle.sin() as f32 * gain)
-                }
-            };
-            let (stereo_left, stereo_right) = if track.pan() < 0.0 {
-                (gain, (1.0 + track.pan()) * gain)
-            } else {
-                ((1.0 - track.pan()) * gain, gain)
             };
             compiled.push(TrackGains {
-                left,
-                right,
-                stereo_left,
-                stereo_right,
+                track_id: track.id(),
+                left: gains.left,
+                right: gains.right,
+                stereo_left: gains.stereo_left,
+                stereo_right: gains.stereo_right,
+                live: Arc::new(LiveTrackGains::new(gains)),
                 muted: track.is_muted(),
                 solo: track.is_solo(),
             });
@@ -178,6 +278,17 @@ impl MixerPlan {
             tracks: compiled,
             has_solo,
         })
+    }
+
+    /// Creates a controller for this graph's live volume and pan coefficients.
+    pub fn track_mix_controller(&self) -> TrackMixController {
+        TrackMixController {
+            tracks: self
+                .tracks
+                .iter()
+                .map(|gains| (gains.track_id, Arc::clone(&gains.live)))
+                .collect(),
+        }
     }
 
     /// Mixes one mono input buffer per project track, in project order, into
@@ -218,13 +329,20 @@ impl MixerPlan {
     }
 
     fn mix_track_unchecked(&self, track_index: usize, input: &[f32], output: &mut [[f32; 2]]) {
-        let track = self.tracks[track_index];
+        let track = &self.tracks[track_index];
         if track.muted || (self.has_solo && !track.solo) {
             return;
         }
+        let fallback = GainCoefficients {
+            left: track.left,
+            right: track.right,
+            stereo_left: track.stereo_left,
+            stereo_right: track.stereo_right,
+        };
+        let gains = track.live.snapshot(fallback);
         for (frame, sample) in output.iter_mut().zip(input.iter().copied()) {
-            frame[0] += sample * track.left;
-            frame[1] += sample * track.right;
+            frame[0] += sample * gains.left;
+            frame[1] += sample * gains.right;
         }
     }
 
@@ -234,13 +352,20 @@ impl MixerPlan {
         input: &[[f32; 2]],
         output: &mut [[f32; 2]],
     ) {
-        let track = self.tracks[track_index];
+        let track = &self.tracks[track_index];
         if track.muted || (self.has_solo && !track.solo) {
             return;
         }
+        let fallback = GainCoefficients {
+            left: track.left,
+            right: track.right,
+            stereo_left: track.stereo_left,
+            stereo_right: track.stereo_right,
+        };
+        let gains = track.live.snapshot(fallback);
         for (frame, sample) in output.iter_mut().zip(input.iter()) {
-            frame[0] += sample[0] * track.stereo_left;
-            frame[1] += sample[1] * track.stereo_right;
+            frame[0] += sample[0] * gains.stereo_left;
+            frame[1] += sample[1] * gains.stereo_right;
         }
     }
 }
@@ -1048,6 +1173,11 @@ impl AudioRenderGraph {
     /// Returns the maximum frames accepted by the preallocated callback buffers.
     pub fn max_block_frames(&self) -> usize {
         self.mixer.max_block_frames
+    }
+
+    /// Returns a control-thread handle for live volume/pan updates on this graph.
+    pub fn track_mix_controller(&self) -> TrackMixController {
+        self.mixer.track_mix_controller()
     }
 
     /// Returns the callback-owned transport for start/stop/seek control.

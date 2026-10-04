@@ -4,9 +4,12 @@ use crate::timeline::{
     self, ArrangementPane, TCP_SCROLL_ID, TIMELINE_ROW_HEIGHT, TIMELINE_SCROLL_ID, TimelineEvent,
 };
 use aaadaw_core::Track;
+use iced::advanced::widget::Operation;
+use iced::advanced::widget::tree::{self, Tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, stack,
-    text, text_input,
+    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, slider,
+    stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 
@@ -422,21 +425,80 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
-    let controls = row![
+    let mix_gesture = app
+        .track_mix_gesture
+        .filter(|gesture| gesture.track_id == track_id);
+    let volume_db = mix_gesture
+        .map(|gesture| gesture.after_volume_db)
+        .unwrap_or_else(|| track.volume_db());
+    let pan = mix_gesture
+        .map(|gesture| gesture.after_pan)
+        .unwrap_or_else(|| track.pan());
+    let volume_text = app
+        .track_volume_edits
+        .get(&track_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{volume_db:.1}"));
+    let pan_text = app
+        .track_pan_edits
+        .get(&track_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{pan:.2}"));
+    let volume_slider = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
+        Message::PreviewTrackVolume(track_id, value)
+    })
+    .step(0.1_f32)
+    .shift_step(0.01_f32)
+    .on_release(Message::CommitTrackVolume(track_id))
+    .width(Length::Fill);
+    let volume = reset_on_double_click(
+        volume_slider.into(),
+        Message::ResetTrackVolumeByDoubleClick(track_id),
+    );
+    let pan_slider = slider(-1.0..=1.0, pan, move |value| {
+        Message::PreviewTrackPan(track_id, value)
+    })
+    .step(0.01_f32)
+    .shift_step(0.001_f32)
+    .on_release(Message::CommitTrackPan(track_id))
+    .width(Length::Fill);
+    let volume_controls = row![
         mute,
         solo,
         record_arm,
-        text(format!("{:.0} dB", track.volume_db())).size(11),
-        small_control("−", Message::AdjustVolume(track_id, -1.0)),
-        small_control("+", Message::AdjustVolume(track_id, 1.0)),
-        text(pan_label(track.pan())).size(11),
-        small_control("◀", Message::AdjustPan(track_id, -0.1)),
-        small_control("▶", Message::AdjustPan(track_id, 0.1)),
+        text("Vol").size(11),
+        volume,
+        text_input("dB", &volume_text)
+            .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
+            .on_submit(Message::CommitTrackVolumeText(track_id))
+            .width(Length::Fixed(48.0)),
+        text("dB").size(10),
+        button("0")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::ResetTrackVolume(track_id))
+            .padding([2, 5]),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+    let pan_controls = row![
+        text(format!("Pan {}", pan_label(pan))).size(11),
+        reset_on_double_click(
+            pan_slider.into(),
+            Message::ResetTrackPanByDoubleClick(track_id),
+        ),
+        text_input("-1 to 1", &pan_text)
+            .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
+            .on_submit(Message::CommitTrackPanText(track_id))
+            .width(Length::Fixed(48.0)),
+        button("C")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::ResetTrackPan(track_id))
+            .padding([2, 5]),
     ]
     .spacing(3)
     .align_y(Alignment::Center);
     let selected = app.timeline.selected_track == Some(track_id);
-    let row = container(column![heading, controls].spacing(4))
+    let row = container(column![heading, volume_controls, pan_controls].spacing(2))
         .padding([5, 4])
         .height(TIMELINE_ROW_HEIGHT)
         .width(Length::Fill)
@@ -458,11 +520,193 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .into()
 }
 
-fn small_control<'a>(label: &'static str, message: Message) -> iced::widget::Button<'a, Message> {
-    button(label)
-        .style(iced::widget::button::secondary)
-        .on_press(message)
-        .padding([2, 5])
+struct DoubleClickResetState {
+    previous_click: Option<mouse::Click>,
+    press_position: Option<iced::Point>,
+}
+
+struct DoubleClickReset<'a> {
+    content: Element<'a, Message>,
+    message: Message,
+}
+
+fn reset_on_double_click<'a>(
+    content: Element<'a, Message>,
+    message: Message,
+) -> Element<'a, Message> {
+    Element::new(DoubleClickReset { content, message })
+}
+
+fn record_left_click(previous_click: &mut Option<mouse::Click>, position: iced::Point) -> bool {
+    let click = mouse::Click::new(position, mouse::Button::Left, *previous_click);
+    *previous_click = Some(click);
+    click.kind() == mouse::click::Kind::Double
+}
+
+fn invalidate_click_after_drag(state: &mut DoubleClickResetState, position: iced::Point) {
+    if state
+        .press_position
+        .is_some_and(|start| start.distance(position) >= 6.0)
+    {
+        state.previous_click = None;
+    }
+}
+
+impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
+    fn size(&self) -> iced::Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> iced::Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<DoubleClickResetState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(DoubleClickResetState {
+            previous_click: None,
+            press_position: None,
+        })
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(self.content.as_widget())]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[self.content.as_widget()]);
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &iced::Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) {
+        match event {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Left))
+                if let Some(position) = cursor.position_over(layout.bounds()) =>
+            {
+                let state = tree.state.downcast_mut::<DoubleClickResetState>();
+                state.press_position = Some(position);
+                if record_left_click(&mut state.previous_click, position) {
+                    shell.publish(self.message.clone());
+                    shell.capture_event();
+                    return;
+                }
+            }
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                if let Some(position) = cursor.position() {
+                    invalidate_click_after_drag(
+                        tree.state.downcast_mut::<DoubleClickResetState>(),
+                        position,
+                    );
+                }
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                tree.state
+                    .downcast_mut::<DoubleClickResetState>()
+                    .press_position = None;
+            }
+            _ => {}
+        }
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: Layout<'a>,
+        renderer: &iced::Renderer,
+        viewport: &iced::Rectangle,
+        translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'a, Message, Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
 }
 
 fn action_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {
@@ -510,5 +754,37 @@ fn pan_label(pan: f32) -> String {
         format!("L {:.0}%", pan.abs() * 100.0)
     } else {
         format!("R {:.0}%", pan * 100.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DoubleClickResetState, invalidate_click_after_drag, record_left_click};
+    use iced::{Point, advanced::mouse};
+
+    #[test]
+    fn consecutive_left_clicks_are_detected_as_double_click() {
+        let mut previous_click = None;
+        let position = Point::new(12.0, 8.0);
+
+        assert!(!record_left_click(&mut previous_click, position));
+        assert!(record_left_click(&mut previous_click, position));
+        assert_eq!(
+            previous_click.expect("click should be recorded").kind(),
+            mouse::click::Kind::Double
+        );
+    }
+
+    #[test]
+    fn dragging_invalidates_the_previous_click_for_double_click_detection() {
+        let start = Point::new(12.0, 8.0);
+        let mut state = DoubleClickResetState {
+            previous_click: Some(mouse::Click::new(start, mouse::Button::Left, None)),
+            press_position: Some(start),
+        };
+
+        invalidate_click_after_drag(&mut state, Point::new(18.0, 8.0));
+
+        assert!(state.previous_click.is_none());
     }
 }

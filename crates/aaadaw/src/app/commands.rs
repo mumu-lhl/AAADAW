@@ -883,8 +883,14 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::OpenProject => !project_edit_busy(app) && !app.is_dirty(),
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings => true,
-        CommandKind::SaveProjectAs | CommandKind::Undo | CommandKind::Redo => {
-            !project_edit_busy(app)
+        CommandKind::SaveProjectAs => !project_edit_busy(app),
+        CommandKind::Undo => history_command_enabled(
+            app,
+            app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
+        ),
+        CommandKind::Redo => {
+            app.track_mix_commit_at.is_none()
+                && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
@@ -995,6 +1001,15 @@ fn project_edit_busy(app: &App) -> bool {
 
 fn project_file_busy(app: &App) -> bool {
     app.io_busy || app.path_picker_busy || app.import_busy || app.audio_asset_management_busy
+}
+
+fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
+    !app.io_busy
+        && !app.path_picker_busy
+        && !app.import_busy
+        && !app.audio_asset_management_busy
+        && !app.playback_busy()
+        && (!app.playback_active() || track_mix_only)
 }
 
 fn key_matches_character(key: &Key<&str>, expected: char) -> bool {

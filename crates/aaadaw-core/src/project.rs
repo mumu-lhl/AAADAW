@@ -491,6 +491,24 @@ impl Project {
         self.state.meter_map.points()
     }
 
+    /// Returns whether the next undo changes only a track's volume or pan.
+    pub fn can_undo_track_mix(&self) -> bool {
+        matches!(
+            self.history_cursor
+                .checked_sub(1)
+                .and_then(|index| self.history.get(index)),
+            Some(ProjectEvent::TrackVolumeChanged { .. } | ProjectEvent::TrackPanChanged { .. })
+        )
+    }
+
+    /// Returns whether the next redo changes only a track's volume or pan.
+    pub fn can_redo_track_mix(&self) -> bool {
+        matches!(
+            self.history.get(self.history_cursor),
+            Some(ProjectEvent::TrackVolumeChanged { .. } | ProjectEvent::TrackPanChanged { .. })
+        )
+    }
+
     /// Applies an action atomically and records it as one undoable history entry.
     ///
     /// A failed action, including a failed nested action in a transaction, leaves

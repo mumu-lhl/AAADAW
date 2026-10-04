@@ -30,7 +30,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod clap_plugin_cache;
 mod clap_plugin_config;
@@ -140,6 +140,10 @@ struct App {
     project_path_query: String,
     project_path: Option<PathBuf>,
     track_name_edits: HashMap<TrackId, String>,
+    track_volume_edits: HashMap<TrackId, String>,
+    track_pan_edits: HashMap<TrackId, String>,
+    track_mix_gesture: Option<TrackMixGesture>,
+    track_mix_commit_at: Option<Instant>,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
@@ -267,6 +271,22 @@ struct FxParameterGesture {
     before: f64,
     after: f64,
     before_state: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrackMixParameter {
+    Volume,
+    Pan,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TrackMixGesture {
+    track_id: TrackId,
+    parameter: TrackMixParameter,
+    before_volume_db: f32,
+    before_pan: f32,
+    after_volume_db: f32,
+    after_pan: f32,
 }
 
 struct PendingAudioImport {
@@ -525,13 +545,19 @@ impl App {
         #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         let recording_active = false;
 
+        let background_tick_interval = if self.track_mix_gesture.is_some() {
+            Duration::from_millis(30)
+        } else {
+            Duration::from_millis(100)
+        };
         let background_ticks = if self.import_busy
             || playback_active
             || recording_active
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
+            || self.track_mix_gesture.is_some()
         {
-            iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
+            iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
         };
@@ -546,6 +572,21 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let completes_pending_mix_reset = match &message {
+            Message::ResetTrackVolumeByDoubleClick(track_id) => {
+                self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Volume)
+            }
+            Message::ResetTrackPanByDoubleClick(track_id) => {
+                self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Pan)
+            }
+            _ => false,
+        };
+        if self.track_mix_commit_at.is_some()
+            && !matches!(&message, Message::BackgroundTick)
+            && !completes_pending_mix_reset
+        {
+            self.commit_track_mix_gesture();
+        }
         if !matches!(
             &message,
             Message::Timeline(
@@ -753,59 +794,61 @@ impl App {
                 self.status = "Wait for playback preparation to finish".to_owned();
                 return Task::none();
             }
+            let unsupported_playback_history_edit = match &message {
+                Message::Undo => !self.project.can_undo_track_mix(),
+                Message::Redo => !self.project.can_redo_track_mix(),
+                _ => false,
+            };
             if self.playback.is_some()
-                && matches!(
-                    &message,
-                    Message::AddTrack
-                        | Message::AddMidiItem
-                        | Message::AddMidiNote(_)
-                        | Message::AddMidiNoteAt(..)
-                        | Message::EditMidiNotes(..)
-                        | Message::DeleteMidiNotes(..)
-                        | Message::SetMidiControllers(..)
-                        | Message::DeleteMidiItem(_)
-                        | Message::NudgeMidiItem(..)
-                        | Message::NudgeMidiNote(..)
-                        | Message::AdjustMidiNotePitch(..)
-                        | Message::AdjustMidiNoteVelocity(..)
-                        | Message::DeleteMidiNote(..)
-                        | Message::QuantizeMidiItem(_)
-                        | Message::DeleteTrack(_)
-                        | Message::MoveTrack(..)
-                        | Message::TrackNameChanged(..)
-                        | Message::CommitTrackName(_)
-                        | Message::ToggleMute(_)
-                        | Message::ToggleSolo(_)
-                        | Message::ToggleRecordArm(_)
-                        | Message::AdjustVolume(..)
-                        | Message::AdjustPan(..)
-                        | Message::AddScannedPlugin(_)
-                        | Message::ClearTrackInstrument(_)
-                        | Message::SelectScannedInstrument(_)
-                        | Message::ToggleFxChainPlugin(_)
-                        | Message::RemoveSelectedFxPlugin
-                        | Message::FxChainWindowNativeHandle(..)
-                        | Message::FxChainWindowScaleFactor(..)
-                        | Message::FxChainWindowResized(..)
-                        | Message::NudgeAudioItem(..)
-                        | Message::BeginAudioItemStartSampleEdit(_)
-                        | Message::AudioItemStartSampleChanged(..)
-                        | Message::CommitAudioItemStartSample(_)
-                        | Message::CancelAudioItemStartSampleEdit(_)
-                        | Message::DeleteAudioItem(_)
-                        | Message::DeleteSelectedItems
-                        | Message::DuplicateAudioItem(_)
-                        | Message::DuplicateMidiItem(_)
-                        | Message::SplitSelectedItemsAtCursor
-                        | Message::SplitSelectedItemsAtTimeSelection
-                        | Message::Undo
-                        | Message::Redo
-                        | Message::RunActionQuery
-                        | Message::RunAudioAssetManagement(_)
-                        | Message::CancelAudioAssetManagement
-                        | Message::ReimportAudioItem(_)
-                        | Message::RelinkAudioItem(_)
-                )
+                && (unsupported_playback_history_edit
+                    || matches!(
+                        &message,
+                        Message::AddTrack
+                            | Message::AddMidiItem
+                            | Message::AddMidiNote(_)
+                            | Message::AddMidiNoteAt(..)
+                            | Message::EditMidiNotes(..)
+                            | Message::DeleteMidiNotes(..)
+                            | Message::SetMidiControllers(..)
+                            | Message::DeleteMidiItem(_)
+                            | Message::NudgeMidiItem(..)
+                            | Message::NudgeMidiNote(..)
+                            | Message::AdjustMidiNotePitch(..)
+                            | Message::AdjustMidiNoteVelocity(..)
+                            | Message::DeleteMidiNote(..)
+                            | Message::QuantizeMidiItem(_)
+                            | Message::DeleteTrack(_)
+                            | Message::MoveTrack(..)
+                            | Message::TrackNameChanged(..)
+                            | Message::CommitTrackName(_)
+                            | Message::ToggleMute(_)
+                            | Message::ToggleSolo(_)
+                            | Message::ToggleRecordArm(_)
+                            | Message::AddScannedPlugin(_)
+                            | Message::ClearTrackInstrument(_)
+                            | Message::SelectScannedInstrument(_)
+                            | Message::ToggleFxChainPlugin(_)
+                            | Message::RemoveSelectedFxPlugin
+                            | Message::FxChainWindowNativeHandle(..)
+                            | Message::FxChainWindowScaleFactor(..)
+                            | Message::FxChainWindowResized(..)
+                            | Message::NudgeAudioItem(..)
+                            | Message::BeginAudioItemStartSampleEdit(_)
+                            | Message::AudioItemStartSampleChanged(..)
+                            | Message::CommitAudioItemStartSample(_)
+                            | Message::CancelAudioItemStartSampleEdit(_)
+                            | Message::DeleteAudioItem(_)
+                            | Message::DeleteSelectedItems
+                            | Message::DuplicateAudioItem(_)
+                            | Message::DuplicateMidiItem(_)
+                            | Message::SplitSelectedItemsAtCursor
+                            | Message::SplitSelectedItemsAtTimeSelection
+                            | Message::RunActionQuery
+                            | Message::RunAudioAssetManagement(_)
+                            | Message::CancelAudioAssetManagement
+                            | Message::ReimportAudioItem(_)
+                            | Message::RelinkAudioItem(_)
+                    ))
             {
                 self.status = format!(
                     "Close {} output before editing the project",
@@ -1305,36 +1348,37 @@ impl App {
                     );
                 }
             }
-            Message::AdjustVolume(track_id, delta_db) => {
-                if let Some(track) = self
-                    .project
-                    .tracks()
-                    .iter()
-                    .find(|track| track.id() == track_id)
-                {
-                    let volume_db = (track.volume_db() + delta_db).clamp(-60.0, 6.0);
-                    self.apply_action(
-                        DawAction::SetTrackVolume {
-                            track_id,
-                            volume_db,
-                        },
-                        "Track volume changed",
-                    );
-                }
+            Message::PreviewTrackVolume(track_id, volume_db) => {
+                self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
             }
-            Message::AdjustPan(track_id, delta) => {
-                if let Some(track) = self
-                    .project
-                    .tracks()
-                    .iter()
-                    .find(|track| track.id() == track_id)
-                {
-                    let pan = (track.pan() + delta).clamp(-1.0, 1.0);
-                    self.apply_action(
-                        DawAction::SetTrackPan { track_id, pan },
-                        "Track pan changed",
-                    );
-                }
+            Message::CommitTrackVolume(track_id) => {
+                self.finish_track_mix_gesture(track_id, TrackMixParameter::Volume);
+            }
+            Message::PreviewTrackPan(track_id, pan) => {
+                self.preview_track_mix(track_id, TrackMixParameter::Pan, pan);
+            }
+            Message::CommitTrackPan(track_id) => {
+                self.finish_track_mix_gesture(track_id, TrackMixParameter::Pan);
+            }
+            Message::TrackVolumeTextChanged(track_id, value) => {
+                self.track_volume_edits.insert(track_id, value);
+            }
+            Message::TrackPanTextChanged(track_id, value) => {
+                self.track_pan_edits.insert(track_id, value);
+            }
+            Message::CommitTrackVolumeText(track_id) => {
+                self.commit_track_volume_text(track_id);
+            }
+            Message::CommitTrackPanText(track_id) => {
+                self.commit_track_pan_text(track_id);
+            }
+            Message::ResetTrackVolume(track_id) => self.reset_track_volume(track_id, false),
+            Message::ResetTrackVolumeByDoubleClick(track_id) => {
+                self.reset_track_volume(track_id, true);
+            }
+            Message::ResetTrackPan(track_id) => self.reset_track_pan(track_id, false),
+            Message::ResetTrackPanByDoubleClick(track_id) => {
+                self.reset_track_pan(track_id, true);
             }
             Message::NudgeAudioItem(item_id, direction, milliseconds) => {
                 self.nudge_audio_item(item_id, direction, milliseconds)
@@ -1380,10 +1424,12 @@ impl App {
             Message::Undo => {
                 self.active_menu = None;
                 self.undo();
+                self.sync_all_track_mix_to_playback();
             }
             Message::Redo => {
                 self.active_menu = None;
                 self.redo();
+                self.sync_all_track_mix_to_playback();
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
             Message::ShortcutPressed(key, modifiers) => {
@@ -1439,6 +1485,12 @@ impl App {
                 self.finish_audio_item_relink(item_id, result);
             }
             Message::BackgroundTick => {
+                if self
+                    .track_mix_commit_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    self.commit_track_mix_gesture();
+                }
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 {
                     if self.fx_parameter_end_requested
@@ -1498,6 +1550,10 @@ impl App {
                             scroll_arrangement_to(timeline::TIMELINE_SCROLL_ID, 0.0),
                         ]);
                         self.track_name_edits.clear();
+                        self.track_volume_edits.clear();
+                        self.track_pan_edits.clear();
+                        self.track_mix_gesture = None;
+                        self.track_mix_commit_at = None;
                         self.audio_item_start_edits.clear();
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
@@ -1734,6 +1790,10 @@ impl App {
         self.timeline.edit_cursor_tick = 0;
         self.timeline.vertical_scroll = 0.0;
         self.track_name_edits.clear();
+        self.track_volume_edits.clear();
+        self.track_pan_edits.clear();
+        self.track_mix_gesture = None;
+        self.track_mix_commit_at = None;
         self.audio_item_start_edits.clear();
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
@@ -2217,15 +2277,277 @@ impl App {
     }
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
+        let live_mix_track = match &action {
+            DawAction::SetTrackVolume { track_id, .. }
+            | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
+            _ => None,
+        };
         self.status = match self.project.apply(action) {
             Ok(()) => {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                if let Some(track_id) = live_mix_track {
+                    self.sync_track_mix_to_playback(track_id);
+                }
                 success.to_owned()
             }
             Err(error) => format!("Action failed: {error}"),
         };
+    }
+
+    fn sync_track_mix_to_playback(&self, track_id: TrackId) {
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_track_mix(track_id, track.volume_db(), track.pan());
+        }
+        #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
+        let _ = track_id;
+    }
+
+    fn sync_all_track_mix_to_playback(&self) {
+        for track in self.project.tracks() {
+            self.sync_track_mix_to_playback(track.id());
+        }
+    }
+
+    fn preview_track_mix(&mut self, track_id: TrackId, parameter: TrackMixParameter, value: f32) {
+        match parameter {
+            TrackMixParameter::Volume => {
+                self.track_volume_edits.remove(&track_id);
+            }
+            TrackMixParameter::Pan => {
+                self.track_pan_edits.remove(&track_id);
+            }
+        }
+        let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+        else {
+            return;
+        };
+        let current_volume = track.volume_db();
+        let current_pan = track.pan();
+        if self
+            .track_mix_gesture
+            .is_some_and(|gesture| gesture.track_id != track_id || gesture.parameter != parameter)
+        {
+            self.cancel_track_mix_gesture();
+        }
+        let gesture = self.track_mix_gesture.get_or_insert(TrackMixGesture {
+            track_id,
+            parameter,
+            before_volume_db: current_volume,
+            before_pan: current_pan,
+            after_volume_db: current_volume,
+            after_pan: current_pan,
+        });
+        match parameter {
+            TrackMixParameter::Volume => gesture.after_volume_db = value.clamp(-60.0, 6.0),
+            TrackMixParameter::Pan => gesture.after_pan = value.clamp(-1.0, 1.0),
+        }
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if let Some(playback) = &self.playback
+            && !playback.set_track_mix(track_id, gesture.after_volume_db, gesture.after_pan)
+        {
+            self.status = "Could not update the active track mix".to_owned();
+        }
+    }
+
+    fn finish_track_mix_gesture(&mut self, track_id: TrackId, parameter: TrackMixParameter) {
+        let Some(gesture) = self.track_mix_gesture else {
+            return;
+        };
+        if gesture.track_id != track_id || gesture.parameter != parameter {
+            return;
+        }
+        let (before, after) = match parameter {
+            TrackMixParameter::Volume => (gesture.before_volume_db, gesture.after_volume_db),
+            TrackMixParameter::Pan => (gesture.before_pan, gesture.after_pan),
+        };
+        if (before - after).abs() < f32::EPSILON {
+            self.track_mix_gesture = None;
+            self.track_mix_commit_at = None;
+            self.sync_track_mix_to_playback(track_id);
+            return;
+        }
+        self.track_mix_commit_at = Some(Instant::now() + Duration::from_millis(350));
+    }
+
+    fn commit_track_mix_gesture(&mut self) {
+        self.track_mix_commit_at = None;
+        let Some(gesture) = self.track_mix_gesture.take() else {
+            return;
+        };
+        let (before, after) = match gesture.parameter {
+            TrackMixParameter::Volume => (gesture.before_volume_db, gesture.after_volume_db),
+            TrackMixParameter::Pan => (gesture.before_pan, gesture.after_pan),
+        };
+        if (before - after).abs() < f32::EPSILON {
+            self.sync_track_mix_to_playback(gesture.track_id);
+            return;
+        }
+        let action = match gesture.parameter {
+            TrackMixParameter::Volume => DawAction::SetTrackVolume {
+                track_id: gesture.track_id,
+                volume_db: gesture.after_volume_db,
+            },
+            TrackMixParameter::Pan => DawAction::SetTrackPan {
+                track_id: gesture.track_id,
+                pan: gesture.after_pan,
+            },
+        };
+        self.apply_action(action, "Track mix changed");
+    }
+
+    fn track_mix_commit_is_pending(&self, track_id: TrackId, parameter: TrackMixParameter) -> bool {
+        self.track_mix_commit_at.is_some()
+            && self.track_mix_gesture.is_some_and(|gesture| {
+                gesture.track_id == track_id && gesture.parameter == parameter
+            })
+    }
+
+    fn clear_track_mix_for_reset(
+        &mut self,
+        track_id: TrackId,
+        parameter: TrackMixParameter,
+        double_click: bool,
+    ) {
+        if double_click && self.track_mix_commit_is_pending(track_id, parameter) {
+            self.track_mix_gesture = None;
+            self.track_mix_commit_at = None;
+        } else {
+            self.cancel_track_mix_gesture();
+        }
+    }
+
+    fn cancel_track_mix_gesture(&mut self) {
+        self.track_mix_commit_at = None;
+        if let Some(_gesture) = self.track_mix_gesture.take() {
+            #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+            if let Some(playback) = &self.playback {
+                let _ = playback.set_track_mix(
+                    _gesture.track_id,
+                    _gesture.before_volume_db,
+                    _gesture.before_pan,
+                );
+            }
+        }
+    }
+
+    fn commit_track_volume_text(&mut self, track_id: TrackId) {
+        let Some(text) = self.track_volume_edits.get(&track_id).cloned() else {
+            return;
+        };
+        let Ok(value) = text.trim().parse::<f32>() else {
+            self.status = "Enter a valid volume in dB".to_owned();
+            return;
+        };
+        if !value.is_finite() {
+            self.status = "Enter a finite volume in dB".to_owned();
+            return;
+        }
+        let value = value.clamp(-60.0, 6.0);
+        self.cancel_track_mix_gesture();
+        self.track_volume_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| (track.volume_db() - value).abs() < f32::EPSILON)
+        {
+            return;
+        }
+        self.apply_action(
+            DawAction::SetTrackVolume {
+                track_id,
+                volume_db: value,
+            },
+            "Track volume changed",
+        );
+    }
+
+    fn commit_track_pan_text(&mut self, track_id: TrackId) {
+        let Some(text) = self.track_pan_edits.get(&track_id).cloned() else {
+            return;
+        };
+        let Ok(value) = text.trim().parse::<f32>() else {
+            self.status = "Enter a pan value from -1.0 to 1.0".to_owned();
+            return;
+        };
+        if !value.is_finite() {
+            self.status = "Enter a finite pan value".to_owned();
+            return;
+        }
+        let value = value.clamp(-1.0, 1.0);
+        self.cancel_track_mix_gesture();
+        self.track_pan_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| (track.pan() - value).abs() < f32::EPSILON)
+        {
+            return;
+        }
+        self.apply_action(
+            DawAction::SetTrackPan {
+                track_id,
+                pan: value,
+            },
+            "Track pan changed",
+        );
+    }
+
+    fn reset_track_volume(&mut self, track_id: TrackId, double_click: bool) {
+        self.clear_track_mix_for_reset(track_id, TrackMixParameter::Volume, double_click);
+        self.track_volume_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| track.volume_db() != 0.0)
+        {
+            self.apply_action(
+                DawAction::SetTrackVolume {
+                    track_id,
+                    volume_db: 0.0,
+                },
+                "Track volume reset",
+            );
+        } else {
+            self.sync_track_mix_to_playback(track_id);
+        }
+    }
+
+    fn reset_track_pan(&mut self, track_id: TrackId, double_click: bool) {
+        self.clear_track_mix_for_reset(track_id, TrackMixParameter::Pan, double_click);
+        self.track_pan_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| track.pan() != 0.0)
+        {
+            self.apply_action(
+                DawAction::SetTrackPan { track_id, pan: 0.0 },
+                "Track pan centered",
+            );
+        } else {
+            self.sync_track_mix_to_playback(track_id);
+        }
     }
 
     fn finish_item_drag(&mut self) {
@@ -2370,7 +2692,15 @@ impl App {
     }
 
     fn delete_track(&mut self, track_id: TrackId) {
+        if self
+            .track_mix_gesture
+            .is_some_and(|gesture| gesture.track_id == track_id)
+        {
+            self.cancel_track_mix_gesture();
+        }
         self.track_name_edits.remove(&track_id);
+        self.track_volume_edits.remove(&track_id);
+        self.track_pan_edits.remove(&track_id);
         self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
     }
 

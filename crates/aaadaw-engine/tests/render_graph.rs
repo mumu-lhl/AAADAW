@@ -58,6 +58,45 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
 }
 
 #[test]
+fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    let (mut producer, consumer) = pcm_stream(8).expect("positive queue size is valid");
+    assert_eq!(producer.push_samples(&[1.0; 8]), 8);
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 8)
+        .expect("one input stream should match the track count");
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32, 0.0_f32]; 2];
+
+    graph
+        .render_into(&mut output)
+        .expect("initial block should render");
+    let center = std::f32::consts::FRAC_1_SQRT_2;
+    for frame in output {
+        assert!((frame[0] - center).abs() < 1.0e-6);
+        assert!((frame[1] - center).abs() < 1.0e-6);
+    }
+
+    assert!(mix.set_track_mix(track_id, -6.0, 1.0));
+    graph
+        .render_into(&mut output)
+        .expect("updated block should render");
+    let right_gain = 10.0_f32.powf(-6.0 / 20.0);
+    for frame in output {
+        assert_eq!(frame[0], 0.0);
+        assert!((frame[1] - right_gain).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 4);
+}
+
+#[test]
 fn audio_item_streams_respect_sample_clock_start_and_end_positions() {
     let mut project = Project::new();
     project
