@@ -23,6 +23,11 @@ impl AudioCaptureControl {
         self.0.enabled.store(true, Ordering::Release);
     }
 
+    /// Returns whether the current take is accepting input callback frames.
+    pub fn is_enabled(&self) -> bool {
+        self.0.enabled.load(Ordering::Acquire) && !self.0.failed.load(Ordering::Acquire)
+    }
+
     /// Stops accepting frames while leaving queued data available to drain.
     pub fn stop(&self) {
         self.0.enabled.store(false, Ordering::Release);
@@ -329,14 +334,17 @@ mod tests {
     #[test]
     fn capture_queue_only_accepts_armed_frames_and_reports_backpressure() {
         let (mut producer, mut consumer, control) = audio_capture_stream(2);
+        assert!(!control.is_enabled());
         producer.push_frames_at(100, [[9.0, 9.0]]);
         let mut output = [[0.0; 2]; 4];
         assert!(consumer.pop_timed_frames(&mut output).is_none());
 
         control.start();
+        assert!(control.is_enabled());
         producer.push_frames_at(100, [[0.1, -0.1], [0.2, -0.2], [0.3, -0.3]]);
 
         assert!(control.has_overflowed());
+        assert!(!control.is_enabled());
         assert_eq!(control.overflow_frames(), 1);
         let block = consumer
             .pop_timed_frames(&mut output)
@@ -353,6 +361,7 @@ mod tests {
         control.start();
         producer.push_frames_at(250, [[0.25, -0.25], [0.5, -0.5]]);
         control.stop();
+        assert!(!control.is_enabled());
 
         let mut output = [[0.0; 2]; 4];
         let block = consumer
@@ -361,6 +370,20 @@ mod tests {
         assert_eq!(block.first_frame, 250);
         assert_eq!(block.frame_count, 2);
         assert_eq!(output[..2], [[0.25, -0.25], [0.5, -0.5]]);
+    }
+
+    #[test]
+    fn backend_error_fails_and_disarms_the_active_take() {
+        let (mut producer, mut consumer, control) = audio_capture_stream(4);
+        control.start();
+        control.fail();
+        assert!(control.has_failed());
+        assert!(control.has_callback_error());
+        assert!(!control.is_enabled());
+
+        producer.push_frames_at(0, [[0.5, -0.5]]);
+        let mut output = [[0.0; 2]; 1];
+        assert!(consumer.pop_timed_frames(&mut output).is_none());
     }
 
     #[test]

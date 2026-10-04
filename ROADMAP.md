@@ -78,7 +78,7 @@
 - [x] 保留 JACK 每个捕获周期的帧位置；录音队列溢出或时钟回退时使 take 失败，短暂的周期间隔在 WAV 中写为静音，避免 overdub 时间被压缩（[Issue #38](https://github.com/mumu-lhl/AAADAW/issues/38)）。
 - [x] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
 - [x] 增加 Windows WASAPI 默认立体声输出，让 Windows 工程可播放且记录设备格式协商、默认设备变化和移除行为（[Issue #50](https://github.com/mumu-lhl/AAADAW/issues/50)）。
-- [ ] 增加 Windows WASAPI 输入；明确各平台的设备枚举、热插拔和延迟语义。
+- [ ] 增加 Windows WASAPI 输入，让用户可在 armed track 上录制、保留采集时间戳并通过现有 WAV/recovery/import 路径回放（[Issue #52](https://github.com/mumu-lhl/AAADAW/issues/52)）。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。

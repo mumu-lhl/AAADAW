@@ -21,6 +21,8 @@ mod pipewire_output;
 mod stream;
 mod transport;
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+mod wasapi_input;
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 mod wasapi_output;
 
 pub use capture::{
@@ -50,6 +52,8 @@ pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
 pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_output::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 
