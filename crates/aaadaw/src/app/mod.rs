@@ -139,6 +139,20 @@ struct MidiNoteClipboard {
     last_paste: Option<(ItemId, u64)>,
 }
 
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WasapiOutputDeviceChoice {
+    id: Option<String>,
+    label: String,
+}
+
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+impl std::fmt::Display for WasapiOutputDeviceChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.label)
+    }
+}
+
 #[derive(Default)]
 struct App {
     project: Project,
@@ -209,6 +223,12 @@ struct App {
     audio_settings: audio_config::AudioSettings,
     audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_output_devices: Vec<aaadaw_engine::WasapiOutputDeviceInfo>,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_output_devices_loading: bool,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_output_devices_error: Option<String>,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
     clap_plugin_cache_path: Option<PathBuf>,
@@ -1457,6 +1477,10 @@ impl App {
                 if self.shortcut_capture_id.take().is_some() {
                     self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
                 }
+                #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+                if category == SettingsCategory::Audio {
+                    task = self.refresh_wasapi_output_devices();
+                }
             }
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
                 self.set_master_output_ceiling_dbfs(ceiling_dbfs);
@@ -1465,6 +1489,50 @@ impl App {
                 self.audio_recording_offset_query = Some(value);
             }
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::WasapiOutputDevicesLoaded(result) => {
+                self.wasapi_output_devices_loading = false;
+                match result {
+                    Ok(devices) => {
+                        self.wasapi_output_devices = devices;
+                        self.wasapi_output_devices_error = None;
+                    }
+                    Err(error) => {
+                        self.wasapi_output_devices_error = Some(error.clone());
+                        self.audio_settings_feedback =
+                            format!("WASAPI output devices could not be listed: {error}");
+                    }
+                }
+            }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::RefreshWasapiOutputDevices => {
+                task = self.refresh_wasapi_output_devices();
+            }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::SelectWasapiOutputDevice(device_id) => {
+                let settings = audio_config::AudioSettings {
+                    wasapi_output_device_id: device_id.clone(),
+                    ..self.audio_settings.clone()
+                };
+                self.audio_settings = settings.clone();
+                match audio_config::save(&settings) {
+                    Ok(()) => {
+                        let target = device_id.as_deref().unwrap_or("System default");
+                        self.audio_settings_feedback = if self.playback.is_some() {
+                            format!(
+                                "{target} selected for the next output; close and reopen playback to apply"
+                            )
+                        } else {
+                            format!("{target} selected for WASAPI playback")
+                        };
+                    }
+                    Err(error) => {
+                        self.audio_settings_feedback = format!(
+                            "WASAPI output selection is active for this session but could not be saved: {error}"
+                        );
+                    }
+                }
+            }
             Message::RemoveClapPluginPath(path) => {
                 task = self.remove_clap_plugin_path(path);
             }
@@ -2307,10 +2375,10 @@ impl App {
                     self.playback_backend = backend;
                     let settings = audio_config::AudioSettings {
                         playback_backend: Some(Self::playback_backend_setting(backend)),
-                        ..self.audio_settings
+                        ..self.audio_settings.clone()
                     };
                     self.audio_settings = settings;
-                    match audio_config::save(settings) {
+                    match audio_config::save(&settings) {
                         Ok(()) => {
                             self.status = format!("{} selected for playback", backend.name());
                             self.audio_settings_feedback =
@@ -2392,7 +2460,11 @@ impl App {
 
     fn open_settings(&mut self) -> Task<Message> {
         if let Some(window_id) = self.settings_window_id {
-            return iced::window::gain_focus(window_id);
+            let focus = iced::window::gain_focus(window_id);
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            return Task::batch([focus, self.refresh_wasapi_output_devices()]);
+            #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+            return focus;
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(760.0, 620.0),
@@ -2400,7 +2472,25 @@ impl App {
             ..iced::window::Settings::default()
         });
         self.settings_window_id = Some(window_id);
+        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        return Task::batch([task.discard(), self.refresh_wasapi_output_devices()]);
+        #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
         task.discard()
+    }
+
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    fn refresh_wasapi_output_devices(&mut self) -> Task<Message> {
+        if self.wasapi_output_devices_loading {
+            return Task::none();
+        }
+        self.wasapi_output_devices_loading = true;
+        self.wasapi_output_devices_error = None;
+        Task::perform(
+            run_blocking("aaadaw-wasapi-device-list", || {
+                aaadaw_engine::enumerate_wasapi_output_devices().map_err(|error| error.to_string())
+            }),
+            Message::WasapiOutputDevicesLoaded,
+        )
     }
 
     fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
@@ -3170,7 +3260,14 @@ impl App {
             return;
         }
 
-        let mut playback = match prepared.into_output(self.selected_playback_backend()) {
+        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        let output_result = prepared.into_output(
+            self.selected_playback_backend(),
+            self.audio_settings.wasapi_output_device_id.as_deref(),
+        );
+        #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+        let output_result = prepared.into_output(self.selected_playback_backend(), None);
+        let mut playback = match output_result {
             Ok(playback) => playback,
             Err(error) => {
                 let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
@@ -4336,14 +4433,14 @@ impl App {
     fn set_master_output_ceiling_dbfs(&mut self, ceiling: aaadaw_engine::MasterOutputCeiling) {
         let settings = audio_config::AudioSettings {
             master_output_ceiling: ceiling,
-            ..self.audio_settings
+            ..self.audio_settings.clone()
         };
         #[cfg(feature = "audio-device")]
         if let Some(playback) = &self.playback {
             playback.set_master_output_ceiling_dbfs(ceiling);
         }
-        self.audio_settings = settings;
-        match audio_config::save(settings) {
+        self.audio_settings = settings.clone();
+        match audio_config::save(&settings) {
             Ok(()) => {
                 self.audio_settings_feedback =
                     format!("Master sample-peak ceiling set to {ceiling}");
@@ -4368,12 +4465,12 @@ impl App {
         };
         let settings = audio_config::AudioSettings {
             recording_offset_us: offset_us,
-            ..self.audio_settings
+            ..self.audio_settings.clone()
         };
-        self.audio_settings = settings;
+        self.audio_settings = settings.clone();
         self.audio_recording_offset_query =
             Some(audio_config::format_recording_offset_ms(offset_us));
-        match audio_config::save(settings) {
+        match audio_config::save(&settings) {
             Ok(()) => {
                 self.audio_settings_feedback = format!(
                     "Recording placement offset set to {} ms; positive values move items later",

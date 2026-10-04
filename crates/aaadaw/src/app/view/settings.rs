@@ -177,8 +177,13 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
             app.audio_settings.recording_offset_us,
         )
     });
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    let wasapi_output = wasapi_output_settings(app);
+    #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+    let wasapi_output: Element<'_, Message> = text("").into();
     column![
         text("Audio output and recording").size(17),
+        wasapi_output,
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
         row![
             column![
@@ -217,6 +222,106 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
         text(app.audio_settings_feedback.clone()).size(11),
     ]
     .spacing(tokens::SPACING_SM)
+    .width(Length::Fill)
+    .into()
+}
+
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+fn wasapi_output_settings(app: &App) -> Element<'_, Message> {
+    use super::super::WasapiOutputDeviceChoice;
+
+    let mut choices = vec![WasapiOutputDeviceChoice {
+        id: None,
+        label: "System default".to_owned(),
+    }];
+    for device in &app.wasapi_output_devices {
+        let base_label = if device.name.trim().is_empty() {
+            "Unnamed output".to_owned()
+        } else {
+            device.name.clone()
+        };
+        let duplicate_name = app
+            .wasapi_output_devices
+            .iter()
+            .filter(|other| other.name == device.name)
+            .count()
+            > 1;
+        let label = if duplicate_name {
+            let suffix = device.id.chars().rev().take(8).collect::<String>();
+            format!(
+                "{base_label} [{}]",
+                suffix.chars().rev().collect::<String>()
+            )
+        } else {
+            base_label
+        };
+        choices.push(WasapiOutputDeviceChoice {
+            id: Some(device.id.clone()),
+            label,
+        });
+    }
+    let saved_id = app.audio_settings.wasapi_output_device_id.as_deref();
+    if let Some(saved_id) = saved_id
+        && !app
+            .wasapi_output_devices
+            .iter()
+            .any(|device| device.id == saved_id)
+    {
+        let suffix = saved_id.chars().rev().take(12).collect::<String>();
+        choices.push(WasapiOutputDeviceChoice {
+            id: Some(saved_id.to_owned()),
+            label: format!(
+                "Unavailable saved output [{}]",
+                suffix.chars().rev().collect::<String>()
+            ),
+        });
+    }
+    let selected = choices
+        .iter()
+        .find(|choice| choice.id.as_deref() == saved_id)
+        .cloned();
+    let enumeration_feedback = if app.wasapi_output_devices_loading {
+        "Listing WASAPI output devices…".to_owned()
+    } else if let Some(error) = &app.wasapi_output_devices_error {
+        format!("Output device list unavailable: {error}")
+    } else if saved_id.is_some_and(|id| {
+        !app.wasapi_output_devices
+            .iter()
+            .any(|device| device.id == id)
+    }) {
+        "The saved endpoint is unavailable. Playback will not switch outputs automatically; choose System default or another endpoint.".to_owned()
+    } else {
+        "Close and reopen playback to apply an endpoint change.".to_owned()
+    };
+
+    column![
+        row![
+            column![
+                text("WASAPI output endpoint").size(13),
+                text("Select a Windows playback endpoint. System default is an explicit choice.")
+                    .size(10),
+            ]
+            .width(Length::Fill)
+            .spacing(tokens::SPACING_XS),
+            iced::widget::pick_list(choices, selected, |choice: WasapiOutputDeviceChoice| {
+                Message::SelectWasapiOutputDevice(choice.id)
+            },)
+            .placeholder("Output device")
+            .width(Length::Fixed(260.0)),
+            button(if app.wasapi_output_devices_loading {
+                "Loading…"
+            } else {
+                "Refresh"
+            })
+            .on_press_maybe(
+                (!app.wasapi_output_devices_loading).then_some(Message::RefreshWasapiOutputDevices)
+            ),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text(enumeration_feedback).size(10),
+    ]
+    .spacing(tokens::SPACING_XS)
     .width(Length::Fill)
     .into()
 }

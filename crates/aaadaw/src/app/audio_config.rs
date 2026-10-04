@@ -67,11 +67,12 @@ impl RecordingPlacementCorrection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct AudioSettings {
     pub(super) master_output_ceiling: MasterOutputCeiling,
     pub(super) recording_offset_us: i32,
     pub(super) playback_backend: Option<PlaybackBackendSetting>,
+    pub(super) wasapi_output_device_id: Option<String>,
 }
 
 pub(super) fn load() -> Result<AudioSettings, String> {
@@ -85,7 +86,7 @@ pub(super) fn load() -> Result<AudioSettings, String> {
     }
 }
 
-pub(super) fn save(settings: AudioSettings) -> Result<(), String> {
+pub(super) fn save(settings: &AudioSettings) -> Result<(), String> {
     let Some(path) = config_path() else {
         return Err("no platform config directory is available".to_owned());
     };
@@ -101,6 +102,7 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
     let mut found_ceiling = false;
     let mut found_recording_offset = false;
     let mut found_playback_backend = false;
+    let mut found_wasapi_output_device = false;
     for (line_number, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -134,13 +136,23 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
                 settings.playback_backend = PlaybackBackendSetting::parse(value);
                 found_playback_backend = true;
             }
+            "wasapi_output_device" if !found_wasapi_output_device => {
+                if value.len() > 4096 {
+                    return Err(format!(
+                        "WASAPI output device ID is too long on line {}",
+                        line_number + 1
+                    ));
+                }
+                settings.wasapi_output_device_id = (!value.is_empty()).then(|| value.to_owned());
+                found_wasapi_output_device = true;
+            }
             _ => return Err(format!("invalid audio config line {}", line_number + 1)),
         }
     }
     Ok(settings)
 }
 
-fn save_to(path: &Path, settings: AudioSettings) -> io::Result<()> {
+fn save_to(path: &Path, settings: &AudioSettings) -> io::Result<()> {
     let mut contents = Vec::new();
     writeln!(
         &mut contents,
@@ -158,6 +170,9 @@ fn save_to(path: &Path, settings: AudioSettings) -> io::Result<()> {
             "playback_backend={}",
             playback_backend.as_config_value()
         )?;
+    }
+    if let Some(device_id) = &settings.wasapi_output_device_id {
+        writeln!(&mut contents, "wasapi_output_device={device_id}")?;
     }
     write_atomic(path, &contents)
 }
@@ -247,6 +262,7 @@ mod tests {
             master_output_ceiling: MasterOutputCeiling::new(-6).unwrap(),
             recording_offset_us: -125_500,
             playback_backend: Some(PlaybackBackendSetting::PipeWire),
+            wasapi_output_device_id: Some("wasapi:device/endpoint-01".to_owned()),
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",
@@ -254,7 +270,7 @@ mod tests {
             std::thread::current().name().unwrap_or("test")
         ));
 
-        save_to(&path, settings).unwrap();
+        save_to(&path, &settings).unwrap();
 
         assert_eq!(
             parse(&std::fs::read_to_string(&path).unwrap()).unwrap(),
@@ -295,6 +311,30 @@ mod tests {
         );
         assert_eq!(settings.recording_offset_us, 1_250);
         assert_eq!(settings.playback_backend, None);
+    }
+
+    #[test]
+    fn saved_wasapi_output_device_id_round_trips_and_old_settings_default_to_system_device() {
+        let id = "wasapi:\\\\?\\SWD#MMDEVAPI#endpoint";
+        let settings = AudioSettings {
+            wasapi_output_device_id: Some(id.to_owned()),
+            ..AudioSettings::default()
+        };
+        let path = std::env::temp_dir().join(format!(
+            "aaadaw-wasapi-audio-{}-{}.conf",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        save_to(&path, &settings).unwrap();
+        assert_eq!(
+            parse(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+            settings
+        );
+        assert_eq!(
+            parse("master_output_ceiling_dbfs=-1\n").unwrap(),
+            AudioSettings::default()
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
