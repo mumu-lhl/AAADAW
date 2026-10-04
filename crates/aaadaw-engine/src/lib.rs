@@ -21,7 +21,8 @@ mod stream;
 mod transport;
 
 pub use capture::{
-    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, audio_capture_stream,
+    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, CapturedFrames,
+    audio_capture_stream,
 };
 pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{

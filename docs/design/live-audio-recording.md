@@ -4,6 +4,10 @@ The audio backend callback owns only an `AudioCaptureProducer` and an atomic con
 bounded SPSC queue carries interleaved stereo `f32` frames to one recording worker. The callback
 does not allocate, lock, wait, log, or access files. If the queue fills, the producer counts the
 dropped frames, disables capture, and marks the take failed. A failed take cannot be re-armed.
+JACK blocks also carry the server frame position of their first sample through a bounded descriptor
+ring. The writer preserves short forward gaps as silence in the WAV; a regressing clock, invalid
+block range, excessive gap, or descriptor overflow invalidates the take. Backends without capture
+timestamps currently retain contiguous-queue behavior.
 
 The recording worker owns the queue consumer and temporary PCM24 WAV segments. It drains frames in
 fixed-size batches, sanitizes non-finite samples, and writes outside the realtime callback. Each

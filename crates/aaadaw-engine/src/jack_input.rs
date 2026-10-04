@@ -10,6 +10,30 @@ struct JackCaptureHandler {
     right: Port<AudioIn>,
     producer: AudioCaptureProducer,
     control: AudioCaptureControl,
+    frame_clock: JackFrameClock,
+}
+
+#[derive(Default)]
+struct JackFrameClock {
+    previous: Option<u32>,
+    epoch: u64,
+}
+
+impl JackFrameClock {
+    fn extend(&mut self, frame: u32) -> Option<u64> {
+        if let Some(previous) = self.previous {
+            if frame < previous {
+                if previous.wrapping_sub(frame) <= u32::MAX / 2 {
+                    return None;
+                }
+                self.epoch = self.epoch.checked_add(u64::from(u32::MAX) + 1)?;
+            } else if frame - previous > u32::MAX / 2 {
+                return None;
+            }
+        }
+        self.previous = Some(frame);
+        self.epoch.checked_add(u64::from(frame))
+    }
 }
 
 impl ProcessHandler for JackCaptureHandler {
@@ -20,7 +44,11 @@ impl ProcessHandler for JackCaptureHandler {
             self.control.fail();
             return Control::Continue;
         }
-        self.producer.push_planar(left, right);
+        let Some(first_frame) = self.frame_clock.extend(scope.last_frame_time()) else {
+            self.control.fail_timing_if_enabled();
+            return Control::Continue;
+        };
+        self.producer.push_planar_at(first_frame, left, right);
         Control::Continue
     }
 }
@@ -96,6 +124,7 @@ impl JackAudioInput {
                 right,
                 producer,
                 control,
+                frame_clock: JackFrameClock::default(),
             },
         )?;
 
@@ -135,5 +164,29 @@ impl JackAudioInput {
 impl Drop for JackAudioInput {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JackFrameClock;
+
+    #[test]
+    fn jack_frame_clock_extends_counter_wraparound() {
+        let mut clock = JackFrameClock::default();
+        assert_eq!(clock.extend(u32::MAX - 10), Some(u64::from(u32::MAX - 10)));
+        assert_eq!(clock.extend(4), Some((u64::from(u32::MAX) + 1) + 4));
+    }
+
+    #[test]
+    fn jack_frame_clock_rejects_small_regressions_and_old_epochs() {
+        let mut clock = JackFrameClock::default();
+        assert_eq!(clock.extend(10_000), Some(10_000));
+        assert_eq!(clock.extend(9_999), None);
+        assert_eq!(clock.extend(10_001), Some(10_001));
+
+        let mut wrapped = JackFrameClock::default();
+        assert_eq!(wrapped.extend(4), Some(4));
+        assert_eq!(wrapped.extend(u32::MAX - 2), None);
     }
 }
