@@ -412,7 +412,7 @@ fn explicitly_authorized_mcp_midi_note_insertion_is_atomic_and_persistent() {
                     "item_id": item_id.value(),
                     "notes": [
                         {"pitch": 67, "tick": 1920, "duration": 480, "velocity": 88},
-                        {"pitch": 128, "tick": 2400, "duration": 480, "velocity": 80}
+                        {"pitch": 70, "tick": 3800, "duration": 100, "velocity": 80}
                     ]
                 }
             }
@@ -427,6 +427,19 @@ fn explicitly_authorized_mcp_midi_note_insertion_is_atomic_and_persistent() {
                     "track_id": other_track_id.value(),
                     "item_id": item_id.value(),
                     "notes": [{"pitch": 67, "tick": 1920, "duration": 480, "velocity": 80}]
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_insert_midi_notes",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "notes": [{"pitch": 128, "tick": 1920, "duration": 480, "velocity": 80}]
                 }
             }
         }),
@@ -517,6 +530,7 @@ fn explicitly_authorized_mcp_midi_note_insertion_is_atomic_and_persistent() {
     assert_eq!(response_for(6)["result"]["isError"], true);
     assert_eq!(response_for(7)["result"]["isError"], true);
     assert_eq!(response_for(8)["result"]["isError"], true);
+    assert_eq!(response_for(9)["result"]["isError"], true);
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     let midi_item = reopened
