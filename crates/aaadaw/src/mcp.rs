@@ -35,6 +35,9 @@ const CREATE_MIDI_ITEM_TOOL: &str = "daw_create_midi_item";
 const MAX_MIDI_ITEM_LENGTH_TICKS: u64 = 3_840 * 256;
 const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
 const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
+const EDIT_MIDI_NOTE_TOOL: &str = "daw_edit_midi_note";
+const DELETE_MIDI_NOTES_TOOL: &str = "daw_delete_midi_notes";
+const MAX_MIDI_NOTES_PER_DELETE: usize = 512;
 const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
 const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
@@ -195,6 +198,8 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(create_track_tool());
             tools.push(create_midi_item_tool());
             tools.push(insert_midi_notes_tool());
+            tools.push(edit_midi_note_tool());
+            tools.push(delete_midi_notes_tool());
             tools.push(quantize_midi_item_tool());
             tools.push(set_volume_automation_point_tool());
             tools.push(set_track_record_arm_tool());
@@ -213,6 +218,8 @@ impl ServerHandler for ProjectMcpServer {
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             CREATE_MIDI_ITEM_TOOL if self.writable => Some(create_midi_item_tool()),
             INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
+            EDIT_MIDI_NOTE_TOOL if self.writable => Some(edit_midi_note_tool()),
+            DELETE_MIDI_NOTES_TOOL if self.writable => Some(delete_midi_notes_tool()),
             QUANTIZE_MIDI_ITEM_TOOL if self.writable => Some(quantize_midi_item_tool()),
             SET_VOLUME_AUTOMATION_POINT_TOOL if self.writable => {
                 Some(set_volume_automation_point_tool())
@@ -258,6 +265,14 @@ impl ServerHandler for ProjectMcpServer {
                 parse_insert_midi_notes_arguments(request.arguments.as_ref()).and_then(
                     |(track_id, item_id, notes)| self.insert_midi_notes(track_id, item_id, notes),
                 )
+            }
+            EDIT_MIDI_NOTE_TOOL if self.writable => parse_edit_midi_note_arguments(
+                request.arguments.as_ref(),
+            )
+            .and_then(|(item_id, note_id, data)| self.edit_midi_note(item_id, note_id, data)),
+            DELETE_MIDI_NOTES_TOOL if self.writable => {
+                parse_delete_midi_notes_arguments(request.arguments.as_ref())
+                    .and_then(|(item_id, note_ids)| self.delete_midi_notes(item_id, note_ids))
             }
             QUANTIZE_MIDI_ITEM_TOOL if self.writable => parse_quantize_midi_item_arguments(
                 request.arguments.as_ref(),
@@ -487,6 +502,99 @@ impl ProjectMcpServer {
             "note_ids": note_ids,
         });
         persist_project_edit(&mut project, store, "inserted MIDI notes")?;
+        Ok(result)
+    }
+
+    fn edit_midi_note(
+        &self,
+        raw_item_id: u64,
+        raw_note_id: u64,
+        data: MidiNoteData,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == raw_item_id)
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        let item_id = item.id();
+        let note_id = item
+            .notes()
+            .iter()
+            .find(|note| note.id().value() == raw_note_id)
+            .map(|note| note.id())
+            .ok_or_else(|| "unknown MIDI note id for this item".to_owned())?;
+        project
+            .apply(DawAction::EditMidiNote {
+                item_id,
+                note_id,
+                data,
+            })
+            .map_err(|error| error.to_string())?;
+        let note = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .and_then(|item| item.notes().iter().find(|note| note.id() == note_id))
+            .ok_or_else(|| "MIDI note disappeared after editing".to_owned())?;
+        let result = json!({
+            "item_id": item_id.value(),
+            "note_id": note.id().value(),
+            "pitch": note.pitch(),
+            "tick": note.tick(),
+            "duration": note.duration(),
+            "velocity": note.velocity(),
+        });
+        persist_project_edit(&mut project, store, "edited MIDI note")?;
+        Ok(result)
+    }
+
+    fn delete_midi_notes(&self, raw_item_id: u64, raw_note_ids: Vec<u64>) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == raw_item_id)
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        let item_id = item.id();
+        let note_ids = raw_note_ids
+            .iter()
+            .map(|raw_note_id| {
+                item.notes()
+                    .iter()
+                    .find(|note| note.id().value() == *raw_note_id)
+                    .map(|note| note.id())
+                    .ok_or_else(|| format!("unknown MIDI note id {raw_note_id} for this item"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        project
+            .apply(DawAction::DeleteMidiNotes { item_id, note_ids })
+            .map_err(|error| error.to_string())?;
+        let result = json!({
+            "item_id": item_id.value(),
+            "deleted_note_ids": raw_note_ids,
+        });
+        persist_project_edit(&mut project, store, "deleted MIDI notes")?;
         Ok(result)
     }
 
@@ -869,6 +977,60 @@ fn insert_midi_notes_tool() -> Tool {
                 }
             },
             "required": ["track_id", "item_id", "notes"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn edit_midi_note_tool() -> Tool {
+    Tool::new(
+        EDIT_MIDI_NOTE_TOOL,
+        "Replace the timing, pitch, duration, and velocity of one note in a MIDI item.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "minimum": 0},
+                "note_id": {"type": "integer", "minimum": 0},
+                "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                "tick": {"type": "integer", "minimum": 0},
+                "duration": {"type": "integer", "minimum": 1},
+                "velocity": {"type": "integer", "minimum": 0, "maximum": 127}
+            },
+            "required": ["item_id", "note_id", "pitch", "tick", "duration", "velocity"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn delete_midi_notes_tool() -> Tool {
+    Tool::new(
+        DELETE_MIDI_NOTES_TOOL,
+        "Delete a bounded set of notes from one MIDI item by stable note ID.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "minimum": 0},
+                "note_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_MIDI_NOTES_PER_DELETE,
+                    "uniqueItems": true,
+                    "items": {"type": "integer", "minimum": 0}
+                }
+            },
+            "required": ["item_id", "note_ids"],
             "additionalProperties": false
         })),
     )
@@ -1347,6 +1509,92 @@ fn parse_insert_midi_notes_arguments(
     Ok((track_id, item_id, notes))
 }
 
+fn parse_edit_midi_note_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, MidiNoteData), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "item_id" | "note_id" | "pitch" | "tick" | "duration" | "velocity"
+        )
+    }) {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let unsigned = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{key} must be a non-negative integer"))
+    };
+    let item_id = unsigned("item_id")?;
+    let note_id = unsigned("note_id")?;
+    let pitch =
+        u8::try_from(unsigned("pitch")?).map_err(|_| "pitch must be in 0..=127".to_owned())?;
+    if pitch > 127 {
+        return Err("pitch must be in 0..=127".to_owned());
+    }
+    let tick = unsigned("tick")?;
+    let duration = unsigned("duration")?;
+    if duration == 0 {
+        return Err("duration must be positive".to_owned());
+    }
+    let velocity = u8::try_from(unsigned("velocity")?)
+        .map_err(|_| "velocity must be in 0..=127".to_owned())?;
+    if velocity > 127 {
+        return Err("velocity must be in 0..=127".to_owned());
+    }
+    Ok((
+        item_id,
+        note_id,
+        MidiNoteData {
+            pitch,
+            tick,
+            duration,
+            velocity,
+        },
+    ))
+}
+
+fn parse_delete_midi_notes_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, Vec<u64>), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "item_id" | "note_ids"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let item_id = arguments
+        .get("item_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "item_id must be a non-negative integer".to_owned())?;
+    let note_ids = arguments
+        .get("note_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "note_ids must be an array".to_owned())?;
+    if note_ids.is_empty() || note_ids.len() > MAX_MIDI_NOTES_PER_DELETE {
+        return Err(format!(
+            "note_ids must contain 1..={MAX_MIDI_NOTES_PER_DELETE} identifiers"
+        ));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(note_ids.len());
+    let note_ids = note_ids
+        .iter()
+        .map(|note_id| {
+            let note_id = note_id
+                .as_u64()
+                .ok_or_else(|| "note_ids entries must be non-negative integers".to_owned())?;
+            if !seen.insert(note_id) {
+                return Err("note_ids must not contain duplicates".to_owned());
+            }
+            Ok(note_id)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((item_id, note_ids))
+}
+
 fn parse_quantize_midi_item_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<(u64, u64, u32, u32, f32), String> {
@@ -1625,9 +1873,10 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_INSERT,
-        MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
-        parse_create_midi_item_arguments, parse_create_track_arguments,
+        MAX_MAP_POINTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE,
+        MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS,
+        MAX_TRACKS, parse_create_midi_item_arguments, parse_create_track_arguments,
+        parse_delete_midi_notes_arguments, parse_edit_midi_note_arguments,
         parse_insert_midi_notes_arguments, parse_note_query_arguments,
         parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
         parse_set_time_signature_arguments, parse_track_summary_uri, scoped_query_notes,
@@ -1728,6 +1977,65 @@ mod tests {
         ] {
             assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([invalid])))).is_err());
         }
+    }
+
+    #[test]
+    fn edit_midi_note_arguments_require_complete_valid_note_data() {
+        let valid = json!({
+            "item_id": 2,
+            "note_id": 9,
+            "pitch": 64,
+            "tick": 120,
+            "duration": 240,
+            "velocity": 96
+        });
+        assert_eq!(
+            parse_edit_midi_note_arguments(valid.as_object()).unwrap(),
+            (
+                2,
+                9,
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                }
+            )
+        );
+        for invalid in [
+            json!({"item_id": 2, "note_id": 9, "pitch": 128, "tick": 0, "duration": 1, "velocity": 1}),
+            json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 0, "velocity": 1}),
+            json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": -1, "duration": 1, "velocity": 1}),
+            json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 1, "velocity": 128}),
+            json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
+        ] {
+            assert!(
+                parse_edit_midi_note_arguments(invalid.as_object()).is_err(),
+                "accepted invalid note edit: {invalid}"
+            );
+        }
+        assert!(parse_edit_midi_note_arguments(None).is_err());
+    }
+
+    #[test]
+    fn delete_midi_notes_arguments_require_bounded_distinct_ids() {
+        let parse = |note_ids: Value| {
+            let value = json!({"item_id": 2, "note_ids": note_ids});
+            parse_delete_midi_notes_arguments(value.as_object())
+        };
+        assert_eq!(parse(json!([4, 7])).unwrap(), (2, vec![4, 7]));
+        for invalid in [
+            json!([]),
+            json!([4, 4]),
+            json!([-1]),
+            json!("4"),
+            json!(vec![0; MAX_MIDI_NOTES_PER_DELETE + 1]),
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+        let unknown_field = json!({"item_id": 2, "note_ids": [4], "extra": true});
+        assert!(parse_delete_midi_notes_arguments(unknown_field.as_object()).is_err());
+        assert!(parse_delete_midi_notes_arguments(None).is_err());
     }
 
     #[test]

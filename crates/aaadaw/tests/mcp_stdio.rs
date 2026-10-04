@@ -267,6 +267,24 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_set_time_signature_point", "arguments": {"tick": 11520, "numerator": 3, "denominator": 4}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {"name": "daw_edit_midi_note", "arguments": {"item_id": item_id.value(), "note_id": 0, "pitch": 72, "tick": 0, "duration": 480, "velocity": 90}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {"name": "daw_delete_midi_notes", "arguments": {"item_id": item_id.value(), "note_ids": [0]}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": {"name": "daw_scoped_query_notes", "arguments": {"track_id": track_id.value(), "start_tick": 0, "end_tick": 3840}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -363,6 +381,16 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .as_array()
             .unwrap()
             .iter()
+            .all(|tool| !matches!(
+                tool["name"].as_str(),
+                Some("daw_edit_midi_note" | "daw_delete_midi_notes")
+            ))
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
             .all(|tool| !matches!(tool["name"].as_str(), Some("daw_undo" | "daw_redo")))
     );
     let structure = response_for(4)["result"]["contents"][0]["text"]
@@ -408,6 +436,19 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(response_for(17)["result"]["isError"], true);
     assert_eq!(response_for(18)["result"]["isError"], true);
     assert_eq!(response_for(19)["result"]["isError"], true);
+    assert_eq!(response_for(20)["result"]["isError"], true);
+    assert_eq!(response_for(21)["result"]["isError"], true);
+    assert_eq!(
+        response_for(22)["result"]["structuredContent"]["notes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        response_for(22)["result"]["structuredContent"]["notes"][0]["pitch"],
+        60
+    );
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -2246,4 +2287,237 @@ fn explicitly_authorized_mcp_creates_midi_items_undoably_and_persistently() {
     assert_eq!(item.track_id(), track_id);
     assert_eq!(item.start_tick(), 960);
     assert_eq!(item.length_ticks(), 3840);
+}
+
+#[test]
+fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-midi-note-edits.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keys".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 960,
+                    duration: 480,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    pitch: 67,
+                    tick: 1920,
+                    duration: 480,
+                    velocity: 80,
+                },
+            ],
+        })
+        .unwrap();
+    let note_ids = project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id().value())
+        .collect::<Vec<_>>();
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, name: &str, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        })
+    };
+    let query = |id| {
+        call(
+            id,
+            "daw_scoped_query_notes",
+            json!({"track_id": track_id.value(), "start_tick": 0, "end_tick": 3840}),
+        )
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-midi-note-edits-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(
+            3,
+            "daw_edit_midi_note",
+            json!({"item_id": item_id.value(), "note_id": note_ids[0], "pitch": 72, "tick": 120, "duration": 960, "velocity": 80}),
+        ),
+        call(
+            4,
+            "daw_edit_midi_note",
+            json!({"item_id": item_id.value(), "note_id": note_ids[0], "pitch": 72, "tick": 3800, "duration": 100, "velocity": 80}),
+        ),
+        call(
+            5,
+            "daw_edit_midi_note",
+            json!({"item_id": item_id.value(), "note_id": 999_999, "pitch": 72, "tick": 120, "duration": 960, "velocity": 80}),
+        ),
+        call(
+            6,
+            "daw_delete_midi_notes",
+            json!({"item_id": item_id.value(), "note_ids": [note_ids[1], 999_999]}),
+        ),
+        query(7),
+        call(
+            8,
+            "daw_delete_midi_notes",
+            json!({"item_id": item_id.value(), "note_ids": [note_ids[1], note_ids[2]]}),
+        ),
+        query(9),
+        call(10, "daw_undo", json!({})),
+        query(11),
+        call(12, "daw_undo", json!({})),
+        query(13),
+        call(14, "daw_redo", json!({})),
+        query(15),
+        call(16, "daw_redo", json!({})),
+        query(17),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    for name in ["daw_edit_midi_note", "daw_delete_midi_notes"] {
+        assert!(tools.iter().any(|tool| tool["name"] == name));
+    }
+    assert_eq!(response_for(3)["result"]["isError"], false);
+    let edited = &response_for(3)["result"]["structuredContent"];
+    assert_eq!(edited["item_id"], item_id.value());
+    assert_eq!(edited["note_id"], note_ids[0]);
+    assert_eq!(edited["pitch"], 72);
+    assert_eq!(edited["tick"], 120);
+    assert_eq!(edited["duration"], 960);
+    assert_eq!(edited["velocity"], 80);
+    for id in [4, 5, 6] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+    assert_eq!(
+        response_for(7)["result"]["structuredContent"]["notes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(response_for(8)["result"]["isError"], false);
+    assert_eq!(
+        response_for(9)["result"]["structuredContent"]["notes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        response_for(10)["result"]["structuredContent"]["changed"],
+        true
+    );
+    let notes_after_delete_undo = &response_for(11)["result"]["structuredContent"]["notes"];
+    assert_eq!(notes_after_delete_undo.as_array().unwrap().len(), 3);
+    assert_eq!(
+        response_for(12)["result"]["structuredContent"]["changed"],
+        true
+    );
+    let notes_after_edit_undo = &response_for(13)["result"]["structuredContent"]["notes"];
+    assert_eq!(notes_after_edit_undo[0]["pitch"], 60);
+    assert_eq!(notes_after_edit_undo[0]["tick"], 0);
+    assert_eq!(
+        response_for(14)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(15)["result"]["structuredContent"]["notes"][0]["pitch"],
+        72
+    );
+    assert_eq!(
+        response_for(16)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(17)["result"]["structuredContent"]["notes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let saved_item = reopened
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .unwrap();
+    assert_eq!(saved_item.notes().len(), 1);
+    let saved_note = &saved_item.notes()[0];
+    assert_eq!(saved_note.id().value(), note_ids[0]);
+    assert_eq!(saved_note.pitch(), 72);
+    assert_eq!(saved_note.tick(), 120);
+    assert_eq!(saved_note.duration(), 960);
+    assert_eq!(saved_note.velocity(), 80);
 }
