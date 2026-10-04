@@ -166,6 +166,49 @@ fn is_volume_automation_visible(app: &App, track: &Track) -> bool {
             && !track.volume_automation().is_empty())
 }
 
+pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
+    let track_id = track.id();
+    let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
+        track_id: None,
+        label: "Master".to_owned(),
+    })
+    .chain(app.project.tracks().iter().filter_map(|candidate| {
+        if !candidate.is_bus() || candidate.id() == track_id {
+            return None;
+        }
+        let mut ancestor = candidate.output_track();
+        while let Some(ancestor_id) = ancestor {
+            if ancestor_id == track_id {
+                return None;
+            }
+            ancestor = app
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == ancestor_id)
+                .and_then(Track::output_track);
+        }
+        Some(TrackOutputChoice {
+            track_id: Some(candidate.id()),
+            label: format!("{} (Bus)", candidate.name()),
+        })
+    }))
+    .collect();
+    let selected_output = output_choices
+        .iter()
+        .find(|choice| choice.track_id == track.output_track())
+        .cloned();
+    column![
+        text("Output").size(11),
+        pick_list(output_choices, selected_output, move |choice| {
+            Message::SetTrackOutput(track_id, choice.track_id)
+        })
+        .width(Length::Fill),
+    ]
+    .spacing(super::tokens::ROW_GAP)
+    .into()
+}
+
 fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
     let heading = row![
@@ -207,41 +250,7 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         Message::OpenTrackFxChain(track_id),
     ));
     actions = actions.push(iced::widget::rule::horizontal(1));
-    let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
-        track_id: None,
-        label: "Master".to_owned(),
-    })
-    .chain(app.project.tracks().iter().filter_map(|candidate| {
-        if !candidate.is_bus() || candidate.id() == track_id {
-            return None;
-        }
-        let mut ancestor = candidate.output_track();
-        while let Some(ancestor_id) = ancestor {
-            if ancestor_id == track_id {
-                return None;
-            }
-            ancestor = app
-                .project
-                .tracks()
-                .iter()
-                .find(|track| track.id() == ancestor_id)
-                .and_then(Track::output_track);
-        }
-        Some(TrackOutputChoice {
-            track_id: Some(candidate.id()),
-            label: format!("{} (Bus)", candidate.name()),
-        })
-    }))
-    .collect();
-    let selected_output = output_choices
-        .iter()
-        .find(|choice| choice.track_id == track.output_track())
-        .cloned();
-    actions = actions.push(text("Output").size(11)).push(pick_list(
-        output_choices,
-        selected_output,
-        move |choice| Message::SetTrackOutput(track_id, choice.track_id),
-    ));
+    actions = actions.push(track_output_selector(app, track));
     let automation_visible = is_volume_automation_visible(app, track);
     actions = actions.push(action_button(
         if automation_visible {
@@ -413,24 +422,7 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
         .map_or_else(|| "Master".to_owned(), |output| output.name().to_owned());
     let is_selected = app.timeline.selected_track == Some(track_id);
     let automation_visible = is_volume_automation_visible(app, track);
-    let fx_chain = track.fx_chain();
-    let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
-    let fx_button = button(text(if fx_chain.is_empty() {
-        "FX".to_owned()
-    } else if has_bypassed_fx {
-        format!("FX {} B", fx_chain.len())
-    } else {
-        format!("FX {}", fx_chain.len())
-    }))
-    .style(if has_bypassed_fx {
-        iced::widget::button::warning
-    } else if fx_chain.is_empty() {
-        iced::widget::button::secondary
-    } else {
-        iced::widget::button::primary
-    })
-    .on_press(Message::OpenTrackFxChain(track_id))
-    .padding([2, 5]);
+    let fx_button = track_fx_button(track);
     let selection_button = button(if is_selected { "●" } else { "○" })
         .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
         .style(if is_selected {
@@ -485,6 +477,59 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
         .spacing(3)
         .align_y(Alignment::Center)
     };
+    let (volume_controls, pan_controls) = track_mix_controls(app, track, compact);
+    let selected = app.timeline.selected_track == Some(track_id);
+    let row = container(column![heading, volume_controls, pan_controls].spacing(2))
+        .padding([5, 4])
+        .height(TIMELINE_ROW_HEIGHT)
+        .width(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(track_selection_background(selected).into()),
+            ..container::Style::default()
+        });
+    mouse_area(row)
+        .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
+            track_id,
+        )))
+        .into()
+}
+
+pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
+    let fx_chain = track.fx_chain();
+    let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
+    button(text(if fx_chain.is_empty() {
+        "FX".to_owned()
+    } else if has_bypassed_fx {
+        format!("FX {} B", fx_chain.len())
+    } else {
+        format!("FX {}", fx_chain.len())
+    }))
+    .style(if has_bypassed_fx {
+        iced::widget::button::warning
+    } else if fx_chain.is_empty() {
+        iced::widget::button::secondary
+    } else {
+        iced::widget::button::primary
+    })
+    .on_press(Message::OpenTrackFxChain(track.id()))
+    .padding([2, 5])
+    .into()
+}
+
+pub(super) fn track_selection_background(selected: bool) -> iced::Color {
+    if selected {
+        iced::Color::from_rgb8(48, 57, 62)
+    } else {
+        iced::Color::from_rgb8(34, 39, 43)
+    }
+}
+
+pub(super) fn track_mix_controls<'a>(
+    app: &'a App,
+    track: &'a Track,
+    compact: bool,
+) -> (Element<'a, Message>, Element<'a, Message>) {
+    let track_id = track.id();
     let mute_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleMute,
@@ -664,27 +709,7 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
     ]
     .spacing(3)
     .align_y(Alignment::Center);
-    let selected = app.timeline.selected_track == Some(track_id);
-    let row = container(column![heading, volume_controls, pan_controls].spacing(2))
-        .padding([5, 4])
-        .height(TIMELINE_ROW_HEIGHT)
-        .width(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(
-                if selected {
-                    iced::Color::from_rgb8(48, 57, 62)
-                } else {
-                    iced::Color::from_rgb8(34, 39, 43)
-                }
-                .into(),
-            ),
-            ..container::Style::default()
-        });
-    mouse_area(row)
-        .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
-            track_id,
-        )))
-        .into()
+    (volume_controls.into(), pan_controls.into())
 }
 
 struct DoubleClickResetState {

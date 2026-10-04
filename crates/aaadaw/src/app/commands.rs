@@ -1,4 +1,4 @@
-use super::{App, MainMenu, Message, PathPickerTarget};
+use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
 use iced::keyboard::key::Named;
@@ -19,6 +19,8 @@ pub(crate) enum CommandId {
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
+    ShowArrangement,
+    ShowMixer,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
@@ -61,6 +63,8 @@ enum CommandKind {
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
+    ShowArrangement,
+    ShowMixer,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedAudioItem,
@@ -267,6 +271,26 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::ShowArrangement,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Arrange workspace",
+        aliases: &["arrangement", "arrange", "show arrange"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ShowMixer,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Mixer workspace",
+        aliases: &["mixer", "mix", "show mixer"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::AddMidiItem,
@@ -738,6 +762,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
+        CommandKind::ShowArrangement => "view.arrangement-workspace",
+        CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
@@ -772,6 +798,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
+        CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
+        CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::DuplicateSelectedAudioItem => {
@@ -928,6 +956,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,
+        CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
@@ -1009,6 +1038,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
+        CommandKind::ShowArrangement => CommandId::ShowArrangement,
+        CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,

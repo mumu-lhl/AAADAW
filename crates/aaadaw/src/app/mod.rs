@@ -60,7 +60,8 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, Message, MidiEditorLane, PathPickerTarget, SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, Message, MidiEditorLane, PathPickerTarget, SettingsCategory,
+    TimeMapTab,
 };
 
 pub(crate) fn run() -> iced::Result {
@@ -145,6 +146,7 @@ struct App {
     shortcut_binding_edits: commands::ShortcutBindings,
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
+    main_workspace: MainWorkspace,
     project_path_query: String,
     project_path: Option<PathBuf>,
     project_lock: Option<ProjectSessionLock>,
@@ -734,6 +736,7 @@ impl App {
         let window_safe_message = matches!(
             &message,
             Message::OpenSettings
+                | Message::ShowMainWorkspace(_)
                 | Message::OpenTempoMap
                 | Message::OpenMeterMap
                 | Message::SelectTimeMapTab(_)
@@ -1023,6 +1026,10 @@ impl App {
         match message {
             Message::ToggleMainMenu(menu) => {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
+            }
+            Message::ShowMainWorkspace(workspace) => {
+                self.main_workspace = workspace;
+                self.active_menu = None;
             }
             Message::OpenSettings => task = self.open_settings(),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),

@@ -51,6 +51,13 @@ pub(crate) enum MainMenu {
     Actions,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MainWorkspace {
+    #[default]
+    Arrangement,
+    Mixer,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PathPickerTarget {
     OpenProject,
@@ -95,6 +102,7 @@ pub(crate) enum Message {
     DismissMainMenu,
     Escape,
     NewProject,
+    ShowMainWorkspace(MainWorkspace),
     ToggleMediaBrowserPanel,
     OpenSettings,
     OpenTempoMap,
