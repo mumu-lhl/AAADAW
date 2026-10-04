@@ -425,6 +425,27 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
+    #[cfg(feature = "audio-device")]
+    let monitor_enabled = app
+        .playback
+        .as_ref()
+        .is_some_and(|playback| playback.input_monitor_enabled(track_id));
+    #[cfg(feature = "audio-device")]
+    let input_monitor = button(if monitor_enabled { "MON" } else { "mon" })
+        .on_press_maybe(
+            (is_recording && app.playback_playing && track.is_record_armed())
+                .then_some(Message::ToggleInputMonitor(track_id)),
+        )
+        .style(move |theme: &Theme, status| {
+            if monitor_enabled {
+                iced::widget::button::success(theme, status)
+            } else {
+                iced::widget::button::secondary(theme, status)
+            }
+        })
+        .padding([2, 6]);
+    #[cfg(not(feature = "audio-device"))]
+    let input_monitor = text("").size(10);
     let mix_gesture = app
         .track_mix_gesture
         .filter(|gesture| gesture.track_id == track_id);
@@ -466,6 +487,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         mute,
         solo,
         record_arm,
+        input_monitor,
         text("Vol").size(11),
         volume,
         text_input("dB", &volume_text)

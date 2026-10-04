@@ -1,6 +1,6 @@
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering, fence};
 
 const CAPTURE_BLOCK_QUEUE_CAPACITY: usize = 16_384;
 
@@ -108,9 +108,167 @@ pub struct CapturedFrames {
 pub struct AudioCaptureProducer {
     producer: Producer<[f32; 2]>,
     block_producer: Producer<CapturedFrames>,
+    monitor: Option<AudioMonitorProducer>,
     state: Arc<CaptureState>,
     next_contiguous_frame: u64,
     published_capture_frame: bool,
+}
+
+/// Control-thread handle for enabling the bounded input-monitor tap.
+#[derive(Clone, Debug, Default)]
+pub struct AudioInputMonitorGate(Arc<MonitorGateState>);
+
+#[derive(Debug, Default)]
+struct MonitorGateState {
+    enabled: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl AudioInputMonitorGate {
+    /// Enables or disables copying input frames to the output-side monitor queue.
+    pub fn set_enabled(&self, enabled: bool) {
+        if enabled {
+            self.0.generation.fetch_add(1, Ordering::AcqRel);
+            self.0.enabled.store(true, Ordering::Release);
+        } else {
+            self.0.enabled.store(false, Ordering::Release);
+        }
+    }
+
+    /// Returns whether any armed track currently routes the input monitor.
+    pub fn is_enabled(&self) -> bool {
+        self.0.enabled.load(Ordering::Acquire)
+    }
+
+    fn generation(&self) -> u64 {
+        self.0.generation.load(Ordering::Acquire)
+    }
+}
+
+/// Input-callback side of a best-effort, bounded live-monitor queue.
+pub struct AudioMonitorProducer {
+    queue: Arc<AudioMonitorQueue>,
+    next_write: u64,
+    gate: AudioInputMonitorGate,
+}
+
+/// Output-callback side of a best-effort, bounded live-monitor queue.
+pub struct AudioMonitorConsumer {
+    queue: Arc<AudioMonitorQueue>,
+    next_read: u64,
+    gate: AudioInputMonitorGate,
+}
+
+struct AudioMonitorQueue {
+    frames: Box<[AudioMonitorFrame]>,
+    write_index: AtomicU64,
+}
+
+struct AudioMonitorFrame {
+    sequence: AtomicU64,
+    samples: AtomicU64,
+    generation: AtomicU64,
+}
+
+/// Creates a bounded stereo monitor queue. Monitor overrun skips stale frames and never
+/// invalidates the recording take.
+pub fn audio_monitor_stream(
+    capacity_frames: usize,
+) -> (
+    AudioMonitorProducer,
+    AudioMonitorConsumer,
+    AudioInputMonitorGate,
+) {
+    let queue = Arc::new(AudioMonitorQueue {
+        frames: (0..capacity_frames.max(1))
+            .map(|_| AudioMonitorFrame {
+                sequence: AtomicU64::new(0),
+                samples: AtomicU64::new(0),
+                generation: AtomicU64::new(0),
+            })
+            .collect(),
+        write_index: AtomicU64::new(0),
+    });
+    let gate = AudioInputMonitorGate::default();
+    (
+        AudioMonitorProducer {
+            queue: Arc::clone(&queue),
+            next_write: 0,
+            gate: gate.clone(),
+        },
+        AudioMonitorConsumer {
+            queue,
+            next_read: 0,
+            gate: gate.clone(),
+        },
+        gate,
+    )
+}
+
+impl AudioMonitorProducer {
+    /// Publishes one frame when monitoring is enabled, overwriting the oldest buffered frame.
+    pub fn push_frame(&mut self, frame: [f32; 2]) -> bool {
+        if !self.gate.is_enabled() {
+            return false;
+        }
+        self.write_frame(frame);
+        true
+    }
+
+    fn write_frame(&mut self, frame: [f32; 2]) {
+        let index = self.next_write;
+        let slot = &self.queue.frames[(index % self.queue.frames.len() as u64) as usize];
+        let writing_sequence = index.wrapping_mul(2).wrapping_add(1);
+        slot.sequence.swap(writing_sequence, Ordering::AcqRel);
+        slot.samples.store(
+            u64::from(frame[0].to_bits()) | (u64::from(frame[1].to_bits()) << 32),
+            Ordering::Relaxed,
+        );
+        slot.generation
+            .store(self.gate.generation(), Ordering::Relaxed);
+        slot.sequence
+            .store(writing_sequence.wrapping_add(1), Ordering::Release);
+        self.next_write = self.next_write.wrapping_add(1);
+        self.queue
+            .write_index
+            .store(self.next_write, Ordering::Release);
+    }
+}
+
+impl AudioMonitorConsumer {
+    /// Copies available frames and clears any underrun tail without blocking or allocating.
+    pub fn read_into(&mut self, output: &mut [[f32; 2]]) -> usize {
+        output.fill([0.0, 0.0]);
+        let available_end = self.queue.write_index.load(Ordering::Acquire);
+        let capacity = self.queue.frames.len() as u64;
+        let oldest_retained = available_end.saturating_sub(capacity);
+        if self.next_read < oldest_retained {
+            self.next_read = oldest_retained;
+        }
+        let mut read = 0;
+        while read < output.len() && self.next_read < available_end {
+            let index = self.next_read;
+            let slot = &self.queue.frames[(index % self.queue.frames.len() as u64) as usize];
+            let expected_sequence = index.wrapping_mul(2).wrapping_add(2);
+            if slot.sequence.load(Ordering::Acquire) == expected_sequence {
+                let packed = slot.samples.load(Ordering::Relaxed);
+                let generation = slot.generation.load(Ordering::Relaxed);
+                fence(Ordering::Acquire);
+                if slot.sequence.load(Ordering::Acquire) == expected_sequence
+                    && self.gate.is_enabled()
+                    && generation == self.gate.generation()
+                {
+                    output[read] = [
+                        f32::from_bits(packed as u32),
+                        f32::from_bits((packed >> 32) as u32),
+                    ];
+                }
+            }
+            read += 1;
+            self.next_read = self.next_read.wrapping_add(1);
+        }
+        output.len() - read
+    }
 }
 
 /// The worker side of a bounded stereo capture queue.
@@ -148,6 +306,7 @@ fn audio_capture_stream_with_capacity(
         AudioCaptureProducer {
             producer,
             block_producer,
+            monitor: None,
             state: Arc::clone(&state),
             next_contiguous_frame: 0,
             published_capture_frame: false,
@@ -164,6 +323,11 @@ fn audio_capture_stream_with_capacity(
 }
 
 impl AudioCaptureProducer {
+    /// Attaches the output graph's bounded live-monitor queue before starting the backend.
+    pub fn attach_monitor(&mut self, monitor: AudioMonitorProducer) {
+        self.monitor = Some(monitor);
+    }
+
     /// Copies a planar block at the next contiguous frame position.
     ///
     /// Use `push_planar_at` when the backend exposes a frame clock.
@@ -232,14 +396,31 @@ impl AudioCaptureProducer {
         first_frame: u64,
         frames: impl IntoIterator<Item = [f32; 2]>,
     ) -> usize {
-        if !self.state.enabled.load(Ordering::Acquire) || self.state.failed.load(Ordering::Relaxed)
-        {
+        let capture_enabled = self.state.enabled.load(Ordering::Acquire)
+            && !self.state.failed.load(Ordering::Relaxed);
+        let monitor_enabled = self
+            .monitor
+            .as_ref()
+            .is_some_and(|monitor| monitor.gate.is_enabled());
+        let mut frames = frames.into_iter();
+        if !capture_enabled {
+            if monitor_enabled {
+                if let Some(monitor) = &mut self.monitor {
+                    for frame in frames {
+                        monitor.write_frame(frame);
+                    }
+                }
+            }
             return 0;
         }
 
         let mut frame_count = 0_usize;
-        let mut frames = frames.into_iter();
         while let Some(frame) = frames.next() {
+            if monitor_enabled {
+                if let Some(monitor) = &mut self.monitor {
+                    monitor.write_frame(frame);
+                }
+            }
             if let Err(PushError::Full(_)) = self.producer.push(frame) {
                 let dropped_frames = 1_u64.saturating_add(frames.count() as u64);
                 if frame_count > 0 && !self.publish_block(first_frame, frame_count) {
@@ -407,6 +588,55 @@ mod tests {
         producer.push_frames_at(120, [[0.2, -0.2]]);
 
         assert_eq!(control.first_capture_frame(), Some(100));
+    }
+
+    #[test]
+    fn monitor_tap_is_off_by_default_and_cannot_overflow_or_invalidate_recording() {
+        let (mut producer, mut capture, control) = super::audio_capture_stream(8);
+        let (monitor_producer, mut monitor, gate) = super::audio_monitor_stream(2);
+        producer.attach_monitor(monitor_producer);
+        control.start();
+
+        producer.push_frames_at(100, [[0.1, -0.1], [0.2, -0.2]]);
+        let mut captured = [[0.0; 2]; 2];
+        assert_eq!(
+            capture.pop_timed_frames(&mut captured),
+            Some(super::CapturedFrames {
+                first_frame: 100,
+                frame_count: 2,
+            })
+        );
+        assert_eq!(captured, [[0.1, -0.1], [0.2, -0.2]]);
+        let mut monitored = [[9.0; 2]; 2];
+        assert_eq!(monitor.read_into(&mut monitored), 2);
+        assert_eq!(monitored, [[0.0; 2]; 2]);
+
+        gate.set_enabled(true);
+        producer.push_frames_at(102, [[0.3, -0.3], [0.4, -0.4], [0.5, -0.5]]);
+        assert_eq!(monitor.read_into(&mut monitored), 0);
+        assert_eq!(monitored, [[0.4, -0.4], [0.5, -0.5]]);
+        assert!(!control.has_failed());
+        assert_eq!(control.overflow_frames(), 0);
+        let mut captured = [[0.0; 2]; 3];
+        assert_eq!(
+            capture.pop_timed_frames(&mut captured).unwrap().frame_count,
+            3
+        );
+        assert_eq!(captured, [[0.3, -0.3], [0.4, -0.4], [0.5, -0.5]]);
+    }
+
+    #[test]
+    fn monitor_reenable_discards_frames_from_the_previous_monitor_session() {
+        let (mut producer, mut consumer, gate) = super::audio_monitor_stream(4);
+        gate.set_enabled(true);
+        assert!(producer.push_frame([0.1, -0.1]));
+        gate.set_enabled(false);
+        gate.set_enabled(true);
+        assert!(producer.push_frame([0.9, -0.9]));
+
+        let mut output = [[0.0; 2]; 2];
+        assert_eq!(consumer.read_into(&mut output), 0);
+        assert_eq!(output, [[0.0, 0.0], [0.9, -0.9]]);
     }
 
     #[test]

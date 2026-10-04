@@ -14,7 +14,9 @@ mod midi_editing;
 mod waveform;
 
 pub use aaadaw_engine::ClapPluginDescriptor;
-pub use aaadaw_engine::{MasterOutputCeiling, MasterOutputSafetyError};
+pub use aaadaw_engine::{
+    AudioInputMonitorController, AudioMonitorProducer, MasterOutputCeiling, MasterOutputSafetyError,
+};
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
     AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
@@ -52,7 +54,8 @@ use aaadaw_engine::TrackMixController;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
-    AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
+    AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, audio_monitor_stream,
+    pcm_stream,
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
@@ -102,10 +105,14 @@ pub enum SharedFrameClockMapping {
 #[allow(unused_variables)]
 pub fn open_audio_input(
     backend: PlaybackBackend,
-    producer: AudioCaptureProducer,
+    mut producer: AudioCaptureProducer,
+    monitor: Option<AudioMonitorProducer>,
     control: AudioCaptureControl,
     sample_rate: u32,
 ) -> Result<RunningAudioInput, String> {
+    if let Some(monitor) = monitor {
+        producer.attach_monitor(monitor);
+    }
     match backend {
         #[cfg(feature = "jack-backend")]
         PlaybackBackend::Jack => {
@@ -285,6 +292,7 @@ impl StdError for PlaybackBuildError {
 pub struct PreparedAudioPlayback {
     graph: AudioRenderGraph,
     feeders: Vec<AudioFeedWorker>,
+    input_monitor_producer: Option<AudioMonitorProducer>,
 }
 
 impl PreparedAudioPlayback {
@@ -317,17 +325,27 @@ impl PreparedAudioPlayback {
         (self.graph, self.feeders)
     }
 
+    /// Transfers the input-callback side of the graph's optional monitoring queue.
+    pub fn take_input_monitor_producer(&mut self) -> Option<AudioMonitorProducer> {
+        self.input_monitor_producer.take()
+    }
+
     /// Opens JACK output and retains feeder workers for the lifetime of playback.
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
-        let (graph, feeders) = self.into_parts();
+        let input_monitor_controller = self.graph.input_monitor_controller();
+        let mut this = self;
+        let input_monitor_producer = this.take_input_monitor_producer();
+        let (graph, feeders) = this.into_parts();
         let output = JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?;
         Ok(RunningJackPlayback {
             output,
             mix_controller,
             master_output_safety,
+            input_monitor_controller,
+            input_monitor_producer,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -348,7 +366,10 @@ impl PreparedAudioPlayback {
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
-        let (graph, feeders) = self.into_parts();
+        let input_monitor_controller = self.graph.input_monitor_controller();
+        let mut this = self;
+        let input_monitor_producer = this.take_input_monitor_producer();
+        let (graph, feeders) = this.into_parts();
         let output = match backend {
             #[cfg(feature = "jack-backend")]
             PlaybackBackend::Jack => DeviceAudioOutput::Jack(
@@ -367,6 +388,8 @@ impl PreparedAudioPlayback {
             output,
             mix_controller,
             master_output_safety,
+            input_monitor_controller,
+            input_monitor_producer,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -495,6 +518,8 @@ pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
     master_output_safety: MasterOutputSafetyController,
+    input_monitor_controller: Option<AudioInputMonitorController>,
+    input_monitor_producer: Option<AudioMonitorProducer>,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -507,6 +532,29 @@ impl RunningAudioPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    pub fn set_track_input_monitor(&self, track_id: aaadaw_core::TrackId, enabled: bool) -> bool {
+        self.input_monitor_controller
+            .as_ref()
+            .is_some_and(|controller| controller.set_track_enabled(track_id, enabled))
+    }
+
+    pub fn input_monitor_enabled(&self, track_id: aaadaw_core::TrackId) -> bool {
+        self.input_monitor_controller
+            .as_ref()
+            .is_some_and(|controller| controller.is_track_enabled(track_id))
+    }
+
+    pub fn disable_input_monitoring(&self) {
+        if let Some(controller) = &self.input_monitor_controller {
+            controller.disable_all();
+        }
+    }
+
+    /// Transfers the queue producer to the input callback before opening an input backend.
+    pub fn take_input_monitor_producer(&mut self) -> Option<AudioMonitorProducer> {
+        self.input_monitor_producer.take()
     }
 
     /// Changes the Master sample-peak ceiling in the active callback without rebuilding the graph.
@@ -611,7 +659,7 @@ impl RunningAudioPlayback {
 
     pub fn replace_graph(
         &mut self,
-        prepared: PreparedAudioPlayback,
+        mut prepared: PreparedAudioPlayback,
     ) -> Result<(), PlaybackBuildError> {
         self.collect_retired_graphs();
         if self.retired_feeders.is_some() {
@@ -641,6 +689,8 @@ impl RunningAudioPlayback {
         }
         let mix_controller = prepared.graph.track_mix_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
+        let input_monitor_controller = prepared.graph.input_monitor_controller();
+        let input_monitor_producer = prepared.take_input_monitor_producer();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         #[cfg(all(
@@ -677,6 +727,8 @@ impl RunningAudioPlayback {
         }
         self.mix_controller = mix_controller;
         self.master_output_safety = master_output_safety;
+        self.input_monitor_controller = input_monitor_controller;
+        self.input_monitor_producer = input_monitor_producer;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }
@@ -886,6 +938,8 @@ pub struct RunningJackPlayback {
     output: JackAudioOutput,
     mix_controller: TrackMixController,
     master_output_safety: MasterOutputSafetyController,
+    input_monitor_controller: Option<AudioInputMonitorController>,
+    input_monitor_producer: Option<AudioMonitorProducer>,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -898,6 +952,28 @@ impl RunningJackPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    pub fn set_track_input_monitor(&self, track_id: aaadaw_core::TrackId, enabled: bool) -> bool {
+        self.input_monitor_controller
+            .as_ref()
+            .is_some_and(|controller| controller.set_track_enabled(track_id, enabled))
+    }
+
+    pub fn input_monitor_enabled(&self, track_id: aaadaw_core::TrackId) -> bool {
+        self.input_monitor_controller
+            .as_ref()
+            .is_some_and(|controller| controller.is_track_enabled(track_id))
+    }
+
+    pub fn disable_input_monitoring(&self) {
+        if let Some(controller) = &self.input_monitor_controller {
+            controller.disable_all();
+        }
+    }
+
+    pub fn take_input_monitor_producer(&mut self) -> Option<AudioMonitorProducer> {
+        self.input_monitor_producer.take()
     }
 
     pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
@@ -949,7 +1025,7 @@ impl RunningJackPlayback {
     /// Replaces active graph and retains old feeders until callback retires old graph.
     pub fn replace_graph(
         &mut self,
-        prepared: PreparedAudioPlayback,
+        mut prepared: PreparedAudioPlayback,
     ) -> Result<(), PlaybackBuildError> {
         self.collect_retired_graphs();
         if self.retired_feeders.is_some() {
@@ -959,6 +1035,8 @@ impl RunningJackPlayback {
         }
         let mix_controller = prepared.graph.track_mix_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
+        let input_monitor_controller = prepared.graph.input_monitor_controller();
+        let input_monitor_producer = prepared.take_input_monitor_producer();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         self.output
@@ -966,6 +1044,8 @@ impl RunningJackPlayback {
             .map_err(PlaybackBuildError::Jack)?;
         self.mix_controller = mix_controller;
         self.master_output_safety = master_output_safety;
+        self.input_monitor_controller = input_monitor_controller;
+        self.input_monitor_producer = input_monitor_producer;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }
@@ -1057,6 +1137,8 @@ pub fn prepare_audio_playback_at(
     queue_capacity_samples: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    let monitor_capacity = max_block_frames.saturating_mul(2).clamp(256, 4_096);
+    let (monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(monitor_capacity);
     let output_sample_rate = project.settings().sample_rate();
     let mut feeders = Vec::with_capacity(project.audio_items().len());
     let mut item_streams = Vec::with_capacity(project.audio_items().len());
@@ -1150,6 +1232,11 @@ pub fn prepare_audio_playback_at(
 
     let mut graph = AudioRenderGraph::new_for_audio_items(project, item_streams, max_block_frames)
         .map_err(PlaybackBuildError::AudioGraph)?;
+    graph.install_input_monitor(monitor_consumer, monitor_gate);
     graph.transport_mut().seek_sample(timeline_sample);
-    Ok(PreparedAudioPlayback { graph, feeders })
+    Ok(PreparedAudioPlayback {
+        graph,
+        feeders,
+        input_monitor_producer: Some(monitor_producer),
+    })
 }

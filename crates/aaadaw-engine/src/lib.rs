@@ -28,8 +28,9 @@ mod wasapi_input;
 mod wasapi_output;
 
 pub use capture::{
-    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, CapturedFrames,
-    audio_capture_stream,
+    AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, AudioInputMonitorGate,
+    AudioMonitorConsumer, AudioMonitorProducer, CapturedFrames, audio_capture_stream,
+    audio_monitor_stream,
 };
 pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{
@@ -63,7 +64,7 @@ use aaadaw_core::{ItemId, Track, TrackId};
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Precomputed per-track mix coefficients, built outside the audio callback.
 #[derive(Clone, Debug)]
@@ -83,6 +84,7 @@ struct TrackGains {
     live: Arc<LiveTrackGains>,
     muted: bool,
     solo: bool,
+    record_armed: bool,
 }
 
 #[derive(Debug)]
@@ -110,6 +112,49 @@ struct GainCoefficients {
 #[derive(Clone, Debug)]
 pub struct TrackMixController {
     tracks: Vec<(TrackId, Arc<LiveTrackGains>)>,
+}
+
+/// Control-thread handle for routing the live input tap to explicitly monitored armed tracks.
+#[derive(Clone, Debug)]
+pub struct AudioInputMonitorController {
+    gate: AudioInputMonitorGate,
+    tracks: Vec<(TrackId, bool, Arc<AtomicBool>)>,
+}
+
+impl AudioInputMonitorController {
+    /// Enables input monitoring for an armed track. Unarmed tracks cannot be monitored.
+    pub fn set_track_enabled(&self, track_id: TrackId, enabled: bool) -> bool {
+        let Some((_, armed, state)) = self.tracks.iter().find(|(id, _, _)| *id == track_id) else {
+            return false;
+        };
+        if enabled && !armed {
+            return false;
+        }
+        state.store(enabled, Ordering::Release);
+        let any_enabled = self
+            .tracks
+            .iter()
+            .any(|(_, _, state)| state.load(Ordering::Acquire));
+        if any_enabled != self.gate.is_enabled() {
+            self.gate.set_enabled(any_enabled);
+        }
+        true
+    }
+
+    /// Disables every monitor route and stops the input callback's monitor fanout.
+    pub fn disable_all(&self) {
+        for (_, _, state) in &self.tracks {
+            state.store(false, Ordering::Release);
+        }
+        self.gate.set_enabled(false);
+    }
+
+    pub fn is_track_enabled(&self, track_id: TrackId) -> bool {
+        self.tracks
+            .iter()
+            .find(|(id, _, _)| *id == track_id)
+            .is_some_and(|(_, _, state)| state.load(Ordering::Acquire))
+    }
 }
 
 impl TrackMixController {
@@ -285,6 +330,7 @@ impl MixerPlan {
                 live: Arc::new(LiveTrackGains::new(gains)),
                 muted: track.is_muted(),
                 solo: track.is_solo(),
+                record_armed: track.is_record_armed(),
             });
         }
 
@@ -966,6 +1012,10 @@ pub struct AudioRenderGraph {
     source_cursors: Vec<Option<u64>>,
     source_item_ids: Vec<Option<ItemId>>,
     scratch: Vec<Vec<f32>>,
+    input_monitor: Option<AudioMonitorConsumer>,
+    input_monitor_gate: Option<AudioInputMonitorGate>,
+    input_monitor_scratch: Vec<[f32; 2]>,
+    input_monitor_states: Vec<(TrackId, usize, Arc<AtomicBool>)>,
 }
 
 impl AudioRenderGraph {
@@ -1183,6 +1233,10 @@ impl AudioRenderGraph {
             source_cursors: sources.cursors,
             source_item_ids: sources.item_ids,
             scratch,
+            input_monitor: None,
+            input_monitor_gate: None,
+            input_monitor_scratch: vec![[0.0, 0.0]; max_block_frames],
+            input_monitor_states: Vec::new(),
         })
     }
 
@@ -1199,6 +1253,46 @@ impl AudioRenderGraph {
     /// Returns a control-thread handle for live volume/pan updates on this graph.
     pub fn track_mix_controller(&self) -> TrackMixController {
         self.mixer.track_mix_controller()
+    }
+
+    /// Adds the optional live-input tap before the graph is handed to an output callback.
+    pub fn install_input_monitor(
+        &mut self,
+        consumer: AudioMonitorConsumer,
+        gate: AudioInputMonitorGate,
+    ) -> AudioInputMonitorController {
+        let tracks = self
+            .mixer
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| {
+                let state = Arc::new(AtomicBool::new(false));
+                self.input_monitor_states
+                    .push((track.track_id, index, Arc::clone(&state)));
+                (track.track_id, track.record_armed, state)
+            })
+            .collect();
+        self.input_monitor = Some(consumer);
+        self.input_monitor_gate = Some(gate.clone());
+        AudioInputMonitorController { gate, tracks }
+    }
+
+    /// Returns the live-input monitoring controller when this graph has a monitor queue.
+    pub fn input_monitor_controller(&self) -> Option<AudioInputMonitorController> {
+        let gate = self.input_monitor_gate.clone()?;
+        let tracks = self
+            .mixer
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                self.input_monitor_states
+                    .iter()
+                    .find(|(track_id, _, _)| *track_id == track.track_id)
+                    .map(|(_, _, state)| (track.track_id, track.record_armed, Arc::clone(state)))
+            })
+            .collect();
+        Some(AudioInputMonitorController { gate, tracks })
     }
 
     /// Returns a lock-free control handle for the final Master sample-peak ceiling.
@@ -1557,6 +1651,15 @@ impl AudioRenderGraph {
             .advance_block(output.len())
             .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
         if !block.is_playing {
+            if let Some(monitor) = &mut self.input_monitor {
+                let _ = monitor.read_into(&mut self.input_monitor_scratch[..output.len()]);
+            }
+            for (_, _, state) in &self.input_monitor_states {
+                state.store(false, Ordering::Release);
+            }
+            if let Some(gate) = &self.input_monitor_gate {
+                gate.set_enabled(false);
+            }
             output.fill([0.0, 0.0]);
             return Ok(AudioRenderStats {
                 block,
@@ -1606,6 +1709,27 @@ impl AudioRenderGraph {
                 }
             } else {
                 self.mixer.mix_track_unchecked(track_index, input, output);
+            }
+        }
+        if let Some(monitor) = &mut self.input_monitor {
+            let input = &mut self.input_monitor_scratch[..output.len()];
+            let _ = monitor.read_into(input);
+            for (_track_id, track_index, enabled) in &self.input_monitor_states {
+                if !enabled.load(Ordering::Acquire) {
+                    continue;
+                }
+                if let Some(track_buffer) = self.track_effect_buffers[*track_index].as_mut() {
+                    for (frame, sample) in track_buffer[..output.len()]
+                        .iter_mut()
+                        .zip(input.iter().copied())
+                    {
+                        frame[0] += sample[0];
+                        frame[1] += sample[1];
+                    }
+                } else {
+                    self.mixer
+                        .mix_stereo_track_unchecked(*track_index, input, output);
+                }
             }
         }
         let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
