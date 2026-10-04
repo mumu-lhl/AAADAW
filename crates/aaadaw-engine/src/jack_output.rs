@@ -1,4 +1,4 @@
-use crate::AudioRenderGraph;
+use crate::{AudioRenderGraph, TransportClockAnchor};
 use jack::{
     AudioOut, Client, ClientOptions, Control, NotificationHandler, Port, ProcessHandler,
     ProcessScope,
@@ -293,7 +293,7 @@ pub struct JackOutputStats {
     /// Project sample position after the most recent successful render callback.
     pub playhead_sample: u64,
     /// JACK server frame and project sample at the start of the same successful render callback.
-    pub transport_clock_anchor: Option<(u32, u64)>,
+    pub transport_clock_anchor: Option<TransportClockAnchor>,
 }
 
 impl JackAudioOutput {
@@ -490,7 +490,7 @@ impl JackAudioOutput {
     }
 }
 
-fn read_transport_clock_anchor(counters: &CallbackCounters) -> Option<(u32, u64)> {
+fn read_transport_clock_anchor(counters: &CallbackCounters) -> Option<TransportClockAnchor> {
     for _ in 0..4 {
         let before = counters.transport_clock_sequence.load(Ordering::Acquire);
         if before % 2 != 0 {
@@ -502,7 +502,12 @@ fn read_transport_clock_anchor(counters: &CallbackCounters) -> Option<(u32, u64)
         fence(Ordering::Acquire);
         let after = counters.transport_clock_sequence.load(Ordering::Relaxed);
         if before == after {
-            return u32::try_from(frame).ok().map(|frame| (frame, sample));
+            return u32::try_from(frame)
+                .ok()
+                .map(|server_frame| TransportClockAnchor {
+                    backend_frame: server_frame,
+                    project_sample: sample,
+                });
         }
     }
     None
@@ -556,7 +561,13 @@ mod tests {
         counters
             .transport_project_sample
             .store(56_789, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(read_transport_clock_anchor(&counters), Some((1234, 56_789)));
+        assert_eq!(
+            read_transport_clock_anchor(&counters),
+            Some(TransportClockAnchor {
+                backend_frame: 1234,
+                project_sample: 56_789,
+            })
+        );
 
         counters
             .transport_clock_sequence

@@ -13,7 +13,8 @@ sample. The writer maps the first accepted callback through this anchor, updates
 sidecar, and the finished import uses that same mapped sample. The capture callback publishes its
 first accepted frame through atomics; it does not perform timeline conversion or file I/O. PipeWire
 and WASAPI do not yet expose a clock paired with the project transport, so they keep the transport
-anchor path until their clock semantics are mapped explicitly.
+anchor path until their clock semantics are mapped explicitly. If either side of the JACK clock
+pair is unavailable, recording does not silently fall back to click-time placement.
 PipeWire capture requests per-buffer `SPA_META_Header` metadata and uses its PTS when available;
 missing, corrupted, or unrepresentable timing invalidates that take rather than falling back to
 callback order. `Stream::time().ticks` is not treated as the current buffer's first frame.

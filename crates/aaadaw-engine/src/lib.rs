@@ -53,7 +53,7 @@ pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
-pub use transport::{AudioBlock, Transport, TransportPositionOverflow};
+pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]

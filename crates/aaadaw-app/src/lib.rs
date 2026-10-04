@@ -49,6 +49,8 @@ use aaadaw_engine::MasterOutputSafetyController;
 use aaadaw_engine::StoppedTrackFxProcessor;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackMixController;
+#[cfg(feature = "audio-device")]
+use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
 };
@@ -123,6 +125,24 @@ pub fn open_audio_input(
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioInput {
+    /// Returns whether this input shares a backend frame clock with the output transport.
+    pub fn has_shared_frame_clock(&self) -> bool {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(_) => true,
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(_) => false,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(_) => false,
+            #[cfg(not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(feature = "wasapi-backend", target_os = "windows")
+            )))]
+            _ => false,
+        }
+    }
+
     /// Maps a playback frame-clock value into the input backend's extended clock domain.
     pub fn map_shared_frame_time(&self, _frame: u32) -> Option<u64> {
         match self {
@@ -787,7 +807,7 @@ pub struct PlaybackStats {
     pub callback_errors: u64,
     pub playhead_sample: u64,
     /// JACK server frame paired with the project sample at that callback's start.
-    pub transport_clock_anchor: Option<(u32, u64)>,
+    pub transport_clock_anchor: Option<TransportClockAnchor>,
     /// True after Windows invalidates the active stream because its device changed or disappeared.
     pub output_device_lost: bool,
 }
