@@ -573,10 +573,10 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let completes_pending_mix_reset = match &message {
-            Message::ResetTrackVolume(track_id) => {
+            Message::ResetTrackVolumeByDoubleClick(track_id) => {
                 self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Volume)
             }
-            Message::ResetTrackPan(track_id) => {
+            Message::ResetTrackPanByDoubleClick(track_id) => {
                 self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Pan)
             }
             _ => false,
@@ -1372,44 +1372,13 @@ impl App {
             Message::CommitTrackPanText(track_id) => {
                 self.commit_track_pan_text(track_id);
             }
-            Message::ResetTrackVolume(track_id) => {
-                self.clear_track_mix_for_reset(track_id, TrackMixParameter::Volume);
-                self.track_volume_edits.remove(&track_id);
-                if self
-                    .project
-                    .tracks()
-                    .iter()
-                    .find(|track| track.id() == track_id)
-                    .is_some_and(|track| track.volume_db() != 0.0)
-                {
-                    self.apply_action(
-                        DawAction::SetTrackVolume {
-                            track_id,
-                            volume_db: 0.0,
-                        },
-                        "Track volume reset",
-                    );
-                } else {
-                    self.sync_track_mix_to_playback(track_id);
-                }
+            Message::ResetTrackVolume(track_id) => self.reset_track_volume(track_id, false),
+            Message::ResetTrackVolumeByDoubleClick(track_id) => {
+                self.reset_track_volume(track_id, true);
             }
-            Message::ResetTrackPan(track_id) => {
-                self.clear_track_mix_for_reset(track_id, TrackMixParameter::Pan);
-                self.track_pan_edits.remove(&track_id);
-                if self
-                    .project
-                    .tracks()
-                    .iter()
-                    .find(|track| track.id() == track_id)
-                    .is_some_and(|track| track.pan() != 0.0)
-                {
-                    self.apply_action(
-                        DawAction::SetTrackPan { track_id, pan: 0.0 },
-                        "Track pan centered",
-                    );
-                } else {
-                    self.sync_track_mix_to_playback(track_id);
-                }
+            Message::ResetTrackPan(track_id) => self.reset_track_pan(track_id, false),
+            Message::ResetTrackPanByDoubleClick(track_id) => {
+                self.reset_track_pan(track_id, true);
             }
             Message::NudgeAudioItem(item_id, direction, milliseconds) => {
                 self.nudge_audio_item(item_id, direction, milliseconds)
@@ -2446,8 +2415,13 @@ impl App {
             })
     }
 
-    fn clear_track_mix_for_reset(&mut self, track_id: TrackId, parameter: TrackMixParameter) {
-        if self.track_mix_commit_is_pending(track_id, parameter) {
+    fn clear_track_mix_for_reset(
+        &mut self,
+        track_id: TrackId,
+        parameter: TrackMixParameter,
+        double_click: bool,
+    ) {
+        if double_click && self.track_mix_commit_is_pending(track_id, parameter) {
             self.track_mix_gesture = None;
             self.track_mix_commit_at = None;
         } else {
@@ -2533,6 +2507,47 @@ impl App {
             },
             "Track pan changed",
         );
+    }
+
+    fn reset_track_volume(&mut self, track_id: TrackId, double_click: bool) {
+        self.clear_track_mix_for_reset(track_id, TrackMixParameter::Volume, double_click);
+        self.track_volume_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| track.volume_db() != 0.0)
+        {
+            self.apply_action(
+                DawAction::SetTrackVolume {
+                    track_id,
+                    volume_db: 0.0,
+                },
+                "Track volume reset",
+            );
+        } else {
+            self.sync_track_mix_to_playback(track_id);
+        }
+    }
+
+    fn reset_track_pan(&mut self, track_id: TrackId, double_click: bool) {
+        self.clear_track_mix_for_reset(track_id, TrackMixParameter::Pan, double_click);
+        self.track_pan_edits.remove(&track_id);
+        if self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .is_some_and(|track| track.pan() != 0.0)
+        {
+            self.apply_action(
+                DawAction::SetTrackPan { track_id, pan: 0.0 },
+                "Track pan centered",
+            );
+        } else {
+            self.sync_track_mix_to_playback(track_id);
+        }
     }
 
     fn finish_item_drag(&mut self) {

@@ -1872,6 +1872,29 @@ fn resetting_track_volume_is_undoable() {
 }
 
 #[test]
+fn reset_button_preserves_a_recent_mix_gesture_as_a_separate_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackVolume {
+            track_id,
+            volume_db: -4.0,
+        })
+        .expect("track volume should be set");
+
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -8.0));
+    let _ = app.update(Message::CommitTrackVolume(track_id));
+    let _ = app.update(Message::ResetTrackVolume(track_id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), -8.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), -4.0);
+}
+
+#[test]
 fn dragging_track_volume_commits_one_undoable_action() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -1907,7 +1930,7 @@ fn double_click_track_mix_reset_coalesces_the_pending_click_into_one_undo_step()
     let _ = app.update(Message::PreviewTrackVolume(track_id, -8.0));
     let _ = app.update(Message::CommitTrackVolume(track_id));
     assert_eq!(app.project.tracks()[0].volume_db(), -4.0);
-    let _ = app.update(Message::ResetTrackVolume(track_id));
+    let _ = app.update(Message::ResetTrackVolumeByDoubleClick(track_id));
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
 
     let _ = app.update(Message::Undo);

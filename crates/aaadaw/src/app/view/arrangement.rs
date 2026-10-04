@@ -451,7 +451,10 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     .shift_step(0.01_f32)
     .on_release(Message::CommitTrackVolume(track_id))
     .width(Length::Fill);
-    let volume = reset_on_double_click(volume_slider.into(), Message::ResetTrackVolume(track_id));
+    let volume = reset_on_double_click(
+        volume_slider.into(),
+        Message::ResetTrackVolumeByDoubleClick(track_id),
+    );
     let pan_slider = slider(-1.0..=1.0, pan, move |value| {
         Message::PreviewTrackPan(track_id, value)
     })
@@ -479,7 +482,10 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     .align_y(Alignment::Center);
     let pan_controls = row![
         text(format!("Pan {}", pan_label(pan))).size(11),
-        reset_on_double_click(pan_slider.into(), Message::ResetTrackPan(track_id)),
+        reset_on_double_click(
+            pan_slider.into(),
+            Message::ResetTrackPanByDoubleClick(track_id),
+        ),
         text_input("-1 to 1", &pan_text)
             .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
             .on_submit(Message::CommitTrackPanText(track_id))
