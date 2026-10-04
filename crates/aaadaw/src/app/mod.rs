@@ -17,7 +17,8 @@ use aaadaw_app::{
 #[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
-    AudioItem, DawAction, FxParameterChange, ItemId, MidiItem, Project, TempoCurve, TrackId,
+    AudioItem, DawAction, FxParameterChange, ItemId, MeterPointSnapshot, MidiItem, Project,
+    TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
@@ -58,7 +59,9 @@ mod tests;
 mod view;
 mod x11_plugin_editor;
 
-pub(crate) use messages::{MainMenu, Message, MidiEditorLane, PathPickerTarget, SettingsCategory};
+pub(crate) use messages::{
+    MainMenu, Message, MidiEditorLane, PathPickerTarget, SettingsCategory, TimeMapTab,
+};
 
 pub(crate) fn run() -> iced::Result {
     iced::daemon(App::new, App::update, view::view_for_window)
@@ -154,8 +157,11 @@ struct App {
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
     tempo_map_window_id: Option<iced::window::Id>,
+    time_map_tab: TimeMapTab,
     tempo_map_edits: Vec<TempoMapEdit>,
     tempo_map_feedback: String,
+    meter_map_edits: Vec<MeterMapEdit>,
+    meter_map_feedback: String,
     fx_chain_window_id: Option<iced::window::Id>,
     fx_chain_track_id: Option<TrackId>,
     fx_chain_selected_index: Option<usize>,
@@ -306,6 +312,14 @@ struct TempoMapEdit {
     tick: String,
     bpm: String,
     curve: TempoCurve,
+}
+
+#[derive(Clone, Debug)]
+struct MeterMapEdit {
+    original_tick: Option<u64>,
+    tick: String,
+    numerator: String,
+    denominator: String,
 }
 
 #[cfg(feature = "audio-device")]
@@ -720,12 +734,20 @@ impl App {
             &message,
             Message::OpenSettings
                 | Message::OpenTempoMap
+                | Message::OpenMeterMap
+                | Message::SelectTimeMapTab(_)
                 | Message::ApplyTempoMap
                 | Message::AddTempoPoint
                 | Message::DeleteTempoPoint(_)
                 | Message::TempoPointTickChanged(_, _)
                 | Message::TempoPointBpmChanged(_, _)
                 | Message::CycleTempoCurve(_)
+                | Message::AddMeterPoint
+                | Message::DeleteMeterPoint(_)
+                | Message::MeterPointTickChanged(_, _)
+                | Message::MeterPointNumeratorChanged(_, _)
+                | Message::MeterPointDenominatorChanged(_, _)
+                | Message::ApplyMeterMap
                 | Message::OpenTrackFxChain(_)
                 | Message::OpenTrackInstrumentPicker(_)
                 | Message::OpenPluginPicker
@@ -1002,7 +1024,9 @@ impl App {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
             Message::OpenSettings => task = self.open_settings(),
-            Message::OpenTempoMap => task = self.open_tempo_map(),
+            Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
+            Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
+            Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
             Message::AddTempoPoint => self.add_tempo_point_edit(),
             Message::DeleteTempoPoint(index) => {
                 if index < self.tempo_map_edits.len()
@@ -1033,6 +1057,30 @@ impl App {
                 }
             }
             Message::ApplyTempoMap => task = self.apply_tempo_map_edits(),
+            Message::AddMeterPoint => self.add_meter_point_edit(),
+            Message::DeleteMeterPoint(index) => {
+                if index < self.meter_map_edits.len()
+                    && self.meter_map_edits[index].original_tick != Some(0)
+                {
+                    self.meter_map_edits.remove(index);
+                }
+            }
+            Message::MeterPointTickChanged(index, value) => {
+                if let Some(point) = self.meter_map_edits.get_mut(index) {
+                    point.tick = value;
+                }
+            }
+            Message::MeterPointNumeratorChanged(index, value) => {
+                if let Some(point) = self.meter_map_edits.get_mut(index) {
+                    point.numerator = value;
+                }
+            }
+            Message::MeterPointDenominatorChanged(index, value) => {
+                if let Some(point) = self.meter_map_edits.get_mut(index) {
+                    point.denominator = value;
+                }
+            }
+            Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
                 if self.settings_window_id == Some(window_id) {
                     self.settings_window_id = None;
@@ -1041,6 +1089,7 @@ impl App {
                 } else if self.tempo_map_window_id == Some(window_id) {
                     self.tempo_map_window_id = None;
                     self.tempo_map_edits.clear();
+                    self.meter_map_edits.clear();
                 } else if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                     self.fx_chain_window_id = None;
@@ -1745,8 +1794,13 @@ impl App {
             Message::Undo => {
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
+                let meter_before = self.project.time_signature_map();
                 self.undo();
                 let tempo_changed = self.project.tempo_points().ne(tempo_before);
+                let meter_changed = self.project.time_signature_map() != meter_before;
+                if meter_changed && self.tempo_map_window_id.is_some() {
+                    self.refresh_meter_map_edits();
+                }
                 if tempo_changed {
                     if self.tempo_map_window_id.is_some() {
                         self.refresh_tempo_map_edits();
@@ -1761,8 +1815,13 @@ impl App {
             Message::Redo => {
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
+                let meter_before = self.project.time_signature_map();
                 self.redo();
                 let tempo_changed = self.project.tempo_points().ne(tempo_before);
+                let meter_changed = self.project.time_signature_map() != meter_before;
+                if meter_changed && self.tempo_map_window_id.is_some() {
+                    self.refresh_meter_map_edits();
+                }
                 if tempo_changed {
                     if self.tempo_map_window_id.is_some() {
                         self.refresh_tempo_map_edits();
@@ -1883,7 +1942,9 @@ impl App {
                     Some(Ok(project)) => {
                         self.project = project;
                         self.refresh_tempo_map_edits();
+                        self.refresh_meter_map_edits();
                         self.tempo_map_feedback.clear();
+                        self.meter_map_feedback.clear();
                         self.midi_note_clipboard.source_item_id = None;
                         self.midi_note_clipboard.last_paste = None;
                         self.timeline.rebuild(&self.project);
@@ -2185,7 +2246,9 @@ impl App {
 
         self.project = Project::new();
         self.refresh_tempo_map_edits();
+        self.refresh_meter_map_edits();
         self.tempo_map_feedback.clear();
+        self.meter_map_feedback.clear();
         self.project_generation = self.project_generation.wrapping_add(1);
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;
@@ -2227,11 +2290,13 @@ impl App {
         task.discard()
     }
 
-    fn open_tempo_map(&mut self) -> Task<Message> {
+    fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
+        self.time_map_tab = tab;
         if let Some(window_id) = self.tempo_map_window_id {
             return iced::window::gain_focus(window_id);
         }
         self.refresh_tempo_map_edits();
+        self.refresh_meter_map_edits();
         let (window_id, task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(660.0, 420.0),
             min_size: Some(iced::Size::new(560.0, 320.0)),
@@ -2250,6 +2315,19 @@ impl App {
                 tick: tick.to_string(),
                 bpm: bpm.to_string(),
                 curve,
+            })
+            .collect();
+    }
+
+    fn refresh_meter_map_edits(&mut self) {
+        self.meter_map_edits = self
+            .project
+            .time_signature_points()
+            .map(|(tick, signature)| MeterMapEdit {
+                original_tick: Some(tick),
+                tick: tick.to_string(),
+                numerator: signature.numerator().to_string(),
+                denominator: signature.denominator().to_string(),
             })
             .collect();
     }
@@ -2364,6 +2442,87 @@ impl App {
             self.tempo_map_feedback = self.status.clone();
         }
         Task::none()
+    }
+
+    fn add_meter_point_edit(&mut self) {
+        let tick = self.timeline.edit_cursor_tick;
+        if self
+            .meter_map_edits
+            .iter()
+            .any(|point| point.tick.parse::<u64>().ok() == Some(tick))
+        {
+            self.meter_map_feedback =
+                "A time-signature point already exists at the edit cursor".to_owned();
+            return;
+        }
+        let signature = self.project.time_signature_at_tick(tick);
+        let point = MeterMapEdit {
+            original_tick: None,
+            tick: tick.to_string(),
+            numerator: signature.numerator().to_string(),
+            denominator: signature.denominator().to_string(),
+        };
+        let index = self
+            .meter_map_edits
+            .partition_point(|existing| existing.tick.parse::<u64>().unwrap_or(u64::MAX) < tick);
+        self.meter_map_edits.insert(index, point);
+        self.meter_map_feedback.clear();
+    }
+
+    fn apply_meter_map_edits(&mut self) {
+        let mut desired = Vec::with_capacity(self.meter_map_edits.len());
+        for point in &self.meter_map_edits {
+            let (Ok(start_tick), Ok(numerator), Ok(denominator)) = (
+                point.tick.trim().parse::<u64>(),
+                point.numerator.trim().parse::<u32>(),
+                point.denominator.trim().parse::<u32>(),
+            ) else {
+                self.meter_map_feedback =
+                    "Enter a whole project tick, numerator, and denominator".to_owned();
+                return;
+            };
+            let signature = match TimeSignature::new(numerator, denominator) {
+                Ok(signature) => signature,
+                Err(error) => {
+                    self.meter_map_feedback = error.to_string();
+                    return;
+                }
+            };
+            desired.push(MeterPointSnapshot {
+                start_tick,
+                numerator: signature.numerator(),
+                denominator: signature.denominator(),
+            });
+        }
+        desired.sort_by_key(|point| point.start_tick);
+        if desired.first().map(|point| point.start_tick) != Some(0) {
+            self.meter_map_feedback =
+                "The initial time-signature point must stay at tick zero".to_owned();
+            return;
+        }
+        if desired
+            .windows(2)
+            .any(|pair| pair[0].start_tick == pair[1].start_tick)
+        {
+            self.meter_map_feedback = "Time-signature point positions must be unique".to_owned();
+            return;
+        }
+        if desired == self.project.time_signature_map() {
+            self.meter_map_feedback = "Time-signature map is unchanged".to_owned();
+            return;
+        }
+
+        let previous_revision = self.revision;
+        self.apply_action(
+            DawAction::SetTimeSignatureMap { points: desired },
+            "Time-signature map edited",
+        );
+        if self.revision != previous_revision {
+            self.refresh_meter_map_edits();
+            self.meter_map_feedback = "Time-signature map applied as one undoable edit".to_owned();
+        } else {
+            self.meter_map_feedback = self.status.clone();
+        }
     }
 
     fn open_midi_editor(&mut self, item_id: ItemId) -> Task<Message> {

@@ -58,6 +58,13 @@ pub(crate) enum MidiEditorLane {
     PitchBend,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TimeMapTab {
+    #[default]
+    Tempo,
+    Meter,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
@@ -67,12 +74,20 @@ pub(crate) enum Message {
     ToggleMediaBrowserPanel,
     OpenSettings,
     OpenTempoMap,
+    OpenMeterMap,
+    SelectTimeMapTab(TimeMapTab),
     AddTempoPoint,
     DeleteTempoPoint(usize),
     TempoPointTickChanged(usize, String),
     TempoPointBpmChanged(usize, String),
     CycleTempoCurve(usize),
     ApplyTempoMap,
+    AddMeterPoint,
+    DeleteMeterPoint(usize),
+    MeterPointTickChanged(usize, String),
+    MeterPointNumeratorChanged(usize, String),
+    MeterPointDenominatorChanged(usize, String),
+    ApplyMeterMap,
     OpenTrackFxChain(TrackId),
     OpenTrackInstrumentPicker(TrackId),
     OpenMidiEditor(ItemId),

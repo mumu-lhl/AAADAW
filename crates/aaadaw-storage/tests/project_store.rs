@@ -1,5 +1,5 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
+    DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData, Project,
     VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
@@ -270,9 +270,19 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("Bézier tempo curve should be accepted");
     project
-        .apply(DawAction::SetTimeSignature {
-            start_tick: 3840,
-            signature: TimeSignature::new(7, 8).expect("7/8 is valid"),
+        .apply(DawAction::SetTimeSignatureMap {
+            points: vec![
+                MeterPointSnapshot {
+                    start_tick: 0,
+                    numerator: 3,
+                    denominator: 4,
+                },
+                MeterPointSnapshot {
+                    start_tick: 2880,
+                    numerator: 7,
+                    denominator: 8,
+                },
+            ],
         })
         .expect("meter change should succeed");
 

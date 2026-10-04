@@ -38,6 +38,10 @@ pub enum ActionError {
     },
     /// The required tempo point at tick zero cannot be removed.
     CannotRemoveInitialTempo,
+    /// The required time-signature point at tick zero cannot be removed.
+    CannotRemoveInitialMeter,
+    /// Meter-map points must be strictly ordered and unique.
+    InvalidMeterMap,
     /// The time signature is invalid or cannot be represented at this PPQ.
     InvalidTimeSignature,
     /// A time-signature change must occur on a bar line.
@@ -136,6 +140,12 @@ impl fmt::Display for ActionError {
             }
             Self::CannotRemoveInitialTempo => {
                 formatter.write_str("the initial tempo point at tick zero cannot be removed")
+            }
+            Self::CannotRemoveInitialMeter => {
+                formatter.write_str("the initial time signature at tick zero cannot be removed")
+            }
+            Self::InvalidMeterMap => {
+                formatter.write_str("meter map points must be ordered and have unique positions")
             }
             Self::InvalidTimeSignature => formatter.write_str("time signature is invalid"),
             Self::MeterChangeNotOnBarBoundary => {
