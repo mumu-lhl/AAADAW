@@ -23,11 +23,15 @@ const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app'
 pub(super) fn playback_diagnostic_suffix(
     backend_name: &str,
     underrun_samples: u64,
+    jack_xruns: Option<u64>,
     callback_errors: u64,
 ) -> String {
     let mut diagnostics = String::new();
     if underrun_samples > 0 {
         diagnostics.push_str(&format!(" · stream underrun: {underrun_samples} samples"));
+    }
+    if let Some(jack_xruns) = jack_xruns.filter(|count| *count > 0) {
+        diagnostics.push_str(&format!(" · JACK XRuns: {jack_xruns}"));
     }
     if callback_errors > 0 {
         diagnostics.push_str(&format!(" · {backend_name} errors: {callback_errors}"));
@@ -257,7 +261,12 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         let stats = playback.stats();
         format!(
             "{playback_state}{}",
-            playback_diagnostic_suffix(backend_name, stats.underrun_samples, stats.callback_errors,)
+            playback_diagnostic_suffix(
+                backend_name,
+                stats.underrun_samples,
+                stats.jack_xruns,
+                stats.callback_errors,
+            )
         )
     } else {
         playback_state

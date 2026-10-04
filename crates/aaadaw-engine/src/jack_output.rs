@@ -1,5 +1,8 @@
 use crate::AudioRenderGraph;
-use jack::{AudioOut, Client, ClientOptions, Control, Port, ProcessHandler, ProcessScope};
+use jack::{
+    AudioOut, Client, ClientOptions, Control, NotificationHandler, Port, ProcessHandler,
+    ProcessScope,
+};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
@@ -21,12 +24,31 @@ enum TransportCommand {
     Shutdown,
 }
 
+#[derive(Default)]
 struct CallbackCounters {
     shutdown_acknowledged: AtomicBool,
     rendered_blocks: AtomicU64,
     underrun_samples: AtomicU64,
+    device_xruns: AtomicU64,
     callback_errors: AtomicU64,
     playhead_sample: AtomicU64,
+}
+
+struct JackNotifications {
+    counters: Arc<CallbackCounters>,
+}
+
+impl JackNotifications {
+    fn record_xrun(&self) {
+        self.counters.device_xruns.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl NotificationHandler for JackNotifications {
+    fn xrun(&mut self, _client: &Client) -> Control {
+        self.record_xrun();
+        Control::Continue
+    }
 }
 
 struct JackProcessHandler {
@@ -237,6 +259,7 @@ pub struct JackAudioOutput {
 pub struct JackOutputStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
+    pub device_xruns: u64,
     pub callback_errors: u64,
     /// Project sample position after the most recent successful render callback.
     pub playhead_sample: u64,
@@ -269,6 +292,7 @@ impl JackAudioOutput {
             shutdown_acknowledged: AtomicBool::new(false),
             rendered_blocks: AtomicU64::new(0),
             underrun_samples: AtomicU64::new(0),
+            device_xruns: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
             playhead_sample: AtomicU64::new(0),
         });
@@ -283,7 +307,10 @@ impl JackAudioOutput {
             counters: Arc::clone(&counters),
             shutdown_requested: false,
         };
-        let active = client.activate_async((), process_handler)?;
+        let notifications = JackNotifications {
+            counters: Arc::clone(&counters),
+        };
+        let active = client.activate_async(notifications, process_handler)?;
         Ok(Self {
             _active: Some(active),
             commands,
@@ -397,6 +424,7 @@ impl JackAudioOutput {
         JackOutputStats {
             rendered_blocks: self.counters.rendered_blocks.load(Ordering::Relaxed),
             underrun_samples: self.counters.underrun_samples.load(Ordering::Relaxed),
+            device_xruns: self.counters.device_xruns.load(Ordering::Relaxed),
             callback_errors: self.counters.callback_errors.load(Ordering::Relaxed),
             playhead_sample: self.counters.playhead_sample.load(Ordering::Relaxed),
         }
@@ -413,5 +441,36 @@ impl JackAudioOutput {
 impl Drop for JackAudioOutput {
     fn drop(&mut self) {
         let _ = self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CallbackCounters, JackNotifications};
+    use std::sync::Arc;
+
+    #[test]
+    fn jack_xrun_notifications_increment_the_device_counter() {
+        let counters = Arc::new(CallbackCounters::default());
+        let notifications = JackNotifications {
+            counters: Arc::clone(&counters),
+        };
+
+        notifications.record_xrun();
+        notifications.record_xrun();
+        notifications.record_xrun();
+
+        assert_eq!(
+            counters
+                .device_xruns
+                .load(std::sync::atomic::Ordering::Relaxed),
+            3
+        );
+        assert_eq!(
+            counters
+                .underrun_samples
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 }

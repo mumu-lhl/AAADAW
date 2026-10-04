@@ -70,18 +70,29 @@ fn view_builder_has_app_view_signature() {
 
 #[test]
 fn playback_diagnostics_distinguish_stream_underruns_from_backend_errors() {
-    assert_eq!(super::view::playback_diagnostic_suffix("JACK", 0, 0), "");
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 256, 0),
+        super::view::playback_diagnostic_suffix("JACK", 0, Some(0), 0),
+        ""
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("JACK", 256, Some(0), 0),
         " · stream underrun: 256 samples"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("PipeWire", 0, 2),
+        super::view::playback_diagnostic_suffix("PipeWire", 0, None, 2),
         " · PipeWire errors: 2"
     );
     assert_eq!(
-        super::view::playback_diagnostic_suffix("JACK", 256, 2),
-        " · stream underrun: 256 samples · JACK errors: 2"
+        super::view::playback_diagnostic_suffix("JACK", 256, Some(2), 2),
+        " · stream underrun: 256 samples · JACK XRuns: 2 · JACK errors: 2"
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("JACK", 0, Some(2), 0),
+        " · JACK XRuns: 2"
+    );
+    assert_eq!(
+        super::view::playback_diagnostic_suffix("PipeWire", 256, None, 2),
+        " · stream underrun: 256 samples · PipeWire errors: 2"
     );
 }
 
