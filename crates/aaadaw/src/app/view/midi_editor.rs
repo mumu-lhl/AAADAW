@@ -18,6 +18,7 @@ const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
 const VOLUME_LANE_HEIGHT: f32 = 72.0;
+const PAN_LANE_HEIGHT: f32 = 72.0;
 const PITCH_BEND_LANE_HEIGHT: f32 = 72.0;
 const MODULATION_LANE_HEIGHT: f32 = 72.0;
 const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
@@ -113,6 +114,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         lane_button("Velocity", MidiEditorLane::Velocity, app.midi_editor_lane),
         lane_button("Sustain", MidiEditorLane::Sustain, app.midi_editor_lane),
         lane_button("Volume CC7", MidiEditorLane::Volume, app.midi_editor_lane),
+        lane_button("Pan CC10", MidiEditorLane::Pan, app.midi_editor_lane),
         lane_button(
             "Pitch Bend",
             MidiEditorLane::PitchBend,
@@ -159,6 +161,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             7,
             "Volume CC7",
             VOLUME_LANE_HEIGHT,
+            app,
+            ticks_per_beat,
+        ),
+        MidiEditorLane::Pan => controller_lane(
+            item,
+            item_id,
+            10,
+            "Pan CC10",
+            PAN_LANE_HEIGHT,
             app,
             ticks_per_beat,
         ),
@@ -1649,6 +1660,8 @@ mod tests {
         assert_eq!(app.midi_editor_lane, MidiEditorLane::Velocity);
         let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Volume));
         assert_eq!(app.midi_editor_lane, MidiEditorLane::Volume);
+        let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Pan));
+        assert_eq!(app.midi_editor_lane, MidiEditorLane::Pan);
         let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Expression));
         assert_eq!(app.midi_editor_lane, MidiEditorLane::Expression);
         let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::PitchBend));
@@ -2334,6 +2347,198 @@ mod tests {
         assert_eq!(project.midi_items()[0].controllers().len(), 1);
         project.redo().unwrap();
         assert_eq!(project.midi_items()[0].controllers(), expected);
+    }
+
+    #[test]
+    fn pan_lane_edits_cc10_and_preserves_notes_and_other_controllers() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                }],
+            })
+            .unwrap();
+        let other_controllers = vec![MidiControllerData {
+            controller: 1,
+            tick: 0,
+            value: 50,
+        }];
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: other_controllers.clone(),
+            })
+            .unwrap();
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, PAN_LANE_HEIGHT));
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 10,
+            lane_height: PAN_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = ControllerLaneInteraction::default();
+        let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("click should start inserting a pan point");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("release should commit the pan point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(changed_item, controllers) = message.unwrap() else {
+            panic!("Pan lane should submit CC10 through the shared controller action");
+        };
+        assert_eq!(changed_item, item_id);
+        let expected = [
+            other_controllers.clone(),
+            vec![MidiControllerData {
+                controller: 10,
+                tick: 960,
+                value: 64,
+            }],
+        ]
+        .concat();
+        assert_eq!(controllers, expected);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 10,
+            lane_height: PAN_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = ControllerLaneInteraction::default();
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("existing pan point should start a drag");
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(192.0, 15.0),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(192.0, 15.0)),
+        )
+        .expect("drag should update the pan point");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(192.0, 15.0)),
+            )
+            .expect("release should commit the moved pan point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(_, controllers) = message.unwrap() else {
+            panic!("moving a pan point should replace the controller lane");
+        };
+        let moved = [
+            other_controllers.clone(),
+            vec![MidiControllerData {
+                controller: 10,
+                tick: 1_920,
+                value: 115,
+            }],
+        ]
+        .concat();
+        assert_eq!(controllers, moved);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: controllers.clone(),
+            })
+            .unwrap();
+        assert_eq!(project.midi_items()[0].notes().len(), 1);
+        assert_eq!(project.midi_items()[0].controllers(), moved);
+        project.undo().unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), expected);
+        project.redo().unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), moved);
+
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 10,
+            lane_height: PAN_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut interaction = ControllerLaneInteraction::default();
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            bounds,
+            mouse::Cursor::Available(Point::new(192.0, 15.0)),
+        )
+        .expect("right-click should open the pan point menu");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(200.0, 23.0)),
+            )
+            .expect("choosing Delete CC10 point should remove that point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(_, controllers) = message.unwrap() else {
+            panic!("deleting a pan point should preserve the shared controller list");
+        };
+        assert_eq!(controllers, other_controllers);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), other_controllers);
+        project.undo().unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), moved);
     }
 
     #[test]

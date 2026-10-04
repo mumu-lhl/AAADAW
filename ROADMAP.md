@@ -88,6 +88,7 @@
 - [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。
 - [x] 为钢琴卷帘增加连续 MIDI Modulation Wheel（CC1）lane；复用通用控制器编辑、存储、sample-accurate 播放和 seek chase（[Issue #28](https://github.com/mumu-lhl/AAADAW/issues/28)）。
 - [x] 在钢琴卷帘中增加 MIDI Expression（CC11）lane（[Issue #32](https://github.com/mumu-lhl/AAADAW/issues/32)），以及与轨道推子区分的 MIDI Channel Volume（CC7）lane（[Issue #78](https://github.com/mumu-lhl/AAADAW/issues/78)）；更多常见控制器继续排期。
+- [x] 增加 MIDI Pan（CC10）lane；沿用通用控制器 Action、存储和实时播放/seek chase，并支持可撤销的点编辑（[Issue #97](https://github.com/mumu-lhl/AAADAW/issues/97)）。
 - [x] 增加独立 14-bit MIDI Pitch Bend lane；支持编辑、撤销/重做、schema v11 保存/恢复、sample-accurate 调度、seek chase 和停止后归中（[Issue #80](https://github.com/mumu-lhl/AAADAW/issues/80)）。
 - [x] 停止/seek/graph replacement 时重置 CLAP MIDI 状态，并提供不移动 playhead 的 MIDI Panic 命令（[Issue #30](https://github.com/mumu-lhl/AAADAW/issues/30)）。
 - [x] 在传输栏显示音频流欠载样本数，并与后端 callback 错误区分（[Issue #34](https://github.com/mumu-lhl/AAADAW/issues/34)）。

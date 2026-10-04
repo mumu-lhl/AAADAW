@@ -249,6 +249,11 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
                     value: 88,
                 },
                 MidiControllerData {
+                    controller: 10,
+                    tick: 480,
+                    value: 32,
+                },
+                MidiControllerData {
                     controller: 11,
                     tick: 720,
                     value: 96,
