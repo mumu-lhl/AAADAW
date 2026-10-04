@@ -105,8 +105,7 @@
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 为 Arrange Audio/MIDI Item 增加右键上下文菜单（[`docs/tickets/2026-10-02-arrangement-item-context-menu.md`](docs/tickets/2026-10-02-arrangement-item-context-menu.md)）。
 - [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
-- [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。音量/声像仍使用离散按钮，活动播放时不更新当前渲染图。
-- [ ] 以连续 fader/pan 控件替换重复点刻度；支持精确输入、单次手势单步撤销，并在活动播放中通过无锁/有界的混音参数接口即时更新（[Issue #44](https://github.com/mumu-lhl/AAADAW/issues/44)）。
+- [x] 实现轨道创建/删除/重命名/排序，以及连续音量/声像、静音和独奏控件；支持精确输入、细调、重置、单手势单步撤销，并在活动播放中即时更新混音（[Issue #44](https://github.com/mumu-lhl/AAADAW/issues/44)）。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [x] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
 - [x] 固定主窗口为 Arrangement，将 Media 收敛为 Media Browser 面板、移除 Project 子页面，并在 File 菜单加入新建工程命令（[`docs/tickets/2026-10-02-arrangement-only-main-window.md`](docs/tickets/2026-10-02-arrangement-only-main-window.md)）。
