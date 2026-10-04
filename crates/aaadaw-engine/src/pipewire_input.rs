@@ -188,7 +188,7 @@ fn run_pipewire_input(
                 data.control.fail();
             }
         })
-        .process(|stream, data| {
+        .process(move |stream, data| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 data.control.fail_if_enabled();
                 return;
