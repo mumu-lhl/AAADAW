@@ -300,7 +300,7 @@ impl LiveTrackGains {
 
     fn snapshot(&self) -> Option<GainCoefficients> {
         let before = self.version.load(Ordering::SeqCst);
-        if before % 2 != 0 {
+        if !before.is_multiple_of(2) {
             return None;
         }
         let gains = GainCoefficients {

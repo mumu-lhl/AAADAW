@@ -198,7 +198,7 @@ impl AudioRecordingWorker {
         if sample_rate == 0 {
             return Err(AudioRecordingError::InvalidSampleRate);
         }
-        if segment_data_limit < 6 || segment_data_limit % 6 != 0 {
+        if segment_data_limit < 6 || !segment_data_limit.is_multiple_of(6) {
             return Err(AudioRecordingError::TakeTooLarge);
         }
         let directory = project_path

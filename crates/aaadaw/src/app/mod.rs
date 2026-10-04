@@ -4358,7 +4358,7 @@ impl App {
 
 fn snap_tick_up(tick: u64, grid_ticks: u64) -> u64 {
     let grid_ticks = grid_ticks.max(1);
-    let quotient = tick / grid_ticks + u64::from(tick % grid_ticks != 0);
+    let quotient = tick / grid_ticks + u64::from(!tick.is_multiple_of(grid_ticks));
     quotient.saturating_mul(grid_ticks)
 }
 

@@ -3,10 +3,11 @@ use aaadaw_storage::ProjectStore;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, Implementation, ListResourceTemplatesResult,
-        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion, RawResource,
-        RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, Resource,
-        ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+        Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerConfig, Tool,
+        ToolAnnotations,
     },
     service::{RequestContext, RoleServer},
 };
@@ -40,8 +41,8 @@ struct ProjectMcpServer {
 }
 
 impl ServerHandler for ProjectMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_resources()
                 .enable_tools()
@@ -59,11 +60,8 @@ impl ServerHandler for ProjectMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
-        let resource = Resource::new(
-            RawResource::new(STRUCTURE_URI, "Project structure")
-                .with_description("Track names and types, tempo map, and meter map."),
-            None,
-        );
+        let resource = Resource::new(STRUCTURE_URI, "Project structure")
+            .with_description("Track names and types, tempo map, and meter map.");
         std::future::ready(Ok(ListResourcesResult::with_all_items(vec![resource])))
     }
 
@@ -73,11 +71,8 @@ impl ServerHandler for ProjectMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_
     {
-        let template = ResourceTemplate::new(
-            RawResourceTemplate::new(MIDI_SUMMARY_TEMPLATE, "Track MIDI summary")
-                .with_description("Bounded aggregate counts and tick range for one track."),
-            None,
-        );
+        let template = ResourceTemplate::new(MIDI_SUMMARY_TEMPLATE, "Track MIDI summary")
+            .with_description("Bounded aggregate counts and tick range for one track.");
         std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(vec![
             template,
         ])))
@@ -87,7 +82,7 @@ impl ServerHandler for ProjectMcpServer {
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_ {
         let result = if request.uri == STRUCTURE_URI {
             serde_json::to_string(&structure_summary(&self.project))
                 .map(|text| (request.uri, text))
@@ -113,6 +108,7 @@ impl ServerHandler for ProjectMcpServer {
             ReadResourceResult::new(vec![
                 ResourceContents::text(text, uri).with_mime_type("application/json"),
             ])
+            .into()
         }))
     }
 
@@ -132,7 +128,7 @@ impl ServerHandler for ProjectMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_ {
         let result = if request.name != MIDI_QUERY_TOOL {
             Err("unknown tool".to_owned())
         } else {
@@ -145,7 +141,8 @@ impl ServerHandler for ProjectMcpServer {
         std::future::ready(Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(message) => CallToolResult::structured_error(json!({"error": message})),
-        }))
+        }
+        .into()))
     }
 }
 

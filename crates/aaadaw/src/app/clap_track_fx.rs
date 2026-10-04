@@ -594,21 +594,20 @@ impl App {
                     .find(|track| track.id() == track_id)
                 {
                     let mut plugins = track.fx_chain().to_vec();
-                    if let Some(plugin) = plugins.get_mut(chain_index) {
-                        if plugin.plugin_id() == plugin_id
-                            && plugin.state() != Some(state.as_slice())
-                        {
-                            *plugin = plugin.clone().with_state(Some(state));
-                            #[cfg(feature = "audio-device")]
-                            let previous_revision = self.revision;
-                            self.apply_action(
-                                DawAction::SetTrackFxChain { track_id, plugins },
-                                "Saved CLAP editor state",
-                            );
-                            #[cfg(feature = "audio-device")]
-                            if self.revision != previous_revision {
-                                self.playback_graph_dirty = true;
-                            }
+                    if let Some(plugin) = plugins.get_mut(chain_index)
+                        && plugin.plugin_id() == plugin_id
+                        && plugin.state() != Some(state.as_slice())
+                    {
+                        *plugin = plugin.clone().with_state(Some(state));
+                        #[cfg(feature = "audio-device")]
+                        let previous_revision = self.revision;
+                        self.apply_action(
+                            DawAction::SetTrackFxChain { track_id, plugins },
+                            "Saved CLAP editor state",
+                        );
+                        #[cfg(feature = "audio-device")]
+                        if self.revision != previous_revision {
+                            self.playback_graph_dirty = true;
                         }
                     }
                 }
@@ -776,10 +775,10 @@ impl App {
             return;
         }
         self.fx_parameter_end_requested = false;
-        if let Some(gui) = self.fx_chain_plugin_gui.as_mut() {
-            if let Err(error) = gui.apply_parameter_command(command) {
-                self.status = format!("Could not finish CLAP parameter edit: {error}");
-            }
+        if let Some(gui) = self.fx_chain_plugin_gui.as_mut()
+            && let Err(error) = gui.apply_parameter_command(command)
+        {
+            self.status = format!("Could not finish CLAP parameter edit: {error}");
         }
         if (gesture.after - gesture.before).abs() < f64::EPSILON {
             return;

@@ -589,10 +589,10 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
         }
         for shortcut in definition.shortcuts {
             let normalized = shortcut.config_label();
-            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
-                if other_id != id {
-                    return Err(format!("{normalized} conflicts with the default for {id}"));
-                }
+            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned())
+                && other_id != id
+            {
+                return Err(format!("{normalized} conflicts with the default for {id}"));
             }
         }
     }
