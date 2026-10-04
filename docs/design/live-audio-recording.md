@@ -8,6 +8,12 @@ JACK blocks also carry the server frame position of their first sample through a
 ring. The writer preserves short forward gaps as silence in the WAV; a regressing clock, invalid
 block range, excessive gap, or descriptor overflow invalidates the take. Backends without capture
 timestamps currently retain contiguous-queue behavior.
+For JACK, the control thread pairs an extended server-frame position with the current project
+sample. The writer maps the first accepted callback through this anchor, updates the recovery
+sidecar, and the finished import uses that same mapped sample. The capture callback publishes its
+first accepted frame through atomics; it does not perform timeline conversion or file I/O. PipeWire
+and WASAPI do not yet expose a clock paired with the project transport, so they keep the transport
+anchor path until their clock semantics are mapped explicitly.
 PipeWire capture requests per-buffer `SPA_META_Header` metadata and uses its PTS when available;
 missing, corrupted, or unrepresentable timing invalidates that take rather than falling back to
 callback order. `Stream::time().ticks` is not treated as the current buffer's first frame.
@@ -23,8 +29,9 @@ Stop ordering is deliberate:
 
 1. Atomically disable queue writes.
 2. Stop and join the JACK or PipeWire input callback/thread.
-3. Ask the file worker to drain the remaining queue, patch each WAV header, sync, and publish every
-   segment in order.
+3. Read the first accepted callback frame after the input is stopped; use the queued JACK clock
+   anchor to determine the final item start sample, then ask the file worker to drain the remaining
+   queue, patch each WAV header, sync, and publish every segment in order.
 4. Import the WAV segments into the project asset store in order.
 5. Apply one `BatchTransaction` that places each segment contiguously on every track armed when
    recording began.

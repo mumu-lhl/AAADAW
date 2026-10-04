@@ -2465,8 +2465,19 @@ fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
     let sample_rate = project.settings().sample_rate();
     let provisional_start = super::audio_config::apply_recording_offset(96_000, sample_rate, 500)
         .expect("calibrated provisional position should fit the project timeline");
-    let capture_start = super::audio_config::apply_recording_offset(96_512, sample_rate, 500)
-        .expect("calibrated capture position should fit the project timeline");
+    let capture_transport_sample =
+        super::audio_config::apply_recording_offset(96_512, sample_rate, 500)
+            .expect("calibrated capture position should fit the project timeline");
+    let capture_anchor = aaadaw_app::CaptureTimelineAnchor::new(
+        10_000,
+        capture_transport_sample,
+        sample_rate,
+        sample_rate,
+    )
+    .expect("capture clock should map to the project sample rate");
+    let capture_start = capture_anchor
+        .project_sample_at(10_024)
+        .expect("first callback should map to a project sample");
 
     let (mut producer, consumer, control) = aaadaw_app::audio_capture_stream(16);
     let worker = aaadaw_app::AudioRecordingWorker::start_recoverable(
@@ -2484,11 +2495,11 @@ fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
     worker
         .set_start_sample(provisional_start)
         .expect("corrected provisional anchor should be durable before capture");
-    control.start();
     worker
-        .refine_start_sample(capture_start)
-        .expect("corrected capture anchor should be queued for persistence");
-    producer.push_planar(&[0.25, 0.5], &[-0.25, -0.5]);
+        .set_capture_timeline_anchor(capture_anchor)
+        .expect("capture clock anchor should be queued before capture starts");
+    control.start();
+    producer.push_planar_at(10_024, &[0.25, 0.5], &[-0.25, -0.5]);
     control.fail();
     assert!(matches!(
         worker.finish(),

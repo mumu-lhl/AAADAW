@@ -7,7 +7,7 @@ use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering, fence};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,10 @@ struct CallbackCounters {
     device_xruns: AtomicU64,
     callback_errors: AtomicU64,
     playhead_sample: AtomicU64,
+    transport_clock_sequence: AtomicU64,
+    transport_server_frame: AtomicU64,
+    transport_project_sample: AtomicU64,
+    has_transport_clock_anchor: AtomicBool,
 }
 
 struct JackNotifications {
@@ -140,6 +144,8 @@ impl JackProcessHandler {
 impl ProcessHandler for JackProcessHandler {
     fn process(&mut self, _client: &Client, scope: &ProcessScope) -> Control {
         self.apply_transport_commands();
+        let server_frame = scope.last_frame_time();
+        let project_sample_at_cycle_start = self.graph.transport_mut().position_samples();
         let frame_count = scope.n_frames() as usize;
         let left = self.left.as_mut_slice(scope);
         let right = self.right.as_mut_slice(scope);
@@ -178,13 +184,26 @@ impl ProcessHandler for JackProcessHandler {
                 self.counters
                     .master_non_finite_samples
                     .fetch_add(stats.master_non_finite_samples as u64, Ordering::Relaxed);
-                self.counters
-                    .rendered_blocks
-                    .fetch_add(1, Ordering::Relaxed);
+                self.counters.rendered_blocks.fetch_add(1, Ordering::AcqRel);
                 self.counters.playhead_sample.store(
                     self.graph.transport_mut().position_samples(),
                     Ordering::Relaxed,
                 );
+                self.counters
+                    .transport_clock_sequence
+                    .fetch_add(1, Ordering::AcqRel);
+                self.counters
+                    .transport_server_frame
+                    .store(u64::from(server_frame), Ordering::Relaxed);
+                self.counters
+                    .transport_project_sample
+                    .store(project_sample_at_cycle_start, Ordering::Relaxed);
+                self.counters
+                    .transport_clock_sequence
+                    .fetch_add(1, Ordering::Release);
+                self.counters
+                    .has_transport_clock_anchor
+                    .store(true, Ordering::Release);
             }
             Err(_) => {
                 left.fill(0.0);
@@ -273,6 +292,8 @@ pub struct JackOutputStats {
     pub callback_errors: u64,
     /// Project sample position after the most recent successful render callback.
     pub playhead_sample: u64,
+    /// JACK server frame and project sample at the start of the same successful render callback.
+    pub transport_clock_anchor: Option<(u32, u64)>,
 }
 
 impl JackAudioOutput {
@@ -307,6 +328,10 @@ impl JackAudioOutput {
             device_xruns: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
             playhead_sample: AtomicU64::new(0),
+            transport_clock_sequence: AtomicU64::new(0),
+            transport_server_frame: AtomicU64::new(0),
+            transport_project_sample: AtomicU64::new(0),
+            has_transport_clock_anchor: AtomicBool::new(false),
         });
         let process_handler = JackProcessHandler {
             graph: Box::new(graph),
@@ -433,6 +458,15 @@ impl JackAudioOutput {
 
     /// Reads callback counters without blocking the audio thread.
     pub fn stats(&self) -> JackOutputStats {
+        let transport_clock_anchor = if self
+            .counters
+            .has_transport_clock_anchor
+            .load(Ordering::Acquire)
+        {
+            read_transport_clock_anchor(&self.counters)
+        } else {
+            None
+        };
         JackOutputStats {
             rendered_blocks: self.counters.rendered_blocks.load(Ordering::Relaxed),
             underrun_samples: self.counters.underrun_samples.load(Ordering::Relaxed),
@@ -444,6 +478,7 @@ impl JackAudioOutput {
             device_xruns: self.counters.device_xruns.load(Ordering::Relaxed),
             callback_errors: self.counters.callback_errors.load(Ordering::Relaxed),
             playhead_sample: self.counters.playhead_sample.load(Ordering::Relaxed),
+            transport_clock_anchor,
         }
     }
 
@@ -455,6 +490,24 @@ impl JackAudioOutput {
     }
 }
 
+fn read_transport_clock_anchor(counters: &CallbackCounters) -> Option<(u32, u64)> {
+    for _ in 0..4 {
+        let before = counters.transport_clock_sequence.load(Ordering::Acquire);
+        if before % 2 != 0 {
+            std::hint::spin_loop();
+            continue;
+        }
+        let frame = counters.transport_server_frame.load(Ordering::Relaxed);
+        let sample = counters.transport_project_sample.load(Ordering::Relaxed);
+        fence(Ordering::Acquire);
+        let after = counters.transport_clock_sequence.load(Ordering::Relaxed);
+        if before == after {
+            return u32::try_from(frame).ok().map(|frame| (frame, sample));
+        }
+    }
+    None
+}
+
 impl Drop for JackAudioOutput {
     fn drop(&mut self) {
         let _ = self.shutdown();
@@ -463,7 +516,7 @@ impl Drop for JackAudioOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{CallbackCounters, JackNotifications};
+    use super::{CallbackCounters, JackNotifications, read_transport_clock_anchor};
     use std::sync::Arc;
 
     #[test]
@@ -489,5 +542,25 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             0
         );
+    }
+
+    #[test]
+    fn transport_clock_anchor_requires_a_stable_callback_snapshot() {
+        let counters = CallbackCounters::default();
+        counters
+            .transport_clock_sequence
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        counters
+            .transport_server_frame
+            .store(1234, std::sync::atomic::Ordering::Relaxed);
+        counters
+            .transport_project_sample
+            .store(56_789, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(read_transport_clock_anchor(&counters), Some((1234, 56_789)));
+
+        counters
+            .transport_clock_sequence
+            .store(3, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(read_transport_clock_anchor(&counters), None);
     }
 }

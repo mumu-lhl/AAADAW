@@ -4,6 +4,8 @@ use jack::{
 };
 use std::error::Error as StdError;
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 struct JackCaptureHandler {
     left: Port<AudioIn>,
@@ -11,6 +13,8 @@ struct JackCaptureHandler {
     producer: AudioCaptureProducer,
     control: AudioCaptureControl,
     frame_clock: JackFrameClock,
+    latest_frame: Arc<AtomicU64>,
+    has_latest_frame: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -34,6 +38,15 @@ impl JackFrameClock {
         self.previous = Some(frame);
         self.epoch.checked_add(u64::from(frame))
     }
+
+    fn extend_near(frame: u32, reference: u64) -> Option<u64> {
+        let delta = frame.wrapping_sub(reference as u32) as i32;
+        if delta >= 0 {
+            reference.checked_add(delta as u64)
+        } else {
+            reference.checked_sub(u64::from(delta.unsigned_abs()))
+        }
+    }
 }
 
 impl ProcessHandler for JackCaptureHandler {
@@ -48,6 +61,8 @@ impl ProcessHandler for JackCaptureHandler {
             self.control.fail_timing_if_enabled();
             return Control::Continue;
         };
+        self.latest_frame.store(first_frame, Ordering::Relaxed);
+        self.has_latest_frame.store(true, Ordering::Release);
         self.producer.push_planar_at(first_frame, left, right);
         Control::Continue
     }
@@ -96,6 +111,8 @@ impl From<jack::Error> for JackInputError {
 pub struct JackAudioInput {
     active: Option<jack::AsyncClient<(), JackCaptureHandler>>,
     sample_rate: u32,
+    latest_frame: Arc<AtomicU64>,
+    has_latest_frame: Arc<AtomicBool>,
 }
 
 impl JackAudioInput {
@@ -117,6 +134,8 @@ impl JackAudioInput {
         let right = client.register_port("in_r", AudioIn::default())?;
         let left_name = left.name()?;
         let right_name = right.name()?;
+        let latest_frame = Arc::new(AtomicU64::new(0));
+        let has_latest_frame = Arc::new(AtomicBool::new(false));
         let active = client.activate_async(
             (),
             JackCaptureHandler {
@@ -125,6 +144,8 @@ impl JackAudioInput {
                 producer,
                 control,
                 frame_clock: JackFrameClock::default(),
+                latest_frame: Arc::clone(&latest_frame),
+                has_latest_frame: Arc::clone(&has_latest_frame),
             },
         )?;
 
@@ -147,12 +168,26 @@ impl JackAudioInput {
         Ok(Self {
             active: Some(active),
             sample_rate,
+            latest_frame,
+            has_latest_frame,
         })
     }
 
     /// Returns the device sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Extends a frame position from the shared JACK server clock around the latest input frame.
+    pub fn map_shared_frame_time(&self, frame: u32) -> Option<u64> {
+        let active = self.active.as_ref()?;
+        if self.has_latest_frame.load(Ordering::Acquire) {
+            JackFrameClock::extend_near(frame, self.latest_frame.load(Ordering::Relaxed))
+        } else {
+            // Without an input-side frame we cannot know whether this raw server frame belongs
+            // just before or after a 32-bit wrap. The caller can retain its transport estimate.
+            None
+        }
     }
 
     /// Stops the callback and disconnects the JACK input ports.
@@ -188,5 +223,25 @@ mod tests {
         let mut wrapped = JackFrameClock::default();
         assert_eq!(wrapped.extend(4), Some(4));
         assert_eq!(wrapped.extend(u32::MAX - 2), None);
+    }
+
+    #[test]
+    fn jack_frame_clock_places_control_thread_time_in_the_latest_epoch() {
+        let before_wrap = u64::from(u32::MAX - 2);
+        assert_eq!(
+            JackFrameClock::extend_near(u32::MAX, before_wrap),
+            Some(before_wrap + 2)
+        );
+
+        let after_wrap = u64::from(u32::MAX) + 4;
+        assert_eq!(
+            JackFrameClock::extend_near(7, after_wrap),
+            Some(after_wrap + 4)
+        );
+        assert_eq!(
+            JackFrameClock::extend_near(u32::MAX - 1, after_wrap),
+            Some(after_wrap - 5)
+        );
+        assert_eq!(JackFrameClock::extend_near(0, 0), Some(0));
     }
 }

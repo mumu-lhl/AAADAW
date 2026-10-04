@@ -2,7 +2,7 @@
 
 ## Current project behavior
 
-JACK capture blocks now retain `ProcessScope::last_frame_time()` in a bounded descriptor ring. The recording worker checks block ranges and clock order, writes silence for forward gaps up to ten seconds, and invalidates takes with regressing timestamps, impossible ranges, excessive gaps, or queue overflow. The app still places the whole take from one project-sample anchor; these timestamps preserve duration within the captured file, but do not yet compensate initial backend latency. PipeWire buffer timestamps and hardware latency correction remain unimplemented. Issue #36 also fixes the transport-side anchor: after the initial recovery-manifest sync, the app resamples the playhead immediately before enabling capture and queues a durable manifest correction on the writer thread. If a crash happens before that correction is flushed, recovery labels and warns that the older persisted position is only an estimate.
+JACK capture blocks retain `ProcessScope::last_frame_time()` in a bounded descriptor ring. The control thread reads JACK's current frame time and pairs it with the project transport sample immediately before capture is enabled. The writer maps the first accepted block through that anchor and durably refines the recovery sidecar before writing that block. On stop, the app uses the same mapping for the imported take. The writer still writes forward gaps as silence and rejects regressions, impossible ranges, excessive gaps, and queue overflow. This maps JACK's capture clock to the project clock; it does not compensate physical input or output latency. PipeWire PTS and WASAPI capture time remain local to their input streams and are not yet paired with the project clock. Issue #36 still provides a provisional transport anchor if the process exits before the first mapped callback is persisted.
 
 ## Timing terms that must stay separate
 
@@ -15,16 +15,17 @@ JACK capture blocks now retain `ProcessScope::last_frame_time()` in a bounded de
 
 Latency ranges are not necessarily exact hardware measurements. JACK's latency API is a graph-wide contract: clients report their port latency and JACK propagates it across connections. PipeWire timing describes the stream/device path known to the graph. Interface converters, external digital devices, and unreported graph nodes can leave residual offset. The user may still need a calibrated recording offset.
 
-## Small deterministic implementation slice
+## Deterministic clock-mapping slice
 
-Start with backend-independent sample-domain logic and synthetic timestamps; no audio hardware is needed to test the rule:
+Issue #56 implements the first backend-independent sample-domain rule and the JACK adapter; its
+math and recovery path are tested with synthetic timestamps and require no audio hardware:
 
 1. Represent a capture block with its first-frame timestamp in a monotonic backend frame clock, plus its frame count. Preserve that metadata through the bounded callback-to-worker queue; do not infer it later from queue drain time.
 2. At record start, save a clock-to-project anchor: a backend frame position paired with the transport's project sample at that instant. Convert each block's first-frame timestamp to a project sample using this fixed anchor and the project sample rate. Keep the take's sample sequence contiguous in the file, but place/segment it according to timestamped positions if the clock reveals a gap.
-3. Apply a separately named capture-latency compensation (plus an optional user calibration offset) to the mapped timeline position. Keep the sign and unit explicit; clamp/reject underflow rather than wrapping. Do not mix output latency into the input correction. For overdub/loopback calibration, compare both paths under an explicitly defined reference.
-4. Unit-test the mapping with synthetic anchor/callback values at 44.1 and 48 kHz, variable callback sizes, a start delay, and reported positive/zero/negative offsets. An especially useful fixture starts capture 256 frames after the transport anchor and reports 128 frames of input latency; expected timeline placement is derived exactly from those declared inputs. Test gaps/overruns separately; a failed or dropped queue block must not silently compress time.
+3. Keep separately named capture-latency compensation (plus the optional user calibration offset) outside the clock mapping. Keep the sign and unit explicit; reject underflow rather than wrapping. Do not mix output latency into input correction. For overdub/loopback calibration, compare both paths under an explicitly defined reference.
+4. Unit-test the mapping with synthetic anchor/callback values at 44.1 and 48 kHz, varying clock rates, nonzero initial callback delay, and arithmetic boundaries. Test gaps/overruns separately; a failed or dropped queue block must not silently compress time.
 
-This first slice proves transport-to-capture clock mapping and signed sample arithmetic deterministically. A later backend adapter can supply real timestamps and latency reports; hardware loopback is needed to validate the complete physical path and calibration. Before using JACK timestamps across separately activated clients, confirm they share the same JACK server frame domain. For PipeWire, negotiate/request any metadata needed for per-buffer timestamps, or use a stream-time snapshot with well-defined cycle semantics; the current code requests only audio format and does not request header metadata.
+This slice proves transport-to-JACK-capture clock mapping and signed sample arithmetic deterministically. The app uses the same JACK server's shared frame domain across its separately activated input and output clients; actual devices and physical loopback have not been validated here. A later backend adapter can map PipeWire/WASAPI timestamps and then supply reliable device latency reports. For PipeWire, negotiate/request any metadata needed for per-buffer timestamps, or use a stream-time snapshot with well-defined cycle semantics; the current capture code requests header metadata but does not map its stream-relative PTS onto the playback clock.
 
 ## Backend/API evidence
 

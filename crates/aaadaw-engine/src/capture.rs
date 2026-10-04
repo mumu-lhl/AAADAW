@@ -11,6 +11,8 @@ struct CaptureState {
     timing_error: AtomicBool,
     overflow_frames: AtomicU64,
     callback_error: AtomicBool,
+    first_capture_frame: AtomicU64,
+    has_first_capture_frame: AtomicBool,
 }
 
 /// Control-thread access to a capture stream's armed and overflow state.
@@ -85,6 +87,14 @@ impl AudioCaptureControl {
     pub fn overflow_frames(&self) -> u64 {
         self.0.overflow_frames.load(Ordering::Relaxed)
     }
+
+    /// Returns the timestamp of the first callback block accepted after capture was enabled.
+    pub fn first_capture_frame(&self) -> Option<u64> {
+        self.0
+            .has_first_capture_frame
+            .load(Ordering::Acquire)
+            .then(|| self.0.first_capture_frame.load(Ordering::Relaxed))
+    }
 }
 
 /// Timing metadata for the frames copied from one input callback block.
@@ -100,6 +110,7 @@ pub struct AudioCaptureProducer {
     block_producer: Producer<CapturedFrames>,
     state: Arc<CaptureState>,
     next_contiguous_frame: u64,
+    published_capture_frame: bool,
 }
 
 /// The worker side of a bounded stereo capture queue.
@@ -139,6 +150,7 @@ fn audio_capture_stream_with_capacity(
             block_producer,
             state: Arc::clone(&state),
             next_contiguous_frame: 0,
+            published_capture_frame: false,
         },
         AudioCaptureConsumer {
             consumer,
@@ -259,7 +271,19 @@ impl AudioCaptureProducer {
             first_frame,
             frame_count,
         };
-        !matches!(self.block_producer.push(block), Err(PushError::Full(_)))
+        if matches!(self.block_producer.push(block), Err(PushError::Full(_))) {
+            return false;
+        }
+        if !self.published_capture_frame {
+            self.state
+                .first_capture_frame
+                .store(first_frame, Ordering::Relaxed);
+            self.state
+                .has_first_capture_frame
+                .store(true, Ordering::Release);
+            self.published_capture_frame = true;
+        }
+        true
     }
 
     fn fail_overflow(&self, frame_count: u64) {
@@ -370,6 +394,19 @@ mod tests {
         assert_eq!(block.first_frame, 250);
         assert_eq!(block.frame_count, 2);
         assert_eq!(output[..2], [[0.25, -0.25], [0.5, -0.5]]);
+    }
+
+    #[test]
+    fn control_remembers_the_first_published_frame_after_capture_is_armed() {
+        let (mut producer, _consumer, control) = audio_capture_stream(8);
+        producer.push_frames_at(40, [[0.0, 0.0]]);
+        assert_eq!(control.first_capture_frame(), None);
+
+        control.start();
+        producer.push_frames_at(100, [[0.1, -0.1]]);
+        producer.push_frames_at(120, [[0.2, -0.2]]);
+
+        assert_eq!(control.first_capture_frame(), Some(100));
     }
 
     #[test]
