@@ -71,7 +71,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 pub struct MixerPlan {
     max_block_frames: usize,
     tracks: Vec<TrackGains>,
-    has_solo: bool,
+    has_solo: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,8 +82,6 @@ struct TrackGains {
     stereo_left: f32,
     stereo_right: f32,
     live: Arc<LiveTrackGains>,
-    muted: bool,
-    solo: bool,
     record_armed: bool,
 }
 
@@ -94,6 +92,8 @@ struct LiveTrackGains {
     right: AtomicU32,
     stereo_left: AtomicU32,
     stereo_right: AtomicU32,
+    muted: AtomicBool,
+    solo: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -112,6 +112,7 @@ struct GainCoefficients {
 #[derive(Clone, Debug)]
 pub struct TrackMixController {
     tracks: Vec<(TrackId, Arc<LiveTrackGains>)>,
+    has_solo: Arc<AtomicBool>,
 }
 
 /// Control-thread handle for routing the live input tap to explicitly monitored armed tracks.
@@ -155,6 +156,22 @@ impl AudioInputMonitorController {
             .find(|(id, _, _)| *id == track_id)
             .is_some_and(|(_, _, state)| state.load(Ordering::Acquire))
     }
+
+    pub fn has_armed_track(&self, track_id: TrackId) -> bool {
+        self.tracks
+            .iter()
+            .any(|(id, armed, _)| *id == track_id && *armed)
+    }
+
+    /// Returns the armed routes currently enabled for the live input tap.
+    pub fn enabled_tracks(&self) -> Vec<TrackId> {
+        self.tracks
+            .iter()
+            .filter_map(|(track_id, armed, state)| {
+                (*armed && state.load(Ordering::Acquire)).then_some(*track_id)
+            })
+            .collect()
+    }
 }
 
 impl TrackMixController {
@@ -177,16 +194,35 @@ impl TrackMixController {
         live.version.fetch_add(1, Ordering::SeqCst);
         true
     }
+
+    /// Updates one track's mute and solo state without rebuilding the render graph.
+    pub fn set_track_mute_solo(&self, track_id: TrackId, muted: bool, solo: bool) -> bool {
+        let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
+            return false;
+        };
+
+        live.muted.store(muted, Ordering::Release);
+        live.solo.store(solo, Ordering::Release);
+        self.has_solo.store(
+            self.tracks
+                .iter()
+                .any(|(_, live)| live.solo.load(Ordering::Acquire)),
+            Ordering::Release,
+        );
+        true
+    }
 }
 
 impl LiveTrackGains {
-    fn new(gains: GainCoefficients) -> Self {
+    fn new(gains: GainCoefficients, muted: bool, solo: bool) -> Self {
         Self {
             version: AtomicU32::new(0),
             left: AtomicU32::new(gains.left.to_bits()),
             right: AtomicU32::new(gains.right.to_bits()),
             stereo_left: AtomicU32::new(gains.stereo_left.to_bits()),
             stereo_right: AtomicU32::new(gains.stereo_right.to_bits()),
+            muted: AtomicBool::new(muted),
+            solo: AtomicBool::new(solo),
         }
     }
 
@@ -313,7 +349,7 @@ impl MixerPlan {
             return Err(MixerPlanError::ZeroBlockCapacity);
         }
 
-        let has_solo = tracks.iter().any(Track::is_solo);
+        let has_solo = Arc::new(AtomicBool::new(tracks.iter().any(Track::is_solo)));
         let mut compiled = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(gains) = gain_coefficients(track.volume_db(), track.pan()) else {
@@ -327,9 +363,11 @@ impl MixerPlan {
                 right: gains.right,
                 stereo_left: gains.stereo_left,
                 stereo_right: gains.stereo_right,
-                live: Arc::new(LiveTrackGains::new(gains)),
-                muted: track.is_muted(),
-                solo: track.is_solo(),
+                live: Arc::new(LiveTrackGains::new(
+                    gains,
+                    track.is_muted(),
+                    track.is_solo(),
+                )),
                 record_armed: track.is_record_armed(),
             });
         }
@@ -349,6 +387,7 @@ impl MixerPlan {
                 .iter()
                 .map(|gains| (gains.track_id, Arc::clone(&gains.live)))
                 .collect(),
+            has_solo: Arc::clone(&self.has_solo),
         }
     }
 
@@ -391,7 +430,9 @@ impl MixerPlan {
 
     fn mix_track_unchecked(&self, track_index: usize, input: &[f32], output: &mut [[f32; 2]]) {
         let track = &self.tracks[track_index];
-        if track.muted || (self.has_solo && !track.solo) {
+        if track.live.muted.load(Ordering::Acquire)
+            || (self.has_solo.load(Ordering::Acquire) && !track.live.solo.load(Ordering::Acquire))
+        {
             return;
         }
         let fallback = GainCoefficients {
@@ -414,7 +455,9 @@ impl MixerPlan {
         output: &mut [[f32; 2]],
     ) {
         let track = &self.tracks[track_index];
-        if track.muted || (self.has_solo && !track.solo) {
+        if track.live.muted.load(Ordering::Acquire)
+            || (self.has_solo.load(Ordering::Acquire) && !track.live.solo.load(Ordering::Acquire))
+        {
             return;
         }
         let fallback = GainCoefficients {
@@ -1261,6 +1304,7 @@ impl AudioRenderGraph {
         consumer: AudioMonitorConsumer,
         gate: AudioInputMonitorGate,
     ) -> AudioInputMonitorController {
+        self.input_monitor_states.clear();
         let tracks = self
             .mixer
             .tracks
@@ -1650,7 +1694,11 @@ impl AudioRenderGraph {
             .transport
             .advance_block(output.len())
             .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
-        if !block.is_playing {
+        let monitor_active = self
+            .input_monitor_gate
+            .as_ref()
+            .is_some_and(AudioInputMonitorGate::is_enabled);
+        if !block.is_playing && !monitor_active {
             if let Some(monitor) = &mut self.input_monitor {
                 let _ = monitor.read_into(&mut self.input_monitor_scratch[..output.len()]);
             }
@@ -1673,14 +1721,22 @@ impl AudioRenderGraph {
         for buffer in self.track_effect_buffers.iter_mut().flatten() {
             buffer[..output.len()].fill([0.0, 0.0]);
         }
-        let block_frame_count = u64::try_from(block.frame_count)
-            .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
-        let block_end_sample = block
-            .start_sample
-            .checked_add(block_frame_count)
-            .ok_or(AudioGraphError::TransportPositionOverflow)?;
+        let block_end_sample = if block.is_playing {
+            let block_frame_count = u64::try_from(block.frame_count)
+                .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+            block
+                .start_sample
+                .checked_add(block_frame_count)
+                .ok_or(AudioGraphError::TransportPositionOverflow)?
+        } else {
+            block.start_sample
+        };
         let mut underrun_samples = 0_usize;
-        for stream_index in 0..self.streams.len() {
+        for stream_index in 0..if block.is_playing {
+            self.streams.len()
+        } else {
+            0
+        } {
             let input = &mut self.scratch[stream_index][..output.len()];
             input.fill(0.0);
             if let Some((item_start, item_end)) = self.source_ranges[stream_index] {
@@ -1733,7 +1789,7 @@ impl AudioRenderGraph {
             }
         }
         let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
-        for route in &mut self.instruments {
+        for route in self.instruments.iter_mut().filter(|_| block.is_playing) {
             route.midi_events.clear();
             for event in scheduled_events.clone().flatten() {
                 if event.track_id == route.track_id {

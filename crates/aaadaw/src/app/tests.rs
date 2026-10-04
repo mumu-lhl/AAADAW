@@ -3001,6 +3001,24 @@ fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content()
     }
 }
 
+#[cfg(feature = "audio-device")]
+#[test]
+fn standby_input_completion_clears_pending_state_during_other_background_jobs() {
+    let mut app = App {
+        standby_monitor_starting: true,
+        io_busy: true,
+        import_busy: true,
+        audio_asset_management_busy: true,
+        recording_recovery_busy: true,
+        playback_busy: true,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::StandbyInputClosed);
+
+    assert!(!app.standby_monitor_starting);
+}
+
 #[test]
 fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history() {
     let mut app = App::default();

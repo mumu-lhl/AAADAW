@@ -1358,7 +1358,8 @@ fn validate_stereo_effect_ports(
 mod tests {
     use super::*;
     use crate::{
-        AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor, pcm_stream,
+        AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor,
+        audio_monitor_stream, pcm_stream,
     };
     use aaadaw_core::{
         DawAction, MidiNoteData, NoteId, Project, TrackFxPlugin, TrackId, TrackInstrument,
@@ -2094,6 +2095,12 @@ mod tests {
             .expect("track creation");
         let track_id = project.tracks()[0].id();
         project
+            .apply(DawAction::SetTrackRecordArm {
+                track_id,
+                armed: true,
+            })
+            .expect("track should be armed for input monitoring");
+        project
             .apply(DawAction::SetTrackVolume {
                 track_id,
                 volume_db: 12.0,
@@ -2143,6 +2150,21 @@ mod tests {
             .install_fx_processors(&project, &mut effects)
             .expect("enabled effect processors should match their chain slots");
         assert!(effects.is_empty());
+        let (mut monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(4);
+        graph.install_input_monitor(monitor_consumer, monitor_gate);
+        let monitor = graph
+            .input_monitor_controller()
+            .expect("graph should expose monitor controls");
+        assert!(monitor.set_track_enabled(track_id, true));
+        assert!(monitor_producer.push_frame([0.2, -0.2]));
+        let mut stopped_output = [[0.0; 2]; 1];
+        graph
+            .render_into(&mut stopped_output)
+            .expect("FX chain should process the stopped transport monitor path");
+        let track_gain = 10.0_f32.powf(12.0 / 20.0);
+        assert!((stopped_output[0][0] - 0.05 * track_gain).abs() < 1.0e-6);
+        assert!((stopped_output[0][1] + 0.05 * track_gain).abs() < 1.0e-6);
+        assert_eq!(graph.transport_mut().position_samples(), 0);
         graph.transport_mut().start();
         let (retired, output, stats) = std::thread::spawn(move || {
             let mut output = [[0.0; 2]; 4];

@@ -1,8 +1,10 @@
 use super::{
     ActiveRecording, App, Message, RecordImportTarget, SharedAudioImportWorker,
-    SharedRecordingStart, SharedRecordingStop, run_blocking,
+    SharedRecordingStart, SharedRecordingStop, SharedStandbyInput, run_blocking,
 };
-use aaadaw_app::{audio_capture_stream, open_audio_input, start_audio_item_import};
+use aaadaw_app::{
+    StandbyAudioInput, audio_capture_stream, open_audio_input, start_audio_item_import,
+};
 use iced::Task;
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +18,7 @@ impl App {
             || self.import_busy
             || self.audio_asset_management_busy
             || self.playback_busy
+            || self.standby_monitor_starting
         {
             self.status = "Wait for the current operation to finish before recording".to_owned();
             return Task::none();
@@ -49,11 +52,18 @@ impl App {
             self.status = format!("Starting {} transport for recording…", backend.name());
             return self.prepare_playback(self.playhead_sample, true);
         }
-        let monitor_producer = self
+        let standby_input = self
             .playback
             .as_mut()
-            .and_then(aaadaw_app::RunningAudioPlayback::take_input_monitor_producer);
-        let Some(monitor_producer) = monitor_producer else {
+            .and_then(aaadaw_app::RunningAudioPlayback::take_standby_input);
+        let monitor_producer = if standby_input.is_none() {
+            self.playback
+                .as_ref()
+                .and_then(aaadaw_app::RunningAudioPlayback::input_monitor_producer)
+        } else {
+            None
+        };
+        if standby_input.is_none() && monitor_producer.is_none() {
             let target_sample = self
                 .playback
                 .as_ref()
@@ -61,18 +71,28 @@ impl App {
                     playback.stats().playhead_sample
                 });
             let resume_playback = self.playback_playing;
-            self.close_playback();
+            let close_task = self.close_playback();
             self.recording_starting = true;
             self.recording_cancel_requested = false;
             self.status = "Refreshing the playback input-monitor route…".to_owned();
-            return self.prepare_playback(target_sample, resume_playback);
-        };
+            return Task::batch([
+                close_task,
+                self.prepare_playback(target_sample, resume_playback),
+            ]);
+        }
         self.recording_tracks = tracks;
         self.recording_starting = true;
         self.recording_cancel_requested = false;
         self.recording_cancelled_transport_start = false;
         self.status = format!("Connecting {} input…", backend.name());
-        let (producer, consumer, control) = audio_capture_stream(sample_rate as usize * 10);
+        let (reused_input, producer, consumer, control) = if let Some(standby_input) = standby_input
+        {
+            let (input, consumer, control) = standby_input.into_recording_parts();
+            (Some(input), None, consumer, control)
+        } else {
+            let (producer, consumer, control) = audio_capture_stream(sample_rate as usize * 10);
+            (None, Some(producer), consumer, control)
+        };
         Task::perform(
             run_blocking("aaadaw-recording-start", move || {
                 let writer = aaadaw_app::AudioRecordingWorker::start_recoverable(
@@ -81,19 +101,40 @@ impl App {
                     recovery_track_ids,
                     consumer,
                     control.clone(),
-                )
-                .map_err(|error| error.to_string())?;
+                );
+                let writer = match writer {
+                    Ok(writer) => writer,
+                    Err(error) => {
+                        if let Some(input) = reused_input {
+                            input.shutdown();
+                        }
+                        return Err(error.to_string());
+                    }
+                };
                 let recovery_manifest_path = writer
                     .recovery_manifest_path()
                     .expect("recoverable recording has a manifest")
                     .to_path_buf();
-                match open_audio_input(
-                    backend,
-                    producer,
-                    Some(monitor_producer),
-                    control.clone(),
-                    sample_rate,
-                ) {
+                let input = if let Some(input) = reused_input {
+                    Ok(input)
+                } else {
+                    let Some(producer) = producer else {
+                        writer.cancel();
+                        return Err("Input capture queue is unavailable".to_owned());
+                    };
+                    let Some(monitor_producer) = monitor_producer else {
+                        writer.cancel();
+                        return Err("Input monitor queue is unavailable".to_owned());
+                    };
+                    open_audio_input(
+                        backend,
+                        producer,
+                        Some(monitor_producer),
+                        control.clone(),
+                        sample_rate,
+                    )
+                };
+                match input {
                     Ok(input) => Ok(ActiveRecording {
                         input,
                         writer,
@@ -117,6 +158,224 @@ impl App {
         )
     }
 
+    pub(super) fn toggle_input_monitor(&mut self, track_id: aaadaw_core::TrackId) -> Task<Message> {
+        let armed = self
+            .project
+            .tracks()
+            .iter()
+            .any(|track| track.id() == track_id && track.is_record_armed());
+        if !armed {
+            return Task::none();
+        }
+        if self.recording.is_some() {
+            if !self.playback_playing {
+                return Task::none();
+            }
+            if let Some(playback) = self.playback.as_ref() {
+                let enabled = !playback.input_monitor_enabled(track_id);
+                if playback.set_track_input_monitor(track_id, enabled) {
+                    self.status = if enabled {
+                        "Input monitoring enabled for armed track".to_owned()
+                    } else {
+                        "Input monitoring disabled for armed track".to_owned()
+                    };
+                }
+            }
+            return Task::none();
+        }
+
+        if self.standby_monitor_starting && self.standby_monitor_track == Some(track_id) {
+            self.standby_monitor_track = None;
+            self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
+            self.status = "Standby input opening cancelled".to_owned();
+            return Task::none();
+        }
+        if self.standby_monitor_starting {
+            self.standby_monitor_track = Some(track_id);
+            self.status = "Waiting for the current input operation to finish…".to_owned();
+            return Task::none();
+        }
+        if let Some(playback) = self.playback.as_ref() {
+            if playback.input_monitor_enabled(track_id) {
+                playback.set_track_input_monitor(track_id, false);
+                self.status = "Input monitoring disabled for armed track".to_owned();
+                return Task::none();
+            }
+            if !playback.can_monitor_track_input(track_id) {
+                let target_sample = playback.stats().playhead_sample;
+                let resume_playback = self.playback_playing;
+                self.standby_monitor_track = Some(track_id);
+                self.status = "Refreshing the armed-track monitor route…".to_owned();
+                return self.prepare_playback(target_sample, resume_playback);
+            }
+            if playback.has_standby_input() {
+                if playback.set_track_input_monitor(track_id, true) {
+                    self.status = "Input monitoring enabled for armed track".to_owned();
+                } else {
+                    self.status = "Input monitor route is unavailable".to_owned();
+                }
+                return Task::none();
+            }
+            if self.standby_monitor_starting {
+                self.standby_monitor_track = Some(track_id);
+                self.status = "Opening input for armed-track monitoring…".to_owned();
+                return Task::none();
+            }
+        } else {
+            self.standby_monitor_track = Some(track_id);
+            self.status = "Opening audio output for input monitoring…".to_owned();
+            return self.prepare_playback(self.playhead_sample, false);
+        }
+        self.standby_monitor_track = Some(track_id);
+        self.start_standby_input(track_id)
+    }
+
+    pub(super) fn start_standby_input(&mut self, track_id: aaadaw_core::TrackId) -> Task<Message> {
+        if self.standby_monitor_starting {
+            return Task::none();
+        }
+        let Some(playback) = self.playback.as_ref() else {
+            self.standby_monitor_track = Some(track_id);
+            return self.prepare_playback(self.playhead_sample, false);
+        };
+        let Some(monitor_producer) = playback.input_monitor_producer() else {
+            self.status = "Input monitor route is unavailable".to_owned();
+            self.standby_monitor_track = None;
+            return Task::none();
+        };
+        let backend = self.selected_playback_backend();
+        let sample_rate = self.project.settings().sample_rate();
+        self.standby_monitor_track = Some(track_id);
+        self.standby_monitor_starting = true;
+        self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
+        let generation = self.standby_monitor_generation;
+        self.status = format!("Opening {} input for monitoring…", backend.name());
+        let result = Arc::new(Mutex::new(None));
+        let message_result = Arc::clone(&result);
+        Task::perform(
+            run_blocking("aaadaw-standby-input-open", move || {
+                let (producer, consumer, control) = audio_capture_stream(sample_rate as usize * 10);
+                open_audio_input(
+                    backend,
+                    producer,
+                    Some(monitor_producer),
+                    control.clone(),
+                    sample_rate,
+                )
+                .map(|input| StandbyAudioInput::new(input, consumer, control))
+            }),
+            move |opened| {
+                *message_result
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(opened);
+                Message::StandbyInputStarted(track_id, generation, SharedStandbyInput(result))
+            },
+        )
+    }
+
+    pub(super) fn finish_standby_input_start(
+        &mut self,
+        track_id: aaadaw_core::TrackId,
+        generation: u64,
+        result: SharedStandbyInput,
+    ) -> Task<Message> {
+        let opened = result.0.lock().ok().and_then(|mut result| result.take());
+        if generation != self.standby_monitor_generation {
+            self.standby_monitor_starting = false;
+            return match opened {
+                Some(Ok(standby)) => self.close_standby_input_async(standby),
+                Some(Err(_)) | None => self
+                    .standby_monitor_track
+                    .filter(|_| self.playback.is_some())
+                    .map_or_else(Task::none, |track_id| self.start_standby_input(track_id)),
+            };
+        }
+        self.standby_monitor_starting = false;
+        let standby = match opened {
+            Some(Ok(input)) => input,
+            Some(Err(error)) => {
+                self.standby_monitor_track = None;
+                self.status = format!("Input monitoring could not start: {error}");
+                return Task::none();
+            }
+            None => {
+                self.standby_monitor_track = None;
+                self.status = "Input monitoring setup result was unavailable".to_owned();
+                return Task::none();
+            }
+        };
+        let route_track = self.standby_monitor_track;
+        let armed = route_track.is_some_and(|route_track| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == route_track && track.is_record_armed())
+        });
+        if !armed {
+            self.standby_monitor_track = None;
+            return self.close_standby_input_async(standby);
+        }
+        let Some(playback) = self.playback.as_mut() else {
+            self.standby_monitor_track = None;
+            return self.close_standby_input_async(standby);
+        };
+        playback.install_standby_input(standby);
+        if playback.set_track_input_monitor(route_track.unwrap_or(track_id), true) {
+            self.standby_monitor_track = None;
+            self.status = "Input monitoring enabled for armed track".to_owned();
+        } else {
+            self.standby_monitor_track = None;
+            self.status = "Input monitor route is unavailable".to_owned();
+        }
+        Task::none()
+    }
+
+    pub(super) fn release_standby_input(&mut self) -> Task<Message> {
+        self.standby_monitor_track = None;
+        self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
+        let standby = self
+            .playback
+            .as_mut()
+            .and_then(aaadaw_app::RunningAudioPlayback::take_standby_input);
+        let Some(standby) = standby else {
+            return Task::none();
+        };
+        if let Some(playback) = self.playback.as_ref() {
+            playback.disable_input_monitoring();
+        }
+        self.close_standby_input_async(standby)
+    }
+
+    pub(super) fn close_standby_input_async(
+        &mut self,
+        standby: StandbyAudioInput,
+    ) -> Task<Message> {
+        self.standby_monitor_starting = true;
+        Task::perform(
+            run_blocking("aaadaw-standby-input-close", move || {
+                standby.shutdown();
+                Ok(())
+            }),
+            |_| Message::StandbyInputClosed,
+        )
+    }
+
+    fn discard_recording_async(&mut self, recording: ActiveRecording) -> Task<Message> {
+        if let Some(playback) = self.playback.as_ref() {
+            playback.disable_input_monitoring();
+        }
+        self.standby_monitor_starting = true;
+        Task::perform(
+            run_blocking("aaadaw-recording-input-discard", move || {
+                recording.control.stop();
+                recording.input.shutdown();
+                recording.writer.cancel();
+                Ok(())
+            }),
+            |_| Message::RecordingInputDiscarded,
+        )
+    }
+
     pub(super) fn finish_recording_start(&mut self, result: SharedRecordingStart) -> Task<Message> {
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
@@ -125,9 +384,8 @@ impl App {
                     self.recording_cancel_requested = false;
                     self.recording_starting = false;
                     self.recording_tracks.clear();
-                    discard_recording(recording);
                     self.status = "Recording setup cancelled".to_owned();
-                    return Task::none();
+                    return self.discard_recording_async(recording);
                 }
                 if self.playback.is_none() {
                     self.pending_recording = Some(recording);
@@ -139,10 +397,9 @@ impl App {
                         {
                             self.recording_starting = false;
                             self.recording_tracks.clear();
-                            discard_recording(recording);
                             self.status =
                                 format!("Playback could not start for recording: {error}");
-                            return Task::none();
+                            return self.discard_recording_async(recording);
                         }
                         self.playback_playing = true;
                     }
@@ -153,6 +410,9 @@ impl App {
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = format!("Recording could not start: {error}");
                 Task::none()
             }
@@ -160,6 +420,9 @@ impl App {
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = "Recording setup result was unavailable".to_owned();
                 Task::none()
             }
@@ -174,9 +437,8 @@ impl App {
                     self.recording_cancel_requested = false;
                     self.recording_cancelled_transport_start = true;
                     self.recording_tracks.clear();
-                    discard_recording(recording);
                     self.status = "Recording setup cancelled".to_owned();
-                    return Task::none();
+                    return self.discard_recording_async(recording);
                 }
                 self.recording_cancel_requested = true;
                 self.status = "Cancelling input setup…".to_owned();
@@ -226,7 +488,7 @@ impl App {
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
             Some(Ok((paths, recovery_manifest_path, start_sample))) => {
-                self.close_playback();
+                let _close_task = self.close_playback();
                 let tracks = std::mem::take(&mut self.recording_tracks);
                 let Some(project_path) = self.project_path.clone() else {
                     self.status = "Project path disappeared; the finalized take remains available for recovery".to_owned();
@@ -304,19 +566,17 @@ impl App {
             self.recording_cancel_requested = false;
             self.recording_starting = false;
             self.recording_tracks.clear();
-            discard_recording(recording);
             self.status = "Recording setup cancelled".to_owned();
-            return Task::none();
+            return self.discard_recording_async(recording);
         }
         if !self.playback_playing {
             self.recording_starting = false;
             self.recording_tracks.clear();
-            discard_recording(recording);
             self.status = format!(
                 "{} output could not start for recording",
                 self.playback_name()
             );
-            return Task::none();
+            return self.discard_recording_async(recording);
         }
         self.begin_recording(recording)
     }
@@ -334,11 +594,10 @@ impl App {
         else {
             self.recording_starting = false;
             self.recording_tracks.clear();
-            discard_recording(recording);
             self.status =
                 "Recording offset moves the take outside the supported project sample range"
                     .to_owned();
-            return Task::none();
+            return self.discard_recording_async(recording);
         };
         self.recording_start_sample = start_sample;
         self.status = "Preparing recording recovery metadata…".to_owned();
@@ -369,9 +628,8 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
-                discard_recording(recording);
                 self.status = "Recording setup cancelled".to_owned();
-                Task::none()
+                self.discard_recording_async(recording)
             }
             Some(Ok((recording, _provisional_start_sample))) => {
                 let mut recording = recording;
@@ -394,13 +652,12 @@ impl App {
                     ),
                     aaadaw_app::SharedFrameClockMapping::Unavailable => {
                         recording.control.fail();
-                        discard_recording(recording);
                         self.recording_starting = false;
                         self.recording_tracks.clear();
                         self.status =
                             "JACK transport/input clock is unavailable; recording was not started"
                                 .to_owned();
-                        return Task::none();
+                        return self.discard_recording_async(recording);
                     }
                     aaadaw_app::SharedFrameClockMapping::Unsupported => (
                         jack_clock_anchor.map_or_else(
@@ -418,11 +675,10 @@ impl App {
                 let Some(start_sample) = placement_correction
                     .apply(transport_sample, self.project.settings().sample_rate())
                 else {
-                    discard_recording(recording);
                     self.recording_starting = false;
                     self.recording_tracks.clear();
                     self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
-                    return Task::none();
+                    return self.discard_recording_async(recording);
                 };
                 if let Some(capture_frame) = capture_frame {
                     let Some(anchor) = aaadaw_app::CaptureTimelineAnchor::new(
@@ -432,13 +688,12 @@ impl App {
                         self.project.settings().sample_rate(),
                     ) else {
                         recording.control.fail_timing();
-                        discard_recording(recording);
                         self.recording_starting = false;
                         self.recording_tracks.clear();
                         self.status =
                             "JACK capture clock could not be mapped to the project sample rate"
                                 .to_owned();
-                        return Task::none();
+                        return self.discard_recording_async(recording);
                     };
                     self.status = "Aligning JACK capture clock…".to_owned();
                     return Task::perform(
@@ -463,11 +718,10 @@ impl App {
                     );
                 } else if let Err(error) = recording.writer.refine_start_sample(start_sample) {
                     recording.control.fail();
-                    discard_recording(recording);
                     self.recording_starting = false;
                     self.recording_tracks.clear();
                     self.status = format!("Could not update recording recovery position: {error}");
-                    return Task::none();
+                    return self.discard_recording_async(recording);
                 }
                 recording.control.start();
                 self.recording_start_sample = start_sample;
@@ -480,6 +734,9 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = format!("Could not persist recording recovery metadata: {error}");
                 Task::none()
             }
@@ -487,6 +744,9 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = "Recording recovery metadata result was unavailable".to_owned();
                 Task::none()
             }
@@ -503,9 +763,8 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
-                discard_recording(recording);
                 self.status = "Recording setup cancelled".to_owned();
-                Task::none()
+                self.discard_recording_async(recording)
             }
             Some(Ok((recording, start_sample))) => {
                 let capture_latency_frames =
@@ -521,6 +780,9 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = format!("Could not initialize JACK recording timeline: {error}");
                 Task::none()
             }
@@ -528,6 +790,9 @@ impl App {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.disable_input_monitoring();
+                }
                 self.status = "JACK recording timeline result was unavailable".to_owned();
                 Task::none()
             }

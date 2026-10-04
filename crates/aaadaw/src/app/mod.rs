@@ -232,6 +232,12 @@ struct App {
     recording_start_sample: u64,
     #[cfg(feature = "audio-device")]
     recording_tracks: Vec<TrackId>,
+    #[cfg(feature = "audio-device")]
+    standby_monitor_track: Option<TrackId>,
+    #[cfg(feature = "audio-device")]
+    standby_monitor_starting: bool,
+    #[cfg(feature = "audio-device")]
+    standby_monitor_generation: u64,
     record_import_tracks: Option<RecordImportTarget>,
     status: String,
     #[cfg(feature = "audio-device")]
@@ -344,6 +350,19 @@ struct PendingRecordingCleanup {
 #[cfg(feature = "audio-device")]
 #[derive(Clone)]
 pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, String>>>>);
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone)]
+pub(super) struct SharedStandbyInput(
+    Arc<Mutex<Option<Result<aaadaw_app::StandbyAudioInput, String>>>>,
+);
+
+#[cfg(feature = "audio-device")]
+impl std::fmt::Debug for SharedStandbyInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedStandbyInput(..)")
+    }
+}
 
 #[cfg(feature = "audio-device")]
 impl std::fmt::Debug for SharedRecordingStart {
@@ -612,6 +631,15 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        #[cfg(feature = "audio-device")]
+        let standby_input_completion = matches!(
+            &message,
+            Message::StandbyInputStarted(_, _, _)
+                | Message::StandbyInputClosed
+                | Message::RecordingInputDiscarded
+        );
+        #[cfg(not(feature = "audio-device"))]
+        let standby_input_completion = false;
         let completes_pending_mix_reset = match &message {
             Message::ResetTrackVolumeByDoubleClick(track_id) => {
                 self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Volume)
@@ -685,7 +713,8 @@ impl App {
                 | Message::ClapPluginsScanned(_)
                 | Message::PickPath(PathPickerTarget::AddClapPluginPath)
         );
-        let allowed_during_io = window_safe_message
+        let allowed_during_io = standby_input_completion
+            || window_safe_message
             || matches!(
                 &message,
                 Message::ProjectLoaded(..)
@@ -723,6 +752,7 @@ impl App {
         }
         if self.path_picker_busy
             && !window_safe_message
+            && !standby_input_completion
             && !matches!(
                 &message,
                 Message::PathPicked(..)
@@ -740,6 +770,7 @@ impl App {
             return Task::none();
         }
         if self.recording_recovery_busy
+            && !standby_input_completion
             && !matches!(
                 &message,
                 Message::RecordingRecoveryPrepared(_)
@@ -756,6 +787,7 @@ impl App {
         }
         if self.import_busy
             && !window_safe_message
+            && !standby_input_completion
             && !matches!(
                 &message,
                 Message::AudioFilePathChanged(_)
@@ -776,6 +808,7 @@ impl App {
         }
         if self.audio_asset_management_busy
             && !window_safe_message
+            && !standby_input_completion
             && !matches!(
                 &message,
                 Message::ToggleMainMenu(_)
@@ -802,7 +835,11 @@ impl App {
                     &message,
                     Message::StopPlayback
                         | Message::StopRecording
+                        | Message::ToggleInputMonitor(_)
                         | Message::RecordingStarted(_)
+                        | Message::StandbyInputStarted(_, _, _)
+                        | Message::StandbyInputClosed
+                        | Message::RecordingInputDiscarded
                         | Message::RecordingPositionSaved(_)
                         | Message::RecordingClockAnchorReady(_)
                         | Message::RecordingStopped(_)
@@ -820,6 +857,7 @@ impl App {
             }
             if self.playback_busy
                 && !window_safe_message
+                && !standby_input_completion
                 && !matches!(
                     &message,
                     Message::PlaybackPrepared { .. }
@@ -1384,6 +1422,13 @@ impl App {
                 }
             }
             Message::ToggleRecordArm(track_id) => {
+                #[cfg(feature = "audio-device")]
+                let was_armed = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                    .is_some_and(|track| track.is_record_armed());
                 if let Some(track) = self
                     .project
                     .tracks()
@@ -1398,28 +1443,26 @@ impl App {
                         "Track record arm changed",
                     );
                 }
-            }
-            #[cfg(feature = "audio-device")]
-            Message::ToggleInputMonitor(track_id) => {
-                let armed = self
-                    .project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.id() == track_id && track.is_record_armed());
-                if self.recording.is_some() && self.playback_playing && armed {
-                    if let Some(playback) = self.playback.as_ref() {
-                        let enabled = !playback.input_monitor_enabled(track_id);
-                        if playback.set_track_input_monitor(track_id, enabled) {
-                            self.status = if enabled {
-                                "Input monitoring enabled for armed track".to_owned()
-                            } else {
-                                "Input monitoring disabled for armed track".to_owned()
-                            };
-                        } else {
-                            self.status = "Input monitor route is unavailable".to_owned();
+                #[cfg(feature = "audio-device")]
+                {
+                    if was_armed {
+                        if self.standby_monitor_track == Some(track_id) {
+                            self.standby_monitor_track = None;
+                            self.standby_monitor_generation =
+                                self.standby_monitor_generation.wrapping_add(1);
+                        }
+                        if let Some(playback) = self.playback.as_ref() {
+                            playback.set_track_input_monitor(track_id, false);
+                            if !playback.has_enabled_input_monitor() {
+                                task = self.release_standby_input();
+                            }
                         }
                     }
                 }
+            }
+            #[cfg(feature = "audio-device")]
+            Message::ToggleInputMonitor(track_id) => {
+                task = self.toggle_input_monitor(track_id);
             }
             Message::PreviewTrackVolume(track_id, volume_db) => {
                 self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
@@ -1776,6 +1819,17 @@ impl App {
             #[cfg(feature = "audio-device")]
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
             #[cfg(feature = "audio-device")]
+            Message::StandbyInputStarted(track_id, generation, result) => {
+                task = self.finish_standby_input_start(track_id, generation, result);
+            }
+            #[cfg(feature = "audio-device")]
+            Message::StandbyInputClosed | Message::RecordingInputDiscarded => {
+                self.standby_monitor_starting = false;
+                if let Some(track_id) = self.standby_monitor_track {
+                    task = self.start_standby_input(track_id);
+                }
+            }
+            #[cfg(feature = "audio-device")]
             Message::RecordingPositionSaved(result) => {
                 task = self.finish_recording_position_saved(result);
             }
@@ -1797,7 +1851,7 @@ impl App {
             #[cfg(feature = "audio-device")]
             Message::SeekToSample => task = self.seek_to_sample(),
             #[cfg(feature = "audio-device")]
-            Message::ClosePlayback => self.close_playback(),
+            Message::ClosePlayback => task = self.close_playback(),
             #[cfg(feature = "audio-device")]
             Message::PlaybackPrepared {
                 target_sample,
@@ -1822,6 +1876,27 @@ impl App {
                     } else {
                         self.recording_starting = false;
                         task = self.start_recording();
+                    }
+                }
+                if let Some(track_id) = self.standby_monitor_track {
+                    if self.playback.is_some() && !self.recording_starting {
+                        let playback = self.playback.as_ref().expect("playback exists");
+                        if playback.has_standby_input() {
+                            if playback.set_track_input_monitor(track_id, true) {
+                                self.standby_monitor_track = None;
+                                self.status = "Input monitoring enabled for armed track".to_owned();
+                            } else {
+                                self.standby_monitor_track = None;
+                                self.status = "Input monitor route is unavailable".to_owned();
+                            }
+                        } else {
+                            task = self.start_standby_input(track_id);
+                        }
+                    } else if self.playback.is_none() {
+                        self.standby_monitor_track = None;
+                        self.status =
+                            "Standby input could not start because audio output is unavailable"
+                                .to_owned();
                     }
                 }
             }
@@ -2122,7 +2197,6 @@ impl App {
             self.status = format!("{} output is not open", self.playback_name());
             return;
         };
-        playback.disable_input_monitoring();
         match playback.stop() {
             Ok(()) => {
                 self.playback_playing = false;
@@ -2166,12 +2240,16 @@ impl App {
     }
 
     #[cfg(feature = "audio-device")]
-    fn close_playback(&mut self) {
+    fn close_playback(&mut self) -> Task<Message> {
+        self.standby_monitor_track = None;
+        self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
         #[cfg(feature = "audio-device")]
         let state_error = self.persist_clap_plugin_states().err();
         let mut shutdown_error = None;
-        if let Some(playback) = self.playback.take() {
+        let mut standby_input = None;
+        if let Some(mut playback) = self.playback.take() {
             playback.disable_input_monitoring();
+            standby_input = playback.take_standby_input();
             match playback.shutdown() {
                 Ok((instruments, effects)) => {
                     self.deactivate_stopped_instruments(instruments);
@@ -2212,6 +2290,9 @@ impl App {
             self.status
                 .push_str(&format!("; plugin state save failed: {error}"));
         }
+        standby_input.map_or_else(Task::none, |standby_input| {
+            self.close_standby_input_async(standby_input)
+        })
     }
 
     #[cfg(feature = "audio-device")]
@@ -2433,6 +2514,12 @@ impl App {
             | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
             _ => None,
         };
+        let live_mute_solo_track = match &action {
+            DawAction::SetTrackMute { track_id, .. } | DawAction::SetTrackSolo { track_id, .. } => {
+                Some(*track_id)
+            }
+            _ => None,
+        };
         self.status = match self.project.apply(action) {
             Ok(()) => {
                 self.midi_note_clipboard.last_paste = None;
@@ -2440,6 +2527,9 @@ impl App {
                 self.timeline.rebuild(&self.project);
                 if let Some(track_id) = live_mix_track {
                     self.sync_track_mix_to_playback(track_id);
+                }
+                if let Some(track_id) = live_mute_solo_track {
+                    self.sync_track_mute_solo_to_playback(track_id);
                 }
                 success.to_owned()
             }
@@ -2457,6 +2547,21 @@ impl App {
             && let Some(playback) = &self.playback
         {
             let _ = playback.set_track_mix(track_id, track.volume_db(), track.pan());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = track_id;
+    }
+
+    fn sync_track_mute_solo_to_playback(&self, track_id: TrackId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_track_mute_solo(track_id, track.is_muted(), track.is_solo());
         }
         #[cfg(not(feature = "audio-device"))]
         let _ = track_id;
