@@ -1,6 +1,6 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, MediaError};
 use aaadaw_core::AudioItem;
-use aaadaw_engine::PcmStreamProducer;
+use aaadaw_engine::{PcmStreamProducer, StereoPcmStreamProducer};
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,6 +61,26 @@ pub fn spawn_audio_item_stream(
     )
 }
 
+/// Feeds a timeline item while preserving a mono center or stereo left/right image.
+pub fn spawn_stereo_audio_item_stream(
+    item: &AudioItem,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    if item.length_samples() == 0 {
+        return Err(MediaError::InvalidAudioItemLength);
+    }
+    spawn_stereo_stream(
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples()),
+        0,
+        producer,
+    )
+}
+
 /// Re-decodes a file-backed item and discards output before the requested timeline sample.
 pub fn spawn_audio_item_stream_at(
     item: &AudioItem,
@@ -71,6 +91,25 @@ pub fn spawn_audio_item_stream_at(
 ) -> Result<AudioFeedWorker, MediaError> {
     let samples_to_skip = checked_item_seek(item, timeline_sample)?;
     spawn_stream(
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples() - samples_to_skip),
+        samples_to_skip,
+        producer,
+    )
+}
+
+/// Re-decodes a stereo-capable item and discards output before the requested timeline sample.
+pub fn spawn_stereo_audio_item_stream_at(
+    item: &AudioItem,
+    timeline_sample: u64,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    let samples_to_skip = checked_item_seek(item, timeline_sample)?;
+    spawn_stereo_stream(
         DecoderInput::Path(resolved_path.as_ref().to_owned()),
         output_sample_rate,
         item.source_offset_samples(),
@@ -99,6 +138,35 @@ where
         return Err(MediaError::InvalidAudioItemLength);
     }
     spawn_stream(
+        DecoderInput::Reader {
+            reader: Box::new(reader),
+            byte_len,
+            extension: extension_hint.map(str::to_owned),
+        },
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples()),
+        0,
+        producer,
+    )
+}
+
+/// Decodes a seekable reader into a stereo-capable AudioItem stream.
+pub fn spawn_stereo_audio_item_stream_from_reader<R>(
+    item: &AudioItem,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    if item.length_samples() == 0 {
+        return Err(MediaError::InvalidAudioItemLength);
+    }
+    spawn_stereo_stream(
         DecoderInput::Reader {
             reader: Box::new(reader),
             byte_len,
@@ -141,6 +209,34 @@ where
     )
 }
 
+/// Re-decodes a seekable reader and discards stereo frames before the requested sample.
+pub fn spawn_stereo_audio_item_stream_from_reader_at<R>(
+    item: &AudioItem,
+    timeline_sample: u64,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    let samples_to_skip = checked_item_seek(item, timeline_sample)?;
+    spawn_stereo_stream(
+        DecoderInput::Reader {
+            reader: Box::new(reader),
+            byte_len,
+            extension: extension_hint.map(str::to_owned),
+        },
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples() - samples_to_skip),
+        samples_to_skip,
+        producer,
+    )
+}
+
 fn spawn_stream(
     input: DecoderInput,
     output_sample_rate: u32,
@@ -166,6 +262,37 @@ fn spawn_stream(
         .spawn(move || run_worker(input, config, producer, worker_cancelled, startup_sender))
         .map_err(MediaError::ThreadSpawn)?;
 
+    Ok(AudioFeedWorker {
+        cancelled,
+        startup: Some(startup),
+        thread: Some(thread),
+    })
+}
+
+fn spawn_stereo_stream(
+    input: DecoderInput,
+    output_sample_rate: u32,
+    source_offset_samples: u64,
+    output_length_samples: Option<u64>,
+    output_samples_to_skip: u64,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    if output_sample_rate == 0 {
+        return Err(MediaError::InvalidOutputSampleRate);
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_cancelled = Arc::clone(&cancelled);
+    let (startup_sender, startup) = mpsc::sync_channel(1);
+    let config = WorkerConfig {
+        output_sample_rate,
+        source_offset_remaining: source_offset_samples,
+        output_samples_remaining: output_length_samples,
+        output_samples_to_skip,
+    };
+    let thread = thread::Builder::new()
+        .name("aaadaw-stereo-media-decode".to_owned())
+        .spawn(move || run_worker(input, config, producer, worker_cancelled, startup_sender))
+        .map_err(MediaError::ThreadSpawn)?;
     Ok(AudioFeedWorker {
         cancelled,
         startup: Some(startup),
@@ -261,10 +388,67 @@ struct WorkerConfig {
     output_samples_to_skip: u64,
 }
 
-fn run_worker(
+trait FeedFrame: Copy + Send + 'static {
+    fn copy_from_chunk(chunk: &DecodedAudioChunk, output: &mut Vec<Self>);
+    fn interpolate(left: Self, right: Self, fraction: f32) -> Self;
+}
+
+impl FeedFrame for f32 {
+    fn copy_from_chunk(chunk: &DecodedAudioChunk, output: &mut Vec<Self>) {
+        chunk.copy_mono_downmix(output);
+    }
+
+    fn interpolate(left: Self, right: Self, fraction: f32) -> Self {
+        left + (right - left) * fraction
+    }
+}
+
+impl FeedFrame for [f32; 2] {
+    fn copy_from_chunk(chunk: &DecodedAudioChunk, output: &mut Vec<Self>) {
+        chunk.copy_stereo(output);
+    }
+
+    fn interpolate(left: Self, right: Self, fraction: f32) -> Self {
+        [
+            left[0] + (right[0] - left[0]) * fraction,
+            left[1] + (right[1] - left[1]) * fraction,
+        ]
+    }
+}
+
+trait FeedProducer: Send + 'static {
+    type Frame: FeedFrame;
+
+    fn set_source_channels(&self, channels: usize);
+    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize;
+}
+
+impl FeedProducer for PcmStreamProducer {
+    type Frame = f32;
+
+    fn set_source_channels(&self, _channels: usize) {}
+
+    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize {
+        self.push_samples(frames)
+    }
+}
+
+impl FeedProducer for StereoPcmStreamProducer {
+    type Frame = [f32; 2];
+
+    fn set_source_channels(&self, channels: usize) {
+        self.set_stereo_content(channels == 2);
+    }
+
+    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize {
+        StereoPcmStreamProducer::push_frames(self, frames)
+    }
+}
+
+fn run_worker<P: FeedProducer>(
     input: DecoderInput,
     config: WorkerConfig,
-    mut producer: PcmStreamProducer,
+    mut producer: P,
     cancelled: Arc<AtomicBool>,
     startup: SyncSender<WorkerStartupResult>,
 ) -> Result<(), MediaError> {
@@ -284,6 +468,7 @@ fn run_worker(
     };
     let mut decoder = match decoder_result {
         Ok(decoder) => {
+            producer.set_source_channels(decoder.metadata().channel_count.unwrap_or(0) as usize);
             let _ = startup.send(Ok(()));
             decoder
         }
@@ -296,8 +481,9 @@ fn run_worker(
             return Err(error);
         }
     };
-    let mut resampler: Option<StreamingMonoResampler> = None;
-    let mut mono_input = Vec::new();
+    let mut resampler: Option<StreamingResampler<P::Frame>> = None;
+    let mut decoded_frames = Vec::new();
+    let mut source_channels = None;
 
     loop {
         if cancelled.load(Ordering::Acquire) {
@@ -305,23 +491,28 @@ fn run_worker(
         }
         match decoder.next_chunk()? {
             Some(chunk) => {
+                if source_channels.is_some_and(|channels| channels != chunk.channels()) {
+                    return Err(MediaError::InvalidDecodedAudioSpec);
+                }
+                source_channels = Some(chunk.channels());
+                producer.set_source_channels(chunk.channels());
                 let current = match &mut resampler {
                     Some(resampler) if resampler.input_sample_rate() != chunk.sample_rate() => {
                         return Err(MediaError::ChangedAudioSampleRate);
                     }
                     Some(resampler) => resampler,
                     None => {
-                        resampler = Some(StreamingMonoResampler::new(
+                        resampler = Some(StreamingResampler::<P::Frame>::new(
                             chunk.sample_rate(),
                             output_sample_rate,
                         )?);
                         resampler.as_mut().expect("resampler was just initialized")
                     }
                 };
-                chunk.copy_mono_downmix(&mut mono_input);
-                let skipped = source_offset_remaining.min(mono_input.len() as u64) as usize;
+                P::Frame::copy_from_chunk(&chunk, &mut decoded_frames);
+                let skipped = source_offset_remaining.min(decoded_frames.len() as u64) as usize;
                 source_offset_remaining -= skipped as u64;
-                let mut output = current.push(&mono_input[skipped..])?;
+                let mut output = current.push(&decoded_frames[skipped..])?;
                 skip_output(&mut output, &mut output_samples_to_skip);
                 limit_output(&mut output, &mut output_samples_remaining);
                 push_with_backpressure(&mut producer, &output, &cancelled);
@@ -342,7 +533,7 @@ fn run_worker(
     }
 }
 
-fn skip_output(samples: &mut Vec<f32>, remaining: &mut u64) {
+fn skip_output<T: Copy>(samples: &mut Vec<T>, remaining: &mut u64) {
     let skipped = usize::try_from(*remaining)
         .unwrap_or(usize::MAX)
         .min(samples.len());
@@ -354,7 +545,7 @@ fn skip_output(samples: &mut Vec<f32>, remaining: &mut u64) {
     }
 }
 
-fn limit_output(samples: &mut Vec<f32>, remaining: &mut Option<u64>) {
+fn limit_output<T: Copy>(samples: &mut Vec<T>, remaining: &mut Option<u64>) {
     if let Some(remaining) = remaining {
         let allowed = usize::try_from(*remaining)
             .unwrap_or(usize::MAX)
@@ -364,30 +555,30 @@ fn limit_output(samples: &mut Vec<f32>, remaining: &mut Option<u64>) {
     }
 }
 
-fn push_with_backpressure(
-    producer: &mut PcmStreamProducer,
-    samples: &[f32],
+fn push_with_backpressure<P: FeedProducer>(
+    producer: &mut P,
+    samples: &[P::Frame],
     cancelled: &AtomicBool,
 ) {
     let mut offset = 0;
     while offset < samples.len() && !cancelled.load(Ordering::Acquire) {
-        offset += producer.push_samples(&samples[offset..]);
+        offset += producer.push_frames(&samples[offset..]);
         if offset < samples.len() {
             thread::sleep(Duration::from_millis(1));
         }
     }
 }
 
-struct StreamingMonoResampler {
+struct StreamingResampler<F> {
     input_sample_rate: u32,
     output_sample_rate: u32,
     next_position_numerator: u128,
     input_frames: u64,
     pending_start_frame: u64,
-    pending_samples: Vec<f32>,
+    pending_frames: Vec<F>,
 }
 
-impl StreamingMonoResampler {
+impl<F: FeedFrame> StreamingResampler<F> {
     fn new(input_sample_rate: u32, output_sample_rate: u32) -> Result<Self, MediaError> {
         if input_sample_rate == 0 {
             return Err(MediaError::InvalidDecodedAudioSpec);
@@ -407,7 +598,7 @@ impl StreamingMonoResampler {
             next_position_numerator: 0,
             input_frames: 0,
             pending_start_frame: 0,
-            pending_samples: Vec::new(),
+            pending_frames: Vec::new(),
         })
     }
 
@@ -415,20 +606,20 @@ impl StreamingMonoResampler {
         self.input_sample_rate
     }
 
-    fn push(&mut self, input: &[f32]) -> Result<Vec<f32>, MediaError> {
+    fn push(&mut self, input: &[F]) -> Result<Vec<F>, MediaError> {
         self.input_frames = self
             .input_frames
             .checked_add(input.len() as u64)
             .ok_or(MediaError::AudioTooLong)?;
-        self.pending_samples.extend_from_slice(input);
+        self.pending_frames.extend_from_slice(input);
         Ok(self.drain(false))
     }
 
-    fn finish(&mut self) -> Vec<f32> {
+    fn finish(&mut self) -> Vec<F> {
         self.drain(true)
     }
 
-    fn drain(&mut self, at_eof: bool) -> Vec<f32> {
+    fn drain(&mut self, at_eof: bool) -> Vec<F> {
         let mut output = Vec::new();
         let denominator = self.output_sample_rate as u128;
         let input_end = self.input_frames as u128 * denominator;
@@ -441,14 +632,14 @@ impl StreamingMonoResampler {
             }
 
             let left_index = (left_frame - self.pending_start_frame) as usize;
-            let left_sample = self.pending_samples[left_index];
-            let right_sample = if right_frame < self.input_frames {
-                self.pending_samples[(right_frame - self.pending_start_frame) as usize]
+            let left = self.pending_frames[left_index];
+            let right = if right_frame < self.input_frames {
+                self.pending_frames[(right_frame - self.pending_start_frame) as usize]
             } else {
-                left_sample
+                left
             };
             let fraction = (self.next_position_numerator % denominator) as f32 / denominator as f32;
-            output.push(left_sample + (right_sample - left_sample) * fraction);
+            output.push(F::interpolate(left, right, fraction));
             self.next_position_numerator += self.input_sample_rate as u128;
         }
 
@@ -456,7 +647,7 @@ impl StreamingMonoResampler {
             ((self.next_position_numerator / denominator) as u64).min(self.input_frames);
         let discard_count = (discard_until - self.pending_start_frame) as usize;
         if discard_count > 0 {
-            self.pending_samples.drain(..discard_count);
+            self.pending_frames.drain(..discard_count);
             self.pending_start_frame = discard_until;
         }
         output
@@ -472,15 +663,34 @@ impl DecodedAudioChunk {
             output.push(sum / self.channels() as f32);
         }
     }
+
+    fn copy_stereo(&self, output: &mut Vec<[f32; 2]>) {
+        output.clear();
+        output.reserve(self.frame_count());
+        match self.channels() {
+            1 => output.extend(self.samples().iter().map(|sample| [*sample, *sample])),
+            2 => output.extend(
+                self.samples()
+                    .chunks_exact(2)
+                    .map(|frame| [frame[0], frame[1]]),
+            ),
+            channels => {
+                for frame in self.samples().chunks_exact(channels) {
+                    let mono = frame.iter().copied().sum::<f32>() / channels as f32;
+                    output.push([mono, mono]);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StreamingMonoResampler;
+    use super::StreamingResampler;
 
     #[test]
     fn streaming_resampler_preserves_interpolation_across_chunk_boundaries() {
-        let mut resampler = StreamingMonoResampler::new(24_000, 48_000)
+        let mut resampler = StreamingResampler::<f32>::new(24_000, 48_000)
             .expect("valid sample rates should create a resampler");
         let first = resampler.push(&[0.0]).expect("first packet should process");
         let second = resampler
@@ -495,7 +705,7 @@ mod tests {
 
     #[test]
     fn streaming_resampler_downsamples_without_packet_local_phase_reset() {
-        let mut resampler = StreamingMonoResampler::new(48_000, 24_000)
+        let mut resampler = StreamingResampler::<f32>::new(48_000, 24_000)
             .expect("valid sample rates should create a resampler");
         let first = resampler
             .push(&[0.0, 0.25])
@@ -508,5 +718,22 @@ mod tests {
         assert_eq!(first, [0.0]);
         assert_eq!(second, [0.5]);
         assert_eq!(final_samples, []);
+    }
+
+    #[test]
+    fn stereo_resampler_preserves_channels_across_packet_boundaries() {
+        let mut resampler = StreamingResampler::<[f32; 2]>::new(24_000, 48_000)
+            .expect("valid rates should create a stereo resampler");
+        let first = resampler
+            .push(&[[0.0, 1.0]])
+            .expect("first frame should process");
+        let second = resampler
+            .push(&[[1.0, 0.0]])
+            .expect("second frame should process");
+        let final_frames = resampler.finish();
+
+        assert!(first.is_empty());
+        assert_eq!(second, [[0.0, 1.0], [0.5, 0.5]]);
+        assert_eq!(final_frames, [[1.0, 0.0], [1.0, 0.0]]);
     }
 }

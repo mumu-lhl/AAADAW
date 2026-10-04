@@ -64,7 +64,7 @@ use aaadaw_engine::TrackMixController;
 use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, audio_monitor_stream,
-    pcm_stream,
+    stereo_pcm_stream,
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
@@ -73,8 +73,8 @@ use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStat
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 use aaadaw_engine::{WasapiAudioInput, WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 use aaadaw_media::{
-    AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_at,
-    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
+    AudioFeedWorker, MediaError, spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
+    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
 use std::error::Error as StdError;
@@ -1268,17 +1268,18 @@ impl RunningJackPlayback {
 
 /// Resolves every project AudioItem and prepares a fixed-topology streaming graph.
 ///
-/// Queue capacity and callback block size are specified in mono samples/frames. Embedded assets
-/// stream directly from independent SQLite readers; linked files are opened and probed on background
-/// workers. This call waits for each worker's source-open result, so invoke it on a background
-/// control thread when the UI must remain responsive. Partial setup is cancelled if a source fails.
+/// Queue capacity and callback block size are specified in project frames. Embedded assets stream
+/// directly from independent SQLite readers; linked files are opened and probed on background
+/// workers. Mono sources are centered and stereo sources retain their left/right channels. This call
+/// waits for each worker's source-open result, so invoke it on a background control thread when the
+/// UI must remain responsive. Partial setup is cancelled if a source fails.
 pub fn prepare_audio_playback(
     project: &Project,
     store: &ProjectStore,
-    queue_capacity_samples: usize,
+    queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
-    prepare_audio_playback_at(project, store, 0, queue_capacity_samples, max_block_frames)
+    prepare_audio_playback_at(project, store, 0, queue_capacity_frames, max_block_frames)
 }
 
 /// Prepares playback with the graph transport positioned at an arbitrary project sample.
@@ -1289,7 +1290,7 @@ pub fn prepare_audio_playback_at(
     project: &Project,
     store: &ProjectStore,
     timeline_sample: u64,
-    queue_capacity_samples: usize,
+    queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     let monitor_capacity = max_block_frames.saturating_mul(2).clamp(256, 4_096);
@@ -1300,10 +1301,10 @@ pub fn prepare_audio_playback_at(
 
     for item in project.audio_items() {
         let (producer, consumer) =
-            pcm_stream(queue_capacity_samples).map_err(PlaybackBuildError::PcmStream)?;
+            stereo_pcm_stream(queue_capacity_frames).map_err(PlaybackBuildError::PcmStream)?;
         if timeline_sample >= item.end_sample() {
             drop(producer);
-            item_streams.push(AudioItemStream::new_at_sample(
+            item_streams.push(AudioItemStream::new_stereo_at_sample(
                 item.id(),
                 item.end_sample(),
                 consumer,
@@ -1323,7 +1324,7 @@ pub fn prepare_audio_playback_at(
                     .and_then(|value| value.to_str())
                     .map(str::to_owned);
                 if needs_refill {
-                    spawn_audio_item_stream_from_reader_at(
+                    spawn_stereo_audio_item_stream_from_reader_at(
                         item,
                         timeline_sample,
                         reader,
@@ -1333,7 +1334,7 @@ pub fn prepare_audio_playback_at(
                         producer,
                     )
                 } else {
-                    spawn_audio_item_stream_from_reader(
+                    spawn_stereo_audio_item_stream_from_reader(
                         item,
                         reader,
                         Some(byte_len),
@@ -1345,7 +1346,7 @@ pub fn prepare_audio_playback_at(
                 .map_err(PlaybackBuildError::Media)?
             }
             ResolvedAudioAsset::LinkedFile { path, .. } => if needs_refill {
-                spawn_audio_item_stream_at(
+                spawn_stereo_audio_item_stream_at(
                     item,
                     timeline_sample,
                     path,
@@ -1353,7 +1354,7 @@ pub fn prepare_audio_playback_at(
                     producer,
                 )
             } else {
-                spawn_audio_item_stream(item, path, output_sample_rate, producer)
+                spawn_stereo_audio_item_stream(item, path, output_sample_rate, producer)
             }
             .map_err(PlaybackBuildError::Media)?,
         };
@@ -1375,13 +1376,13 @@ pub fn prepare_audio_playback_at(
         }
         feeders.push(feeder);
         if needs_refill {
-            item_streams.push(AudioItemStream::new_at_sample(
+            item_streams.push(AudioItemStream::new_stereo_at_sample(
                 item.id(),
                 timeline_sample,
                 consumer,
             ));
         } else {
-            item_streams.push(AudioItemStream::new(item.id(), consumer));
+            item_streams.push(AudioItemStream::new_stereo(item.id(), consumer));
         }
     }
 

@@ -15,6 +15,8 @@ mod waveform;
 pub use stream::{
     AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
+    spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
+    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
 };
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;

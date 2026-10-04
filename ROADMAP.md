@@ -75,7 +75,7 @@
 - [x] Seek 进入已开始消费的 AudioItem 时，在不推进 Transport/消费 PCM 的情况下拒绝渲染并要求控制侧重填该 Item 的流；refilled feeder 可从 Item 开始重解码并丢弃至目标 sample，渲染图可绑定从指定 sample 起始的队列。
 - [x] 将控制侧 Seek、素材解析/后台 refill 与渲染图替换打通；JACK 回调通过 SPSC 队列换图，旧图与 feeder 在控制线程安全回收。长素材随机定位成本仍待优化。
 - [x] 可选 JACK 输出后端接入播放/停止与设备采样率检查。
-- [x] 将后台 packet 解码、单声道下混、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；音频回调仍不执行解码、锁或 I/O。
+- [x] 将后台 packet 解码、单声道居中/立体声保真、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；多于两声道的来源当前折叠为居中单声道，音频回调仍不执行解码、锁或 I/O（[Issue #101](https://github.com/mumu-lhl/AAADAW/issues/101)）。
 - [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；支持 sample seek refill、JACK 图替换、实际 PCM 渲染与缺失外链报错。
 - [x] 为 Linux JACK/PipeWire 增加默认立体声输入捕获和 armed-track 录音路径；真实设备验证仍待完成。
 - [x] 保留 JACK 每个捕获周期的帧位置；录音队列溢出或时钟回退时使 take 失败，短暂的周期间隔在 WAV 中写为静音，避免 overdub 时间被压缩（[Issue #38](https://github.com/mumu-lhl/AAADAW/issues/38)）。

@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
     AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
-    MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream,
+    MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream, stereo_pcm_stream,
 };
 
 #[test]
@@ -57,6 +57,97 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
     assert_eq!(stopped.underrun_samples, 0);
     assert_eq!(output[..2], [[0.0, 0.0]; 2]);
     assert_eq!(graph.transport_mut().position_samples(), 3);
+}
+
+#[test]
+fn stereo_item_stream_preserves_channels_and_counts_interleaved_underrun_samples() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Stereo".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackPan {
+            track_id,
+            pan: -1.0,
+        })
+        .expect("hard-left pan should succeed");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://stereo-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 2,
+        })
+        .expect("audio item should be valid");
+
+    let (mut producer, consumer) = stereo_pcm_stream(2).expect("positive queue size is valid");
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames(&[[0.25, 0.75]]), 1);
+    let item = project.audio_items()[0].id();
+    let stream = AudioItemStream::new_stereo(item, consumer);
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 4)
+        .expect("stereo stream should match the audio item");
+    graph.transport_mut().start();
+    let mut output = [[9.0; 2]; 2];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("stereo stream should render");
+
+    assert_eq!(output, [[0.25, 0.0], [0.0, 0.0]]);
+    assert_eq!(stats.underrun_samples, 2);
+}
+
+#[test]
+fn stereo_audio_item_keeps_its_image_through_a_subgroup_bus() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Stereo source".to_owned(),
+        })
+        .expect("source track should be created");
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Stereo bus".to_owned(),
+        })
+        .expect("bus track should be created");
+    let source_track = project.tracks()[0].id();
+    let bus_track = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_track,
+            output_track: Some(bus_track),
+        })
+        .expect("source should route to the bus");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: source_track,
+            media_ref: "asset://stereo-bus-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1,
+        })
+        .expect("audio item should be valid");
+    let (mut producer, consumer) = stereo_pcm_stream(1).unwrap();
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames(&[[0.25, -0.5]]), 1);
+    let stream = AudioItemStream::new_stereo(project.audio_items()[0].id(), consumer);
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 2)
+        .expect("stereo source should route through the bus");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph
+        .render_into(&mut output)
+        .expect("routed stereo source should render");
+
+    assert!((output[0][0] - 0.25).abs() < 1.0e-6);
+    assert!((output[0][1] + 0.5).abs() < 1.0e-6);
 }
 
 #[test]
