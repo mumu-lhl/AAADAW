@@ -104,8 +104,9 @@ impl ServerHandler for ProjectMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
-        let resource = Resource::new(STRUCTURE_URI, "Project structure")
-            .with_description("Track names and types, tempo map, and meter map.");
+        let resource = Resource::new(STRUCTURE_URI, "Project structure").with_description(
+            "Bounded track names, types, mix/record state and routing, plus tempo and meter maps.",
+        );
         std::future::ready(Ok(ListResourcesResult::with_all_items(vec![resource])))
     }
 
@@ -1016,6 +1017,12 @@ fn structure_summary(project: &Project) -> Value {
             "id": track.id().value(),
             "name": track.name().chars().take(128).collect::<String>(),
             "type": if track.is_bus() { "bus" } else { "track" },
+            "volume_db": track.volume_db(),
+            "pan": track.pan(),
+            "muted": track.is_muted(),
+            "solo": track.is_solo(),
+            "record_armed": track.is_record_armed(),
+            "output_track_id": track.output_track().map(|track_id| track_id.value()),
         })).collect::<Vec<_>>(),
         "tracks_truncated": project.tracks().len() > MAX_TRACKS,
         "tempo_points": tempo_points,
@@ -1068,6 +1075,23 @@ mod tests {
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
     use serde_json::{Value, json};
+
+    #[test]
+    fn structure_summary_keeps_track_state_bounded() {
+        let mut project = Project::new();
+        for index in 0..=MAX_TRACKS {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: format!("Track {index}"),
+                })
+                .unwrap();
+        }
+
+        let summary = structure_summary(&project);
+        assert_eq!(summary["tracks"].as_array().unwrap().len(), MAX_TRACKS);
+        assert_eq!(summary["tracks_truncated"], true);
+    }
 
     #[test]
     fn create_track_arguments_require_a_bounded_non_empty_name() {
