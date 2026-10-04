@@ -61,4 +61,6 @@ The `daw_create_track` tool accepts one non-empty track name of at most 128 char
 
 `daw_set_track_mix` accepts a track ID and one or more of `volume_db`, `pan`, `muted`, and `solo`. Supplied controls are validated and applied together as one atomic `DawAction::BatchTransaction`; omitted controls remain unchanged. The response returns the full resulting mix state, and an unchanged request does not create history or write the project.
 
+`daw_undo` and `daw_redo` move one edit through the in-memory project history for the current MCP writer process and save the resulting snapshot before success. Each new writer starts with empty history because project snapshots do not persist undo history; these tools therefore affect only edits made since that writer started. An empty undo/redo stack is a no-op.
+
 Write mode takes an exclusive project session lock for the server's lifetime. The desktop app and a second MCP writer refuse to open the same project until the MCP server exits. Stop the writer before opening the project in the desktop app; its completed changes are then available when the project is reopened. A sibling `.lock` file may remain after the session ends; the operating-system lock is released automatically. Only enable write mode for a project you intend to modify.
