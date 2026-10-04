@@ -1,8 +1,24 @@
 mod app;
+mod logging;
 mod mcp;
 mod timeline;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::process::ExitCode {
+    let _log_guard = logging::initialize();
+    match run() {
+        Ok(()) => {
+            tracing::info!("AAADAW stopped");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "AAADAW exited with an error");
+            eprintln!("AAADAW failed: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.first().is_some_and(|argument| argument == "mcp") {
         let writable = args.iter().any(|argument| argument == "--write");
@@ -14,8 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("usage: aaadaw mcp --stdio --project <path.aaadaw> [--write]".into());
         }
+        tracing::info!(mode = "mcp", writable, "starting AAADAW");
         return mcp::run(&args[3], writable);
     }
+    tracing::info!(mode = "desktop", "starting AAADAW");
     app::run()?;
     Ok(())
 }

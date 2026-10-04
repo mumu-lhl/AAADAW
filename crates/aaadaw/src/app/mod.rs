@@ -2208,7 +2208,10 @@ impl App {
                             ),
                         ]);
                     }
-                    Some(Err(error)) => self.status = format!("Open failed: {error}"),
+                    Some(Err(error)) => {
+                        tracing::error!(error = %error, "project open failed");
+                        self.status = format!("Open failed: {error}");
+                    }
                     None => self.status = "Project open result was unavailable".to_owned(),
                 }
             }
@@ -2260,7 +2263,10 @@ impl App {
                             );
                         }
                     }
-                    Err(error) => self.status = format!("Save failed: {error}"),
+                    Err(error) => {
+                        tracing::error!(error = %error, "project save failed");
+                        self.status = format!("Save failed: {error}");
+                    }
                 }
             }
             Message::RecordingRecoveryScanned(path, result) => {
@@ -3072,6 +3078,7 @@ impl App {
                     Task::none()
                 }
                 Err(error) => {
+                    tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
                     self.status = format!("{} play failed: {error}", self.playback_name());
                     Task::none()
                 }
@@ -3093,7 +3100,10 @@ impl App {
                 self.playhead_sample = playback.stats().playhead_sample;
                 self.status = "Playback paused".to_owned();
             }
-            Err(error) => self.status = format!("{} stop failed: {error}", self.playback_name()),
+            Err(error) => {
+                tracing::error!(backend = self.playback_name(), error = %error, "playback stop failed");
+                self.status = format!("{} stop failed: {error}", self.playback_name());
+            }
         }
     }
 
@@ -3108,6 +3118,7 @@ impl App {
                 self.status = "MIDI Panic sent: CC resets to MIDI-capable ports, held notes released on all instruments; playhead unchanged".to_owned()
             }
             Err(error) => {
+                tracing::error!(backend = self.playback_name(), error = %error, "MIDI panic failed");
                 self.status = format!("{} MIDI Panic failed: {error}", self.playback_name())
             }
         }
@@ -3271,6 +3282,7 @@ impl App {
         let mut prepared = match result {
             Some(Ok(prepared)) => prepared,
             Some(Err(error)) => {
+                tracing::error!(error = %error, "playback preparation failed");
                 self.status = format!("Playback preparation failed: {error}");
                 return;
             }
@@ -3284,6 +3296,7 @@ impl App {
         let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
             Err(error) => {
+                tracing::error!(error = %error, "playback instrument preparation failed");
                 self.status = format!("Playback preparation failed: {error}");
                 return;
             }
@@ -3292,6 +3305,7 @@ impl App {
         let fx_owner_ids = match self.install_track_fx_processors(&mut prepared) {
             Ok(ids) => ids,
             Err(error) => {
+                tracing::error!(error = %error, "playback effect preparation failed");
                 drop(prepared);
                 let cleanup_error = self.discard_unused_instrument_owners(&instrument_owner_ids);
                 self.status = format!("Playback preparation failed: {error}");
@@ -3366,6 +3380,7 @@ impl App {
         let mut playback = match output_result {
             Ok(playback) => playback,
             Err(error) => {
+                tracing::error!(backend = self.playback_name(), error = %error, "audio output setup failed");
                 let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
                 if let Some(instrument_error) =
                     self.discard_unused_instrument_owners(&instrument_owner_ids)
@@ -3398,6 +3413,7 @@ impl App {
         self.playhead_sample = target_sample;
         self.seek_sample_query = target_sample.to_string();
         if let Some(error) = play_error {
+            tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
             self.status = format!("{} play failed: {error}", self.playback_name());
             return;
         }

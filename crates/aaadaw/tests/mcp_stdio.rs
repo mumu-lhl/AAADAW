@@ -18,6 +18,32 @@ fn send_mcp_notification(stdin: &mut impl Write, method: &str) {
 }
 
 #[test]
+fn startup_logs_propagated_errors_to_the_override_without_polluting_stdout() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args(["mcp"])
+        .env("AAADAW_LOG_DIR", directory.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("AAADAW failed"));
+
+    let log_file = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("aaadaw.") && name.ends_with(".log"))
+        })
+        .expect("the process should create its daily log file");
+    let log = std::fs::read_to_string(log_file).unwrap();
+    assert!(log.contains("AAADAW exited with an error"));
+}
+
+#[test]
 fn stdio_server_lists_and_reads_bounded_project_resources() {
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("mcp-test.aaadaw");

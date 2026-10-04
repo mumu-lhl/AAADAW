@@ -300,6 +300,7 @@ impl App {
             Some(Ok(input)) => input,
             Some(Err(error)) => {
                 self.standby_monitor_track = None;
+                tracing::error!(error = %error, "input monitor setup failed");
                 self.status = format!("Input monitoring could not start: {error}");
                 return Task::none();
             }
@@ -425,6 +426,7 @@ impl App {
                 if let Some(playback) = self.playback.as_ref() {
                     playback.disable_input_monitoring();
                 }
+                tracing::error!(error = %error, "recording setup failed");
                 self.status = format!("Recording could not start: {error}");
                 Task::none()
             }

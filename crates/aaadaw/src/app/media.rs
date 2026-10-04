@@ -285,6 +285,7 @@ impl App {
                     .map_or(error.clone(), |cleanup_error| {
                         format!("{error}; take cleanup failed: {cleanup_error}")
                     });
+                tracing::error!(error = %error, "audio import setup failed");
                 self.status = format!("Audio import could not start: {error}");
             }
             None => {
@@ -800,7 +801,10 @@ impl App {
                 }
                 self.start_audio_waveform_scan(false);
             }
-            Err(error) => self.status = format!("Audio import could not be finalized: {error}"),
+            Err(error) => {
+                tracing::error!(error = %error, "audio import finalization failed");
+                self.status = format!("Audio import could not be finalized: {error}");
+            }
         }
         Task::none()
     }
