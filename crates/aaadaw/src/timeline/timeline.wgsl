@@ -80,6 +80,9 @@ fn vs_main(
         let gutter = min(bin_width * 0.18, 0.6);
         x = start_x * uniforms.view.w + gutter + corner.x * max(bin_width - gutter * 2.0, 0.25);
         width = max(bin_width - gutter * 2.0, 0.25);
+    } else if kind == 13u {
+        x = start_x * uniforms.view.w + (corner.x * 7.0 - 3.5) * uniforms.view.w;
+        width = 7.0 * uniforms.view.w;
     } else {
         width = max(width, 3.0);
     }
@@ -119,9 +122,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     if input.kind == 8u {
         color.a = 0.22;
-    }
-    if input.kind == 12u || input.kind == 13u {
-        color = vec4<f32>(linearize_srgb_color(color.rgb), color.a);
     }
     return color;
 }
