@@ -154,6 +154,8 @@ fn update_reported_capture_latency(
     let frames = latency(left_port_name)
         .zip(latency(right_port_name))
         .and_then(|(left, right)| precise_shared_capture_latency(left, right));
+    // Zero is intentionally the unavailable sentinel: JACK also defaults an unreported port
+    // latency to zero, so it must never be mistaken for a measured correction.
     reported_capture_latency_frames.store(u64::from(frames.unwrap_or(0)), Ordering::Release);
 }
 

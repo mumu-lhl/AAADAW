@@ -68,8 +68,10 @@ impl App {
                         input,
                         writer,
                         control,
-                        recording_offset_us,
-                        capture_latency_frames: None,
+                        placement_correction:
+                            super::audio_config::RecordingPlacementCorrection::new(
+                                recording_offset_us,
+                            ),
                         capture_timeline_anchor: None,
                         recovery_manifest_path,
                     }),
@@ -293,12 +295,10 @@ impl App {
             .map_or(self.playhead_sample, |playback| {
                 playback.stats().playhead_sample
             });
-        let Some(start_sample) = super::audio_config::apply_recording_placement_correction(
-            transport_sample,
-            self.project.settings().sample_rate(),
-            recording.recording_offset_us,
-            recording.capture_latency_frames,
-        ) else {
+        let Some(start_sample) = recording
+            .placement_correction
+            .apply(transport_sample, self.project.settings().sample_rate())
+        else {
             self.recording_starting = false;
             self.recording_tracks.clear();
             discard_recording(recording);
@@ -342,9 +342,10 @@ impl App {
             }
             Some(Ok((recording, _provisional_start_sample))) => {
                 let mut recording = recording;
-                recording.capture_latency_frames =
-                    recording.input.reported_capture_latency_frames();
-                let capture_latency_frames = recording.capture_latency_frames;
+                recording.placement_correction = recording
+                    .placement_correction
+                    .with_capture_latency_frames(recording.input.reported_capture_latency_frames());
+                let placement_correction = recording.placement_correction;
                 let playback_stats = self.playback.as_ref().map(|playback| playback.stats());
                 let jack_clock_anchor =
                     playback_stats.and_then(|stats| stats.transport_clock_anchor);
@@ -381,12 +382,9 @@ impl App {
                 };
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
-                let Some(start_sample) = super::audio_config::apply_recording_placement_correction(
-                    transport_sample,
-                    self.project.settings().sample_rate(),
-                    recording.recording_offset_us,
-                    capture_latency_frames,
-                ) else {
+                let Some(start_sample) = placement_correction
+                    .apply(transport_sample, self.project.settings().sample_rate())
+                else {
                     discard_recording(recording);
                     self.recording_starting = false;
                     self.recording_tracks.clear();
@@ -442,7 +440,7 @@ impl App {
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;
-                self.status = recording_status(capture_latency_frames);
+                self.status = recording_status(placement_correction.capture_latency_frames());
                 Task::none()
             }
             Some(Err(error)) => {
@@ -477,7 +475,8 @@ impl App {
                 Task::none()
             }
             Some(Ok((recording, start_sample))) => {
-                let capture_latency_frames = recording.capture_latency_frames;
+                let capture_latency_frames =
+                    recording.placement_correction.capture_latency_frames();
                 recording.control.start();
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);

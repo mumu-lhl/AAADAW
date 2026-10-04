@@ -5,6 +5,42 @@ use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "audio.conf";
 const MAX_RECORDING_OFFSET_US: i32 = 5_000_000;
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RecordingPlacementCorrection {
+    user_offset_us: i32,
+    capture_latency_frames: Option<u32>,
+}
+
+#[cfg(feature = "audio-device")]
+impl RecordingPlacementCorrection {
+    pub(super) const fn new(user_offset_us: i32) -> Self {
+        Self {
+            user_offset_us,
+            capture_latency_frames: None,
+        }
+    }
+
+    pub(super) const fn with_capture_latency_frames(mut self, frames: Option<u32>) -> Self {
+        self.capture_latency_frames = frames;
+        self
+    }
+
+    pub(super) const fn capture_latency_frames(self) -> Option<u32> {
+        self.capture_latency_frames
+    }
+
+    pub(super) fn apply(self, start_sample: u64, sample_rate: u32) -> Option<u64> {
+        apply_recording_placement_correction(
+            start_sample,
+            sample_rate,
+            self.user_offset_us,
+            self.capture_latency_frames,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct AudioSettings {
     pub(super) master_output_ceiling: MasterOutputCeiling,
