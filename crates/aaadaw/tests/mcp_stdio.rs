@@ -195,6 +195,15 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
                 "arguments": {"track_id": 1, "armed": true}
             }
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_set_track_mix",
+                "arguments": {"track_id": 1, "volume_db": -3}
+            }
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -258,6 +267,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .iter()
             .all(|tool| tool["name"] != "daw_set_track_record_arm")
     );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| tool["name"] != "daw_set_track_mix")
+    );
     let structure = response_for(4)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
@@ -289,6 +305,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(response_for(11)["result"]["isError"], true);
     assert_eq!(response_for(13)["result"]["isError"], true);
     assert_eq!(response_for(14)["result"]["isError"], true);
+    assert_eq!(response_for(15)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -1253,4 +1270,137 @@ fn explicitly_authorized_mcp_sets_track_record_arm_state() {
     }
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     assert!(!reopened.tracks()[0].is_record_armed());
+}
+
+#[test]
+fn explicitly_authorized_mcp_sets_track_mix_as_one_persistent_edit() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-track-mix-test.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Lead".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "daw_set_track_mix", "arguments": arguments}
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-track-mix-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(
+            3,
+            json!({
+                "track_id": track_id.value(),
+                "volume_db": -6.0,
+                "pan": 0.5,
+                "muted": true,
+                "solo": true
+            }),
+        ),
+        call(
+            4,
+            json!({
+                "track_id": track_id.value(),
+                "volume_db": -6.0,
+                "pan": 0.5,
+                "muted": true,
+                "solo": true
+            }),
+        ),
+        call(5, json!({"track_id": track_id.value(), "pan": 0.25})),
+        call(
+            6,
+            json!({"track_id": track_id.value(), "pan": 1.5, "muted": false}),
+        ),
+        call(7, json!({"track_id": u64::MAX, "volume_db": 2.0})),
+        call(8, json!({"track_id": track_id.value()})),
+        call(9, json!({"track_id": track_id.value(), "volume_db": 1e100})),
+        call(10, json!({"track_id": track_id.value(), "muted": "false"})),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["name"] == "daw_set_track_mix"));
+    let initial = &response_for(3)["result"]["structuredContent"];
+    assert_eq!(initial["changed"], true);
+    assert_eq!(initial["volume_db"], -6.0);
+    assert_eq!(initial["pan"], 0.5);
+    assert_eq!(initial["muted"], true);
+    assert_eq!(initial["solo"], true);
+    assert_eq!(
+        response_for(4)["result"]["structuredContent"]["changed"],
+        false
+    );
+    let partial = &response_for(5)["result"]["structuredContent"];
+    assert_eq!(partial["volume_db"], -6.0);
+    assert_eq!(partial["pan"], 0.25);
+    assert_eq!(partial["muted"], true);
+    assert_eq!(partial["solo"], true);
+    for id in [6, 7, 8, 9, 10] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let track = &reopened.tracks()[0];
+    assert_eq!(track.volume_db(), -6.0);
+    assert_eq!(track.pan(), 0.25);
+    assert!(track.is_muted());
+    assert!(track.is_solo());
 }
