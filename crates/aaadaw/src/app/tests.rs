@@ -1906,6 +1906,62 @@ fn track_rename_is_undoable() {
 }
 
 #[test]
+fn mixer_track_rename_uses_shared_undoable_project_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let selected_track_id = app.timeline.selected_track.unwrap();
+    let renamed_track = app
+        .project
+        .tracks()
+        .iter()
+        .find(|track| track.id() != selected_track_id)
+        .unwrap();
+    let renamed_track_id = renamed_track.id();
+    let original_name = renamed_track.name().to_owned();
+    let _ = app.update(Message::ShowMainWorkspace(MainWorkspace::Mixer));
+
+    let _ = app.update(Message::TrackNameChanged(
+        renamed_track_id,
+        "Bass Bus".to_owned(),
+    ));
+    let _ = app.update(Message::CommitTrackName(renamed_track_id));
+    assert_eq!(
+        app.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == renamed_track_id)
+            .unwrap()
+            .name(),
+        "Bass Bus"
+    );
+    assert_eq!(app.timeline.selected_track, Some(selected_track_id));
+
+    let _ = app.update(Message::ShowMainWorkspace(MainWorkspace::Arrangement));
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == renamed_track_id)
+            .unwrap()
+            .name(),
+        original_name
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == renamed_track_id)
+            .unwrap()
+            .name(),
+        "Bass Bus"
+    );
+    assert_eq!(app.timeline.selected_track, Some(selected_track_id));
+}
+
+#[test]
 fn track_context_menu_selects_its_target_and_closes_after_an_action() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
