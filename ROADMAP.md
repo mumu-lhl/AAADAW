@@ -26,7 +26,7 @@
 - [ ] 统一日志约定，并为后续 crate 制定一致的错误/日志接入规范。
 - [x] 配置格式化、Clippy、nextest 单元测试和 Linux CI；添加本地开发命令与 nextest 约定。
 - [ ] 增加 Windows 构建检查，并记录各平台本地开发与打包步骤。
-- [x] 固定 Rust edition/MSRV 声明（Rust 2024 / 1.85）并配置 stable 工具链。
+- [x] 固定 Rust edition/MSRV 声明（Rust 2024 / 1.88）并配置 stable 工具链。
 - [ ] 编写 ADR，明确首个音频后端、Iced 与 wgpu 版本策略、实时线程模型及第三方依赖许可审核流程。
 - [x] 编写 ADR，确定 `DawAction` 的校验、原子提交、事务回滚、撤销/重做及单调分配轨道 ID 的语义。
 - [ ] 明确事件历史与持久化快照的关系，以及双时基的内部表示。
