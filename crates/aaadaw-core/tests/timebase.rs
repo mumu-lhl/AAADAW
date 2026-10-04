@@ -90,6 +90,50 @@ fn linear_tempo_ramps_integrate_and_invert_positions() {
 }
 
 #[test]
+fn curved_tempo_ramps_keep_bpm_and_tick_sample_conversion_consistent() {
+    for curve in [TempoCurve::Logarithmic, TempoCurve::Bézier] {
+        for end_bpm in [60.0, 120.0, 180.0] {
+            let mut project = Project::new();
+            project
+                .apply(DawAction::SetTempo {
+                    start_tick: 960,
+                    bpm: end_bpm,
+                })
+                .expect("ramp endpoint should be accepted");
+            project
+                .apply(DawAction::SetTempoCurve {
+                    start_tick: 0,
+                    curve,
+                })
+                .expect("curved tempo ramp should be accepted");
+
+            let midpoint_bpm = project.tempo_at_tick(480);
+            assert!(midpoint_bpm.is_finite());
+            assert!(midpoint_bpm > 0.0);
+            assert!(midpoint_bpm >= end_bpm.min(120.0) - 1.0e-10);
+            assert!(midpoint_bpm <= end_bpm.max(120.0) + 1.0e-10);
+
+            let mut previous_sample = 0;
+            for tick in (0..=960).step_by(37).chain([960]) {
+                let sample = project
+                    .sample_at_tick(tick)
+                    .expect("tempo ramp tick should map to a sample");
+                assert!(sample >= previous_sample, "curve {curve:?} at {tick}");
+                previous_sample = sample;
+                let restored_tick = project
+                    .tick_at_sample(sample)
+                    .expect("tempo ramp sample should map back to a tick");
+                assert!(
+                    restored_tick.abs_diff(tick) <= 1,
+                    "curve {curve:?}, tick {tick} mapped through sample {sample} to {restored_tick}"
+                );
+            }
+            assert_eq!(project.tempo_at_tick(960), end_bpm);
+        }
+    }
+}
+
+#[test]
 fn tempo_map_conversions_stay_monotonic_and_sample_accurate_over_long_ranges() {
     let mut project = Project::new();
     let mut specs = vec![(0_u64, 120.0_f64, TempoCurve::Step)];

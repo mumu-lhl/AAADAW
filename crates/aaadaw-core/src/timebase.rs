@@ -362,6 +362,10 @@ pub enum TempoCurve {
     Step,
     /// Change BPM linearly over the interval to the next point.
     Linear,
+    /// Interpolate linearly in log-BPM space, producing an exponential BPM ramp.
+    Logarithmic,
+    /// Use a cubic Bézier ramp with horizontal endpoint tangents.
+    Bézier,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -487,7 +491,7 @@ impl TempoMap {
         }
         let progress =
             (tick - point.start_tick) as f64 / (next.start_tick - point.start_tick) as f64;
-        point.bpm + (next.bpm - point.bpm) * progress
+        tempo_at_progress(point.bpm, next.bpm, point.curve_to_next, progress)
     }
 
     pub(crate) fn sample_at_tick(&self, tick: u64) -> Result<u64, TimebaseError> {
@@ -609,17 +613,8 @@ fn segment_sample_offset(
         return Err(TimebaseError::PositionOutOfRange);
     }
     let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
-    let delta_bpm = end_bpm - start_bpm;
-    let samples = if curve == TempoCurve::Linear && segment_length > 0 && delta_bpm != 0.0 {
-        let progress = offset_ticks as f64 / segment_length as f64;
-        let log_argument = delta_bpm * progress / start_bpm;
-        if log_argument <= -1.0 {
-            return Err(TimebaseError::InvalidTempo);
-        }
-        scale * segment_length as f64 / delta_bpm * log_argument.ln_1p()
-    } else {
-        scale * offset_ticks as f64 / start_bpm
-    };
+    let samples =
+        scale * segment_integral_ticks(start_bpm, end_bpm, curve, segment_length, offset_ticks)?;
     if !samples.is_finite() || samples < 0.0 {
         return Err(TimebaseError::PositionOutOfRange);
     }
@@ -653,13 +648,192 @@ fn ticks_from_sample_offset(
         return sample_offset_to_ticks(sample_rate, ppq, start_bpm, sample_offset);
     }
     let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
-    let slope = (end_bpm - start_bpm) / segment_length as f64;
-    let exponent = slope * sample_offset / scale;
-    let ticks = start_bpm * exponent.exp_m1() / slope;
+    let target = sample_offset / scale;
+    let ticks = match curve {
+        TempoCurve::Linear => {
+            let slope = (end_bpm - start_bpm) / segment_length as f64;
+            let exponent = slope * target;
+            start_bpm * exponent.exp_m1() / slope
+        }
+        TempoCurve::Logarithmic => {
+            let log_ratio = end_bpm.ln() - start_bpm.ln();
+            if log_ratio.abs() < 1.0e-12 {
+                target * start_bpm
+            } else {
+                let argument = target * log_ratio * start_bpm / segment_length as f64;
+                if argument >= 1.0 {
+                    return Err(TimebaseError::PositionOutOfRange);
+                }
+                -(segment_length as f64) * (-argument).ln_1p() / log_ratio
+            }
+        }
+        TempoCurve::Bézier => {
+            let mut low = 0.0;
+            let mut high = 1.0;
+            for _ in 0..56 {
+                let middle = (low + high) * 0.5;
+                let elapsed =
+                    segment_integral_progress(start_bpm, end_bpm, curve, segment_length, middle)?;
+                if elapsed < target {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+            (low + high) * 0.5 * segment_length as f64
+        }
+        TempoCurve::Step => unreachable!("step tempo ramps are handled above"),
+    };
     if !ticks.is_finite() || ticks < 0.0 {
         return Err(TimebaseError::PositionOutOfRange);
     }
     Ok(ticks)
+}
+
+fn tempo_at_progress(start_bpm: f64, end_bpm: f64, curve: TempoCurve, progress: f64) -> f64 {
+    match curve {
+        TempoCurve::Step => start_bpm,
+        TempoCurve::Linear => start_bpm + (end_bpm - start_bpm) * progress,
+        TempoCurve::Logarithmic => {
+            (start_bpm.ln() + (end_bpm.ln() - start_bpm.ln()) * progress).exp()
+        }
+        TempoCurve::Bézier => {
+            let smooth_progress = progress * progress * (3.0 - 2.0 * progress);
+            start_bpm + (end_bpm - start_bpm) * smooth_progress
+        }
+    }
+}
+
+fn segment_integral_ticks(
+    start_bpm: f64,
+    end_bpm: f64,
+    curve: TempoCurve,
+    segment_length: u64,
+    offset_ticks: u64,
+) -> Result<f64, TimebaseError> {
+    if offset_ticks > segment_length {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    if offset_ticks == 0 {
+        return Ok(0.0);
+    }
+    segment_integral_progress(
+        start_bpm,
+        end_bpm,
+        curve,
+        segment_length,
+        offset_ticks as f64 / segment_length as f64,
+    )
+}
+
+fn segment_integral_progress(
+    start_bpm: f64,
+    end_bpm: f64,
+    curve: TempoCurve,
+    segment_length: u64,
+    progress: f64,
+) -> Result<f64, TimebaseError> {
+    if curve == TempoCurve::Step || segment_length == 0 || start_bpm == end_bpm {
+        return Ok(segment_length as f64 * progress / start_bpm);
+    }
+    let integral = match curve {
+        TempoCurve::Linear => {
+            let log_argument = (end_bpm - start_bpm) * progress / start_bpm;
+            if log_argument <= -1.0 {
+                return Err(TimebaseError::InvalidTempo);
+            }
+            segment_length as f64 * (log_argument.ln_1p()) / (end_bpm - start_bpm)
+        }
+        TempoCurve::Logarithmic => {
+            let log_ratio = end_bpm.ln() - start_bpm.ln();
+            if log_ratio.abs() < 1.0e-12 {
+                segment_length as f64 * progress / start_bpm
+            } else {
+                segment_length as f64 * (-(-log_ratio * progress).exp_m1())
+                    / (start_bpm * log_ratio)
+            }
+        }
+        TempoCurve::Bézier => {
+            let f = |u: f64| 1.0 / tempo_at_progress(start_bpm, end_bpm, curve, u);
+            adaptive_simpson(f, 0.0, progress, 1.0e-13, 20) * segment_length as f64
+        }
+        TempoCurve::Step => unreachable!("step ramps are handled above"),
+    };
+    if !integral.is_finite() || integral < 0.0 {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(integral)
+}
+
+fn adaptive_simpson(
+    f: impl Fn(f64) -> f64 + Copy,
+    start: f64,
+    end: f64,
+    tolerance: f64,
+    depth: u8,
+) -> f64 {
+    let middle = (start + end) * 0.5;
+    let start_value = f(start);
+    let middle_value = f(middle);
+    let end_value = f(end);
+    let whole = (end - start) * (start_value + 4.0 * middle_value + end_value) / 6.0;
+    adaptive_simpson_refine(
+        f,
+        start,
+        end,
+        start_value,
+        middle_value,
+        end_value,
+        whole,
+        tolerance,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn adaptive_simpson_refine(
+    f: impl Fn(f64) -> f64 + Copy,
+    start: f64,
+    end: f64,
+    start_value: f64,
+    middle_value: f64,
+    end_value: f64,
+    whole: f64,
+    tolerance: f64,
+    depth: u8,
+) -> f64 {
+    let middle = (start + end) * 0.5;
+    let left_middle = (start + middle) * 0.5;
+    let right_middle = (middle + end) * 0.5;
+    let left_value = f(left_middle);
+    let right_value = f(right_middle);
+    let left = (middle - start) * (start_value + 4.0 * left_value + middle_value) / 6.0;
+    let right = (end - middle) * (middle_value + 4.0 * right_value + end_value) / 6.0;
+    let delta = left + right - whole;
+    if depth == 0 || delta.abs() <= 15.0 * tolerance {
+        return left + right + delta / 15.0;
+    }
+    adaptive_simpson_refine(
+        f,
+        start,
+        middle,
+        start_value,
+        left_value,
+        middle_value,
+        left,
+        tolerance * 0.5,
+        depth - 1,
+    ) + adaptive_simpson_refine(
+        f,
+        middle,
+        end,
+        middle_value,
+        right_value,
+        end_value,
+        right,
+        tolerance * 0.5,
+        depth - 1,
+    )
 }
 
 impl Default for TempoMap {

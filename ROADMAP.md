@@ -51,9 +51,9 @@
 - [x] 实现采样位置与 PPQ tick 互换、960 PPQ/48 kHz/120 BPM 默认值，以及可通过 Action 修改的分段恒定 Tempo Map。
 - [x] 实现拍号地图、仅允许小节线变更，并支持 tick 到小节/拍位置查询。
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
-- [ ] 增加贝塞尔/对数 BPM 曲线。
+- [x] 增加对数 BPM ramp 与端点水平切线的三次 Bézier ramp；使用一致的 tick/sample 积分与逆变换，并通过 schema v12 持久化（[Issue #82](https://github.com/mumu-lhl/AAADAW/issues/82)）。
 - [x] 用固定种子的属性式测试覆盖阶梯/线性 tempo 段边界和 12 小时时基精度；将依赖 `f64` 的 tick/sample 转换显式限制在整数精确表示范围内，超出时返回范围错误（[Issue #76](https://github.com/mumu-lhl/AAADAW/issues/76)）。
-- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v11、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
+- [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v12、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [x] 扩展 schema 保存 sample-clock 轨道音量自动化（v9）和总线类型/输出目标（v10）；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。全量快照写入仍待按工程规模优化。
 - [x] 实现新建数据库、原子快照保存/加载、关闭时 WAL checkpoint，并验证保存—关闭—重开状态往返。
 - [x] 验收 SQLite 页数上限触发磁盘满时的原子保存回滚、旧工程恢复和解除限制后的重试（[Issue #24](https://github.com/mumu-lhl/AAADAW/issues/24)）。
