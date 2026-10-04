@@ -14,3 +14,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
+
+# Upstream cryoglyph has fixed RUSTSEC-2026-0253 but has not published a
+# compatible crates.io release yet. This local source keeps its Iced 0.14
+# dependency versions and applies only the upstream lru requirement update.
+[patch.crates-io]
+cryoglyph = { path = "vendor/cryoglyph" }
