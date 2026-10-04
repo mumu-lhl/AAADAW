@@ -53,6 +53,7 @@ pub(crate) enum MidiEditorLane {
     Velocity,
     Sustain,
     Volume,
+    Pan,
     Modulation,
     Expression,
     PitchBend,
