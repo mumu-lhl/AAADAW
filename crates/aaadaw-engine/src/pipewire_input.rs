@@ -1,6 +1,8 @@
 use crate::{AudioCaptureControl, AudioCaptureProducer};
 use pipewire as pw;
-use pw::spa::pod::Pod;
+use pw::spa::buffer::meta::{MetaHeader, MetaHeaderFlags};
+use pw::spa::pod::{Pod, Property, Value};
+use pw::spa::utils::{Id, SpaTypes};
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
@@ -16,6 +18,19 @@ enum ThreadCommand {
 struct CaptureData {
     producer: AudioCaptureProducer,
     control: AudioCaptureControl,
+    first_pts: Option<i64>,
+}
+
+const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+
+fn pipewire_pts_to_frame(pts: i64, origin_pts: i64, sample_rate: u32) -> Option<u64> {
+    let delta_ns = i128::from(pts).checked_sub(i128::from(origin_pts))?;
+    if delta_ns < 0 || sample_rate == 0 {
+        return None;
+    }
+    let scaled = delta_ns.checked_mul(i128::from(sample_rate))?;
+    let rounded = scaled.checked_add(NANOSECONDS_PER_SECOND / 2)? / NANOSECONDS_PER_SECOND;
+    u64::try_from(rounded).ok()
 }
 
 /// Errors encountered while connecting a PipeWire default stereo input.
@@ -162,7 +177,11 @@ fn run_pipewire_input(
     let stream_error = Arc::new(AtomicBool::new(false));
     let callback_error = Arc::clone(&stream_error);
     let listener = stream
-        .add_local_listener_with_user_data(CaptureData { producer, control })
+        .add_local_listener_with_user_data(CaptureData {
+            producer,
+            control,
+            first_pts: None,
+        })
         .state_changed(move |_, data, _, state| {
             if matches!(state, pw::stream::StreamState::Error(_)) {
                 callback_error.store(true, Ordering::Release);
@@ -174,6 +193,19 @@ fn run_pipewire_input(
                 data.control.fail_if_enabled();
                 return;
             };
+            let header = buffer
+                .find_meta::<MetaHeader>()
+                .map(|header| (header.pts(), header.flags()));
+            let Some((pts, flags)) = header else {
+                data.control.fail_timing_if_enabled();
+                return;
+            };
+            if flags.contains(MetaHeaderFlags::CORRUPTED)
+                || (flags.contains(MetaHeaderFlags::DISCONT) && data.first_pts.is_some())
+            {
+                data.control.fail_timing_if_enabled();
+                return;
+            }
             let datas = buffer.datas_mut();
             let [input] = datas else {
                 data.control.fail();
@@ -183,25 +215,46 @@ fn run_pipewire_input(
             let offset = chunk.offset() as usize;
             let size = chunk.size() as usize;
             let stride = chunk.stride();
-            let Some(bytes) = input.data() else {
-                data.control.fail();
-                return;
-            };
-            let Some(end) = offset.checked_add(size) else {
-                data.control.fail();
-                return;
-            };
-            if stride != 8 || size % 8 != 0 || end > bytes.len() {
-                data.control.fail();
+            if stride != 8 || size % 8 != 0 {
+                data.control.fail_timing_if_enabled();
                 return;
             }
-            data.producer
-                .push_frames(bytes[offset..end].chunks_exact(8).map(|frame| {
-                    [
-                        f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]),
-                        f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]),
-                    ]
-                }));
+            let frame_count = size / 8;
+            if frame_count == 0 {
+                data.control.fail_timing_if_enabled();
+                return;
+            }
+            let origin_pts = *data.first_pts.get_or_insert(pts);
+            let Some(first_frame) = pipewire_pts_to_frame(pts, origin_pts, sample_rate) else {
+                data.control.fail_timing_if_enabled();
+                return;
+            };
+            if flags.contains(MetaHeaderFlags::GAP) {
+                data.producer
+                    .push_frames_at(first_frame, std::iter::repeat_n([0.0, 0.0], frame_count));
+            } else {
+                let Some(bytes) = input.data() else {
+                    data.control.fail();
+                    return;
+                };
+                let Some(end) = offset.checked_add(size) else {
+                    data.control.fail_timing_if_enabled();
+                    return;
+                };
+                if end > bytes.len() {
+                    data.control.fail_timing_if_enabled();
+                    return;
+                }
+                data.producer.push_frames_at(
+                    first_frame,
+                    bytes[offset..end].chunks_exact(8).map(|frame| {
+                        [
+                            f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]),
+                            f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]),
+                        ]
+                    }),
+                );
+            }
         })
         .register()
         .map_err(|error| error.to_string())?;
@@ -226,7 +279,10 @@ fn run_pipewire_input(
     .0
     .into_inner();
     let audio_param = Pod::from_bytes(&values).ok_or_else(|| "invalid audio format".to_owned())?;
-    let mut params = [audio_param];
+    let metadata_values = serialize_header_metadata()?;
+    let metadata = Pod::from_bytes(&metadata_values)
+        .ok_or_else(|| "invalid PipeWire header metadata parameter".to_owned())?;
+    let mut params = [audio_param, metadata];
     stream
         .connect(
             pw::spa::utils::Direction::Input,
@@ -260,4 +316,56 @@ fn run_pipewire_input(
     drop(context);
     drop(mainloop);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pipewire_pts_to_frame;
+
+    #[test]
+    fn pipewire_pts_deltas_map_to_frames_at_common_rates() {
+        for sample_rate in [44_100, 48_000] {
+            let expected_frames = u64::from(sample_rate) * 2 + 17;
+            let delta_ns = (u128::from(expected_frames) * 1_000_000_000
+                + u128::from(sample_rate) / 2)
+                / u128::from(sample_rate);
+            assert_eq!(
+                pipewire_pts_to_frame(9_000_000_000 + delta_ns as i64, 9_000_000_000, sample_rate,),
+                Some(expected_frames)
+            );
+            let gap_ns =
+                (256_u128 * 1_000_000_000 + u128::from(sample_rate) / 2) / u128::from(sample_rate);
+            assert_eq!(
+                pipewire_pts_to_frame(12_000_000_000 + gap_ns as i64, 12_000_000_000, sample_rate),
+                Some(256)
+            );
+        }
+    }
+
+    #[test]
+    fn pipewire_pts_conversion_rejects_regressions_and_invalid_rates() {
+        assert_eq!(pipewire_pts_to_frame(99, 100, 48_000), None);
+        assert_eq!(pipewire_pts_to_frame(100, 100, 0), None);
+        assert_eq!(pipewire_pts_to_frame(i64::MAX, i64::MIN, u32::MAX), None);
+    }
+}
+
+fn serialize_header_metadata() -> Result<Vec<u8>, String> {
+    let meta = pw::spa::pod::Value::Object(pw::spa::pod::Object {
+        type_: SpaTypes::ObjectParamMeta.as_raw(),
+        id: pw::spa::param::ParamType::Meta.as_raw(),
+        properties: vec![
+            Property::new(
+                pw::spa::sys::SPA_PARAM_META_type,
+                Value::Id(Id(pw::spa::sys::SPA_META_Header)),
+            ),
+            Property::new(
+                pw::spa::sys::SPA_PARAM_META_size,
+                Value::Int(std::mem::size_of::<MetaHeader>() as i32),
+            ),
+        ],
+    });
+    pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &meta)
+        .map(|(cursor, _)| cursor.into_inner())
+        .map_err(|error| error.to_string())
 }

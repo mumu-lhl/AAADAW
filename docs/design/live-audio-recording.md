@@ -8,6 +8,9 @@ JACK blocks also carry the server frame position of their first sample through a
 ring. The writer preserves short forward gaps as silence in the WAV; a regressing clock, invalid
 block range, excessive gap, or descriptor overflow invalidates the take. Backends without capture
 timestamps currently retain contiguous-queue behavior.
+PipeWire capture requests per-buffer `SPA_META_Header` metadata and uses its PTS when available;
+missing, corrupted, or unrepresentable timing invalidates that take rather than falling back to
+callback order. `Stream::time().ticks` is not treated as the current buffer's first frame.
 
 The recording worker owns the queue consumer and temporary PCM24 WAV segments. It drains frames in
 fixed-size batches, sanitizes non-finite samples, and writes outside the realtime callback. Each
