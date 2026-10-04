@@ -122,6 +122,34 @@ fn live_mix_ramp_uses_the_compiled_sample_rate() {
 }
 
 #[test]
+fn live_mix_ramp_combines_with_sample_accurate_volume_automation() {
+    let (mut project, track_ids) = project_with_tracks(&["Automated"]);
+    let ramp_frames = 240;
+    project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id: track_ids[0],
+            points: vec![
+                VolumeAutomationPoint::new(0, 0.0).unwrap(),
+                VolumeAutomationPoint::new(ramp_frames as u64, -6.0).unwrap(),
+            ],
+        })
+        .unwrap();
+    let plan = MixerPlan::compile_with_sample_rate(project.tracks(), ramp_frames + 1, 48_000)
+        .expect("track controls should compile");
+    let controller = plan.track_mix_controller();
+    assert!(controller.set_track_mix(track_ids[0], -6.0, 0.0));
+
+    let input = vec![1.0_f32; ramp_frames + 1];
+    let mut output = vec![[0.0_f32; 2]; ramp_frames + 1];
+    plan.mix_mono_into(&[&input], &mut output)
+        .expect("live fader ramp and volume automation should mix together");
+    let fader_gain = 10.0_f32.powf(-6.0 / 20.0);
+    let expected = std::f32::consts::FRAC_1_SQRT_2 * fader_gain * fader_gain;
+    assert!((output[ramp_frames][0] - expected).abs() < 1.0e-6);
+    assert!((output[ramp_frames][1] - expected).abs() < 1.0e-6);
+}
+
+#[test]
 fn live_track_mix_rejects_unknown_tracks_and_invalid_pan() {
     let (project, track_ids) = project_with_tracks(&["Track", "Other"]);
     let plan =

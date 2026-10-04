@@ -444,8 +444,10 @@ impl fmt::Display for MixError {
 impl std::error::Error for MixError {}
 
 impl MixerPlan {
-    /// Compiles the project's current track controls for a maximum callback
-    /// block size. Call this on a control thread, not in the audio callback.
+    /// Compiles the project's current track controls for a maximum callback block size.
+    /// The live-control ramp uses a 48 kHz sample rate; use
+    /// [`compile_with_sample_rate`](Self::compile_with_sample_rate) for another rate.
+    /// Call this on a control thread, not in the audio callback.
     pub fn compile(tracks: &[Track], max_block_frames: usize) -> Result<Self, MixerPlanError> {
         Self::compile_with_sample_rate(tracks, max_block_frames, 48_000)
     }
