@@ -1,6 +1,6 @@
 use crate::{
     GridFraction, ItemId, MidiControllerData, MidiNoteData, NoteId, TempoCurve, TimeSignature,
-    TrackFxPlugin, TrackId, TrackInstrument,
+    TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 /// A command that changes project state.
@@ -19,6 +19,11 @@ pub enum DawAction {
     },
     /// Set a track's volume in decibels.
     SetTrackVolume { track_id: TrackId, volume_db: f32 },
+    /// Replace a track's read-mode sample-clock volume automation lane.
+    SetTrackVolumeAutomation {
+        track_id: TrackId,
+        points: Vec<VolumeAutomationPoint>,
+    },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.
     SetTrackPan { track_id: TrackId, pan: f32 },
     /// Mute or unmute a track.

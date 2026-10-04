@@ -26,6 +26,41 @@ fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
 }
 
 #[test]
+fn arrangement_automation_add_move_delete_selection_and_undo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let expected_sample = app.project.sample_at_tick(960).unwrap();
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::InsertVolumeAutomationAt {
+            track_index: 0,
+            tick: 960,
+            gain_db: -12.0,
+        },
+    ));
+    assert_eq!(app.project.tracks()[0].volume_automation().len(), 1);
+    assert_eq!(
+        app.project.tracks()[0].volume_automation()[0].sample(),
+        expected_sample
+    );
+    assert!(app.timeline.volume_automation_tracks.contains(&track_id));
+    let point = aaadaw_core::VolumeAutomationPoint::new(expected_sample + 24_000, -6.0).unwrap();
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectVolumeAutomationPoint { track_id, index: 0 },
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SetVolumeAutomation(track_id, vec![point]),
+    ));
+    assert_eq!(app.project.tracks()[0].volume_automation(), &[point]);
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::DeleteVolumeAutomationPoint { track_id, index: 0 },
+    ));
+    assert!(app.project.tracks()[0].volume_automation().is_empty());
+    assert!(app.project.undo().unwrap());
+    assert_eq!(app.project.tracks()[0].volume_automation(), &[point]);
+}
+
+#[test]
 fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
     let mut app = App::default();
     let new_project = commands::for_menu(&app, MainMenu::File)

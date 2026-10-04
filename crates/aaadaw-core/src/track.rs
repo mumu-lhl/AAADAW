@@ -13,6 +13,31 @@ impl TrackId {
     }
 }
 
+/// One sample-clock point in a track's read-mode volume automation lane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VolumeAutomationPoint {
+    sample: u64,
+    gain_db: f32,
+}
+
+impl VolumeAutomationPoint {
+    /// Creates a volume automation point with gain between -60 and +6 dB.
+    pub fn new(sample: u64, gain_db: f32) -> Option<Self> {
+        (gain_db.is_finite() && (-60.0..=6.0).contains(&gain_db))
+            .then_some(Self { sample, gain_db })
+    }
+
+    /// Returns the absolute project sample at which this point occurs.
+    pub fn sample(self) -> u64 {
+        self.sample
+    }
+
+    /// Returns the point's gain in decibels.
+    pub fn gain_db(self) -> f32 {
+        self.gain_db
+    }
+}
+
 /// A track in a project.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
@@ -25,6 +50,7 @@ pub struct Track {
     pub(crate) record_armed: bool,
     pub(crate) instrument: Option<TrackInstrument>,
     pub(crate) fx_chain: Vec<TrackFxPlugin>,
+    pub(crate) volume_automation: Vec<VolumeAutomationPoint>,
 }
 
 /// A CLAP instrument selected for a track. The bundle path is a load hint;
@@ -203,5 +229,10 @@ impl Track {
     /// Returns the ordered CLAP FX chain for this track.
     pub fn fx_chain(&self) -> &[TrackFxPlugin] {
         &self.fx_chain
+    }
+
+    /// Returns this track's ordered sample-clock volume automation points.
+    pub fn volume_automation(&self) -> &[VolumeAutomationPoint] {
+        &self.volume_automation
     }
 }

@@ -21,6 +21,15 @@ const DROP_TARGET: u32 = 8;
 const TIME_SELECTION_FILL: u32 = 9;
 const TIME_SELECTION_EDGE: u32 = 10;
 const AUDIO_WAVEFORM: u32 = 11;
+const AUTOMATION_SEGMENT: u32 = 12;
+const AUTOMATION_POINT: u32 = 13;
+
+#[derive(Debug)]
+pub(super) struct AutomationLane {
+    pub(super) track_index: u32,
+    pub(super) selected_point: Option<usize>,
+    pub(super) points: Vec<(u64, f32)>,
+}
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
@@ -40,6 +49,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) width: f32,
     pub(super) height: f32,
     pub(super) grid_lines: Vec<(u64, bool)>,
+    pub(super) volume_automation: Vec<AutomationLane>,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -229,7 +239,14 @@ impl Primitive for TimelinePrimitive {
         if pipeline.static_generation != Some(self.generation) {
             pipeline.previewed_indices.clear();
             let mut instances = Vec::with_capacity(
-                self.track_count as usize + self.items.len() + self.waveform_bins.len(),
+                self.track_count as usize
+                    + self.items.len()
+                    + self.waveform_bins.len()
+                    + self
+                        .volume_automation
+                        .iter()
+                        .map(|lane| lane.points.len() * 2 + 1)
+                        .sum::<usize>(),
             );
             for track_index in 0..self.track_count {
                 let color = if track_index % 2 == 0 {
@@ -249,6 +266,10 @@ impl Primitive for TimelinePrimitive {
                 }));
             }
             for item in self.items.iter() {
+                let has_automation = self
+                    .volume_automation
+                    .iter()
+                    .any(|lane| lane.track_index == item.track_index as u32);
                 let (color, kind) = match item.kind {
                     ItemKind::Audio => ([74, 99, 122, 255], AUDIO_ITEM),
                     ItemKind::Midi => ([89, 112, 74, 255], MIDI_ITEM),
@@ -257,7 +278,11 @@ impl Primitive for TimelinePrimitive {
                     start_tick: item.start_tick,
                     end_tick: item.end_tick,
                     y: item.track_index as f32 * self.row_height + 7.0,
-                    height: self.row_height - 14.0,
+                    height: if has_automation {
+                        self.row_height - 42.0
+                    } else {
+                        self.row_height - 14.0
+                    },
                     color,
                     item_id: item.id.value(),
                     track_index: item.track_index as u32,
@@ -265,8 +290,13 @@ impl Primitive for TimelinePrimitive {
                 }));
             }
             for bin in self.waveform_bins.iter() {
-                let height = (self.row_height * 0.56).max(1.0);
-                let center = bin.track_index as f32 * self.row_height + self.row_height * 0.62;
+                let has_automation = self
+                    .volume_automation
+                    .iter()
+                    .any(|lane| lane.track_index == bin.track_index as u32);
+                let height = (self.row_height * if has_automation { 0.35 } else { 0.56 }).max(1.0);
+                let center = bin.track_index as f32 * self.row_height
+                    + self.row_height * if has_automation { 0.38 } else { 0.62 };
                 let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
                 let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
                 instances.push(GpuRect::new(GpuRectSpec {
@@ -279,6 +309,69 @@ impl Primitive for TimelinePrimitive {
                     track_index: bin.track_index as u32,
                     kind: AUDIO_WAVEFORM,
                 }));
+            }
+            for lane in &self.volume_automation {
+                let y = |db: f32| {
+                    lane.track_index as f32 * self.row_height
+                        + 66.0
+                        + (6.0 - db.clamp(-60.0, 6.0)) * (16.0 / 66.0)
+                };
+                for pair in lane.points.windows(2) {
+                    instances.push(GpuRect::new(GpuRectSpec {
+                        start_tick: pair[0].0,
+                        end_tick: pair[1].0,
+                        y: y(pair[0].1),
+                        height: y(pair[1].1),
+                        color: [92, 205, 162, 255],
+                        item_id: 0,
+                        track_index: lane.track_index,
+                        kind: AUTOMATION_SEGMENT,
+                    }));
+                }
+                if let Some((first_tick, first_db)) = lane.points.first().copied() {
+                    instances.push(GpuRect::new(GpuRectSpec {
+                        start_tick: 0,
+                        end_tick: first_tick,
+                        y: y(first_db),
+                        height: y(first_db),
+                        color: [92, 205, 162, 255],
+                        item_id: 0,
+                        track_index: lane.track_index,
+                        kind: AUTOMATION_SEGMENT,
+                    }));
+                }
+                if let Some((last_tick, last_db)) = lane.points.last().copied() {
+                    let view_end_tick = self.origin_tick.saturating_add(
+                        (f64::from(self.width) / f64::from(self.pixels_per_tick)).ceil() as u64,
+                    );
+                    instances.push(GpuRect::new(GpuRectSpec {
+                        start_tick: last_tick,
+                        end_tick: view_end_tick.max(last_tick),
+                        y: y(last_db),
+                        height: y(last_db),
+                        color: [92, 205, 162, 255],
+                        item_id: 0,
+                        track_index: lane.track_index,
+                        kind: AUTOMATION_SEGMENT,
+                    }));
+                }
+                for (index, point) in lane.points.iter().enumerate() {
+                    let py = y(point.1);
+                    instances.push(GpuRect::new(GpuRectSpec {
+                        start_tick: point.0,
+                        end_tick: point.0,
+                        y: py - 3.5,
+                        height: 7.0,
+                        color: if lane.selected_point == Some(index) {
+                            [255, 221, 127, 255]
+                        } else {
+                            [170, 244, 205, 255]
+                        },
+                        item_id: 0,
+                        track_index: lane.track_index,
+                        kind: AUTOMATION_POINT,
+                    }));
+                }
             }
             ensure_capacity(
                 device,

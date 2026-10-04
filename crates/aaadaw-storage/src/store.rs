@@ -2,7 +2,7 @@ use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
     MidiNoteSnapshot, Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve,
     TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
-    TrackInstrumentSnapshot, TrackSnapshot,
+    TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -20,7 +20,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -133,6 +133,19 @@ CREATE TABLE midi_controllers (
     UNIQUE (item_id, controller, tick)
 );
 CREATE INDEX midi_controllers_by_item_tick ON midi_controllers(item_id, tick, controller);
+"#;
+
+const MIGRATION_9: &str = r#"
+CREATE TABLE track_volume_automation (
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    sample INTEGER NOT NULL CHECK (sample >= 0),
+    gain_db REAL NOT NULL CHECK (gain_db BETWEEN -60 AND 6),
+    PRIMARY KEY (track_id, position),
+    UNIQUE (track_id, sample)
+);
+CREATE INDEX track_volume_automation_by_sample
+    ON track_volume_automation(track_id, sample);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1918,6 +1931,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             6 => transaction.execute_batch(MIGRATION_6)?,
             7 => transaction.execute_batch(MIGRATION_7)?,
             8 => transaction.execute_batch(MIGRATION_8)?,
+            9 => transaction.execute_batch(MIGRATION_9)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1936,6 +1950,7 @@ fn write_snapshot(
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
+    transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
@@ -1975,6 +1990,18 @@ fn write_snapshot(
     }
 
     for track in &snapshot.tracks {
+        for (position, point) in track.volume_automation.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_volume_automation(track_id, position, sample, gain_db) \
+                 VALUES(?1, ?2, ?3, ?4)",
+                params![
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(point.sample())?,
+                    f64::from(point.gain_db()),
+                ],
+            )?;
+        }
         for (position, plugin) in track.fx_chain.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO track_fx_plugins(track_id, position, plugin_id, plugin_path, enabled, state) \
@@ -2088,6 +2115,7 @@ fn write_snapshot(
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
+    let mut volume_automation = read_volume_automation(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
     let mut fx_statement = connection.prepare(
@@ -2223,10 +2251,37 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     record_armed,
                     instrument,
                     fx_chain: fx_chains.remove(&id).unwrap_or_default(),
+                    volume_automation: volume_automation.remove(&id).unwrap_or_default(),
                 })
             },
         )
         .collect()
+}
+
+fn read_volume_automation(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<VolumeAutomationPoint>>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT track_id, sample, gain_db FROM track_volume_automation \
+         ORDER BY track_id, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut points_by_track = HashMap::<i64, Vec<VolumeAutomationPoint>>::new();
+    for (track_id, sample, gain_db) in rows {
+        let sample = from_sql_u64(sample)?;
+        let point = VolumeAutomationPoint::new(sample, gain_db as f32)
+            .ok_or(StorageError::InvalidStoredData("track volume automation"))?;
+        points_by_track.entry(track_id).or_default().push(point);
+    }
+    Ok(points_by_track)
 }
 
 fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {

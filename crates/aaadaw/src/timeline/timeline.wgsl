@@ -80,10 +80,16 @@ fn vs_main(
         let gutter = min(bin_width * 0.18, 0.6);
         x = start_x * uniforms.view.w + gutter + corner.x * max(bin_width - gutter * 2.0, 0.25);
         width = max(bin_width - gutter * 2.0, 0.25);
+    } else if kind == 13u {
+        x = start_x * uniforms.view.w + (corner.x * 7.0 - 3.5) * uniforms.view.w;
+        width = 7.0 * uniforms.view.w;
     } else {
         width = max(width, 3.0);
     }
-    let logical_y = y_height.x + corner.y * y_height.y;
+    var logical_y = y_height.x + corner.y * y_height.y;
+    if kind == 12u {
+        logical_y = mix(y_height.x, y_height.y, corner.x) + (corner.y - 0.5) * 2.5;
+    }
     let y = logical_y * uniforms.view.w;
     let screen_x = x;
     let screen_y = y;

@@ -323,6 +323,12 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .map_or(track.name(), String::as_str);
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let is_selected = app.timeline.selected_track == Some(track_id);
+    let automation_visible = app.timeline.volume_automation_tracks.contains(&track_id)
+        || (!app
+            .timeline
+            .hidden_volume_automation_tracks
+            .contains(&track_id)
+            && !track.volume_automation().is_empty());
     let fx_chain = track.fx_chain();
     let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
     let fx_button = button(text(if fx_chain.is_empty() {
@@ -357,6 +363,16 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             .padding([2, 4])
             .width(Length::Fill),
         fx_button,
+        button(if automation_visible { "AUTO" } else { "auto" })
+            .style(if automation_visible {
+                iced::widget::button::success
+            } else {
+                iced::widget::button::secondary
+            })
+            .on_press(Message::Timeline(TimelineEvent::ToggleVolumeAutomation(
+                track_id
+            )))
+            .padding([2, 4]),
         button(if has_edit { "✓" } else { "⋯" })
             .on_press(if has_edit {
                 Message::CommitTrackName(track_id)

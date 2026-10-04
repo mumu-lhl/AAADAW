@@ -1,4 +1,6 @@
-use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TimeSignature};
+use aaadaw_core::{
+    DawAction, MidiControllerData, MidiNoteData, Project, TimeSignature, VolumeAutomationPoint,
+};
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -75,6 +77,15 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             volume_db: -3.0,
         })
         .expect("volume change should succeed");
+    project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id,
+            points: vec![
+                VolumeAutomationPoint::new(0, -12.0).unwrap(),
+                VolumeAutomationPoint::new(48_000, 0.0).unwrap(),
+            ],
+        })
+        .expect("track volume automation should persist");
     project
         .apply(DawAction::SetTrackMute {
             track_id,
@@ -266,6 +277,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE track_fx_plugins DROP COLUMN state; \
              DROP TABLE track_fx_parameter_values; \
              DROP TABLE midi_controllers; \
+             DROP TABLE track_volume_automation; \
              DROP TABLE track_fx_plugins; \
              PRAGMA user_version = 2;",
         )
@@ -1228,7 +1240,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
+            "DROP TABLE track_volume_automation; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1275,11 +1287,38 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE midi_controllers; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE track_volume_automation; DROP TABLE midi_controllers; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
     let store = ProjectStore::open(&path).expect("schema seven should migrate");
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn schema_eight_projects_migrate_volume_automation_storage_without_changing_tracks() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy track".to_owned(),
+        })
+        .expect("track should be created");
+    let mut store = ProjectStore::open(&path).expect("project should open");
+    store.save(&project).expect("project should save");
+    store.close().expect("project should close");
+
+    let connection = Connection::open(&path).expect("project should be SQLite");
+    connection
+        .execute_batch("DROP TABLE track_volume_automation; PRAGMA user_version = 8;")
+        .expect("project should resemble a schema-eight database");
+    drop(connection);
+
+    let store = ProjectStore::open(&path).expect("schema eight should migrate");
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
     store.close().expect("migrated project should close");

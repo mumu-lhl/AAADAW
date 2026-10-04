@@ -1,4 +1,7 @@
-use crate::{MidiControllerData, MidiNoteData, ProjectSettings, TempoCurve, TimebaseError};
+use crate::{
+    MidiControllerData, MidiNoteData, ProjectSettings, TempoCurve, TimebaseError,
+    VolumeAutomationPoint,
+};
 use std::fmt;
 
 /// A validated, serialization-friendly copy of project state.
@@ -23,6 +26,7 @@ pub struct TrackSnapshot {
     pub record_armed: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,
     pub fx_chain: Vec<TrackFxPluginSnapshot>,
+    pub volume_automation: Vec<VolumeAutomationPoint>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
