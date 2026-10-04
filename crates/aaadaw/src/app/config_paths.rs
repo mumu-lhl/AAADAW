@@ -24,3 +24,26 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     file.persist(path)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_replacement_keeps_the_existing_destination() {
+        let parent = std::env::temp_dir().join(format!(
+            "aaadaw-atomic-config-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let destination = parent.join("settings");
+        std::fs::create_dir_all(&destination).unwrap();
+        let sentinel = destination.join("preserve-me");
+        std::fs::write(&sentinel, b"existing settings").unwrap();
+
+        assert!(write_atomic(&destination, b"replacement").is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"existing settings");
+
+        let _ = std::fs::remove_dir_all(parent);
+    }
+}
