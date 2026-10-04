@@ -12,6 +12,8 @@ pub enum DawAction {
     CreateBusTrack { index: usize, name: String },
     /// Set or insert a tempo point at the given project tick.
     SetTempo { start_tick: u64, bpm: f64 },
+    /// Remove a tempo point, except for the required initial point at tick zero.
+    DeleteTempoPoint { start_tick: u64 },
     /// Set the interpolation curve from one tempo point to the next.
     SetTempoCurve { start_tick: u64, curve: TempoCurve },
     /// Set or insert a time signature at the given project tick.

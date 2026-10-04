@@ -247,6 +247,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 - Native file picker、后台导入/扫描/pack/relink、进度和取消状态都适合作为 Media panel 的基础。
 - Audio Item 的 sample-clock 精确定位、MIDI 的 tick/音符编辑、Audio/MIDI 相关 Action 不因列表视图退役而丢弃；可保留为 Inspector 和键盘命令。
 - Transport 已占据稳定底部位置；可沿用作为常驻容器，并替换其 placeholder/简化控件。
+- Transport 现提供 edit-cursor BPM 读数和独立 Tempo Map 窗口；tempo point 支持项目 tick/BPM、曲线、批量原子应用与单步撤销。窗口的原生视觉/键鼠验收仍需图形会话运行。
 - 可选 JACK 的播放准备、seek refill、播放状态和异步任务边界保持在 UI 重构之外。
 - 独立 Media workspace 对工程级维护有价值；状态/进度应在 dock 后仍可访问。
 

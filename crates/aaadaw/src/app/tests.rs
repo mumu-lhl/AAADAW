@@ -61,6 +61,63 @@ fn arrangement_automation_add_move_delete_selection_and_undo() {
 }
 
 #[test]
+fn tempo_map_editor_adds_edits_curves_deletes_and_undoes_as_one_action() {
+    let mut app = App::default();
+    app.timeline.edit_cursor_tick = 960;
+    app.refresh_tempo_map_edits();
+
+    let _ = app.update(Message::AddTempoPoint);
+    assert_eq!(app.tempo_map_edits.len(), 2);
+    let _ = app.update(Message::TempoPointBpmChanged(1, "90".to_owned()));
+    let _ = app.update(Message::CycleTempoCurve(0));
+    let previous_revision = app.revision;
+    let _ = app.update(Message::ApplyTempoMap);
+
+    assert_eq!(app.revision, previous_revision + 1);
+    #[cfg(feature = "audio-device")]
+    assert!(app.playback_graph_dirty);
+    assert_eq!(app.project.tempo_at_tick(960), 90.0);
+    assert_eq!(
+        app.project.tempo_points().collect::<Vec<_>>(),
+        vec![
+            (0, 120.0, aaadaw_core::TempoCurve::Linear),
+            (960, 90.0, aaadaw_core::TempoCurve::Step),
+        ]
+    );
+    assert!(app.project.undo().unwrap());
+    assert_eq!(
+        app.project.tempo_points().collect::<Vec<_>>(),
+        vec![(0, 120.0, aaadaw_core::TempoCurve::Step)]
+    );
+    assert!(app.project.redo().unwrap());
+    assert_eq!(app.project.tempo_at_tick(960), 90.0);
+
+    let _ = app.update(Message::TempoPointTickChanged(1, "1920".to_owned()));
+    let _ = app.update(Message::ApplyTempoMap);
+    assert_eq!(app.project.tempo_points().count(), 2);
+    assert_eq!(app.project.tempo_at_tick(1920), 90.0);
+    assert!(app.project.undo().unwrap());
+    assert_eq!(app.project.tempo_at_tick(960), 90.0);
+    assert!(app.project.redo().unwrap());
+    assert_eq!(app.project.tempo_at_tick(1920), 90.0);
+
+    app.project.undo().unwrap();
+    app.project.undo().unwrap();
+    app.refresh_tempo_map_edits();
+    app.timeline.edit_cursor_tick = 960;
+    let _ = app.update(Message::AddTempoPoint);
+    let _ = app.update(Message::DeleteTempoPoint(0));
+    assert_eq!(
+        app.tempo_map_edits.len(),
+        2,
+        "the initial point is protected"
+    );
+    let _ = app.update(Message::DeleteTempoPoint(1));
+    let _ = app.update(Message::ApplyTempoMap);
+    assert_eq!(app.project.tempo_points().count(), 1);
+}
+
+#[test]
 fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
     let mut app = App::default();
     let new_project = commands::for_menu(&app, MainMenu::File)

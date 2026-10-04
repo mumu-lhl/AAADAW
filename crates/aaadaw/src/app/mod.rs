@@ -16,7 +16,9 @@ use aaadaw_app::{
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
-use aaadaw_core::{AudioItem, DawAction, FxParameterChange, ItemId, MidiItem, Project, TrackId};
+use aaadaw_core::{
+    AudioItem, DawAction, FxParameterChange, ItemId, MidiItem, Project, TempoCurve, TrackId,
+};
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
@@ -151,6 +153,9 @@ struct App {
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    tempo_map_window_id: Option<iced::window::Id>,
+    tempo_map_edits: Vec<TempoMapEdit>,
+    tempo_map_feedback: String,
     fx_chain_window_id: Option<iced::window::Id>,
     fx_chain_track_id: Option<TrackId>,
     fx_chain_selected_index: Option<usize>,
@@ -293,6 +298,25 @@ struct App {
     clap_instrument_targets: HashMap<u64, TrackId>,
     #[cfg(feature = "audio-device")]
     clap_plugin_warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct TempoMapEdit {
+    original_tick: Option<u64>,
+    tick: String,
+    bpm: String,
+    curve: TempoCurve,
+}
+
+#[cfg(feature = "audio-device")]
+fn action_changes_tempo_map(action: &DawAction) -> bool {
+    match action {
+        DawAction::SetTempo { .. }
+        | DawAction::DeleteTempoPoint { .. }
+        | DawAction::SetTempoCurve { .. } => true,
+        DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_changes_tempo_map),
+        _ => false,
+    }
 }
 
 #[derive(Debug)]
@@ -695,6 +719,13 @@ impl App {
         let window_safe_message = matches!(
             &message,
             Message::OpenSettings
+                | Message::OpenTempoMap
+                | Message::ApplyTempoMap
+                | Message::AddTempoPoint
+                | Message::DeleteTempoPoint(_)
+                | Message::TempoPointTickChanged(_, _)
+                | Message::TempoPointBpmChanged(_, _)
+                | Message::CycleTempoCurve(_)
                 | Message::OpenTrackFxChain(_)
                 | Message::OpenTrackInstrumentPicker(_)
                 | Message::OpenPluginPicker
@@ -971,11 +1002,45 @@ impl App {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
             }
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenTempoMap => task = self.open_tempo_map(),
+            Message::AddTempoPoint => self.add_tempo_point_edit(),
+            Message::DeleteTempoPoint(index) => {
+                if index < self.tempo_map_edits.len()
+                    && self.tempo_map_edits[index].original_tick != Some(0)
+                {
+                    self.tempo_map_edits.remove(index);
+                }
+            }
+            Message::TempoPointTickChanged(index, value) => {
+                if let Some(point) = self.tempo_map_edits.get_mut(index) {
+                    point.tick = value;
+                }
+            }
+            Message::TempoPointBpmChanged(index, value) => {
+                if let Some(point) = self.tempo_map_edits.get_mut(index) {
+                    point.bpm = value;
+                }
+            }
+            Message::CycleTempoCurve(index) => {
+                let has_next = index + 1 < self.tempo_map_edits.len();
+                if has_next && let Some(point) = self.tempo_map_edits.get_mut(index) {
+                    point.curve = match point.curve {
+                        TempoCurve::Step => TempoCurve::Linear,
+                        TempoCurve::Linear => TempoCurve::Logarithmic,
+                        TempoCurve::Logarithmic => TempoCurve::Bézier,
+                        TempoCurve::Bézier => TempoCurve::Step,
+                    };
+                }
+            }
+            Message::ApplyTempoMap => task = self.apply_tempo_map_edits(),
             Message::WindowClosed(window_id) => {
                 if self.settings_window_id == Some(window_id) {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
+                } else if self.tempo_map_window_id == Some(window_id) {
+                    self.tempo_map_window_id = None;
+                    self.tempo_map_edits.clear();
                 } else if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                     self.fx_chain_window_id = None;
@@ -1679,12 +1744,34 @@ impl App {
             }
             Message::Undo => {
                 self.active_menu = None;
+                let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 self.undo();
+                let tempo_changed = self.project.tempo_points().ne(tempo_before);
+                if tempo_changed {
+                    if self.tempo_map_window_id.is_some() {
+                        self.refresh_tempo_map_edits();
+                    }
+                    #[cfg(feature = "audio-device")]
+                    if self.playback.is_some() {
+                        task = self.prepare_playback(self.playhead_sample, self.playback_playing);
+                    }
+                }
                 self.sync_all_track_mix_to_playback();
             }
             Message::Redo => {
                 self.active_menu = None;
+                let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 self.redo();
+                let tempo_changed = self.project.tempo_points().ne(tempo_before);
+                if tempo_changed {
+                    if self.tempo_map_window_id.is_some() {
+                        self.refresh_tempo_map_edits();
+                    }
+                    #[cfg(feature = "audio-device")]
+                    if self.playback.is_some() {
+                        task = self.prepare_playback(self.playhead_sample, self.playback_playing);
+                    }
+                }
                 self.sync_all_track_mix_to_playback();
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
@@ -1795,6 +1882,8 @@ impl App {
                 match result {
                     Some(Ok(project)) => {
                         self.project = project;
+                        self.refresh_tempo_map_edits();
+                        self.tempo_map_feedback.clear();
                         self.midi_note_clipboard.source_item_id = None;
                         self.midi_note_clipboard.last_paste = None;
                         self.timeline.rebuild(&self.project);
@@ -2095,6 +2184,8 @@ impl App {
         }
 
         self.project = Project::new();
+        self.refresh_tempo_map_edits();
+        self.tempo_map_feedback.clear();
         self.project_generation = self.project_generation.wrapping_add(1);
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;
@@ -2134,6 +2225,145 @@ impl App {
         });
         self.settings_window_id = Some(window_id);
         task.discard()
+    }
+
+    fn open_tempo_map(&mut self) -> Task<Message> {
+        if let Some(window_id) = self.tempo_map_window_id {
+            return iced::window::gain_focus(window_id);
+        }
+        self.refresh_tempo_map_edits();
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(660.0, 420.0),
+            min_size: Some(iced::Size::new(560.0, 320.0)),
+            ..iced::window::Settings::default()
+        });
+        self.tempo_map_window_id = Some(window_id);
+        task.discard()
+    }
+
+    fn refresh_tempo_map_edits(&mut self) {
+        self.tempo_map_edits = self
+            .project
+            .tempo_points()
+            .map(|(tick, bpm, curve)| TempoMapEdit {
+                original_tick: Some(tick),
+                tick: tick.to_string(),
+                bpm: bpm.to_string(),
+                curve,
+            })
+            .collect();
+    }
+
+    fn add_tempo_point_edit(&mut self) {
+        let tick = self.timeline.edit_cursor_tick;
+        if self
+            .tempo_map_edits
+            .iter()
+            .any(|point| point.tick.parse::<u64>().ok() == Some(tick))
+        {
+            self.tempo_map_feedback = "A tempo point already exists at the edit cursor".to_owned();
+            return;
+        }
+        let bpm = self.project.tempo_at_tick(tick);
+        let point = TempoMapEdit {
+            original_tick: None,
+            tick: tick.to_string(),
+            bpm: bpm.to_string(),
+            curve: TempoCurve::Step,
+        };
+        let index = self
+            .tempo_map_edits
+            .partition_point(|existing| existing.tick.parse::<u64>().unwrap_or(u64::MAX) < tick);
+        self.tempo_map_edits.insert(index, point);
+        self.tempo_map_feedback.clear();
+    }
+
+    fn apply_tempo_map_edits(&mut self) -> Task<Message> {
+        let mut desired = Vec::with_capacity(self.tempo_map_edits.len());
+        for point in &self.tempo_map_edits {
+            let (Ok(tick), Ok(bpm)) = (
+                point.tick.trim().parse::<u64>(),
+                point.bpm.trim().parse::<f64>(),
+            ) else {
+                self.tempo_map_feedback = "Enter a whole project tick and a numeric BPM".to_owned();
+                return Task::none();
+            };
+            if !bpm.is_finite() || bpm <= 0.0 {
+                self.tempo_map_feedback = "BPM must be finite and greater than zero".to_owned();
+                return Task::none();
+            }
+            desired.push((tick, bpm, point.curve, point.original_tick));
+        }
+        desired.sort_by_key(|point| point.0);
+        if desired.first().map(|point| point.0) != Some(0) {
+            self.tempo_map_feedback = "The initial tempo point must stay at tick zero".to_owned();
+            return Task::none();
+        }
+        if desired.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            self.tempo_map_feedback = "Tempo point positions must be unique".to_owned();
+            return Task::none();
+        }
+
+        let current = self.project.tempo_points().collect::<Vec<_>>();
+        let desired_ticks = desired.iter().map(|point| point.0).collect::<HashSet<_>>();
+        let mut actions = current
+            .iter()
+            .filter(|(tick, _, _)| *tick != 0 && !desired_ticks.contains(tick))
+            .map(|(start_tick, _, _)| DawAction::DeleteTempoPoint {
+                start_tick: *start_tick,
+            })
+            .collect::<Vec<_>>();
+        for (tick, bpm, curve, _) in &desired {
+            if current
+                .iter()
+                .find(|(current_tick, _, _)| current_tick == tick)
+                .is_none_or(|(_, current_bpm, _)| current_bpm != bpm)
+            {
+                actions.push(DawAction::SetTempo {
+                    start_tick: *tick,
+                    bpm: *bpm,
+                });
+            }
+            let final_point = desired.last().is_some_and(|last| last.0 == *tick);
+            let desired_curve = if final_point {
+                TempoCurve::Step
+            } else {
+                *curve
+            };
+            if current
+                .iter()
+                .find(|(current_tick, _, _)| current_tick == tick)
+                .is_none_or(|(_, _, current_curve)| current_curve != &desired_curve)
+            {
+                actions.push(DawAction::SetTempoCurve {
+                    start_tick: *tick,
+                    curve: desired_curve,
+                });
+            }
+        }
+        if actions.is_empty() {
+            self.tempo_map_feedback = "Tempo map is unchanged".to_owned();
+            return Task::none();
+        }
+        let previous_revision = self.revision;
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Tempo map edited",
+        );
+        if self.revision != previous_revision {
+            self.refresh_tempo_map_edits();
+            self.tempo_map_feedback = "Tempo map applied as one undoable edit".to_owned();
+            #[cfg(feature = "audio-device")]
+            if self.playback.is_some() {
+                return self.prepare_playback(self.playhead_sample, self.playback_playing);
+            }
+        } else {
+            self.tempo_map_feedback = self.status.clone();
+        }
+        Task::none()
     }
 
     fn open_midi_editor(&mut self, item_id: ItemId) -> Task<Message> {
@@ -2736,6 +2966,8 @@ impl App {
     }
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
+        #[cfg(feature = "audio-device")]
+        let tempo_map_changed = action_changes_tempo_map(&action);
         let live_mix_track = match &action {
             DawAction::SetTrackVolume { track_id, .. }
             | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
@@ -2752,6 +2984,10 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                #[cfg(feature = "audio-device")]
+                if tempo_map_changed {
+                    self.playback_graph_dirty = true;
+                }
                 if let Some(track_id) = live_mix_track {
                     self.sync_track_mix_to_playback(track_id);
                 }
@@ -3401,6 +3637,8 @@ impl App {
     }
 
     fn undo(&mut self) {
+        #[cfg(feature = "audio-device")]
+        let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
         if let Some(parameter_id) = self
             .fx_parameter_gesture
             .as_ref()
@@ -3418,6 +3656,10 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                #[cfg(feature = "audio-device")]
+                if self.project.tempo_points().ne(tempo_before) {
+                    self.playback_graph_dirty = true;
+                }
                 self.sync_fx_parameter_cache_from_project();
                 "Action undone".to_owned()
             }
@@ -3427,6 +3669,8 @@ impl App {
     }
 
     fn redo(&mut self) {
+        #[cfg(feature = "audio-device")]
+        let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
         if let Some(parameter_id) = self
             .fx_parameter_gesture
             .as_ref()
@@ -3448,6 +3692,10 @@ impl App {
                     });
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                #[cfg(feature = "audio-device")]
+                if self.project.tempo_points().ne(tempo_before) {
+                    self.playback_graph_dirty = true;
+                }
                 self.sync_fx_parameter_cache_from_project();
                 "Action redone".to_owned()
             }

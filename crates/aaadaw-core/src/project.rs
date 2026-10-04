@@ -554,6 +554,11 @@ impl Project {
         self.state.tempo_map.tempo_at_tick(tick)
     }
 
+    /// Returns the ordered tempo points as `(start_tick, bpm, curve_to_next)` tuples.
+    pub fn tempo_points(&self) -> impl Iterator<Item = (u64, f64, TempoCurve)> + '_ {
+        self.state.tempo_map.points()
+    }
+
     /// Converts a tick to a one-based measure/beat and an in-beat tick offset.
     pub fn musical_position_at_tick(&self, tick: u64) -> Result<MusicalPosition, TimebaseError> {
         self.state.meter_map.position_at_tick(tick)
@@ -1066,6 +1071,29 @@ impl Project {
                     start_tick,
                     before: state.tempo_map.point_at(start_tick),
                     after: Some(bpm),
+                }
+            }
+            DawAction::DeleteTempoPoint { start_tick } => {
+                let before = state
+                    .tempo_map
+                    .point_at(start_tick)
+                    .ok_or(ActionError::TempoPointNotFound { start_tick })?;
+                let mut candidate_map = state.tempo_map.clone();
+                candidate_map
+                    .set_point(start_tick, None)
+                    .map_err(|error| match error {
+                        TimebaseError::CannotRemoveInitialTempo => {
+                            ActionError::CannotRemoveInitialTempo
+                        }
+                        TimebaseError::TempoPointNotFound => {
+                            ActionError::TempoPointNotFound { start_tick }
+                        }
+                        _ => ActionError::TempoMapOutOfRange,
+                    })?;
+                ProjectEvent::TempoChanged {
+                    start_tick,
+                    before: Some(before),
+                    after: None,
                 }
             }
             DawAction::SetTempoCurve { start_tick, curve } => {
