@@ -61,7 +61,10 @@ pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositi
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-pub use wasapi_output::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
+pub use wasapi_output::{
+    WasapiAudioOutput, WasapiOutputDeviceInfo, WasapiOutputError, WasapiOutputStats,
+    enumerate_output_devices as enumerate_wasapi_output_devices,
+};
 
 use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
 use std::cell::Cell;

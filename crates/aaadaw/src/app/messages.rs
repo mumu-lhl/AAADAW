@@ -326,6 +326,12 @@ pub(crate) enum Message {
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     },
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    WasapiOutputDevicesLoaded(Result<Vec<aaadaw_engine::WasapiOutputDeviceInfo>, String>),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    RefreshWasapiOutputDevices,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    SelectWasapiOutputDevice(Option<String>),
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(

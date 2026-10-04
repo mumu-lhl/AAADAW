@@ -430,6 +430,7 @@ impl PreparedAudioPlayback {
     pub fn into_output(
         self,
         backend: PlaybackBackend,
+        _wasapi_device_id: Option<&str>,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
@@ -449,7 +450,8 @@ impl PreparedAudioPlayback {
             ),
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
             PlaybackBackend::Wasapi => DeviceAudioOutput::Wasapi(
-                WasapiAudioOutput::open(graph).map_err(PlaybackBuildError::Wasapi)?,
+                WasapiAudioOutput::open(graph, _wasapi_device_id)
+                    .map_err(PlaybackBuildError::Wasapi)?,
             ),
         };
         Ok(RunningAudioPlayback {
@@ -480,6 +482,7 @@ impl PreparedAudioPlayback {
     pub fn into_output(
         self,
         _backend: PlaybackBackend,
+        _wasapi_device_id: Option<&str>,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         Err(PlaybackBuildError::NoAudioOutputBackend)
     }

@@ -5,6 +5,7 @@ use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedB
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -237,12 +238,23 @@ impl Drop for Callback {
 #[derive(Debug)]
 pub enum WasapiOutputError {
     DeviceUnavailable,
+    SelectedDeviceUnavailable(String),
+    InvalidDeviceId(String),
     Cpal(cpal::Error),
-    NoStereoConfig { sample_rate: u32 },
+    NoStereoConfig {
+        sample_rate: u32,
+        is_default_device: bool,
+    },
     UnsupportedSampleFormat(SampleFormat),
-    SampleRateMismatch { project: u32, device: u32 },
+    SampleRateMismatch {
+        project: u32,
+        device: u32,
+    },
     UnknownBufferSize,
-    DeviceBlockTooLarge { device: usize, maximum: usize },
+    DeviceBlockTooLarge {
+        device: usize,
+        maximum: usize,
+    },
     ControlQueueFull,
     GraphReplacementInFlight,
     ShutdownTimedOut,
@@ -252,10 +264,24 @@ impl fmt::Display for WasapiOutputError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeviceUnavailable => f.write_str("Windows has no default playback device"),
+            Self::SelectedDeviceUnavailable(id) => {
+                write!(f, "selected WASAPI output device is unavailable ({id})")
+            }
+            Self::InvalidDeviceId(id) => {
+                write!(f, "saved WASAPI output device ID is invalid ({id})")
+            }
             Self::Cpal(error) => write!(f, "WASAPI output error: {error}"),
-            Self::NoStereoConfig { sample_rate } => write!(
+            Self::NoStereoConfig {
+                sample_rate,
+                is_default_device,
+            } => write!(
                 f,
-                "default WASAPI device has no stereo PCM configuration supporting {sample_rate} Hz"
+                "{} WASAPI device has no stereo PCM configuration supporting {sample_rate} Hz",
+                if *is_default_device {
+                    "default"
+                } else {
+                    "selected"
+                }
             ),
             Self::UnsupportedSampleFormat(format) => write!(
                 f,
@@ -328,11 +354,24 @@ where
 }
 
 impl WasapiAudioOutput {
-    pub fn open(graph: AudioRenderGraph) -> Result<Self, WasapiOutputError> {
+    pub fn open(
+        graph: AudioRenderGraph,
+        selected_device_id: Option<&str>,
+    ) -> Result<Self, WasapiOutputError> {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or(WasapiOutputError::DeviceUnavailable)?;
+        let device = match selected_device_id {
+            Some(id) => {
+                let parsed = parse_wasapi_device_id(id)?;
+                let device = host
+                    .output_devices()?
+                    .find(|device| device.id().is_ok_and(|device_id| device_id == parsed));
+                require_selected_output_device(id, device)?
+            }
+            None => host
+                .default_output_device()
+                .ok_or(WasapiOutputError::DeviceUnavailable)?,
+        };
+        let is_default_device = selected_device_id.is_none();
         let project_rate = graph.sample_rate();
         let max_block_frames = graph.max_block_frames();
         let supported = device.supported_output_configs()?;
@@ -354,6 +393,7 @@ impl WasapiAudioOutput {
             .min_by_key(|(range, _)| u8::from(range.sample_format() != SampleFormat::F32))
             .ok_or(WasapiOutputError::NoStereoConfig {
                 sample_rate: project_rate,
+                is_default_device,
             })?;
         let sample_format = selected.sample_format();
         let mut config = selected.with_sample_rate(project_rate).config();
@@ -530,6 +570,32 @@ impl WasapiAudioOutput {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasapiOutputDeviceInfo {
+    pub id: String,
+    pub name: String,
+}
+
+fn parse_wasapi_device_id(id: &str) -> Result<cpal::DeviceId, WasapiOutputError> {
+    cpal::DeviceId::from_str(id).map_err(|_| WasapiOutputError::InvalidDeviceId(id.to_owned()))
+}
+
+fn require_selected_output_device<T>(id: &str, device: Option<T>) -> Result<T, WasapiOutputError> {
+    device.ok_or_else(|| WasapiOutputError::SelectedDeviceUnavailable(id.to_owned()))
+}
+
+pub fn enumerate_output_devices() -> Result<Vec<WasapiOutputDeviceInfo>, WasapiOutputError> {
+    let host = cpal::default_host();
+    host.output_devices()?
+        .map(|device| {
+            Ok(WasapiOutputDeviceInfo {
+                id: device.id()?.to_string(),
+                name: device.description()?.name().to_owned(),
+            })
+        })
+        .collect()
+}
+
 impl Drop for WasapiAudioOutput {
     fn drop(&mut self) {
         if self.stream.is_some() {
@@ -547,6 +613,27 @@ mod tests {
     use super::*;
     use aaadaw_core::{DawAction, Project};
     use cpal::FrameCount;
+
+    #[test]
+    fn persisted_wasapi_device_ids_parse_and_invalid_ids_are_reported() {
+        assert!(parse_wasapi_device_id("wasapi:mock-endpoint").is_ok());
+        assert!(matches!(
+            parse_wasapi_device_id("not-a-device-id"),
+            Err(WasapiOutputError::InvalidDeviceId(_))
+        ));
+    }
+
+    #[test]
+    fn missing_selected_device_is_an_error_instead_of_default_device_fallback() {
+        assert!(matches!(
+            require_selected_output_device::<()>("wasapi:disconnected", None),
+            Err(WasapiOutputError::SelectedDeviceUnavailable(id)) if id == "wasapi:disconnected"
+        ));
+        assert_eq!(
+            require_selected_output_device("wasapi:present", Some(17)).unwrap(),
+            17
+        );
+    }
 
     struct CallbackFixture {
         callback: Callback,
