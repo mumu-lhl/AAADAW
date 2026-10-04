@@ -20,6 +20,31 @@ use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[test]
+fn wasapi_output_enumeration_failures_are_visible_and_clear_loading_state() {
+    let mut app = App::default();
+    app.wasapi_output_devices_loading = true;
+    app.wasapi_output_devices
+        .push(aaadaw_engine::WasapiOutputDeviceInfo {
+            id: "wasapi:stale".to_owned(),
+            name: "Stale output".to_owned(),
+        });
+
+    app.finish_wasapi_output_device_enumeration(Err("endpoint service stopped".to_owned()));
+
+    assert!(!app.wasapi_output_devices_loading);
+    assert!(app.wasapi_output_devices.is_empty());
+    assert_eq!(
+        app.wasapi_output_devices_error.as_deref(),
+        Some("endpoint service stopped")
+    );
+    assert_eq!(
+        app.audio_settings_feedback,
+        "WASAPI output devices could not be listed: endpoint service stopped"
+    );
+}
+
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 #[test]
 fn saved_playback_backend_restores_only_when_available_in_this_build() {

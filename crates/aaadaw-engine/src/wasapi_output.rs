@@ -584,21 +584,16 @@ fn require_selected_output_device<T>(id: &str, device: Option<T>) -> Result<T, W
     device.ok_or_else(|| WasapiOutputError::SelectedDeviceUnavailable(id.to_owned()))
 }
 
-fn collect_output_device_infos<I, E>(devices: I) -> Result<Vec<WasapiOutputDeviceInfo>, E>
-where
-    I: IntoIterator<Item = Result<WasapiOutputDeviceInfo, E>>,
-{
-    devices.into_iter().collect()
-}
-
 pub fn enumerate_output_devices() -> Result<Vec<WasapiOutputDeviceInfo>, WasapiOutputError> {
     let host = cpal::default_host();
-    collect_output_device_infos(host.output_devices()?.map(|device| {
-        Ok(WasapiOutputDeviceInfo {
-            id: device.id()?.to_string(),
-            name: device.description()?.name().to_owned(),
+    host.output_devices()?
+        .map(|device| {
+            Ok(WasapiOutputDeviceInfo {
+                id: device.id()?.to_string(),
+                name: device.description()?.name().to_owned(),
+            })
         })
-    }))
+        .collect()
 }
 
 impl Drop for WasapiAudioOutput {
@@ -637,21 +632,6 @@ mod tests {
         assert_eq!(
             require_selected_output_device("wasapi:present", Some(17)).unwrap(),
             17
-        );
-    }
-
-    #[test]
-    fn device_enumeration_propagates_per_device_errors() {
-        let result = collect_output_device_infos(vec![
-            Ok(WasapiOutputDeviceInfo {
-                id: "wasapi:first".to_owned(),
-                name: "First".to_owned(),
-            }),
-            Err("device disconnected during enumeration"),
-        ]);
-        assert_eq!(
-            result.unwrap_err(),
-            "device disconnected during enumeration"
         );
     }
 

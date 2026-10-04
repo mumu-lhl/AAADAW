@@ -1491,18 +1491,7 @@ impl App {
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
             Message::WasapiOutputDevicesLoaded(result) => {
-                self.wasapi_output_devices_loading = false;
-                match result {
-                    Ok(devices) => {
-                        self.wasapi_output_devices = devices;
-                        self.wasapi_output_devices_error = None;
-                    }
-                    Err(error) => {
-                        self.wasapi_output_devices_error = Some(error.clone());
-                        self.audio_settings_feedback =
-                            format!("WASAPI output devices could not be listed: {error}");
-                    }
-                }
+                self.finish_wasapi_output_device_enumeration(result);
             }
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
             Message::RefreshWasapiOutputDevices => {
@@ -2491,6 +2480,26 @@ impl App {
             }),
             Message::WasapiOutputDevicesLoaded,
         )
+    }
+
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    fn finish_wasapi_output_device_enumeration(
+        &mut self,
+        result: Result<Vec<aaadaw_engine::WasapiOutputDeviceInfo>, String>,
+    ) {
+        self.wasapi_output_devices_loading = false;
+        match result {
+            Ok(devices) => {
+                self.wasapi_output_devices = devices;
+                self.wasapi_output_devices_error = None;
+            }
+            Err(error) => {
+                self.wasapi_output_devices.clear();
+                self.wasapi_output_devices_error = Some(error.clone());
+                self.audio_settings_feedback =
+                    format!("WASAPI output devices could not be listed: {error}");
+            }
+        }
     }
 
     fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
