@@ -182,6 +182,7 @@
 - [x] 为 MCP writer 提供会话内 Undo/Redo，撤销/重做后保存快照；新 server 从空历史开始，工具仅作用于当前 writer 创建的编辑（[Issue #121](https://github.com/mumu-lhl/AAADAW/issues/121)）。
 - [x] 通过显式 `--write` MCP 工具插入/更新拍号地图和速度图节点；走 `DawAction` 校验、原子持久化及 writer 会话 Undo/Redo（[Issue #133](https://github.com/mumu-lhl/AAADAW/issues/133)、[Issue #135](https://github.com/mumu-lhl/AAADAW/issues/135)）。
 - [x] 通过显式 `--write` MCP 工具设置轨道音量自动化点和录音预备状态；两项均经 Action 校验、持久化并有 no-op 处理（[Issue #113](https://github.com/mumu-lhl/AAADAW/issues/113)、[Issue #115](https://github.com/mumu-lhl/AAADAW/issues/115)）。
+- [x] 通过授权 MCP writer 创建有界 MIDI clip（track、绝对起点、时长），经 `InsertMidiItem` Action 持久化并加入会话 Undo/Redo（[Issue #151](https://github.com/mumu-lhl/AAADAW/issues/151)）。
 - [ ] 继续评估其他适合 MCP 的无对话框 Action，并为危险操作保留显式授权边界。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。

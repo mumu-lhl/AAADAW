@@ -356,6 +356,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .as_array()
             .unwrap()
             .iter()
+            .all(|tool| tool["name"] != "daw_create_midi_item")
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
             .all(|tool| !matches!(tool["name"].as_str(), Some("daw_undo" | "daw_redo")))
     );
     let structure = response_for(4)["result"]["contents"][0]["text"]
@@ -2086,4 +2093,157 @@ fn mcp_undo_and_redo_apply_only_session_local_edits_and_persist() {
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     assert_eq!(reopened.tracks().len(), 1);
     assert_eq!(reopened.tracks()[0].name(), "Take");
+}
+
+#[test]
+fn explicitly_authorized_mcp_creates_midi_items_undoably_and_persistently() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-midi-item-test.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keys".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let tool_call = |id, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "daw_create_midi_item", "arguments": arguments}
+        })
+    };
+    let summary_read = |id| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "resources/read",
+            "params": {"uri": format!("daw://project/track/{}/midi_summary", track_id.value())}
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-midi-item-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        tool_call(
+            3,
+            json!({"track_id": track_id.value(), "start_tick": 960, "length_ticks": 3840}),
+        ),
+        tool_call(
+            4,
+            json!({"track_id": track_id.value(), "start_tick": 0, "length_ticks": 0}),
+        ),
+        tool_call(
+            5,
+            json!({"track_id": track_id.value(), "start_tick": u64::MAX, "length_ticks": 1}),
+        ),
+        tool_call(
+            6,
+            json!({"track_id": 999_999, "start_tick": 0, "length_ticks": 960}),
+        ),
+        summary_read(7),
+        json!({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "daw_undo", "arguments": {}}}),
+        summary_read(9),
+        json!({"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "daw_redo", "arguments": {}}}),
+        summary_read(11),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["name"] == "daw_create_midi_item")
+    );
+    assert_eq!(
+        response_for(3)["result"]["isError"],
+        false,
+        "{}",
+        response_for(3)
+    );
+    let created = &response_for(3)["result"]["structuredContent"];
+    assert_eq!(created["track_id"], track_id.value());
+    assert_eq!(created["start_tick"], 960);
+    assert_eq!(created["length_ticks"], 3840);
+    assert!(created["item_id"].as_u64().is_some());
+    for id in [4, 5, 6] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+    let summary = |id| {
+        serde_json::from_str::<Value>(
+            response_for(id)["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    assert_eq!(summary(7)["midi_item_count"], 1);
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(summary(9)["midi_item_count"], 0);
+    assert_eq!(
+        response_for(10)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(summary(11)["midi_item_count"], 1);
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    assert_eq!(reopened.midi_items().len(), 1);
+    let item = &reopened.midi_items()[0];
+    assert_eq!(item.id().value(), created["item_id"].as_u64().unwrap());
+    assert_eq!(item.track_id(), track_id);
+    assert_eq!(item.start_tick(), 960);
+    assert_eq!(item.length_ticks(), 3840);
 }
