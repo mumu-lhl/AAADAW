@@ -2419,6 +2419,16 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
         query(15),
         call(16, "daw_redo", json!({})),
         query(17),
+        call(
+            18,
+            "daw_edit_midi_note",
+            json!({"item_id": 999_999, "note_id": note_ids[0], "pitch": 72, "tick": 120, "duration": 960, "velocity": 80}),
+        ),
+        call(
+            19,
+            "daw_delete_midi_notes",
+            json!({"item_id": 999_999, "note_ids": [note_ids[0]]}),
+        ),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -2528,6 +2538,8 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
             .len(),
         1
     );
+    assert_eq!(response_for(18)["result"]["isError"], true);
+    assert_eq!(response_for(19)["result"]["isError"], true);
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     let saved_item = reopened
