@@ -20,6 +20,8 @@ jobs:
         run: cargo check --workspace --all-targets --features aaadaw/wasapi-backend
       - name: Test WASAPI device enumeration error state
         run: cargo test -p aaadaw --features wasapi-backend wasapi_output_enumeration_failures_are_visible_and_clear_loading_state
+      - name: Test WASAPI input device enumeration error state
+        run: cargo test -p aaadaw --features wasapi-backend wasapi_input_enumeration_failures_are_visible_and_clear_loading_state
       - name: Test Windows WASAPI backend policies
         run: cargo test -p aaadaw-engine --features wasapi-backend
 
