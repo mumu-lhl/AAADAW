@@ -2460,11 +2460,33 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
         assert_eq!(response_for(id)["result"]["isError"], true);
     }
     assert_eq!(
-        response_for(7)["result"]["structuredContent"]["notes"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
+        response_for(7)["result"]["structuredContent"]["notes"],
+        json!([
+            {
+                "item_id": item_id.value(),
+                "note_id": note_ids[0],
+                "tick": 120,
+                "pitch": 72,
+                "duration": 960,
+                "velocity": 80
+            },
+            {
+                "item_id": item_id.value(),
+                "note_id": note_ids[1],
+                "tick": 960,
+                "pitch": 64,
+                "duration": 480,
+                "velocity": 90
+            },
+            {
+                "item_id": item_id.value(),
+                "note_id": note_ids[2],
+                "tick": 1920,
+                "pitch": 67,
+                "duration": 480,
+                "velocity": 80
+            }
+        ])
     );
     assert_eq!(response_for(8)["result"]["isError"], false);
     assert_eq!(
