@@ -44,6 +44,16 @@ pub(crate) enum SettingsCategory {
     Audio,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorLane {
+    #[default]
+    Velocity,
+    Sustain,
+    Volume,
+    Modulation,
+    Expression,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
@@ -56,6 +66,7 @@ pub(crate) enum Message {
     OpenTrackInstrumentPicker(TrackId),
     OpenMidiEditor(ItemId),
     CloseMidiEditor,
+    SelectMidiEditorLane(MidiEditorLane),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
