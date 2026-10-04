@@ -5,8 +5,8 @@ use crate::timeline::{
 };
 use aaadaw_core::Track;
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, stack,
-    text, text_input,
+    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, slider,
+    stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 
@@ -422,21 +422,71 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             }
         })
         .padding([2, 8]);
-    let controls = row![
+    let mix_gesture = app
+        .track_mix_gesture
+        .filter(|gesture| gesture.track_id == track_id);
+    let volume_db = mix_gesture
+        .map(|gesture| gesture.after_volume_db)
+        .unwrap_or_else(|| track.volume_db());
+    let pan = mix_gesture
+        .map(|gesture| gesture.after_pan)
+        .unwrap_or_else(|| track.pan());
+    let volume_text = app
+        .track_volume_edits
+        .get(&track_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{volume_db:.1}"));
+    let pan_text = app
+        .track_pan_edits
+        .get(&track_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{pan:.2}"));
+    let volume = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
+        Message::PreviewTrackVolume(track_id, value)
+    })
+    .step(0.1_f32)
+    .on_release(Message::CommitTrackVolume(track_id))
+    .width(Length::Fill);
+    let pan_slider = slider(-1.0..=1.0, pan, move |value| {
+        Message::PreviewTrackPan(track_id, value)
+    })
+    .step(0.01_f32)
+    .on_release(Message::CommitTrackPan(track_id))
+    .width(Length::Fill);
+    let volume_controls = row![
         mute,
         solo,
         record_arm,
-        text(format!("{:.0} dB", track.volume_db())).size(11),
-        small_control("−", Message::AdjustVolume(track_id, -1.0)),
-        small_control("+", Message::AdjustVolume(track_id, 1.0)),
-        text(pan_label(track.pan())).size(11),
-        small_control("◀", Message::AdjustPan(track_id, -0.1)),
-        small_control("▶", Message::AdjustPan(track_id, 0.1)),
+        text("Vol").size(11),
+        volume,
+        text_input("dB", &volume_text)
+            .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
+            .on_submit(Message::CommitTrackVolumeText(track_id))
+            .width(Length::Fixed(48.0)),
+        text("dB").size(10),
+        button("0")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::ResetTrackVolume(track_id))
+            .padding([2, 5]),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+    let pan_controls = row![
+        text(format!("Pan {}", pan_label(pan))).size(11),
+        pan_slider,
+        text_input("-1 to 1", &pan_text)
+            .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
+            .on_submit(Message::CommitTrackPanText(track_id))
+            .width(Length::Fixed(48.0)),
+        button("C")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::ResetTrackPan(track_id))
+            .padding([2, 5]),
     ]
     .spacing(3)
     .align_y(Alignment::Center);
     let selected = app.timeline.selected_track == Some(track_id);
-    let row = container(column![heading, controls].spacing(4))
+    let row = container(column![heading, volume_controls, pan_controls].spacing(2))
         .padding([5, 4])
         .height(TIMELINE_ROW_HEIGHT)
         .width(Length::Fill)
@@ -456,13 +506,6 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             track_id,
         )))
         .into()
-}
-
-fn small_control<'a>(label: &'static str, message: Message) -> iced::widget::Button<'a, Message> {
-    button(label)
-        .style(iced::widget::button::secondary)
-        .on_press(message)
-        .padding([2, 5])
 }
 
 fn action_button<'a>(label: &'a str, message: Message) -> iced::widget::Button<'a, Message> {

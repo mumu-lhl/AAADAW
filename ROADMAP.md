@@ -76,7 +76,7 @@
 - [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；支持 sample seek refill、JACK 图替换、实际 PCM 渲染与缺失外链报错。
 - [x] 为 Linux JACK/PipeWire 增加默认立体声输入捕获和 armed-track 录音路径；真实设备验证仍待完成。
 - [x] 保留 JACK 每个捕获周期的帧位置；录音队列溢出或时钟回退时使 take 失败，短暂的周期间隔在 WAV 中写为静音，避免 overdub 时间被压缩（[Issue #38](https://github.com/mumu-lhl/AAADAW/issues/38)）。
-- [ ] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
+- [x] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
 - [ ] 增加 Windows WASAPI 输入；明确各平台的设备枚举、热插拔和延迟语义。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
@@ -86,7 +86,7 @@
 - [x] 在钢琴卷帘中增加 MIDI Expression（CC11）lane（[Issue #32](https://github.com/mumu-lhl/AAADAW/issues/32)）；更多常见控制器继续排期。
 - [x] 停止/seek/graph replacement 时重置 CLAP MIDI 状态，并提供不移动 playhead 的 MIDI Panic 命令（[Issue #30](https://github.com/mumu-lhl/AAADAW/issues/30)）。
 - [x] 在传输栏显示音频流欠载样本数，并与后端 callback 错误区分（[Issue #34](https://github.com/mumu-lhl/AAADAW/issues/34)）。
-- [ ] 在传输栏显示 JACK 明确报告的设备 XRun 次数，并与 PCM 流欠载和 callback 错误区分（[Issue #40](https://github.com/mumu-lhl/AAADAW/issues/40)）；PipeWire 当前绑定没有对应的 per-stream XRun 通知。
+- [x] 在传输栏显示 JACK 明确报告的设备 XRun 次数，并与 PCM 流欠载和 callback 错误区分（[Issue #40](https://github.com/mumu-lhl/AAADAW/issues/40)）；PipeWire 当前绑定没有对应的 per-stream XRun 通知。
 - [ ] 设计并实现可配置的 Master 输出安全保护；明确峰值/响度目标、限幅行为和实时安全约束。
 - [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。
 
@@ -105,7 +105,8 @@
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 为 Arrange Audio/MIDI Item 增加右键上下文菜单（[`docs/tickets/2026-10-02-arrangement-item-context-menu.md`](docs/tickets/2026-10-02-arrangement-item-context-menu.md)）。
 - [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
-- [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。
+- [x] 实现轨道创建/删除/重命名/排序，以及音量、声像、静音和独奏控件；状态变更通过 Action 并支持撤销。音量/声像仍使用离散按钮，活动播放时不更新当前渲染图。
+- [ ] 以连续 fader/pan 控件替换重复点刻度；支持精确输入、单次手势单步撤销，并在活动播放中通过无锁/有界的混音参数接口即时更新（[Issue #44](https://github.com/mumu-lhl/AAADAW/issues/44)）。
 - [x] 增加 Undo/Redo、工程打开/保存和 JACK 播放/停止快捷键；键盘与按钮走相同应用消息，文本控件已消费的按键不触发全局快捷键。
 - [x] 将快捷键设置迁入菜单打开的小型 Settings 窗口；用按键捕获替代文本输入，支持清除单项、恢复默认及冲突反馈（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
 - [x] 固定主窗口为 Arrangement，将 Media 收敛为 Media Browser 面板、移除 Project 子页面，并在 File 菜单加入新建工程命令（[`docs/tickets/2026-10-02-arrangement-only-main-window.md`](docs/tickets/2026-10-02-arrangement-only-main-window.md)）。

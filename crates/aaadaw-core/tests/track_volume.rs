@@ -10,6 +10,7 @@ fn setting_track_volume_changes_the_track_level() {
         })
         .expect("creating a track should succeed");
     let track_id = project.tracks()[0].id();
+    assert!(!project.can_undo_track_mix());
 
     project
         .apply(DawAction::SetTrackVolume {
@@ -19,6 +20,12 @@ fn setting_track_volume_changes_the_track_level() {
         .expect("setting an existing track's volume should succeed");
 
     assert_eq!(project.tracks()[0].volume_db(), -6.0);
+    assert!(project.can_undo_track_mix());
+    assert!(!project.can_redo_track_mix());
+    project.undo().expect("volume edit should undo");
+    assert!(project.can_redo_track_mix());
+    project.redo().expect("volume edit should redo");
+    assert!(project.can_undo_track_mix());
 }
 
 #[test]

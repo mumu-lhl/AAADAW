@@ -42,6 +42,8 @@ pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 use aaadaw_core::Project;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_engine::StoppedTrackFxProcessor;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::TrackMixController;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
 };
@@ -196,10 +198,12 @@ impl PreparedAudioPlayback {
     /// Opens JACK output and retains feeder workers for the lifetime of playback.
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
+        let mix_controller = self.graph.track_mix_controller();
         let (graph, feeders) = self.into_parts();
         let output = JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?;
         Ok(RunningJackPlayback {
             output,
+            mix_controller,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -214,6 +218,7 @@ impl PreparedAudioPlayback {
         self,
         backend: PlaybackBackend,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
+        let mix_controller = self.graph.track_mix_controller();
         let (graph, feeders) = self.into_parts();
         let output = match backend {
             #[cfg(feature = "jack-backend")]
@@ -227,6 +232,7 @@ impl PreparedAudioPlayback {
         };
         Ok(RunningAudioPlayback {
             output,
+            mix_controller,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -272,6 +278,7 @@ enum DeviceAudioOutput {
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
+    mix_controller: TrackMixController,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -281,6 +288,11 @@ pub struct RunningAudioPlayback {
 
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 impl RunningAudioPlayback {
+    /// Updates a track's live playback coefficients without replacing the graph.
+    pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
+        self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
     pub fn backend(&self) -> PlaybackBackend {
         match self.output {
             #[cfg(feature = "jack-backend")]
@@ -347,6 +359,7 @@ impl RunningAudioPlayback {
                 }
             });
         }
+        let mix_controller = prepared.graph.track_mix_controller();
         let (graph, feeders) = prepared.into_parts();
         match &mut self.output {
             #[cfg(feature = "jack-backend")]
@@ -358,6 +371,7 @@ impl RunningAudioPlayback {
                 .replace_graph(graph, self.is_playing)
                 .map_err(PlaybackBuildError::PipeWire)?,
         }
+        self.mix_controller = mix_controller;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }
@@ -499,6 +513,7 @@ impl From<PipeWireOutputStats> for PlaybackStats {
 #[cfg(feature = "jack-backend")]
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
+    mix_controller: TrackMixController,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -508,6 +523,11 @@ pub struct RunningJackPlayback {
 
 #[cfg(feature = "jack-backend")]
 impl RunningJackPlayback {
+    /// Updates a track's live playback coefficients without replacing the graph.
+    pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
+        self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
     /// Queues playback for the next JACK callback.
     pub fn play(&mut self) -> Result<(), JackOutputError> {
         self.output.play()?;
@@ -561,10 +581,12 @@ impl RunningJackPlayback {
                 JackOutputError::GraphReplacementInFlight,
             ));
         }
+        let mix_controller = prepared.graph.track_mix_controller();
         let (graph, feeders) = prepared.into_parts();
         self.output
             .replace_graph(graph, self.is_playing)
             .map_err(PlaybackBuildError::Jack)?;
+        self.mix_controller = mix_controller;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }

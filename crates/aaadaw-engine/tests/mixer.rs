@@ -39,6 +39,38 @@ fn mixer_applies_equal_power_center_pan_and_track_gain() {
 }
 
 #[test]
+fn live_track_mix_updates_take_effect_on_the_next_mixed_block() {
+    let (project, track_ids) = project_with_tracks(&["Track"]);
+    let plan = MixerPlan::compile(project.tracks(), 8).expect("track controls should compile");
+    let controller = plan.track_mix_controller();
+    let mut output = [[0.0_f32; 2]; 1];
+
+    plan.mix_mono_into(&[&[1.0]], &mut output)
+        .expect("initial buffer should mix");
+    let center = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((output[0][0] - center).abs() < 1.0e-6);
+    assert!((output[0][1] - center).abs() < 1.0e-6);
+
+    assert!(controller.set_track_mix(track_ids[0], -6.0, 1.0));
+    plan.mix_mono_into(&[&[1.0]], &mut output)
+        .expect("updated buffer should mix");
+    let expected = 10.0_f32.powf(-6.0 / 20.0);
+    assert_eq!(output[0][0], 0.0);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
+}
+
+#[test]
+fn live_track_mix_rejects_unknown_tracks_and_invalid_pan() {
+    let (project, track_ids) = project_with_tracks(&["Track", "Other"]);
+    let plan =
+        MixerPlan::compile(&project.tracks()[..1], 8).expect("track controls should compile");
+    let controller = plan.track_mix_controller();
+
+    assert!(!controller.set_track_mix(track_ids[0], 0.0, 2.0));
+    assert!(!controller.set_track_mix(track_ids[1], 0.0, 0.0));
+}
+
+#[test]
 fn mixer_obeys_mute_solo_and_hard_pan_controls() {
     let (mut project, track_ids) = project_with_tracks(&["Muted", "Solo", "Other"]);
     project

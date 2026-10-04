@@ -15,7 +15,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 64.0;
+pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 88.0;
 pub(crate) const TIMELINE_RULER_HEIGHT: f32 = 32.0;
 pub(crate) const TCP_SCROLL_ID: &str = "aaadaw-tcp-scroll";
 pub(crate) const TIMELINE_SCROLL_ID: &str = "aaadaw-timeline-scroll";

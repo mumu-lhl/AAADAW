@@ -1084,7 +1084,8 @@ fn track_controls_and_undo_change_project_only_through_actions() {
 
     let _ = app.update(Message::ToggleMute(track_id));
     let _ = app.update(Message::ToggleRecordArm(track_id));
-    let _ = app.update(Message::AdjustVolume(track_id, -3.0));
+    let _ = app.update(Message::TrackVolumeTextChanged(track_id, "-3.0".to_owned()));
+    let _ = app.update(Message::CommitTrackVolumeText(track_id));
     assert!(app.project.tracks()[0].is_muted());
     assert!(app.project.tracks()[0].is_record_armed());
     assert_eq!(app.project.tracks()[0].volume_db(), -3.0);
@@ -1825,10 +1826,30 @@ fn track_pan_adjustment_is_undoable() {
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
 
-    let _ = app.update(Message::AdjustPan(track_id, 0.25));
+    let _ = app.update(Message::PreviewTrackPan(track_id, 0.25));
+    assert_eq!(app.project.tracks()[0].pan(), 0.0);
+    let _ = app.update(Message::CommitTrackPan(track_id));
     assert_eq!(app.project.tracks()[0].pan(), 0.25);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.tracks()[0].pan(), 0.0);
+}
+
+#[test]
+fn dragging_track_volume_commits_one_undoable_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -3.2));
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -5.7));
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+
+    let _ = app.update(Message::CommitTrackVolume(track_id));
+    assert_eq!(app.project.tracks()[0].volume_db(), -5.7);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks().is_empty());
 }
 
 #[test]
