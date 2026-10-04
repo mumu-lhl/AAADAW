@@ -7,6 +7,7 @@ use cpal::{
 };
 use std::error::Error as StdError;
 use std::fmt;
+use std::str::FromStr;
 use std::time::Duration;
 
 const PREFERRED_CAPTURE_FRAMES: u32 = 512;
@@ -151,8 +152,13 @@ where
 #[derive(Debug)]
 pub enum WasapiInputError {
     DeviceUnavailable,
+    SelectedDeviceUnavailable(String),
+    InvalidDeviceId(String),
     Cpal(cpal::Error),
-    NoStereoConfig { sample_rate: u32 },
+    NoStereoConfig {
+        sample_rate: u32,
+        is_default_device: bool,
+    },
 }
 
 impl fmt::Display for WasapiInputError {
@@ -161,10 +167,27 @@ impl fmt::Display for WasapiInputError {
             Self::DeviceUnavailable => {
                 formatter.write_str("Windows has no default recording device")
             }
+            Self::SelectedDeviceUnavailable(id) => {
+                write!(
+                    formatter,
+                    "selected WASAPI input device is unavailable ({id})"
+                )
+            }
+            Self::InvalidDeviceId(id) => {
+                write!(formatter, "saved WASAPI input device ID is invalid ({id})")
+            }
             Self::Cpal(error) => write!(formatter, "WASAPI input error: {error}"),
-            Self::NoStereoConfig { sample_rate } => write!(
+            Self::NoStereoConfig {
+                sample_rate,
+                is_default_device,
+            } => write!(
                 formatter,
-                "default WASAPI input has no stereo PCM configuration supporting {sample_rate} Hz"
+                "{} WASAPI input has no stereo PCM configuration supporting {sample_rate} Hz",
+                if *is_default_device {
+                    "default"
+                } else {
+                    "selected"
+                }
             ),
         }
     }
@@ -174,7 +197,10 @@ impl StdError for WasapiInputError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Cpal(error) => Some(error),
-            Self::DeviceUnavailable | Self::NoStereoConfig { .. } => None,
+            Self::DeviceUnavailable
+            | Self::SelectedDeviceUnavailable(_)
+            | Self::InvalidDeviceId(_)
+            | Self::NoStereoConfig { .. } => None,
         }
     }
 }
@@ -185,23 +211,33 @@ impl From<cpal::Error> for WasapiInputError {
     }
 }
 
-/// A CPAL stream capturing stereo audio from the default WASAPI input device.
+/// A CPAL stream capturing stereo audio from a WASAPI input device.
 pub struct WasapiAudioInput {
     stream: Option<cpal::Stream>,
     sample_rate: u32,
 }
 
 impl WasapiAudioInput {
-    /// Opens the default shared-mode stereo input at the project's sample rate.
+    /// Opens a shared-mode stereo input at the project's sample rate.
     pub fn open(
         producer: AudioCaptureProducer,
         control: AudioCaptureControl,
         project_sample_rate: u32,
+        selected_device_id: Option<&str>,
     ) -> Result<Self, WasapiInputError> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or(WasapiInputError::DeviceUnavailable)?;
+        let device = match selected_device_id {
+            Some(id) => {
+                let parsed = parse_wasapi_input_device_id(id)?;
+                let device =
+                    find_input_device_by_id(&parsed, host.input_devices()?, |device| device.id());
+                require_selected_input_device(id, device)?
+            }
+            None => host
+                .default_input_device()
+                .ok_or(WasapiInputError::DeviceUnavailable)?,
+        };
+        let is_default_device = selected_device_id.is_none();
         let (selected, buffer_size) = device
             .supported_input_configs()?
             .filter(|range| {
@@ -220,6 +256,7 @@ impl WasapiAudioInput {
             .min_by_key(|(range, _)| u8::from(range.sample_format() != SampleFormat::F32))
             .ok_or(WasapiInputError::NoStereoConfig {
                 sample_rate: project_sample_rate,
+                is_default_device,
             })?;
         let sample_format = selected.sample_format();
         let mut config = selected.with_sample_rate(project_sample_rate).config();
@@ -272,6 +309,7 @@ impl WasapiAudioInput {
             _unsupported => {
                 return Err(WasapiInputError::NoStereoConfig {
                     sample_rate: project_sample_rate,
+                    is_default_device,
                 });
             }
         }?;
@@ -296,6 +334,44 @@ impl WasapiAudioInput {
     }
 }
 
+/// WASAPI endpoint shown in Audio settings.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasapiInputDeviceInfo {
+    pub id: String,
+    pub name: String,
+}
+
+fn parse_wasapi_input_device_id(id: &str) -> Result<cpal::DeviceId, WasapiInputError> {
+    cpal::DeviceId::from_str(id).map_err(|_| WasapiInputError::InvalidDeviceId(id.to_owned()))
+}
+
+fn require_selected_input_device<T>(id: &str, device: Option<T>) -> Result<T, WasapiInputError> {
+    device.ok_or_else(|| WasapiInputError::SelectedDeviceUnavailable(id.to_owned()))
+}
+
+fn find_input_device_by_id<T, E>(
+    expected_id: &cpal::DeviceId,
+    devices: impl IntoIterator<Item = T>,
+    mut device_id: impl FnMut(&T) -> Result<cpal::DeviceId, E>,
+) -> Option<T> {
+    devices
+        .into_iter()
+        .find(|device| device_id(device).is_ok_and(|id| id == *expected_id))
+}
+
+/// Lists input-capable WASAPI endpoints with stable CPAL device IDs.
+pub fn enumerate_input_devices() -> Result<Vec<WasapiInputDeviceInfo>, WasapiInputError> {
+    let host = cpal::default_host();
+    host.input_devices()?
+        .map(|device| {
+            Ok(WasapiInputDeviceInfo {
+                id: device.id()?.to_string(),
+                name: device.description()?.name().to_owned(),
+            })
+        })
+        .collect()
+}
+
 impl Drop for WasapiAudioInput {
     fn drop(&mut self) {
         self.shutdown();
@@ -305,9 +381,37 @@ impl Drop for WasapiAudioInput {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaptureClock, capture_buffer_size, capture_interleaved, supports_project_input_config,
+        CaptureClock, WasapiInputError, capture_buffer_size, capture_interleaved,
+        find_input_device_by_id, parse_wasapi_input_device_id, require_selected_input_device,
+        supports_project_input_config,
     };
     use crate::audio_capture_stream;
+
+    #[test]
+    fn persisted_wasapi_input_ids_parse_and_missing_devices_are_reported() {
+        assert!(parse_wasapi_input_device_id("wasapi:mock-endpoint").is_ok());
+        assert!(matches!(
+            parse_wasapi_input_device_id("not-a-device-id"),
+            Err(WasapiInputError::InvalidDeviceId(_))
+        ));
+        let expected = parse_wasapi_input_device_id("wasapi:mock-endpoint").unwrap();
+        let devices = [
+            ("wasapi:other-endpoint", "Other input"),
+            ("wasapi:mock-endpoint", "Selected input"),
+        ];
+        let selected = find_input_device_by_id(&expected, devices, |(id, _)| {
+            parse_wasapi_input_device_id(id)
+        });
+        assert_eq!(selected.map(|(_, name)| name), Some("Selected input"));
+        assert!(matches!(
+            require_selected_input_device::<()>("wasapi:disconnected", None),
+            Err(WasapiInputError::SelectedDeviceUnavailable(id)) if id == "wasapi:disconnected"
+        ));
+        assert_eq!(
+            require_selected_input_device("wasapi:present", Some(17)).unwrap(),
+            17
+        );
+    }
     use cpal::{BufferSize, SampleFormat, StreamInstant, SupportedBufferSize};
 
     #[test]

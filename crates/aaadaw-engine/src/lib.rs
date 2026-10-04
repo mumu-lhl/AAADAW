@@ -59,7 +59,10 @@ pub use stream::{
 };
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
+pub use wasapi_input::{
+    WasapiAudioInput, WasapiInputDeviceInfo, WasapiInputError,
+    enumerate_input_devices as enumerate_wasapi_input_devices,
+};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_output::{
     WasapiAudioOutput, WasapiOutputDeviceInfo, WasapiOutputError, WasapiOutputStats,

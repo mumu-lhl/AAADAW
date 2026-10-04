@@ -332,6 +332,12 @@ pub(crate) enum Message {
     RefreshWasapiOutputDevices,
     #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
     SelectWasapiOutputDevice(Option<String>),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    WasapiInputDevicesLoaded(Result<Vec<aaadaw_engine::WasapiInputDeviceInfo>, String>),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    RefreshWasapiInputDevices,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    SelectWasapiInputDevice(Option<String>),
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(

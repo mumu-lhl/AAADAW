@@ -73,6 +73,7 @@ pub(super) struct AudioSettings {
     pub(super) recording_offset_us: i32,
     pub(super) playback_backend: Option<PlaybackBackendSetting>,
     pub(super) wasapi_output_device_id: Option<String>,
+    pub(super) wasapi_input_device_id: Option<String>,
 }
 
 pub(super) fn load() -> Result<AudioSettings, String> {
@@ -103,6 +104,7 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
     let mut found_recording_offset = false;
     let mut found_playback_backend = false;
     let mut found_wasapi_output_device = false;
+    let mut found_wasapi_input_device = false;
     for (line_number, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -146,6 +148,16 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
                 settings.wasapi_output_device_id = (!value.is_empty()).then(|| value.to_owned());
                 found_wasapi_output_device = true;
             }
+            "wasapi_input_device" if !found_wasapi_input_device => {
+                if value.len() > 4096 {
+                    return Err(format!(
+                        "WASAPI input device ID is too long on line {}",
+                        line_number + 1
+                    ));
+                }
+                settings.wasapi_input_device_id = (!value.is_empty()).then(|| value.to_owned());
+                found_wasapi_input_device = true;
+            }
             _ => return Err(format!("invalid audio config line {}", line_number + 1)),
         }
     }
@@ -173,6 +185,9 @@ fn save_to(path: &Path, settings: &AudioSettings) -> io::Result<()> {
     }
     if let Some(device_id) = &settings.wasapi_output_device_id {
         writeln!(&mut contents, "wasapi_output_device={device_id}")?;
+    }
+    if let Some(device_id) = &settings.wasapi_input_device_id {
+        writeln!(&mut contents, "wasapi_input_device={device_id}")?;
     }
     write_atomic(path, &contents)
 }
@@ -263,6 +278,7 @@ mod tests {
             recording_offset_us: -125_500,
             playback_backend: Some(PlaybackBackendSetting::PipeWire),
             wasapi_output_device_id: Some("wasapi:device/endpoint-01".to_owned()),
+            wasapi_input_device_id: Some("wasapi:device/endpoint-02".to_owned()),
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",
@@ -322,6 +338,30 @@ mod tests {
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-wasapi-audio-{}-{}.conf",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        save_to(&path, &settings).unwrap();
+        assert_eq!(
+            parse(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+            settings
+        );
+        assert_eq!(
+            parse("master_output_ceiling_dbfs=-1\n").unwrap(),
+            AudioSettings::default()
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn saved_wasapi_input_device_id_round_trips_and_old_settings_default_to_system_device() {
+        let id = "wasapi:\\\\?\\SWD#MMDEVAPI#input-endpoint";
+        let settings = AudioSettings {
+            wasapi_input_device_id: Some(id.to_owned()),
+            ..AudioSettings::default()
+        };
+        let path = std::env::temp_dir().join(format!(
+            "aaadaw-wasapi-input-audio-{}-{}.conf",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));

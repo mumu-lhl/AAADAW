@@ -158,6 +158,7 @@ pub fn open_audio_input(
     monitor: Option<AudioMonitorProducer>,
     control: AudioCaptureControl,
     sample_rate: u32,
+    wasapi_input_device_id: Option<&str>,
 ) -> Result<RunningAudioInput, String> {
     if let Some(monitor) = monitor {
         producer.attach_monitor(monitor);
@@ -176,9 +177,11 @@ pub fn open_audio_input(
                 .map_err(|error| error.to_string())
         }
         #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-        PlaybackBackend::Wasapi => WasapiAudioInput::open(producer, control, sample_rate)
-            .map(RunningAudioInput::Wasapi)
-            .map_err(|error| error.to_string()),
+        PlaybackBackend::Wasapi => {
+            WasapiAudioInput::open(producer, control, sample_rate, wasapi_input_device_id)
+                .map(RunningAudioInput::Wasapi)
+                .map_err(|error| error.to_string())
+        }
         #[cfg(all(
             feature = "audio-device",
             not(any(

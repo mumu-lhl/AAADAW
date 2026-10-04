@@ -141,13 +141,13 @@ struct MidiNoteClipboard {
 
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct WasapiOutputDeviceChoice {
+struct WasapiDeviceChoice {
     id: Option<String>,
     label: String,
 }
 
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-impl std::fmt::Display for WasapiOutputDeviceChoice {
+impl std::fmt::Display for WasapiDeviceChoice {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.label)
     }
@@ -229,6 +229,12 @@ struct App {
     wasapi_output_devices_loading: bool,
     #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
     wasapi_output_devices_error: Option<String>,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_input_devices: Vec<aaadaw_engine::WasapiInputDeviceInfo>,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_input_devices_loading: bool,
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    wasapi_input_devices_error: Option<String>,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
     clap_plugin_cache_path: Option<PathBuf>,
@@ -1479,7 +1485,10 @@ impl App {
                 }
                 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
                 if category == SettingsCategory::Audio {
-                    task = self.refresh_wasapi_output_devices();
+                    task = Task::batch([
+                        self.refresh_wasapi_output_devices(),
+                        self.refresh_wasapi_input_devices(),
+                    ]);
                 }
             }
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
@@ -1521,6 +1530,60 @@ impl App {
                         );
                     }
                 }
+            }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::WasapiInputDevicesLoaded(result) => {
+                self.finish_wasapi_input_device_enumeration(result);
+            }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::RefreshWasapiInputDevices => {
+                task = self.refresh_wasapi_input_devices();
+            }
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Message::SelectWasapiInputDevice(device_id) => {
+                let input_changed = self.audio_settings.wasapi_input_device_id != device_id;
+                let wasapi_is_selected =
+                    self.selected_playback_backend() == PlaybackBackend::Wasapi;
+                let input_monitor_was_open = self.standby_monitor_starting
+                    || self
+                        .playback
+                        .as_ref()
+                        .is_some_and(aaadaw_app::RunningAudioPlayback::has_standby_input);
+                let close_standby = if input_changed && wasapi_is_selected {
+                    self.release_standby_input()
+                } else {
+                    Task::none()
+                };
+                let settings = audio_config::AudioSettings {
+                    wasapi_input_device_id: device_id.clone(),
+                    ..self.audio_settings.clone()
+                };
+                self.audio_settings = settings.clone();
+                match audio_config::save(&settings) {
+                    Ok(()) => {
+                        let target = device_id.as_deref().unwrap_or("System default");
+                        self.audio_settings_feedback = if self.recording.is_some()
+                            || self.recording_starting
+                        {
+                            format!(
+                                "{target} selected for the next input connection; the current take keeps its existing input"
+                            )
+                        } else {
+                            format!("{target} selected for WASAPI recording")
+                        };
+                        if input_monitor_was_open && wasapi_is_selected && input_changed {
+                            self.audio_settings_feedback.push_str(
+                                "; input monitoring stopped, re-enable it to use the new endpoint",
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.audio_settings_feedback = format!(
+                            "WASAPI input selection is active for this session but could not be saved: {error}"
+                        );
+                    }
+                }
+                task = close_standby;
             }
             Message::RemoveClapPluginPath(path) => {
                 task = self.remove_clap_plugin_path(path);
@@ -2451,7 +2514,11 @@ impl App {
         if let Some(window_id) = self.settings_window_id {
             let focus = iced::window::gain_focus(window_id);
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            return Task::batch([focus, self.refresh_wasapi_output_devices()]);
+            return Task::batch([
+                focus,
+                self.refresh_wasapi_output_devices(),
+                self.refresh_wasapi_input_devices(),
+            ]);
             #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
             return focus;
         }
@@ -2462,22 +2529,22 @@ impl App {
         });
         self.settings_window_id = Some(window_id);
         #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-        return Task::batch([task.discard(), self.refresh_wasapi_output_devices()]);
+        return Task::batch([
+            task.discard(),
+            self.refresh_wasapi_output_devices(),
+            self.refresh_wasapi_input_devices(),
+        ]);
         #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
         task.discard()
     }
 
     #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
     fn refresh_wasapi_output_devices(&mut self) -> Task<Message> {
-        if self.wasapi_output_devices_loading {
-            return Task::none();
-        }
-        self.wasapi_output_devices_loading = true;
-        self.wasapi_output_devices_error = None;
-        Task::perform(
-            run_blocking("aaadaw-wasapi-device-list", || {
-                aaadaw_engine::enumerate_wasapi_output_devices().map_err(|error| error.to_string())
-            }),
+        start_wasapi_device_enumeration(
+            &mut self.wasapi_output_devices_loading,
+            &mut self.wasapi_output_devices_error,
+            "aaadaw-wasapi-device-list",
+            || aaadaw_engine::enumerate_wasapi_output_devices().map_err(|error| error.to_string()),
             Message::WasapiOutputDevicesLoaded,
         )
     }
@@ -2487,19 +2554,40 @@ impl App {
         &mut self,
         result: Result<Vec<aaadaw_engine::WasapiOutputDeviceInfo>, String>,
     ) {
-        self.wasapi_output_devices_loading = false;
-        match result {
-            Ok(devices) => {
-                self.wasapi_output_devices = devices;
-                self.wasapi_output_devices_error = None;
-            }
-            Err(error) => {
-                self.wasapi_output_devices.clear();
-                self.wasapi_output_devices_error = Some(error.clone());
-                self.audio_settings_feedback =
-                    format!("WASAPI output devices could not be listed: {error}");
-            }
-        }
+        finish_wasapi_device_enumeration(
+            &mut self.wasapi_output_devices,
+            &mut self.wasapi_output_devices_loading,
+            &mut self.wasapi_output_devices_error,
+            &mut self.audio_settings_feedback,
+            "output",
+            result,
+        );
+    }
+
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    fn refresh_wasapi_input_devices(&mut self) -> Task<Message> {
+        start_wasapi_device_enumeration(
+            &mut self.wasapi_input_devices_loading,
+            &mut self.wasapi_input_devices_error,
+            "aaadaw-wasapi-input-device-list",
+            || aaadaw_engine::enumerate_wasapi_input_devices().map_err(|error| error.to_string()),
+            Message::WasapiInputDevicesLoaded,
+        )
+    }
+
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    fn finish_wasapi_input_device_enumeration(
+        &mut self,
+        result: Result<Vec<aaadaw_engine::WasapiInputDeviceInfo>, String>,
+    ) {
+        finish_wasapi_device_enumeration(
+            &mut self.wasapi_input_devices,
+            &mut self.wasapi_input_devices_loading,
+            &mut self.wasapi_input_devices_error,
+            &mut self.audio_settings_feedback,
+            "input",
+            result,
+        );
     }
 
     fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
@@ -5005,6 +5093,46 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|error| format!("could not start worker: {error}"))?
         .join()
         .map_err(|_| format!("{name} worker panicked"))?
+}
+
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+fn start_wasapi_device_enumeration<T: Send + 'static>(
+    loading: &mut bool,
+    error: &mut Option<String>,
+    worker_name: &'static str,
+    enumerate: impl FnOnce() -> Result<Vec<T>, String> + Send + 'static,
+    message: fn(Result<Vec<T>, String>) -> Message,
+) -> Task<Message> {
+    if *loading {
+        return Task::none();
+    }
+    *loading = true;
+    *error = None;
+    Task::perform(run_blocking(worker_name, enumerate), message)
+}
+
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+fn finish_wasapi_device_enumeration<T>(
+    devices: &mut Vec<T>,
+    loading: &mut bool,
+    error: &mut Option<String>,
+    feedback: &mut String,
+    direction: &str,
+    result: Result<Vec<T>, String>,
+) {
+    *loading = false;
+    match result {
+        Ok(enumerated) => {
+            *devices = enumerated;
+            *error = None;
+        }
+        Err(enumeration_error) => {
+            devices.clear();
+            *error = Some(enumeration_error.clone());
+            *feedback =
+                format!("WASAPI {direction} devices could not be listed: {enumeration_error}");
+        }
+    }
 }
 
 #[cfg(feature = "audio-device")]
