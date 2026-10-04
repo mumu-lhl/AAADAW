@@ -670,6 +670,7 @@ impl App {
                         Some(frame),
                     ),
                     aaadaw_app::SharedFrameClockMapping::Unavailable => {
+                        tracing::error!("JACK transport/input clock mapping unavailable");
                         recording.control.fail();
                         self.recording_starting = false;
                         self.recording_tracks.clear();
@@ -694,6 +695,9 @@ impl App {
                 let Some(start_sample) = placement_correction
                     .apply(transport_sample, self.project.settings().sample_rate())
                 else {
+                    tracing::error!(
+                        "recording placement correction exceeded the project sample range"
+                    );
                     self.recording_starting = false;
                     self.recording_tracks.clear();
                     self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
@@ -706,6 +710,9 @@ impl App {
                         self.project.settings().sample_rate(),
                         self.project.settings().sample_rate(),
                     ) else {
+                        tracing::error!(
+                            "JACK capture clock could not be mapped to the project sample rate"
+                        );
                         recording.control.fail_timing();
                         self.recording_starting = false;
                         self.recording_tracks.clear();
@@ -736,6 +743,7 @@ impl App {
                         },
                     );
                 } else if let Err(error) = recording.writer.refine_start_sample(start_sample) {
+                    tracing::error!(error = %error, "recording recovery position update failed");
                     recording.control.fail();
                     self.recording_starting = false;
                     self.recording_tracks.clear();
@@ -750,6 +758,7 @@ impl App {
                 Task::none()
             }
             Some(Err(error)) => {
+                tracing::error!(error = %error, "recording recovery metadata persistence failed");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
@@ -760,6 +769,7 @@ impl App {
                 Task::none()
             }
             None => {
+                tracing::error!("recording recovery metadata result was unavailable");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
@@ -796,6 +806,7 @@ impl App {
                 Task::none()
             }
             Some(Err(error)) => {
+                tracing::error!(error = %error, "JACK recording timeline initialization failed");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
@@ -806,6 +817,7 @@ impl App {
                 Task::none()
             }
             None => {
+                tracing::error!("JACK recording timeline initialization result was unavailable");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
