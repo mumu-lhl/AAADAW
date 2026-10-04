@@ -222,6 +222,12 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_set_tempo_point", "arguments": {"tick": 960, "bpm": 90}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 19,
+            "method": "tools/call",
+            "params": {"name": "daw_set_time_signature_point", "arguments": {"tick": 11520, "numerator": 3, "denominator": 4}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -304,6 +310,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .as_array()
             .unwrap()
             .iter()
+            .all(|tool| tool["name"] != "daw_set_time_signature_point")
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
             .all(|tool| !matches!(tool["name"].as_str(), Some("daw_undo" | "daw_redo")))
     );
     let structure = response_for(4)["result"]["contents"][0]["text"]
@@ -323,6 +336,10 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(structure["tempo_points"].as_array().unwrap().len(), 1);
     assert_eq!(structure["tempo_points"][0]["tick"], 0);
     assert_eq!(structure["tempo_points"][0]["bpm"], 120.0);
+    assert_eq!(structure["meter_points"].as_array().unwrap().len(), 1);
+    assert_eq!(structure["meter_points"][0]["tick"], 0);
+    assert_eq!(structure["meter_points"][0]["numerator"], 4);
+    assert_eq!(structure["meter_points"][0]["denominator"], 4);
     let midi = response_for(5)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
@@ -344,6 +361,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(response_for(16)["result"]["isError"], true);
     assert_eq!(response_for(17)["result"]["isError"], true);
     assert_eq!(response_for(18)["result"]["isError"], true);
+    assert_eq!(response_for(19)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -604,6 +622,159 @@ fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
     assert_eq!(tempo_points.len(), 2);
     assert!(tempo_points.iter().all(|(tick, _, _)| *tick != 1920));
     assert_eq!(reopened.tempo_at_tick(960), 100.0);
+}
+
+#[test]
+fn explicitly_authorized_mcp_sets_project_meter_undoably_and_persistently() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-meter-test.aaadaw");
+    let store = ProjectStore::open(&project_path).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "daw_set_time_signature_point", "arguments": arguments}
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-meter-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(3, json!({"tick": 11520, "numerator": 3, "denominator": 4})),
+        call(4, json!({"tick": 11520, "numerator": 3, "denominator": 4})),
+        call(5, json!({"tick": 11520, "numerator": 4, "denominator": 4})),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {"name": "daw_undo", "arguments": {}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "daw_redo", "arguments": {}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+        call(10, json!({"tick": 23040, "numerator": 3, "denominator": 3})),
+        call(11, json!({"tick": 10000, "numerator": 3, "denominator": 4})),
+        call(12, json!({"tick": 23040, "numerator": 0, "denominator": 4})),
+        call(
+            13,
+            json!({"tick": u64::MAX, "numerator": 3, "denominator": 4}),
+        ),
+        call(14, json!({"tick": 23040, "numerator": 3})),
+        call(
+            15,
+            json!({"tick": 23040, "numerator": 3, "denominator": 4, "extra": true}),
+        ),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["name"] == "daw_set_time_signature_point")
+    );
+    for (id, numerator, changed) in [(3, 3, true), (4, 3, false), (5, 4, true)] {
+        let result = &response_for(id)["result"]["structuredContent"];
+        assert_eq!(result["tick"], 11520);
+        assert_eq!(result["numerator"], numerator);
+        assert_eq!(result["denominator"], 4);
+        assert_eq!(result["changed"], changed);
+    }
+    assert_eq!(
+        response_for(6)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["changed"],
+        true
+    );
+
+    let meter_points = |id| {
+        let structure: Value = serde_json::from_str(
+            response_for(id)["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        structure["meter_points"].as_array().unwrap().clone()
+    };
+    assert!(meter_points(7).iter().any(|point| {
+        point["tick"] == 11520 && point["numerator"] == 3 && point["denominator"] == 4
+    }));
+    assert!(meter_points(9).iter().any(|point| {
+        point["tick"] == 11520 && point["numerator"] == 4 && point["denominator"] == 4
+    }));
+    for id in [10, 11, 12, 13, 14, 15] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let meter_points = reopened.time_signature_points().collect::<Vec<_>>();
+    assert_eq!(meter_points.len(), 2);
+    assert!(meter_points.iter().all(|(tick, _)| *tick != 23040));
+    assert_eq!(reopened.time_signature_at_tick(11520).numerator(), 4);
 }
 
 #[test]
