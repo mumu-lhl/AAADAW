@@ -884,8 +884,14 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
-        CommandKind::Undo => history_command_enabled(app, app.project.can_undo_track_mix()),
-        CommandKind::Redo => history_command_enabled(app, app.project.can_redo_track_mix()),
+        CommandKind::Undo => history_command_enabled(
+            app,
+            app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
+        ),
+        CommandKind::Redo => {
+            app.track_mix_commit_at.is_none()
+                && history_command_enabled(app, app.project.can_redo_track_mix())
+        }
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::ImportAudio => {

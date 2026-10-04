@@ -18,6 +18,8 @@ change without rebuilding playback.
 - Support Shift fine adjustment and double-click reset on both sliders.
 - Apply each completed drag or numeric edit through one `DawAction`, making one gesture one undo
   step.
+- Treat a double-click reset as one undo step, including coalescing the click that precedes the
+  second press.
 - Make a value audible in active playback within the next block without allocation, locks, or I/O
   on the audio callback.
 - Preserve track ordering, mute/solo, project serialization, and safe render-graph replacement.
@@ -29,6 +31,8 @@ change without rebuilding playback.
   values through atomics or an already bounded command path.
 - Do not rebuild/decode media or recompile plugin processors for a fader change.
 - A canceled or unchanged gesture must not create an undo record.
+- Live audition updates immediately; only the project-history commit waits through the platform's
+  double-click interval so a reset stays one undo step.
 
 ## Validation
 

@@ -30,7 +30,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod clap_plugin_cache;
 mod clap_plugin_config;
@@ -143,6 +143,7 @@ struct App {
     track_volume_edits: HashMap<TrackId, String>,
     track_pan_edits: HashMap<TrackId, String>,
     track_mix_gesture: Option<TrackMixGesture>,
+    track_mix_commit_at: Option<Instant>,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
@@ -544,13 +545,19 @@ impl App {
         #[cfg(not(any(feature = "jack-backend", feature = "pipewire-backend")))]
         let recording_active = false;
 
+        let background_tick_interval = if self.track_mix_gesture.is_some() {
+            Duration::from_millis(30)
+        } else {
+            Duration::from_millis(100)
+        };
         let background_ticks = if self.import_busy
             || playback_active
             || recording_active
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
+            || self.track_mix_gesture.is_some()
         {
-            iced::time::every(Duration::from_millis(100)).map(|_| Message::BackgroundTick)
+            iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
         };
@@ -565,6 +572,21 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let completes_pending_mix_reset = match &message {
+            Message::ResetTrackVolume(track_id) => {
+                self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Volume)
+            }
+            Message::ResetTrackPan(track_id) => {
+                self.track_mix_commit_is_pending(*track_id, TrackMixParameter::Pan)
+            }
+            _ => false,
+        };
+        if self.track_mix_commit_at.is_some()
+            && !matches!(&message, Message::BackgroundTick)
+            && !completes_pending_mix_reset
+        {
+            self.commit_track_mix_gesture();
+        }
         if !matches!(
             &message,
             Message::Timeline(
@@ -1351,7 +1373,7 @@ impl App {
                 self.commit_track_pan_text(track_id);
             }
             Message::ResetTrackVolume(track_id) => {
-                self.cancel_track_mix_gesture();
+                self.clear_track_mix_for_reset(track_id, TrackMixParameter::Volume);
                 self.track_volume_edits.remove(&track_id);
                 if self
                     .project
@@ -1367,10 +1389,12 @@ impl App {
                         },
                         "Track volume reset",
                     );
+                } else {
+                    self.sync_track_mix_to_playback(track_id);
                 }
             }
             Message::ResetTrackPan(track_id) => {
-                self.cancel_track_mix_gesture();
+                self.clear_track_mix_for_reset(track_id, TrackMixParameter::Pan);
                 self.track_pan_edits.remove(&track_id);
                 if self
                     .project
@@ -1383,6 +1407,8 @@ impl App {
                         DawAction::SetTrackPan { track_id, pan: 0.0 },
                         "Track pan centered",
                     );
+                } else {
+                    self.sync_track_mix_to_playback(track_id);
                 }
             }
             Message::NudgeAudioItem(item_id, direction, milliseconds) => {
@@ -1490,6 +1516,12 @@ impl App {
                 self.finish_audio_item_relink(item_id, result);
             }
             Message::BackgroundTick => {
+                if self
+                    .track_mix_commit_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    self.commit_track_mix_gesture();
+                }
                 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
                 {
                     if self.fx_parameter_end_requested
@@ -1552,6 +1584,7 @@ impl App {
                         self.track_volume_edits.clear();
                         self.track_pan_edits.clear();
                         self.track_mix_gesture = None;
+                        self.track_mix_commit_at = None;
                         self.audio_item_start_edits.clear();
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
@@ -1791,6 +1824,7 @@ impl App {
         self.track_volume_edits.clear();
         self.track_pan_edits.clear();
         self.track_mix_gesture = None;
+        self.track_mix_commit_at = None;
         self.audio_item_start_edits.clear();
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
@@ -2360,11 +2394,10 @@ impl App {
     }
 
     fn finish_track_mix_gesture(&mut self, track_id: TrackId, parameter: TrackMixParameter) {
-        let Some(gesture) = self.track_mix_gesture.take() else {
+        let Some(gesture) = self.track_mix_gesture else {
             return;
         };
         if gesture.track_id != track_id || gesture.parameter != parameter {
-            self.track_mix_gesture = Some(gesture);
             return;
         }
         let (before, after) = match parameter {
@@ -2372,23 +2405,58 @@ impl App {
             TrackMixParameter::Pan => (gesture.before_pan, gesture.after_pan),
         };
         if (before - after).abs() < f32::EPSILON {
+            self.track_mix_gesture = None;
+            self.track_mix_commit_at = None;
             self.sync_track_mix_to_playback(track_id);
             return;
         }
-        let action = match parameter {
+        self.track_mix_commit_at = Some(Instant::now() + Duration::from_millis(350));
+    }
+
+    fn commit_track_mix_gesture(&mut self) {
+        self.track_mix_commit_at = None;
+        let Some(gesture) = self.track_mix_gesture.take() else {
+            return;
+        };
+        let (before, after) = match gesture.parameter {
+            TrackMixParameter::Volume => (gesture.before_volume_db, gesture.after_volume_db),
+            TrackMixParameter::Pan => (gesture.before_pan, gesture.after_pan),
+        };
+        if (before - after).abs() < f32::EPSILON {
+            self.sync_track_mix_to_playback(gesture.track_id);
+            return;
+        }
+        let action = match gesture.parameter {
             TrackMixParameter::Volume => DawAction::SetTrackVolume {
-                track_id,
+                track_id: gesture.track_id,
                 volume_db: gesture.after_volume_db,
             },
             TrackMixParameter::Pan => DawAction::SetTrackPan {
-                track_id,
+                track_id: gesture.track_id,
                 pan: gesture.after_pan,
             },
         };
         self.apply_action(action, "Track mix changed");
     }
 
+    fn track_mix_commit_is_pending(&self, track_id: TrackId, parameter: TrackMixParameter) -> bool {
+        self.track_mix_commit_at.is_some()
+            && self.track_mix_gesture.is_some_and(|gesture| {
+                gesture.track_id == track_id && gesture.parameter == parameter
+            })
+    }
+
+    fn clear_track_mix_for_reset(&mut self, track_id: TrackId, parameter: TrackMixParameter) {
+        if self.track_mix_commit_is_pending(track_id, parameter) {
+            self.track_mix_gesture = None;
+            self.track_mix_commit_at = None;
+        } else {
+            self.cancel_track_mix_gesture();
+        }
+    }
+
     fn cancel_track_mix_gesture(&mut self) {
+        self.track_mix_commit_at = None;
         if let Some(_gesture) = self.track_mix_gesture.take() {
             #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
             if let Some(playback) = &self.playback {

@@ -8,6 +8,7 @@ use aaadaw_storage::ProjectStore;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -1829,6 +1830,9 @@ fn track_pan_adjustment_is_undoable() {
     let _ = app.update(Message::PreviewTrackPan(track_id, 0.25));
     assert_eq!(app.project.tracks()[0].pan(), 0.0);
     let _ = app.update(Message::CommitTrackPan(track_id));
+    assert_eq!(app.project.tracks()[0].pan(), 0.0);
+    app.track_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
     assert_eq!(app.project.tracks()[0].pan(), 0.25);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.tracks()[0].pan(), 0.0);
@@ -1878,11 +1882,36 @@ fn dragging_track_volume_commits_one_undoable_action() {
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
 
     let _ = app.update(Message::CommitTrackVolume(track_id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+    app.track_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
     assert_eq!(app.project.tracks()[0].volume_db(), -5.7);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
     let _ = app.update(Message::Undo);
     assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn double_click_track_mix_reset_coalesces_the_pending_click_into_one_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackVolume {
+            track_id,
+            volume_db: -4.0,
+        })
+        .expect("track volume should be set");
+
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -8.0));
+    let _ = app.update(Message::CommitTrackVolume(track_id));
+    assert_eq!(app.project.tracks()[0].volume_db(), -4.0);
+    let _ = app.update(Message::ResetTrackVolume(track_id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), -4.0);
 }
 
 #[test]
