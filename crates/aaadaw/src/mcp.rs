@@ -37,6 +37,8 @@ const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
 const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
 const SET_TRACK_MIX_TOOL: &str = "daw_set_track_mix";
+const UNDO_TOOL: &str = "daw_undo";
+const REDO_TOOL: &str = "daw_redo";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TrackMixChanges {
@@ -45,6 +47,12 @@ struct TrackMixChanges {
     pan: Option<f32>,
     muted: Option<bool>,
     solo: Option<bool>,
+}
+
+#[derive(Clone, Copy)]
+enum HistoryDirection {
+    Undo,
+    Redo,
 }
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
@@ -186,6 +194,8 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(set_volume_automation_point_tool());
             tools.push(set_track_record_arm_tool());
             tools.push(set_track_mix_tool());
+            tools.push(history_tool(HistoryDirection::Undo));
+            tools.push(history_tool(HistoryDirection::Redo));
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -201,6 +211,8 @@ impl ServerHandler for ProjectMcpServer {
             }
             SET_TRACK_RECORD_ARM_TOOL if self.writable => Some(set_track_record_arm_tool()),
             SET_TRACK_MIX_TOOL if self.writable => Some(set_track_mix_tool()),
+            UNDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Undo)),
+            REDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Redo)),
             _ => None,
         }
     }
@@ -252,6 +264,10 @@ impl ServerHandler for ProjectMcpServer {
                 parse_track_mix_arguments(request.arguments.as_ref())
                     .and_then(|changes| self.set_track_mix(changes))
             }
+            UNDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
+                .and_then(|()| self.move_history(HistoryDirection::Undo)),
+            REDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
+                .and_then(|()| self.move_history(HistoryDirection::Redo)),
             _ => Err("unknown or unavailable tool".to_owned()),
         };
         std::future::ready(Ok(match result {
@@ -531,6 +547,49 @@ impl ProjectMcpServer {
             .find(|track| track.id() == track_id)
             .ok_or_else(|| "track disappeared after setting mix".to_owned())?;
         Ok(track_mix_result(track, true))
+    }
+
+    fn move_history(&self, direction: HistoryDirection) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let changed = match direction {
+            HistoryDirection::Undo => project.undo(),
+            HistoryDirection::Redo => project.redo(),
+        }
+        .map_err(|error| error.to_string())?;
+        if !changed {
+            return Ok(json!({"changed": false}));
+        }
+        if let Err(error) = store.save(&project) {
+            let rollback = match direction {
+                HistoryDirection::Undo => project.redo(),
+                HistoryDirection::Redo => project.undo(),
+            };
+            match rollback {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(format!(
+                        "failed to save history change: {error}; rollback had no history step"
+                    ));
+                }
+                Err(rollback_error) => {
+                    return Err(format!(
+                        "failed to save history change: {error}; rollback failed: {rollback_error}"
+                    ));
+                }
+            }
+            return Err(format!("failed to save history change: {error}"));
+        }
+        Ok(json!({"changed": true}))
     }
 }
 
@@ -869,6 +928,41 @@ fn track_mix_result(track: &aaadaw_core::Track, changed: bool) -> Value {
         "solo": track.is_solo(),
         "changed": changed,
     })
+}
+
+fn history_tool(direction: HistoryDirection) -> Tool {
+    let (name, description) = match direction {
+        HistoryDirection::Undo => (
+            UNDO_TOOL,
+            "Undo the last project edit made during this MCP writer session.",
+        ),
+        HistoryDirection::Redo => (
+            REDO_TOOL,
+            "Redo the next project edit made during this MCP writer session.",
+        ),
+    };
+    Tool::new(
+        name,
+        description,
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn parse_empty_arguments(arguments: Option<&serde_json::Map<String, Value>>) -> Result<(), String> {
+    if arguments.is_some_and(|arguments| !arguments.is_empty()) {
+        return Err("arguments must be empty".to_owned());
+    }
+    Ok(())
 }
 
 fn parse_create_track_arguments(
