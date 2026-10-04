@@ -431,19 +431,27 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .as_ref()
         .is_some_and(|playback| playback.input_monitor_enabled(track_id));
     #[cfg(feature = "audio-device")]
-    let input_monitor = button(if monitor_enabled { "MON" } else { "mon" })
-        .on_press_maybe(
-            (is_recording && app.playback_playing && track.is_record_armed())
-                .then_some(Message::ToggleInputMonitor(track_id)),
-        )
-        .style(move |theme: &Theme, status| {
-            if monitor_enabled {
-                iced::widget::button::success(theme, status)
-            } else {
-                iced::widget::button::secondary(theme, status)
-            }
-        })
-        .padding([2, 6]);
+    let monitor_pending = app.standby_monitor_track == Some(track_id);
+    #[cfg(feature = "audio-device")]
+    let input_monitor = button(if monitor_enabled {
+        "MON"
+    } else if monitor_pending {
+        "MON…"
+    } else {
+        "mon"
+    })
+    .on_press_maybe(
+        (track.is_record_armed() && !app.recording_starting && !app.recording_stopping)
+            .then_some(Message::ToggleInputMonitor(track_id)),
+    )
+    .style(move |theme: &Theme, status| {
+        if monitor_enabled {
+            iced::widget::button::success(theme, status)
+        } else {
+            iced::widget::button::secondary(theme, status)
+        }
+    })
+    .padding([2, 6]);
     #[cfg(not(feature = "audio-device"))]
     let input_monitor = text("").size(10);
     let mix_gesture = app

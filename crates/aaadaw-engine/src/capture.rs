@@ -146,21 +146,29 @@ impl AudioInputMonitorGate {
 }
 
 /// Input-callback side of a best-effort, bounded live-monitor queue.
+///
+/// Clones share the queue cursor so its owner can retain a handle across render-graph swaps. Only
+/// one clone may publish at a time; use the clone in the single active audio-input callback.
+#[derive(Clone)]
 pub struct AudioMonitorProducer {
     queue: Arc<AudioMonitorQueue>,
-    next_write: u64,
     gate: AudioInputMonitorGate,
 }
 
 /// Output-callback side of a best-effort, bounded live-monitor queue.
+///
+/// Clones share the read cursor. Render-graph replacement must leave only one active reader at a
+/// time; audio backends swap graphs at callback boundaries.
+#[derive(Clone)]
 pub struct AudioMonitorConsumer {
     queue: Arc<AudioMonitorQueue>,
-    next_read: u64,
+    next_read: Arc<AtomicU64>,
     gate: AudioInputMonitorGate,
 }
 
 struct AudioMonitorQueue {
     frames: Box<[AudioMonitorFrame]>,
+    next_write_index: AtomicU64,
     write_index: AtomicU64,
 }
 
@@ -187,18 +195,18 @@ pub fn audio_monitor_stream(
                 generation: AtomicU64::new(0),
             })
             .collect(),
+        next_write_index: AtomicU64::new(0),
         write_index: AtomicU64::new(0),
     });
     let gate = AudioInputMonitorGate::default();
     (
         AudioMonitorProducer {
             queue: Arc::clone(&queue),
-            next_write: 0,
             gate: gate.clone(),
         },
         AudioMonitorConsumer {
             queue,
-            next_read: 0,
+            next_read: Arc::new(AtomicU64::new(0)),
             gate: gate.clone(),
         },
         gate,
@@ -216,7 +224,10 @@ impl AudioMonitorProducer {
     }
 
     fn write_frame(&mut self, frame: [f32; 2]) {
-        let index = self.next_write;
+        // Producers may be cloned for an input stream that must survive output graph swaps.
+        // The device still has one active callback writer; reserving indices in the shared queue
+        // keeps that writer aligned with any retained control-side producer handle.
+        let index = self.queue.next_write_index.fetch_add(1, Ordering::Relaxed);
         let slot = &self.queue.frames[(index % self.queue.frames.len() as u64) as usize];
         let writing_sequence = index.wrapping_mul(2).wrapping_add(1);
         slot.sequence.swap(writing_sequence, Ordering::AcqRel);
@@ -228,10 +239,9 @@ impl AudioMonitorProducer {
             .store(self.gate.generation(), Ordering::Relaxed);
         slot.sequence
             .store(writing_sequence.wrapping_add(1), Ordering::Release);
-        self.next_write = self.next_write.wrapping_add(1);
         self.queue
             .write_index
-            .store(self.next_write, Ordering::Release);
+            .store(index.wrapping_add(1), Ordering::Release);
     }
 }
 
@@ -242,12 +252,13 @@ impl AudioMonitorConsumer {
         let available_end = self.queue.write_index.load(Ordering::Acquire);
         let capacity = self.queue.frames.len() as u64;
         let oldest_retained = available_end.saturating_sub(capacity);
-        if self.next_read < oldest_retained {
-            self.next_read = oldest_retained;
+        let mut next_read = self.next_read.load(Ordering::Relaxed);
+        if next_read < oldest_retained {
+            next_read = oldest_retained;
         }
         let mut read = 0;
-        while read < output.len() && self.next_read < available_end {
-            let index = self.next_read;
+        while read < output.len() && next_read < available_end {
+            let index = next_read;
             let slot = &self.queue.frames[(index % self.queue.frames.len() as u64) as usize];
             let expected_sequence = index.wrapping_mul(2).wrapping_add(2);
             if slot.sequence.load(Ordering::Acquire) == expected_sequence {
@@ -265,8 +276,9 @@ impl AudioMonitorConsumer {
                 }
             }
             read += 1;
-            self.next_read = self.next_read.wrapping_add(1);
+            next_read = next_read.wrapping_add(1);
         }
+        self.next_read.store(next_read, Ordering::Release);
         output.len() - read
     }
 }
@@ -623,6 +635,48 @@ mod tests {
             3
         );
         assert_eq!(captured, [[0.3, -0.3], [0.4, -0.4], [0.5, -0.5]]);
+    }
+
+    #[test]
+    fn standby_monitoring_does_not_capture_preroll_and_recording_reuses_the_tap() {
+        let (mut producer, mut capture, control) = super::audio_capture_stream(8);
+        let (monitor_producer, mut monitor, gate) = super::audio_monitor_stream(8);
+        producer.attach_monitor(monitor_producer);
+        gate.set_enabled(true);
+
+        producer.push_frames_at(400, [[0.1, -0.1], [0.2, -0.2]]);
+        let mut frames = [[0.0; 2]; 4];
+        assert_eq!(monitor.read_into(&mut frames[..2]), 0);
+        assert_eq!(frames[..2], [[0.1, -0.1], [0.2, -0.2]]);
+        assert!(capture.pop_timed_frames(&mut frames).is_none());
+        assert_eq!(control.first_capture_frame(), None);
+
+        control.start();
+        producer.push_frames_at(402, [[0.3, -0.3], [0.4, -0.4]]);
+        let captured = capture
+            .pop_timed_frames(&mut frames)
+            .expect("recording should accept frames after capture is enabled");
+        assert_eq!(captured.first_frame, 402);
+        assert_eq!(captured.frame_count, 2);
+        assert_eq!(frames[..2], [[0.3, -0.3], [0.4, -0.4]]);
+        assert_eq!(control.first_capture_frame(), Some(402));
+    }
+
+    #[test]
+    fn cloned_monitor_endpoints_keep_queue_positions_across_graph_replacement() {
+        let (mut callback_producer, consumer, gate) = super::audio_monitor_stream(4);
+        let mut retained_producer = callback_producer.clone();
+        let mut old_graph_consumer = consumer;
+        let mut replacement_graph_consumer = old_graph_consumer.clone();
+        gate.set_enabled(true);
+        assert!(callback_producer.push_frame([0.1, -0.1]));
+
+        let mut output = [[0.0; 2]; 1];
+        assert_eq!(old_graph_consumer.read_into(&mut output), 0);
+        assert_eq!(output, [[0.1, -0.1]]);
+        assert!(retained_producer.push_frame([0.2, -0.2]));
+        assert_eq!(replacement_graph_consumer.read_into(&mut output), 0);
+        assert_eq!(output, [[0.2, -0.2]]);
     }
 
     #[test]

@@ -139,7 +139,8 @@
 - [x] 为钢琴卷帘增加音符复制/粘贴和 velocity lane；复制保留组内 tick 间距、音高、时值和力度，粘贴到原 Item 时从源短语末端开始、重复粘贴顺延，跨 Item 时从当前可视编辑位置吸附到 1/16；velocity lane 支持多选相对力度拖动与悬停反馈，每次操作可撤销（GitHub #6）。
 - [x] 为轨道保存可撤销的 CLAP 乐器引用，兼容既有工程（[`docs/tickets/2026-10-02-track-instrument-assignment.md`](docs/tickets/2026-10-02-track-instrument-assignment.md)）。
 - [x] 为 track 增加可持久化、可撤销的输入录音准备状态（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)）。
-- [x] 完成基础实时录音与素材入库路径；录音期间可按 armed 轨道启用默认关闭的输入监听，并经过对应 track mix、mute/solo、FX 与 master 路径（[Issue #60](https://github.com/mumu-lhl/AAADAW/issues/60)）。armed 后、正式录音前的监听生命周期仍待实现；每个后端的真实设备验收仍待完成。
+- [x] 完成基础实时录音与素材入库路径；录音期间可按 armed 轨道启用默认关闭的输入监听，并经过对应 track mix、mute/solo、FX 与 master 路径（[Issue #60](https://github.com/mumu-lhl/AAADAW/issues/60)）。
+- [ ] 支持正式录音前在 armed 轨道监听输入；待机输入在 transport 停止/播放时经过完整 track mix/FX/Master 路径，并在 Record 时复用输入流且排除 pre-roll（[Issue #62](https://github.com/mumu-lhl/AAADAW/issues/62)）。各后端真实设备与 latency 验收仍跟踪在 [Issue #7](https://github.com/mumu-lhl/AAADAW/issues/7)。
 
 **退出标准**：可导入音频、录制麦克风素材、编辑并播放 MIDI；模拟异常退出后录音仍能按既定恢复策略读取；基础编辑无爆音/咔哒声回归问题。
 

@@ -163,6 +163,16 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         midi_events_seen += stats.midi_event_count;
         last_stats = Some(stats);
     }
+    graph.transport_mut().stop();
+    for _ in 0..128 {
+        for _ in 0..128 {
+            assert!(monitor_producer.push_frame([0.01, -0.01]));
+        }
+        let stats = graph
+            .render_into(&mut output)
+            .expect("stopped standby-monitor block should render");
+        assert!(!stats.block.is_playing);
+    }
     let allocations = tracking.finish();
 
     assert_eq!(allocations, 0, "render callback allocated on its thread");
