@@ -1,4 +1,4 @@
-use super::super::{App, Message};
+use super::super::{App, Message, MidiEditorLane};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
 use aaadaw_core::{ItemId, MidiControllerData, MidiItem, MidiNoteData, NoteId, Project};
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
@@ -15,6 +15,7 @@ const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
+const VOLUME_LANE_HEIGHT: f32 = 72.0;
 const MODULATION_LANE_HEIGHT: f32 = 72.0;
 const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
@@ -105,102 +106,140 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .height(Length::Fixed(
         HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
     ));
-    let velocity_canvas = canvas_widget::Canvas::new(PianoRoll {
-        project: &app.project,
-        item,
-        item_id,
-        selected: &app.midi_editor_selected_notes,
-        origin_tick: app.midi_editor_origin_tick,
-        high_pitch: app.midi_editor_high_pitch,
-        pixels_per_beat: app.midi_editor_pixels_per_beat,
-        ticks_per_beat,
-        region: RollRegion::Velocity,
-    })
-    .width(Length::Fill)
-    .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
-    let velocity_lane = row![
-        container(text("Velocity"))
-            .width(Length::Fixed(KEY_WIDTH))
-            .height(Length::Fixed(VELOCITY_LANE_HEIGHT))
-            .center_y(Length::Fill)
-            .padding(SPACING_XS),
-        velocity_canvas
+    let lane_toolbar = row![
+        lane_button("Velocity", MidiEditorLane::Velocity, app.midi_editor_lane),
+        lane_button("Sustain", MidiEditorLane::Sustain, app.midi_editor_lane),
+        lane_button("Volume CC7", MidiEditorLane::Volume, app.midi_editor_lane),
+        lane_button("Mod CC1", MidiEditorLane::Modulation, app.midi_editor_lane),
+        lane_button(
+            "Expression",
+            MidiEditorLane::Expression,
+            app.midi_editor_lane
+        ),
     ]
-    .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
-    let sustain_canvas = canvas_widget::Canvas::new(ControllerLane {
-        item,
-        item_id,
-        controller: 64,
-        lane_height: SUSTAIN_LANE_HEIGHT,
-        origin_tick: app.midi_editor_origin_tick,
-        pixels_per_beat: app.midi_editor_pixels_per_beat,
-        ticks_per_beat,
-    })
-    .width(Length::Fill)
-    .height(Length::Fixed(SUSTAIN_LANE_HEIGHT));
-    let sustain_lane = row![
-        container(text("Sustain"))
-            .width(Length::Fixed(KEY_WIDTH))
-            .height(Length::Fixed(SUSTAIN_LANE_HEIGHT))
-            .center_y(Length::Fill)
-            .padding(SPACING_XS),
-        sustain_canvas
-    ]
-    .height(Length::Fixed(SUSTAIN_LANE_HEIGHT));
-    let modulation_canvas = canvas_widget::Canvas::new(ControllerLane {
-        item,
-        item_id,
-        controller: 1,
-        lane_height: MODULATION_LANE_HEIGHT,
-        origin_tick: app.midi_editor_origin_tick,
-        pixels_per_beat: app.midi_editor_pixels_per_beat,
-        ticks_per_beat,
-    })
-    .width(Length::Fill)
-    .height(Length::Fixed(MODULATION_LANE_HEIGHT));
-    let modulation_lane = row![
-        container(text("Mod CC1"))
-            .width(Length::Fixed(KEY_WIDTH))
-            .height(Length::Fixed(MODULATION_LANE_HEIGHT))
-            .center_y(Length::Fill)
-            .padding(SPACING_XS),
-        modulation_canvas
-    ]
-    .height(Length::Fixed(MODULATION_LANE_HEIGHT));
-    let expression_canvas = canvas_widget::Canvas::new(ControllerLane {
-        item,
-        item_id,
-        controller: 11,
-        lane_height: EXPRESSION_LANE_HEIGHT,
-        origin_tick: app.midi_editor_origin_tick,
-        pixels_per_beat: app.midi_editor_pixels_per_beat,
-        ticks_per_beat,
-    })
-    .width(Length::Fill)
-    .height(Length::Fixed(EXPRESSION_LANE_HEIGHT));
-    let expression_lane = row![
-        container(text("Expression"))
-            .width(Length::Fixed(KEY_WIDTH))
-            .height(Length::Fixed(EXPRESSION_LANE_HEIGHT))
-            .center_y(Length::Fill)
-            .padding(SPACING_XS),
-        expression_canvas
-    ]
-    .height(Length::Fixed(EXPRESSION_LANE_HEIGHT));
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let active_lane: Element<'_, Message> = match app.midi_editor_lane {
+        MidiEditorLane::Velocity => {
+            let canvas = canvas_widget::Canvas::new(PianoRoll {
+                project: &app.project,
+                item,
+                item_id,
+                selected: &app.midi_editor_selected_notes,
+                origin_tick: app.midi_editor_origin_tick,
+                high_pitch: app.midi_editor_high_pitch,
+                pixels_per_beat: app.midi_editor_pixels_per_beat,
+                ticks_per_beat,
+                region: RollRegion::Velocity,
+            })
+            .width(Length::Fill)
+            .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
+            lane_row("Velocity", VELOCITY_LANE_HEIGHT, canvas)
+        }
+        MidiEditorLane::Sustain => controller_lane(
+            item,
+            item_id,
+            64,
+            "Sustain CC64",
+            SUSTAIN_LANE_HEIGHT,
+            app,
+            ticks_per_beat,
+        ),
+        MidiEditorLane::Volume => controller_lane(
+            item,
+            item_id,
+            7,
+            "Volume CC7",
+            VOLUME_LANE_HEIGHT,
+            app,
+            ticks_per_beat,
+        ),
+        MidiEditorLane::Modulation => controller_lane(
+            item,
+            item_id,
+            1,
+            "Mod CC1",
+            MODULATION_LANE_HEIGHT,
+            app,
+            ticks_per_beat,
+        ),
+        MidiEditorLane::Expression => controller_lane(
+            item,
+            item_id,
+            11,
+            "Expression CC11",
+            EXPRESSION_LANE_HEIGHT,
+            app,
+            ticks_per_beat,
+        ),
+    };
     column![
         edit_toolbar,
         navigation_toolbar,
+        lane_toolbar,
         scrollable(pitch_canvas).height(Length::Fill),
-        velocity_lane,
-        sustain_lane,
-        modulation_lane,
-        expression_lane
+        active_lane
     ]
     .spacing(ROW_GAP)
     .padding(PANEL_PADDING)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+fn lane_button(
+    label: &'static str,
+    lane: MidiEditorLane,
+    selected: MidiEditorLane,
+) -> iced::widget::Button<'static, Message> {
+    button(label)
+        .style(if lane == selected {
+            iced::widget::button::primary
+        } else {
+            iced::widget::button::secondary
+        })
+        .on_press(Message::SelectMidiEditorLane(lane))
+        .padding([SPACING_XS / 2.0, SPACING_XS])
+}
+
+fn lane_row<'a>(
+    label: &'a str,
+    height: f32,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    row![
+        container(text(label))
+            .width(Length::Fixed(KEY_WIDTH))
+            .height(Length::Fixed(height))
+            .center_y(Length::Fill)
+            .padding(SPACING_XS),
+        content.into()
+    ]
+    .height(Length::Fixed(height))
+    .into()
+}
+
+fn controller_lane<'a>(
+    item: &'a MidiItem,
+    item_id: ItemId,
+    controller: u8,
+    label: &'a str,
+    lane_height: f32,
+    app: &App,
+    ticks_per_beat: u64,
+) -> Element<'a, Message> {
+    let canvas = canvas_widget::Canvas::new(ControllerLane {
+        item,
+        item_id,
+        controller,
+        lane_height,
+        origin_tick: app.midi_editor_origin_tick,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(lane_height));
+    lane_row(label, lane_height, canvas)
 }
 
 struct ControllerLane<'a> {
@@ -1260,6 +1299,16 @@ mod tests {
     use iced::widget::canvas::Program;
 
     #[test]
+    fn controller_lane_selection_switches_the_visible_edit_lane() {
+        let mut app = App::default();
+        assert_eq!(app.midi_editor_lane, MidiEditorLane::Velocity);
+        let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Volume));
+        assert_eq!(app.midi_editor_lane, MidiEditorLane::Volume);
+        let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Expression));
+        assert_eq!(app.midi_editor_lane, MidiEditorLane::Expression);
+    }
+
+    #[test]
     fn time_and_pitch_mapping_respect_origin_and_visible_pitch_range() {
         let mapping = RollMapping {
             origin_tick: 1_920,
@@ -1709,6 +1758,90 @@ mod tests {
             ]
             .concat()
         );
+    }
+
+    #[test]
+    fn volume_lane_edits_cc7_and_preserves_other_controllers() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let existing = vec![MidiControllerData {
+            controller: 11,
+            tick: 0,
+            value: 100,
+        }];
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: existing.clone(),
+            })
+            .unwrap();
+        let lane = ControllerLane {
+            item: &project.midi_items()[0],
+            item_id,
+            controller: 7,
+            lane_height: VOLUME_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, VOLUME_LANE_HEIGHT));
+        let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
+        let mut interaction = ControllerLaneInteraction::default();
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        )
+        .expect("click should begin a CC7 edit");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("click release should submit the CC7 point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiControllers(changed_item, controllers) = message.unwrap() else {
+            panic!("Volume lane should submit a controller replacement");
+        };
+        assert_eq!(changed_item, item_id);
+        let expected = [
+            existing,
+            vec![MidiControllerData {
+                controller: 7,
+                tick: 960,
+                value: 64,
+            }],
+        ]
+        .concat();
+        assert_eq!(controllers, expected);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: controllers.clone(),
+            })
+            .unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), expected);
+        project.undo().unwrap();
+        assert_eq!(project.midi_items()[0].controllers().len(), 1);
+        project.redo().unwrap();
+        assert_eq!(project.midi_items()[0].controllers(), expected);
     }
 
     #[test]

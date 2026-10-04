@@ -56,7 +56,7 @@ mod tests;
 mod view;
 mod x11_plugin_editor;
 
-pub(crate) use messages::{MainMenu, Message, PathPickerTarget, SettingsCategory};
+pub(crate) use messages::{MainMenu, Message, MidiEditorLane, PathPickerTarget, SettingsCategory};
 
 pub(crate) fn run() -> iced::Result {
     iced::daemon(App::new, App::update, view::view_for_window)
@@ -169,6 +169,7 @@ struct App {
     midi_editor_window_id: Option<iced::window::Id>,
     midi_editor_item_id: Option<ItemId>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
+    midi_editor_lane: MidiEditorLane,
     midi_editor_origin_tick: u64,
     midi_editor_high_pitch: u8,
     midi_editor_pixels_per_beat: f32,
@@ -1016,6 +1017,7 @@ impl App {
                     task = iced::window::close(window_id);
                 }
             }
+            Message::SelectMidiEditorLane(lane) => self.midi_editor_lane = lane,
             Message::SelectMidiNotes(note_ids) => {
                 self.midi_editor_selected_notes = note_ids;
             }
