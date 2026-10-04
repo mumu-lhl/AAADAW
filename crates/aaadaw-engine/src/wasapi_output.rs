@@ -469,11 +469,11 @@ impl WasapiAudioOutput {
         graphs
     }
     pub fn shutdown(&mut self) -> Result<Vec<AudioRenderGraph>, WasapiOutputError> {
-        if self.stream.is_none() {
-            return Ok(self.take_retired_graphs());
-        }
         if self.counters.device_lost.load(Ordering::Acquire) {
             return Ok(self.shutdown_after_device_loss());
+        }
+        if self.stream.is_none() {
+            return Ok(self.take_retired_graphs());
         }
         self.enqueue(Command::Shutdown)?;
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -796,7 +796,7 @@ mod tests {
             returned_graphs: Arc::clone(&returned_graphs),
         };
 
-        let graphs = output.shutdown_after_device_loss();
+        let graphs = output.shutdown().unwrap();
         assert_eq!(graphs.len(), 1);
         assert!(counters.shutdown.load(Ordering::Acquire));
     }
