@@ -13,6 +13,7 @@ mod midi_editing;
 mod waveform;
 
 pub use aaadaw_engine::ClapPluginDescriptor;
+pub use aaadaw_engine::{MasterOutputCeiling, MasterOutputSafetyError};
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
     AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
@@ -40,6 +41,8 @@ pub use midi_editing::{
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
 use aaadaw_core::Project;
+#[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_engine::MasterOutputSafetyController;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_engine::StoppedTrackFxProcessor;
 #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -183,6 +186,13 @@ impl PreparedAudioPlayback {
         &mut self.graph
     }
 
+    /// Sets this prepared graph's final Master sample-peak ceiling.
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
+        self.graph
+            .master_output_safety_controller()
+            .set_ceiling(ceiling)
+    }
+
     /// Returns the number of background media feeders owned by this playback.
     pub fn feeder_count(&self) -> usize {
         self.feeders.len()
@@ -199,11 +209,13 @@ impl PreparedAudioPlayback {
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_output_safety = self.graph.master_output_safety_controller();
         let (graph, feeders) = self.into_parts();
         let output = JackAudioOutput::open(graph).map_err(PlaybackBuildError::Jack)?;
         Ok(RunningJackPlayback {
             output,
             mix_controller,
+            master_output_safety,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -219,6 +231,7 @@ impl PreparedAudioPlayback {
         backend: PlaybackBackend,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_output_safety = self.graph.master_output_safety_controller();
         let (graph, feeders) = self.into_parts();
         let output = match backend {
             #[cfg(feature = "jack-backend")]
@@ -233,6 +246,7 @@ impl PreparedAudioPlayback {
         Ok(RunningAudioPlayback {
             output,
             mix_controller,
+            master_output_safety,
             feeders,
             retired_feeders: None,
             retired_instrument_processors: Vec::new(),
@@ -279,6 +293,7 @@ enum DeviceAudioOutput {
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
+    master_output_safety: MasterOutputSafetyController,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -291,6 +306,11 @@ impl RunningAudioPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Changes the Master sample-peak ceiling in the active callback without rebuilding the graph.
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
+        self.master_output_safety.set_ceiling(ceiling)
     }
 
     pub fn backend(&self) -> PlaybackBackend {
@@ -360,6 +380,8 @@ impl RunningAudioPlayback {
             });
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_output_safety = prepared.graph.master_output_safety_controller();
+        master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         match &mut self.output {
             #[cfg(feature = "jack-backend")]
@@ -372,6 +394,7 @@ impl RunningAudioPlayback {
                 .map_err(PlaybackBuildError::PipeWire)?,
         }
         self.mix_controller = mix_controller;
+        self.master_output_safety = master_output_safety;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }
@@ -477,6 +500,8 @@ impl RunningAudioPlayback {
 pub struct PlaybackStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
+    pub master_guarded_samples: u64,
+    pub master_non_finite_samples: u64,
     /// JACK-reported device xruns. `None` means the active backend has no verified signal.
     pub jack_xruns: Option<u64>,
     pub callback_errors: u64,
@@ -489,6 +514,8 @@ impl From<JackOutputStats> for PlaybackStats {
         Self {
             rendered_blocks: stats.rendered_blocks,
             underrun_samples: stats.underrun_samples,
+            master_guarded_samples: stats.master_guarded_samples,
+            master_non_finite_samples: stats.master_non_finite_samples,
             jack_xruns: Some(stats.device_xruns),
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
@@ -502,6 +529,8 @@ impl From<PipeWireOutputStats> for PlaybackStats {
         Self {
             rendered_blocks: stats.rendered_blocks,
             underrun_samples: stats.underrun_samples,
+            master_guarded_samples: stats.master_guarded_samples,
+            master_non_finite_samples: stats.master_non_finite_samples,
             jack_xruns: None,
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
@@ -514,6 +543,7 @@ impl From<PipeWireOutputStats> for PlaybackStats {
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
     mix_controller: TrackMixController,
+    master_output_safety: MasterOutputSafetyController,
     feeders: Vec<AudioFeedWorker>,
     retired_feeders: Option<Vec<AudioFeedWorker>>,
     retired_instrument_processors: Vec<aaadaw_engine::StoppedTrackInstrument>,
@@ -526,6 +556,10 @@ impl RunningJackPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
+        self.master_output_safety.set_ceiling(ceiling)
     }
 
     /// Queues playback for the next JACK callback.
@@ -582,11 +616,14 @@ impl RunningJackPlayback {
             ));
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_output_safety = prepared.graph.master_output_safety_controller();
+        master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         self.output
             .replace_graph(graph, self.is_playing)
             .map_err(PlaybackBuildError::Jack)?;
         self.mix_controller = mix_controller;
+        self.master_output_safety = master_output_safety;
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
         Ok(())
     }

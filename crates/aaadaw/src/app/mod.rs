@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod audio_config;
 mod clap_plugin_cache;
 mod clap_plugin_config;
 mod clap_plugin_settings;
@@ -177,6 +178,8 @@ struct App {
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
+    audio_output_settings: audio_config::AudioOutputSettings,
+    audio_settings_feedback: String,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
     clap_plugin_cache_path: Option<PathBuf>,
@@ -466,6 +469,13 @@ impl App {
             }
             Err(error) => {
                 app.status = format!("Keyboard shortcut config unavailable: {error}");
+            }
+        }
+        match audio_config::load() {
+            Ok(settings) => app.audio_output_settings = settings,
+            Err(error) => {
+                app.audio_settings_feedback =
+                    format!("Audio config unavailable; using defaults ({error})");
             }
         }
         let default_plugin_paths = default_clap_search_paths();
@@ -1172,6 +1182,9 @@ impl App {
                 if self.shortcut_capture_id.take().is_some() {
                     self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
                 }
+            }
+            Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
+                self.set_master_output_ceiling_dbfs(ceiling_dbfs);
             }
             Message::RemoveClapPluginPath(path) => {
                 task = self.remove_clap_plugin_path(path);
@@ -2130,6 +2143,7 @@ impl App {
                 return;
             }
         };
+        prepared.set_master_output_ceiling_dbfs(self.audio_output_settings.master_output_ceiling);
 
         let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
@@ -2950,6 +2964,27 @@ impl App {
                 self.shortcut_editor_feedback = "Keyboard shortcuts saved".to_owned();
             }
             Err(error) => self.status = format!("Keyboard shortcuts could not be saved: {error}"),
+        }
+    }
+
+    fn set_master_output_ceiling_dbfs(&mut self, ceiling: aaadaw_engine::MasterOutputCeiling) {
+        let settings = audio_config::AudioOutputSettings {
+            master_output_ceiling: ceiling,
+        };
+        #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
+        if let Some(playback) = &self.playback {
+            playback.set_master_output_ceiling_dbfs(ceiling);
+        }
+        self.audio_output_settings = settings;
+        match audio_config::save(settings) {
+            Ok(()) => {
+                self.audio_settings_feedback =
+                    format!("Master sample-peak ceiling set to {ceiling}");
+            }
+            Err(error) => {
+                self.audio_settings_feedback =
+                    format!("Ceiling is active for this session but could not be saved: {error}");
+            }
         }
     }
 

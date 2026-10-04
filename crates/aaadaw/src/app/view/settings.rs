@@ -1,10 +1,13 @@
 use super::super::{App, Message, PathPickerTarget, SettingsCategory, commands};
+use super::tokens;
+use aaadaw_engine::MasterOutputCeiling;
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
     let plugins_selected = app.settings_category == SettingsCategory::ClapPlugins;
+    let audio_selected = app.settings_category == SettingsCategory::AudioOutput;
     let navigation = column![
         text("Settings").size(13),
         button("Keyboard Shortcuts")
@@ -27,12 +30,23 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_press(Message::SelectSettingsCategory(
                 SettingsCategory::ClapPlugins
             )),
+        button("Audio Output")
+            .width(Length::Fill)
+            .style(if audio_selected {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SelectSettingsCategory(
+                SettingsCategory::AudioOutput
+            )),
     ]
     .spacing(4);
 
     let details = match app.settings_category {
         SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app),
         SettingsCategory::ClapPlugins => clap_plugins(app),
+        SettingsCategory::AudioOutput => audio_output(app),
     };
 
     let content = row![
@@ -50,6 +64,43 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn audio_output(app: &App) -> Element<'_, Message> {
+    column![
+        text("Audio output").size(17),
+        text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
+        row![
+            column![
+            text("Master sample-peak ceiling").size(13),
+            text("Always active · default -1 dBFS").size(10),
+            ]
+            .width(Length::Fill)
+            .spacing(tokens::SPACING_XS),
+            iced::widget::pick_list(
+                master_ceiling_choices(),
+                Some(app.audio_output_settings.master_output_ceiling),
+                Message::SetMasterOutputCeilingDbfs,
+            )
+            .placeholder("Ceiling")
+            .width(Length::Fixed(128.0)),
+        ]
+    .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
+            .size(11),
+        text(app.audio_settings_feedback.clone()).size(11),
+    ]
+    .spacing(tokens::SPACING_SM)
+    .width(Length::Fill)
+    .into()
+}
+
+fn master_ceiling_choices() -> [MasterOutputCeiling; 13] {
+    std::array::from_fn(|index| {
+        MasterOutputCeiling::new(index as i8 - 12)
+            .expect("Master output ceiling menu contains only supported values")
+    })
 }
 
 fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
@@ -120,10 +171,10 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
             iced::widget::Space::new().width(Length::Fill),
             button("Save changes").on_press(Message::SaveShortcutBindings),
         ]
-        .spacing(8)
+        .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
     ]
-    .spacing(8)
+    .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
 }

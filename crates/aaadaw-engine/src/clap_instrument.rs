@@ -2096,6 +2096,12 @@ mod tests {
             .expect("track creation");
         let track_id = project.tracks()[0].id();
         project
+            .apply(DawAction::SetTrackVolume {
+                track_id,
+                volume_db: 12.0,
+            })
+            .expect("track gain should be valid");
+        project
             .apply(DawAction::SetTrackFxChain {
                 track_id,
                 plugins: vec![
@@ -2118,7 +2124,7 @@ mod tests {
             .expect("audio item should be valid");
         let item_id = project.audio_items()[0].id();
         let (mut producer, consumer) = pcm_stream(4).unwrap();
-        assert_eq!(producer.push_samples(&[0.8, -0.4, 0.2, -0.1]), 4);
+        assert_eq!(producer.push_samples(&[1.2, -1.2, 0.2, -0.1]), 4);
         let (first_owner, first_processor) =
             ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
                 .unwrap();
@@ -2140,19 +2146,26 @@ mod tests {
             .expect("enabled effect processors should match their chain slots");
         assert!(effects.is_empty());
         graph.transport_mut().start();
-        let (retired, output) = std::thread::spawn(move || {
+        let (retired, output, stats) = std::thread::spawn(move || {
             let mut output = [[0.0; 2]; 4];
-            graph.render_into(&mut output).unwrap();
+            let stats = graph.render_into(&mut output).unwrap();
             graph.stop_fx_processors();
-            (graph.take_stopped_fx_processors(), output)
+            (graph.take_stopped_fx_processors(), output, stats)
         })
         .join()
         .expect("graph processing thread");
 
-        assert_eq!(
-            output,
-            [[0.2, 0.2], [-0.1, -0.1], [0.05, 0.05], [-0.025, -0.025]]
-        );
+        let ceiling = 10.0_f32.powf(-1.0 / 20.0);
+        assert_eq!(stats.master_guarded_samples, 4);
+        assert_eq!(stats.master_non_finite_samples, 0);
+        assert!((output[0][0] - ceiling).abs() < 1.0e-6);
+        assert!((output[0][1] - ceiling).abs() < 1.0e-6);
+        assert!((output[1][0] + ceiling).abs() < 1.0e-6);
+        assert!((output[1][1] + ceiling).abs() < 1.0e-6);
+        assert!((output[2][0] - 0.05 * 10.0_f32.powf(12.0 / 20.0)).abs() < 1.0e-6);
+        assert_eq!(output[2][0], output[2][1]);
+        assert!((output[3][0] + 0.025 * 10.0_f32.powf(12.0 / 20.0)).abs() < 1.0e-6);
+        assert_eq!(output[3][0], output[3][1]);
         assert_eq!(retired.len(), 2);
         let mut first_stopped = None;
         let mut last_stopped = None;
@@ -2482,6 +2495,12 @@ mod tests {
     fn render_graph_mixes_sample_accurate_stereo_instrument_output_with_pcm() {
         let (mut project, track_id, _) = test_project(1);
         project
+            .apply(DawAction::SetTrackVolume {
+                track_id,
+                volume_db: 12.0,
+            })
+            .expect("track gain should be valid");
+        project
             .apply(DawAction::SetTrackInstrument {
                 track_id,
                 instrument: TrackInstrument::new(PLUGIN_ID, "synth.clap"),
@@ -2561,12 +2580,19 @@ mod tests {
 
         assert_eq!(stats.midi_event_count, 2);
         assert_eq!(stats.underrun_samples, 0);
+        assert!(stats.master_guarded_samples > 0);
         let midi_level = 64.0 / 127.0;
         let pcm_level = 0.1;
+        let track_gain = 10.0_f32.powf(12.0 / 20.0);
+        let ceiling = 10.0_f32.powf(-1.0 / 20.0);
         for (frame_index, frame) in output.iter().enumerate() {
             let instrument_level = if frame_index < 25 { midi_level } else { 0.0 };
-            assert!((frame[0] - (pcm_level + instrument_level) * 0.5).abs() < 0.0001);
-            assert!((frame[1] - (pcm_level + instrument_level * 0.5) * 0.5).abs() < 0.0001);
+            let expected_left =
+                ((pcm_level + instrument_level) * 0.5 * track_gain).clamp(-ceiling, ceiling);
+            let expected_right =
+                ((pcm_level + instrument_level * 0.5) * 0.5 * track_gain).clamp(-ceiling, ceiling);
+            assert!((frame[0] - expected_left).abs() < 0.0001);
+            assert!((frame[1] - expected_right).abs() < 0.0001);
         }
         assert_eq!(retired_instruments.len(), 1);
         assert_eq!(retired_effects.len(), 1);
