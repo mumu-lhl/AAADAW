@@ -5,7 +5,10 @@ use super::prepare_project_playback_file;
 use super::project_io::{
     load_project_file, load_project_session, save_project_file, save_project_session_file,
 };
-use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
+use super::{
+    App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
+    shortcut_message,
+};
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
@@ -26,6 +29,34 @@ fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
     let _ = app.update(Message::AddTrack);
     assert_eq!(app.project.tracks().len(), 2);
     assert_eq!(app.timeline.selected_track, None);
+}
+
+#[test]
+fn switching_arrange_and_mixer_preserves_track_selection_and_transport_position() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.timeline.selected_track = Some(track_id);
+    app.timeline.edit_cursor_tick = 1_920;
+    #[cfg(feature = "audio-device")]
+    {
+        app.playhead_sample = 24_000;
+    }
+
+    let _ = app.update(Message::ShowMainWorkspace(MainWorkspace::Mixer));
+    assert_eq!(app.main_workspace, MainWorkspace::Mixer);
+    assert_eq!(app.timeline.selected_track, Some(track_id));
+    assert_eq!(app.timeline.edit_cursor_tick, 1_920);
+    assert_eq!(app.project.tracks()[0].id(), track_id);
+    #[cfg(feature = "audio-device")]
+    assert_eq!(app.playhead_sample, 24_000);
+
+    let _ = app.update(Message::ShowMainWorkspace(MainWorkspace::Arrangement));
+    assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
+    assert_eq!(app.timeline.selected_track, Some(track_id));
+    assert_eq!(app.timeline.edit_cursor_tick, 1_920);
+    #[cfg(feature = "audio-device")]
+    assert_eq!(app.playhead_sample, 24_000);
 }
 
 #[test]

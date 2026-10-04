@@ -6,3 +6,4 @@ pub(super) const SPACING_LG: f32 = 16.0;
 pub(super) const PANEL_PADDING: f32 = SPACING_SM;
 pub(super) const ROW_GAP: f32 = SPACING_XS;
 pub(super) const SECTION_GAP: f32 = SPACING_MD;
+pub(super) const MIXER_STRIP_COMPACT: f32 = 220.0;

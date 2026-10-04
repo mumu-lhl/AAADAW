@@ -25,6 +25,7 @@ mod item_inspector;
 mod media;
 mod menu;
 mod midi_editor;
+mod mixer;
 mod plugin_picker;
 mod settings;
 mod tempo_map;
@@ -87,10 +88,10 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
-    let arrangement: Element<'_, Message> = if app.media_panel_dock.open {
-        docked_arrangement(app)
-    } else {
-        arrangement::view(app)
+    let workspace: Element<'_, Message> = match app.main_workspace {
+        super::MainWorkspace::Arrangement if app.media_panel_dock.open => docked_arrangement(app),
+        super::MainWorkspace::Arrangement => arrangement::view(app),
+        super::MainWorkspace::Mixer => mixer::view(app),
     };
     let status_text = app.status.clone();
 
@@ -182,7 +183,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .padding(tokens::PANEL_PADDING)
     .style(iced::widget::container::rounded_box);
     content = content
-        .push(arrangement)
+        .push(workspace)
         .push(text(status_text))
         .push(transport);
     let base: Element<'_, Message> = container(content)
