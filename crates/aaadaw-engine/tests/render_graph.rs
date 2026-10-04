@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
     AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
-    PcmStreamError, pcm_stream,
+    MasterOutputCeiling, PcmStreamError, pcm_stream,
 };
 
 #[test]
@@ -113,8 +113,7 @@ fn master_sample_peak_ceiling_applies_after_mixing_and_updates_live() {
         .expect("one stream should match the track count");
     let safety = graph.master_output_safety_controller();
     safety
-        .set_ceiling_dbfs(-6.0)
-        .expect("a supported ceiling should be accepted");
+        .set_ceiling(MasterOutputCeiling::new(-6).expect("a supported ceiling should be accepted"));
     graph.transport_mut().start();
     let mut output = [[0.0; 2]; 3];
 

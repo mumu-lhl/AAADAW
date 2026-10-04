@@ -1,21 +1,12 @@
 use super::config_paths::config_file_path;
+use aaadaw_engine::MasterOutputCeiling;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "audio.conf";
-const DEFAULT_MASTER_OUTPUT_CEILING_DBFS: i8 = -1;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct AudioOutputSettings {
-    pub(super) master_output_ceiling_dbfs: i8,
-}
-
-impl Default for AudioOutputSettings {
-    fn default() -> Self {
-        Self {
-            master_output_ceiling_dbfs: DEFAULT_MASTER_OUTPUT_CEILING_DBFS,
-        }
-    }
+    pub(super) master_output_ceiling: MasterOutputCeiling,
 }
 
 pub(super) fn load() -> Result<AudioOutputSettings, String> {
@@ -54,16 +45,15 @@ fn parse(contents: &str) -> Result<AudioOutputSettings, String> {
         if key != "master_output_ceiling_dbfs" || found_ceiling {
             return Err(format!("invalid audio config line {}", line_number + 1));
         }
-        let ceiling = value
+        let ceiling_dbfs = value
             .parse::<i8>()
             .map_err(|_| format!("invalid Master output ceiling on line {}", line_number + 1))?;
-        if ![-12, -6, -3, -1, 0].contains(&ceiling) {
-            return Err(format!(
+        settings.master_output_ceiling = MasterOutputCeiling::new(ceiling_dbfs).map_err(|_| {
+            format!(
                 "unsupported Master output ceiling on line {}",
                 line_number + 1
-            ));
-        }
-        settings.master_output_ceiling_dbfs = ceiling;
+            )
+        })?;
         found_ceiling = true;
     }
     Ok(settings)
@@ -77,7 +67,7 @@ fn save_to(path: &Path, settings: AudioOutputSettings) -> io::Result<()> {
     writeln!(
         file,
         "master_output_ceiling_dbfs={}",
-        settings.master_output_ceiling_dbfs
+        settings.master_output_ceiling.as_dbfs()
     )?;
     file.sync_all()?;
     drop(file);
@@ -95,7 +85,7 @@ mod tests {
     #[test]
     fn audio_output_settings_round_trip() {
         let settings = AudioOutputSettings {
-            master_output_ceiling_dbfs: -6,
+            master_output_ceiling: MasterOutputCeiling::new(-6).unwrap(),
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",

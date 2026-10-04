@@ -13,7 +13,7 @@ mod midi_editing;
 mod waveform;
 
 pub use aaadaw_engine::ClapPluginDescriptor;
-pub use aaadaw_engine::MasterOutputSafetyError;
+pub use aaadaw_engine::{MasterOutputCeiling, MasterOutputSafetyError};
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
     AudioAssetManagementOperation, AudioAssetManagementProgress, AudioAssetManagementResult,
@@ -187,13 +187,10 @@ impl PreparedAudioPlayback {
     }
 
     /// Sets this prepared graph's final Master sample-peak ceiling.
-    pub fn set_master_output_ceiling_dbfs(
-        &self,
-        ceiling_dbfs: f32,
-    ) -> Result<(), MasterOutputSafetyError> {
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
         self.graph
             .master_output_safety_controller()
-            .set_ceiling_dbfs(ceiling_dbfs)
+            .set_ceiling(ceiling)
     }
 
     /// Returns the number of background media feeders owned by this playback.
@@ -312,11 +309,8 @@ impl RunningAudioPlayback {
     }
 
     /// Changes the Master sample-peak ceiling in the active callback without rebuilding the graph.
-    pub fn set_master_output_ceiling_dbfs(
-        &self,
-        ceiling_dbfs: f32,
-    ) -> Result<(), MasterOutputSafetyError> {
-        self.master_output_safety.set_ceiling_dbfs(ceiling_dbfs)
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
+        self.master_output_safety.set_ceiling(ceiling)
     }
 
     pub fn backend(&self) -> PlaybackBackend {
@@ -387,7 +381,7 @@ impl RunningAudioPlayback {
         }
         let mix_controller = prepared.graph.track_mix_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
-        let _ = master_output_safety.set_ceiling_dbfs(self.master_output_safety.ceiling_dbfs());
+        master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         match &mut self.output {
             #[cfg(feature = "jack-backend")]
@@ -564,11 +558,8 @@ impl RunningJackPlayback {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
     }
 
-    pub fn set_master_output_ceiling_dbfs(
-        &self,
-        ceiling_dbfs: f32,
-    ) -> Result<(), MasterOutputSafetyError> {
-        self.master_output_safety.set_ceiling_dbfs(ceiling_dbfs)
+    pub fn set_master_output_ceiling_dbfs(&self, ceiling: MasterOutputCeiling) {
+        self.master_output_safety.set_ceiling(ceiling)
     }
 
     /// Queues playback for the next JACK callback.
@@ -626,7 +617,7 @@ impl RunningJackPlayback {
         }
         let mix_controller = prepared.graph.track_mix_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
-        let _ = master_output_safety.set_ceiling_dbfs(self.master_output_safety.ceiling_dbfs());
+        master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
         self.output
             .replace_graph(graph, self.is_playing)

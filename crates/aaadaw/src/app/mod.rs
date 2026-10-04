@@ -2143,9 +2143,7 @@ impl App {
                 return;
             }
         };
-        let _ = prepared.set_master_output_ceiling_dbfs(f32::from(
-            self.audio_output_settings.master_output_ceiling_dbfs,
-        ));
+        prepared.set_master_output_ceiling_dbfs(self.audio_output_settings.master_output_ceiling);
 
         let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
@@ -2969,26 +2967,19 @@ impl App {
         }
     }
 
-    fn set_master_output_ceiling_dbfs(&mut self, ceiling_dbfs: i8) {
-        if ![-12, -6, -3, -1, 0].contains(&ceiling_dbfs) {
-            self.audio_settings_feedback = "Unsupported Master output ceiling".to_owned();
-            return;
-        }
+    fn set_master_output_ceiling_dbfs(&mut self, ceiling: aaadaw_engine::MasterOutputCeiling) {
         let settings = audio_config::AudioOutputSettings {
-            master_output_ceiling_dbfs: ceiling_dbfs,
+            master_output_ceiling: ceiling,
         };
         #[cfg(any(feature = "jack-backend", feature = "pipewire-backend"))]
-        if let Some(playback) = &self.playback
-            && let Err(error) = playback.set_master_output_ceiling_dbfs(f32::from(ceiling_dbfs))
-        {
-            self.audio_settings_feedback = format!("Master ceiling was not applied: {error}");
-            return;
+        if let Some(playback) = &self.playback {
+            playback.set_master_output_ceiling_dbfs(ceiling);
         }
         self.audio_output_settings = settings;
         match audio_config::save(settings) {
             Ok(()) => {
                 self.audio_settings_feedback =
-                    format!("Master sample-peak ceiling set to {ceiling_dbfs} dBFS");
+                    format!("Master sample-peak ceiling set to {ceiling}");
             }
             Err(error) => {
                 self.audio_settings_feedback =

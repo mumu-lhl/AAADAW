@@ -1,16 +1,8 @@
 use super::super::{App, Message, PathPickerTarget, SettingsCategory, commands};
+use super::tokens;
+use aaadaw_engine::MasterOutputCeiling;
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Alignment, Element, Length};
-use std::fmt;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct MasterCeilingChoice(i8);
-
-impl fmt::Display for MasterCeilingChoice {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} dBFS", self.0)
-    }
-}
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
@@ -86,24 +78,29 @@ fn audio_output(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .spacing(2),
             iced::widget::pick_list(
-                [0_i8, -1, -3, -6, -12].map(MasterCeilingChoice),
-                Some(MasterCeilingChoice(
-                    app.audio_output_settings.master_output_ceiling_dbfs,
-                )),
-                |choice| Message::SetMasterOutputCeilingDbfs(choice.0),
+                master_ceiling_choices(),
+                Some(app.audio_output_settings.master_output_ceiling),
+                Message::SetMasterOutputCeilingDbfs,
             )
             .placeholder("Ceiling")
             .width(Length::Fixed(128.0)),
         ]
-        .spacing(8)
+    .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
         text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
             .size(11),
         text(app.audio_settings_feedback.clone()).size(11),
     ]
-    .spacing(8)
+    .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
+}
+
+fn master_ceiling_choices() -> [MasterOutputCeiling; 13] {
+    std::array::from_fn(|index| {
+        MasterOutputCeiling::new(index as i8 - 12)
+            .expect("Master output ceiling menu contains only supported values")
+    })
 }
 
 fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
@@ -174,10 +171,10 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
             iced::widget::Space::new().width(Length::Fill),
             button("Save changes").on_press(Message::SaveShortcutBindings),
         ]
-        .spacing(8)
+        .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
     ]
-    .spacing(8)
+    .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
 }

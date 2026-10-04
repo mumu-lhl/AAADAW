@@ -5,6 +5,7 @@ use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
 use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
 use aaadaw_core::{DawAction, ItemId, MidiControllerData, MidiNoteData, NoteId, Project, TrackId};
+use aaadaw_engine::MasterOutputCeiling;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -88,7 +89,7 @@ pub(crate) enum Message {
     ClearShortcutBinding(String),
     RestoreShortcutDefault(String),
     SelectSettingsCategory(SettingsCategory),
-    SetMasterOutputCeilingDbfs(i8),
+    SetMasterOutputCeilingDbfs(MasterOutputCeiling),
     RemoveClapPluginPath(PathBuf),
     RescanClapPlugins,
     ClapPluginsScanned(Result<aaadaw_app::ClapPluginScanReport, String>),

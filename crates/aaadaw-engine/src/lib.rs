@@ -37,7 +37,8 @@ pub use jack_input::{JackAudioInput, JackInputError};
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
 pub use master_output::{
-    MASTER_OUTPUT_DEFAULT_CEILING_DBFS, MasterOutputSafetyController, MasterOutputSafetyError,
+    MASTER_OUTPUT_DEFAULT_CEILING_DBFS, MasterOutputCeiling, MasterOutputSafetyController,
+    MasterOutputSafetyError,
 };
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};

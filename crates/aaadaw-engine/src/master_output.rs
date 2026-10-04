@@ -2,7 +2,42 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Default final-output sample-peak ceiling in dBFS.
-pub const MASTER_OUTPUT_DEFAULT_CEILING_DBFS: f32 = -1.0;
+pub const MASTER_OUTPUT_DEFAULT_CEILING_DBFS: i8 = -1;
+
+/// A validated integer dBFS ceiling for the final Master sample-peak guard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MasterOutputCeiling(i8);
+
+impl MasterOutputCeiling {
+    /// Creates a ceiling from -12 through 0 dBFS.
+    pub fn new(dbfs: i8) -> Result<Self, MasterOutputSafetyError> {
+        (-12..=0)
+            .contains(&dbfs)
+            .then_some(Self(dbfs))
+            .ok_or(MasterOutputSafetyError)
+    }
+
+    /// Returns this ceiling's dBFS value.
+    pub const fn as_dbfs(self) -> i8 {
+        self.0
+    }
+
+    fn linear_amplitude(self) -> f32 {
+        10.0_f32.powf(f32::from(self.0) / 20.0)
+    }
+}
+
+impl Default for MasterOutputCeiling {
+    fn default() -> Self {
+        Self(MASTER_OUTPUT_DEFAULT_CEILING_DBFS)
+    }
+}
+
+impl std::fmt::Display for MasterOutputCeiling {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} dBFS", self.0)
+    }
+}
 
 /// Invalid ceiling values are rejected before they can reach the audio callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,19 +62,16 @@ pub struct MasterOutputSafetyController {
 
 impl MasterOutputSafetyController {
     /// Sets the final sample-peak ceiling. The supported range is -12 through 0 dBFS.
-    pub fn set_ceiling_dbfs(&self, ceiling_dbfs: f32) -> Result<(), MasterOutputSafetyError> {
-        let Some(linear) = ceiling_linear(ceiling_dbfs) else {
-            return Err(MasterOutputSafetyError);
-        };
+    pub fn set_ceiling(&self, ceiling: MasterOutputCeiling) {
         self.ceiling_linear
-            .store(linear.to_bits(), Ordering::Relaxed);
-        Ok(())
+            .store(ceiling.linear_amplitude().to_bits(), Ordering::Relaxed);
     }
 
-    /// Returns the currently active ceiling in dBFS.
-    pub fn ceiling_dbfs(&self) -> f32 {
+    /// Returns the currently active ceiling.
+    pub fn ceiling(&self) -> MasterOutputCeiling {
         let linear = f32::from_bits(self.ceiling_linear.load(Ordering::Relaxed));
-        20.0 * linear.log10()
+        let dbfs = (20.0 * linear.log10()).round() as i8;
+        MasterOutputCeiling::new(dbfs).expect("controller stores only validated ceilings")
     }
 }
 
@@ -52,9 +84,7 @@ impl Default for MasterOutputSafety {
     fn default() -> Self {
         Self {
             ceiling_linear: Arc::new(AtomicU32::new(
-                ceiling_linear(MASTER_OUTPUT_DEFAULT_CEILING_DBFS)
-                    .expect("the default Master sample-peak ceiling is valid")
-                    .to_bits(),
+                MasterOutputCeiling::default().linear_amplitude().to_bits(),
             )),
         }
     }
@@ -90,13 +120,6 @@ impl MasterOutputSafety {
 pub(super) struct MasterOutputGuardStats {
     pub(super) guarded_samples: usize,
     pub(super) non_finite_samples: usize,
-}
-
-fn ceiling_linear(ceiling_dbfs: f32) -> Option<f32> {
-    if !ceiling_dbfs.is_finite() || !(-12.0..=0.0).contains(&ceiling_dbfs) {
-        return None;
-    }
-    Some(10.0_f32.powf(ceiling_dbfs / 20.0))
 }
 
 #[cfg(test)]
@@ -135,19 +158,15 @@ mod tests {
         let mut output = [[0.8, -0.8]];
         assert_eq!(safety.process(&mut output).guarded_samples, 0);
 
-        controller.set_ceiling_dbfs(-6.0).unwrap();
-        assert!((controller.ceiling_dbfs() + 6.0).abs() < 1e-5);
+        controller.set_ceiling(MasterOutputCeiling::new(-6).unwrap());
+        assert_eq!(controller.ceiling(), MasterOutputCeiling::new(-6).unwrap());
         let stats = safety.process(&mut output);
         let ceiling = 10.0_f32.powf(-6.0 / 20.0);
         assert_eq!(stats.guarded_samples, 2);
         assert_eq!(output, [[ceiling, -ceiling]]);
 
-        for invalid in [f32::NAN, f32::INFINITY, -12.1, 0.1] {
-            assert_eq!(
-                controller.set_ceiling_dbfs(invalid),
-                Err(MasterOutputSafetyError)
-            );
-        }
-        assert!((controller.ceiling_dbfs() + 6.0).abs() < 1e-5);
+        assert!(MasterOutputCeiling::new(-13).is_err());
+        assert!(MasterOutputCeiling::new(1).is_err());
+        assert_eq!(controller.ceiling(), MasterOutputCeiling::new(-6).unwrap());
     }
 }
