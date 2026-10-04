@@ -36,6 +36,16 @@ const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
 const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
+const SET_TRACK_MIX_TOOL: &str = "daw_set_track_mix";
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TrackMixChanges {
+    track_id: u64,
+    volume_db: Option<f32>,
+    pan: Option<f32>,
+    muted: Option<bool>,
+    solo: Option<bool>,
+}
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
     let project_path = project_path.as_ref();
@@ -175,6 +185,7 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(quantize_midi_item_tool());
             tools.push(set_volume_automation_point_tool());
             tools.push(set_track_record_arm_tool());
+            tools.push(set_track_mix_tool());
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -189,6 +200,7 @@ impl ServerHandler for ProjectMcpServer {
                 Some(set_volume_automation_point_tool())
             }
             SET_TRACK_RECORD_ARM_TOOL if self.writable => Some(set_track_record_arm_tool()),
+            SET_TRACK_MIX_TOOL if self.writable => Some(set_track_mix_tool()),
             _ => None,
         }
     }
@@ -235,6 +247,10 @@ impl ServerHandler for ProjectMcpServer {
             SET_TRACK_RECORD_ARM_TOOL if self.writable => {
                 parse_record_arm_arguments(request.arguments.as_ref())
                     .and_then(|(track_id, armed)| self.set_track_record_arm(track_id, armed))
+            }
+            SET_TRACK_MIX_TOOL if self.writable => {
+                parse_track_mix_arguments(request.arguments.as_ref())
+                    .and_then(|changes| self.set_track_mix(changes))
             }
             _ => Err("unknown or unavailable tool".to_owned()),
         };
@@ -460,6 +476,61 @@ impl ProjectMcpServer {
             .map_err(|error| error.to_string())?;
         persist_project_edit(&mut project, store, "set track record arm")?;
         Ok(result)
+    }
+
+    fn set_track_mix(&self, changes: TrackMixChanges) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id().value() == changes.track_id)
+            .ok_or_else(|| "unknown track id".to_owned())?;
+        let track_id = track.id();
+        let mut actions = Vec::new();
+        if let Some(volume_db) = changes
+            .volume_db
+            .filter(|value| *value != track.volume_db())
+        {
+            actions.push(DawAction::SetTrackVolume {
+                track_id,
+                volume_db,
+            });
+        }
+        if let Some(pan) = changes.pan.filter(|value| *value != track.pan()) {
+            actions.push(DawAction::SetTrackPan { track_id, pan });
+        }
+        if let Some(muted) = changes.muted.filter(|value| *value != track.is_muted()) {
+            actions.push(DawAction::SetTrackMute { track_id, muted });
+        }
+        if let Some(solo) = changes.solo.filter(|value| *value != track.is_solo()) {
+            actions.push(DawAction::SetTrackSolo { track_id, solo });
+        }
+        if actions.is_empty() {
+            return Ok(track_mix_result(track, false));
+        }
+        project
+            .apply(DawAction::BatchTransaction {
+                tx_id: track_id.value(),
+                actions,
+            })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "set track mix")?;
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .ok_or_else(|| "track disappeared after setting mix".to_owned())?;
+        Ok(track_mix_result(track, true))
     }
 }
 
@@ -699,6 +770,105 @@ fn parse_record_arm_arguments(
         .and_then(Value::as_bool)
         .ok_or_else(|| "armed must be a boolean".to_owned())?;
     Ok((track_id, armed))
+}
+
+fn set_track_mix_tool() -> Tool {
+    Tool::new(
+        SET_TRACK_MIX_TOOL,
+        "Set one or more base mixer controls for an existing track as one undoable edit.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "volume_db": {"type": "number"},
+                "pan": {"type": "number", "minimum": -1, "maximum": 1},
+                "muted": {"type": "boolean"},
+                "solo": {"type": "boolean"}
+            },
+            "required": ["track_id"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_track_mix_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<TrackMixChanges, String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "track_id" | "volume_db" | "pan" | "muted" | "solo"
+        )
+    }) {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let track_id = arguments
+        .get("track_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "track_id must be a non-negative integer".to_owned())?;
+    let volume_db = arguments
+        .get("volume_db")
+        .map(|value| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && (*value as f32).is_finite())
+                .map(|value| value as f32)
+                .ok_or_else(|| "volume_db must be a finite f32 value".to_owned())
+        })
+        .transpose()?;
+    let pan = arguments
+        .get("pan")
+        .map(|value| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && (-1.0..=1.0).contains(value))
+                .map(|value| value as f32)
+                .ok_or_else(|| "pan must be finite and within -1..=1".to_owned())
+        })
+        .transpose()?;
+    let boolean = |key: &str| {
+        arguments
+            .get(key)
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| format!("{key} must be a boolean"))
+            })
+            .transpose()
+    };
+    let changes = TrackMixChanges {
+        track_id,
+        volume_db,
+        pan,
+        muted: boolean("muted")?,
+        solo: boolean("solo")?,
+    };
+    if changes.volume_db.is_none()
+        && changes.pan.is_none()
+        && changes.muted.is_none()
+        && changes.solo.is_none()
+    {
+        return Err("at least one mixer field is required".to_owned());
+    }
+    Ok(changes)
+}
+
+fn track_mix_result(track: &aaadaw_core::Track, changed: bool) -> Value {
+    json!({
+        "track_id": track.id().value(),
+        "volume_db": track.volume_db(),
+        "pan": track.pan(),
+        "muted": track.is_muted(),
+        "solo": track.is_solo(),
+        "changed": changed,
+    })
 }
 
 fn parse_create_track_arguments(
