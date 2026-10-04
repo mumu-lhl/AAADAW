@@ -120,6 +120,20 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
                 }
             }
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -189,6 +203,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     );
     assert_eq!(response_for(9)["result"]["isError"], true);
     assert_eq!(response_for(10)["result"]["isError"], true);
+    assert_eq!(response_for(11)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -547,4 +562,345 @@ fn explicitly_authorized_mcp_midi_note_insertion_is_atomic_and_persistent() {
         midi_item.notes()[1].id().value(),
         note_ids[1].as_u64().unwrap()
     );
+}
+
+#[test]
+fn explicitly_authorized_mcp_quantize_is_undoable_validated_and_persistent() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-quantize-test.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keys".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Other".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let other_track_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 110,
+                    duration: 120,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 510,
+                    duration: 120,
+                    velocity: 90,
+                },
+            ],
+        })
+        .unwrap();
+    let original_note_ids = project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id().value())
+        .collect::<Vec<_>>();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .unwrap();
+    let boundary_item_id = project.midi_items()[1].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: boundary_item_id,
+            notes: vec![MidiNoteData {
+                pitch: 67,
+                tick: 3800,
+                duration: 30,
+                velocity: 80,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "test-media".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 44_100,
+        })
+        .unwrap();
+    let audio_item_id = project.audio_items()[0].id();
+    let store = ProjectStore::open(&project_path).unwrap();
+    let mut store = store;
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-quantize-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16,
+                    "strength": 0.5
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_scoped_query_notes",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "start_tick": 0,
+                    "end_tick": 3840
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 7
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16,
+                    "strength": 1.1
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": other_track_id.value(),
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": boundary_item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": audio_item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": u64::MAX,
+                    "item_id": item_id.value(),
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_quantize_midi_item",
+                "arguments": {
+                    "track_id": track_id.value(),
+                    "item_id": u64::MAX,
+                    "grid_numerator": 1,
+                    "grid_denominator": 16
+                }
+            }
+        }),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["name"] == "daw_quantize_midi_item")
+    );
+    let partial_result = &response_for(3)["result"]["structuredContent"];
+    assert_eq!(response_for(3)["result"]["isError"], false);
+    assert_eq!(partial_result["strength"], 0.5);
+    assert_eq!(partial_result["changed_note_ids"], json!(original_note_ids));
+    let partial_ticks = response_for(30)["result"]["structuredContent"]["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["tick"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(partial_ticks, [55, 495, 3800]);
+    let full_result = &response_for(4)["result"]["structuredContent"];
+    assert_eq!(response_for(4)["result"]["isError"], false);
+    assert_eq!(full_result["strength"], 1.0);
+    assert_eq!(full_result["changed_note_ids"], json!(original_note_ids));
+    assert_eq!(response_for(5)["result"]["isError"], false);
+    assert_eq!(
+        response_for(5)["result"]["structuredContent"]["changed_note_ids"],
+        json!([])
+    );
+    for id in [6, 7, 8, 9, 10, 11, 12] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let midi_item = reopened
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .unwrap();
+    assert_eq!(midi_item.notes()[0].tick(), 0);
+    assert_eq!(midi_item.notes()[0].pitch(), 60);
+    assert_eq!(midi_item.notes()[0].duration(), 120);
+    assert_eq!(midi_item.notes()[0].velocity(), 100);
+    assert_eq!(midi_item.notes()[1].tick(), 480);
+    let boundary_item = reopened
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == boundary_item_id)
+        .unwrap();
+    assert_eq!(boundary_item.notes()[0].tick(), 3800);
 }

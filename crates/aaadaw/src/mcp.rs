@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project, TempoCurve, TrackId};
+use aaadaw_core::{DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TrackId};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
@@ -30,6 +30,7 @@ const CREATE_TRACK_TOOL: &str = "daw_create_track";
 const MAX_TRACK_NAME_CHARS: usize = 128;
 const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
 const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
+const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
     let project_path = project_path.as_ref();
@@ -165,6 +166,7 @@ impl ServerHandler for ProjectMcpServer {
         if self.writable {
             tools.push(create_track_tool());
             tools.push(insert_midi_notes_tool());
+            tools.push(quantize_midi_item_tool());
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -174,6 +176,7 @@ impl ServerHandler for ProjectMcpServer {
             MIDI_QUERY_TOOL => Some(midi_query_tool()),
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
+            QUANTIZE_MIDI_ITEM_TOOL if self.writable => Some(quantize_midi_item_tool()),
             _ => None,
         }
     }
@@ -204,6 +207,12 @@ impl ServerHandler for ProjectMcpServer {
                     |(track_id, item_id, notes)| self.insert_midi_notes(track_id, item_id, notes),
                 )
             }
+            QUANTIZE_MIDI_ITEM_TOOL if self.writable => parse_quantize_midi_item_arguments(
+                request.arguments.as_ref(),
+            )
+            .and_then(|(track_id, item_id, numerator, denominator, strength)| {
+                self.quantize_midi_item(track_id, item_id, numerator, denominator, strength)
+            }),
             _ => Err("unknown or unavailable tool".to_owned()),
         };
         std::future::ready(Ok(match result {
@@ -258,19 +267,7 @@ impl ProjectMcpServer {
         let store = store
             .as_mut()
             .ok_or_else(|| "project was opened read-only".to_owned())?;
-        let track = project
-            .tracks()
-            .iter()
-            .find(|track| track.id().value() == track_id)
-            .ok_or_else(|| "unknown track id".to_owned())?;
-        let item = project
-            .midi_items()
-            .iter()
-            .find(|item| item.id().value() == item_id)
-            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
-        if item.track_id() != track.id() {
-            return Err("MIDI item does not belong to the specified track".to_owned());
-        }
+        let (track_id, item) = resolve_midi_item(&project, track_id, item_id)?;
         let item_id = item.id();
         let first_note_index = item.notes().len();
         project
@@ -286,11 +283,71 @@ impl ProjectMcpServer {
             .map(|note| note.id().value())
             .collect::<Vec<_>>();
         let result = json!({
-            "track_id": track_id,
+            "track_id": track_id.value(),
             "item_id": item_id.value(),
             "note_ids": note_ids,
         });
         persist_project_edit(&mut project, store, "inserted MIDI notes")?;
+        Ok(result)
+    }
+
+    fn quantize_midi_item(
+        &self,
+        track_id: u64,
+        item_id: u64,
+        numerator: u32,
+        denominator: u32,
+        strength: f32,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let (track_id, item) = resolve_midi_item(&project, track_id, item_id)?;
+        let item_id = item.id();
+        let before_ticks = item
+            .notes()
+            .iter()
+            .map(|note| (note.id().value(), note.tick()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let grid = GridFraction::new(numerator, denominator).map_err(|error| error.to_string())?;
+        project
+            .apply(DawAction::QuantizeItem {
+                item_id,
+                grid,
+                strength,
+            })
+            .map_err(|error| error.to_string())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .ok_or_else(|| "MIDI item disappeared after quantization".to_owned())?;
+        let changed_note_ids = item
+            .notes()
+            .iter()
+            .filter(|note| before_ticks.get(&note.id().value()) != Some(&note.tick()))
+            .map(|note| note.id().value())
+            .collect::<Vec<_>>();
+        let no_op = changed_note_ids.is_empty();
+        let result = json!({
+            "track_id": track_id.value(),
+            "item_id": item_id.value(),
+            "grid": {"numerator": numerator, "denominator": denominator},
+            "strength": strength,
+            "changed_note_ids": changed_note_ids,
+        });
+        if no_op {
+            return Ok(result);
+        }
+        persist_project_edit(&mut project, store, "quantized MIDI notes")?;
         Ok(result)
     }
 }
@@ -309,6 +366,27 @@ fn persist_project_edit(
         return Err(format!("failed to save {operation}: {error}"));
     }
     Ok(())
+}
+
+fn resolve_midi_item(
+    project: &Project,
+    track_id: u64,
+    item_id: u64,
+) -> Result<(TrackId, &MidiItem), String> {
+    let track = project
+        .tracks()
+        .iter()
+        .find(|track| track.id().value() == track_id)
+        .ok_or_else(|| "unknown track id".to_owned())?;
+    let item = project
+        .midi_items()
+        .iter()
+        .find(|item| item.id().value() == item_id)
+        .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+    if item.track_id() != track.id() {
+        return Err("MIDI item does not belong to the specified track".to_owned());
+    }
+    Ok((track.id(), item))
 }
 
 fn midi_query_tool() -> Tool {
@@ -383,6 +461,31 @@ fn insert_midi_notes_tool() -> Tool {
                 }
             },
             "required": ["track_id", "item_id", "notes"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn quantize_midi_item_tool() -> Tool {
+    Tool::new(
+        QUANTIZE_MIDI_ITEM_TOOL,
+        "Move note starts in an existing MIDI item toward a musical grid.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "item_id": {"type": "integer", "minimum": 0},
+                "grid_numerator": {"type": "integer", "minimum": 1},
+                "grid_denominator": {"type": "integer", "minimum": 1},
+                "strength": {"type": "number", "minimum": 0, "maximum": 1, "default": 1}
+            },
+            "required": ["track_id", "item_id", "grid_numerator", "grid_denominator"],
             "additionalProperties": false
         })),
     )
@@ -480,6 +583,54 @@ fn parse_insert_midi_notes_arguments(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok((track_id, item_id, notes))
+}
+
+fn parse_quantize_midi_item_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, u32, u32, f32), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "track_id" | "item_id" | "grid_numerator" | "grid_denominator" | "strength"
+        )
+    }) {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let unsigned = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{key} must be a non-negative integer"))
+    };
+    let bounded_u32 =
+        |key: &str| u32::try_from(unsigned(key)?).map_err(|_| format!("{key} is out of range"));
+    let track_id = unsigned("track_id")?;
+    let item_id = unsigned("item_id")?;
+    let grid_numerator = bounded_u32("grid_numerator")?;
+    let grid_denominator = bounded_u32("grid_denominator")?;
+    if grid_numerator == 0 || grid_denominator == 0 {
+        return Err("grid numerator and denominator must be positive".to_owned());
+    }
+    let strength = match arguments.get("strength") {
+        Some(value) => {
+            let strength = value
+                .as_f64()
+                .ok_or_else(|| "strength must be a number in 0..=1".to_owned())?;
+            if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
+                return Err("strength must be a number in 0..=1".to_owned());
+            }
+            strength as f32
+        }
+        None => 1.0,
+    };
+    Ok((
+        track_id,
+        item_id,
+        grid_numerator,
+        grid_denominator,
+        strength,
+    ))
 }
 
 fn parse_note_query_arguments(
@@ -708,8 +859,9 @@ mod tests {
     use super::{
         MAX_MAP_POINTS, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS,
         MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_track_arguments,
-        parse_insert_midi_notes_arguments, parse_note_query_arguments, parse_track_summary_uri,
-        scoped_query_notes, structure_summary, track_midi_summary,
+        parse_insert_midi_notes_arguments, parse_note_query_arguments,
+        parse_quantize_midi_item_arguments, parse_track_summary_uri, scoped_query_notes,
+        structure_summary, track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
     use serde_json::{Value, json};
@@ -769,6 +921,43 @@ mod tests {
             json!({"pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
         ] {
             assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([invalid])))).is_err());
+        }
+    }
+
+    #[test]
+    fn quantize_arguments_validate_grid_and_strength_and_default_to_full_strength() {
+        let arguments = |grid_numerator: Value, grid_denominator: Value| {
+            serde_json::Map::from_iter([
+                ("track_id".to_owned(), json!(0)),
+                ("item_id".to_owned(), json!(0)),
+                ("grid_numerator".to_owned(), grid_numerator),
+                ("grid_denominator".to_owned(), grid_denominator),
+            ])
+        };
+        let parsed =
+            parse_quantize_midi_item_arguments(Some(&arguments(json!(1), json!(16)))).unwrap();
+        assert_eq!(parsed, (0, 0, 1, 16, 1.0));
+
+        let mut partial = arguments(json!(1), json!(16));
+        partial.insert("strength".to_owned(), json!(0.5));
+        assert_eq!(
+            parse_quantize_midi_item_arguments(Some(&partial)).unwrap(),
+            (0, 0, 1, 16, 0.5)
+        );
+        for strength in [json!(-0.1), json!(1.1), json!("1"), json!(true)] {
+            let mut invalid = arguments(json!(1), json!(16));
+            invalid.insert("strength".to_owned(), strength);
+            assert!(parse_quantize_midi_item_arguments(Some(&invalid)).is_err());
+        }
+        for (numerator, denominator) in [
+            (json!(0), json!(16)),
+            (json!(1), json!(0)),
+            (json!(u64::from(u32::MAX) + 1), json!(16)),
+        ] {
+            assert!(
+                parse_quantize_midi_item_arguments(Some(&arguments(numerator, denominator)))
+                    .is_err()
+            );
         }
     }
 
