@@ -17,6 +17,49 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         .unwrap();
     let track_id = project.tracks()[0].id();
     project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Music Bus".to_owned(),
+        })
+        .unwrap();
+    let bus_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackVolume {
+            track_id,
+            volume_db: -4.5,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackPan {
+            track_id,
+            pan: 0.25,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackMute {
+            track_id,
+            muted: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id,
+            output_track: Some(bus_id),
+        })
+        .unwrap();
+    project
         .apply(DawAction::InsertMidiItem {
             track_id,
             start_tick: 0,
@@ -221,6 +264,14 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     let structure: Value = serde_json::from_str(structure).unwrap();
     assert_eq!(structure["tracks"][0]["id"], track_id.value());
     assert_eq!(structure["tracks"][0]["name"], "Keys");
+    assert_eq!(structure["tracks"][0]["volume_db"], -4.5);
+    assert_eq!(structure["tracks"][0]["pan"], 0.25);
+    assert_eq!(structure["tracks"][0]["muted"], true);
+    assert_eq!(structure["tracks"][0]["solo"], true);
+    assert_eq!(structure["tracks"][0]["record_armed"], true);
+    assert_eq!(structure["tracks"][0]["output_track_id"], bus_id.value());
+    assert_eq!(structure["tracks"][1]["type"], "bus");
+    assert_eq!(structure["tracks"][1]["output_track_id"], Value::Null);
     let midi = response_for(5)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
