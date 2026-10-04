@@ -1,6 +1,6 @@
 mod renderer;
 
-use aaadaw_core::{ItemId, Project, TrackId};
+use aaadaw_core::{ItemId, Project, TrackId, VolumeAutomationPoint};
 use aaadaw_media::AudioWaveform;
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas;
@@ -137,6 +137,22 @@ pub(crate) enum TimelineEvent {
         y: f32,
     },
     CloseItemContextMenu,
+    ToggleVolumeAutomation(TrackId),
+    SetVolumeAutomation(TrackId, Vec<VolumeAutomationPoint>),
+    InsertVolumeAutomationAt {
+        track_index: usize,
+        tick: u64,
+        gain_db: f32,
+    },
+    DeleteVolumeAutomationPoint {
+        track_id: TrackId,
+        index: usize,
+    },
+    SelectVolumeAutomationPoint {
+        track_id: TrackId,
+        index: usize,
+    },
+    ClearSelectedVolumeAutomationPoint,
     SelectEmpty(u64),
     SetTimeSelection {
         start_tick: u64,
@@ -416,6 +432,9 @@ pub(crate) struct TimelineState {
     pan_fractional_tick: f64,
     selection_anchor: Option<ItemId>,
     drag_preview: Option<ItemDragPreview>,
+    pub(crate) volume_automation_tracks: HashSet<TrackId>,
+    pub(crate) hidden_volume_automation_tracks: HashSet<TrackId>,
+    selected_volume_automation_point: Option<(TrackId, usize)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,12 +488,29 @@ impl Default for TimelineState {
             pan_fractional_tick: 0.0,
             selection_anchor: None,
             drag_preview: None,
+            volume_automation_tracks: HashSet::new(),
+            hidden_volume_automation_tracks: HashSet::new(),
+            selected_volume_automation_point: None,
         }
     }
 }
 
 impl TimelineState {
     pub(crate) fn rebuild(&mut self, project: &Project) {
+        self.volume_automation_tracks.extend(
+            project
+                .tracks()
+                .iter()
+                .filter(|track| {
+                    !track.volume_automation().is_empty()
+                        && !self.hidden_volume_automation_tracks.contains(&track.id())
+                })
+                .map(|track| track.id()),
+        );
+        self.volume_automation_tracks
+            .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
+        self.hidden_volume_automation_tracks
+            .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
         self.cache
             .rebuild(project, &self.audio_waveforms, self.snap_grid);
         if self.cache.snap_grid_ticks.is_none() {
@@ -512,6 +548,18 @@ impl TimelineState {
         {
             self.context_item = None;
             self.context_item_position = None;
+        }
+        if self
+            .selected_volume_automation_point
+            .is_some_and(|(track_id, index)| {
+                project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                    .is_none_or(|track| index >= track.volume_automation().len())
+            })
+        {
+            self.selected_volume_automation_point = None;
         }
     }
 
@@ -567,6 +615,26 @@ impl TimelineState {
                 self.context_item = None;
                 self.context_item_position = None;
             }
+            TimelineEvent::ToggleVolumeAutomation(track_id) => {
+                if self.volume_automation_tracks.remove(&track_id) {
+                    self.hidden_volume_automation_tracks.insert(track_id);
+                } else {
+                    self.hidden_volume_automation_tracks.remove(&track_id);
+                    self.volume_automation_tracks.insert(track_id);
+                }
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::SelectVolumeAutomationPoint { track_id, index } => {
+                self.selected_volume_automation_point = Some((track_id, index));
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::ClearSelectedVolumeAutomationPoint => {
+                self.selected_volume_automation_point = None;
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::SetVolumeAutomation(_, _)
+            | TimelineEvent::InsertVolumeAutomationAt { .. }
+            | TimelineEvent::DeleteVolumeAutomationPoint { .. } => {}
             TimelineEvent::SelectEmpty(tick) => {
                 self.edit_cursor_tick = tick;
                 self.select_item(None, false, false, false);
@@ -803,6 +871,9 @@ impl TimelineState {
             snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
+            volume_automation_tracks: &self.volume_automation_tracks,
+            hidden_volume_automation_tracks: &self.hidden_volume_automation_tracks,
+            selected_volume_automation_point: self.selected_volume_automation_point,
         }
     }
 
@@ -832,6 +903,9 @@ struct TimelineProgram<'a> {
     snap_enabled: bool,
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
+    volume_automation_tracks: &'a HashSet<TrackId>,
+    hidden_volume_automation_tracks: &'a HashSet<TrackId>,
+    selected_volume_automation_point: Option<(TrackId, usize)>,
 }
 
 #[derive(Default)]
@@ -841,6 +915,15 @@ struct TimelineInteractionState {
     pending_item_drag: Option<PendingItemDrag>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     last_item_click: Option<(ItemId, Instant)>,
+    pending_automation_point: Option<PendingAutomationPoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingAutomationPoint {
+    track_index: usize,
+    point_index: usize,
+    start_x: f32,
+    start_y: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -900,6 +983,22 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             return None;
+        }
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
+            && matches!(
+                key,
+                keyboard::Key::Named(
+                    keyboard::key::Named::Delete | keyboard::key::Named::Backspace
+                )
+            )
+            && let Some((track_id, index)) = self.selected_volume_automation_point
+        {
+            return Some(
+                shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::DeleteVolumeAutomationPoint { track_id, index },
+                ))
+                .and_capture(),
+            );
         }
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
             && *key == keyboard::Key::Named(keyboard::key::Named::Escape)
@@ -967,6 +1066,29 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 let position = cursor.position_in(bounds)?;
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
+                if position.y.rem_euclid(TIMELINE_ROW_HEIGHT) >= 62.0
+                    && let Some(track) = self.project.tracks().get(track_index)
+                    && (self.volume_automation_tracks.contains(&track.id())
+                        || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                            && !track.volume_automation().is_empty()))
+                    && let Some(index) = automation_point_at(
+                        self.project,
+                        self.pixels_per_tick,
+                        track_index,
+                        tick,
+                        position.y.rem_euclid(TIMELINE_ROW_HEIGHT),
+                    )
+                {
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::DeleteVolumeAutomationPoint {
+                                track_id: track.id(),
+                                index,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let event = self.cache.item_at(track_index, tick).map_or(
                     TimelineEvent::CloseItemContextMenu,
                     |item| TimelineEvent::OpenItemContextMenu {
@@ -985,7 +1107,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(last_x) = state.pan_last_x {
+                if state.pending_automation_point.is_some() {
+                    Some(shader::Action::capture())
+                } else if let Some(last_x) = state.pan_last_x {
                     let local_x = position.x - bounds.x;
                     state.pan_last_x = Some(local_x);
                     let delta_x = local_x - last_x;
@@ -1069,8 +1193,56 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
-                let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
+                let row_y = position.y.rem_euclid(TIMELINE_ROW_HEIGHT);
+                let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                let tick = snap_tick_to_grid(
+                    raw_tick,
+                    self.cache.snap_grid_ticks,
+                    self.snap_enabled,
+                    state.modifiers.shift(),
+                );
+                if row_y >= 62.0
+                    && let Some(track) = self.project.tracks().get(track_index)
+                    && (self.volume_automation_tracks.contains(&track.id())
+                        || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                            && !track.volume_automation().is_empty()))
+                {
+                    if let Some(point_index) = automation_point_at(
+                        self.project,
+                        self.pixels_per_tick,
+                        track_index,
+                        raw_tick,
+                        row_y,
+                    ) {
+                        state.pending_automation_point = Some(PendingAutomationPoint {
+                            track_index,
+                            point_index,
+                            start_x: position.x,
+                            start_y: position.y,
+                        });
+                        return Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SelectVolumeAutomationPoint {
+                                    track_id: track.id(),
+                                    index: point_index,
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    let gain_db = (6.0 - ((row_y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::InsertVolumeAutomationAt {
+                                track_index,
+                                tick,
+                                gain_db,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let hit = self.cache.item_at(track_index, tick);
                 let selection_edge = self.time_selection.and_then(|selection| {
                     time_selection_edge_at_tick(selection, tick, self.pixels_per_tick)
@@ -1125,7 +1297,49 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if let Some(drag) = state.pending_item_drag.take() {
+                if let Some(drag) = state.pending_automation_point.take() {
+                    let Some(track) = self.project.tracks().get(drag.track_index) else {
+                        return Some(shader::Action::capture());
+                    };
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(shader::Action::capture());
+                    };
+                    if (position.x - drag.start_x).hypot(position.y - drag.start_y) < 2.0 {
+                        return Some(shader::Action::capture());
+                    }
+                    let tick = snap_tick_to_grid(
+                        tick_at_x(self.origin_tick, self.pixels_per_tick, position.x),
+                        self.cache.snap_grid_ticks,
+                        self.snap_enabled,
+                        state.modifiers.shift(),
+                    );
+                    let sample = self.project.sample_at_tick(tick).ok()?;
+                    let y = (position.y - drag.track_index as f32 * TIMELINE_ROW_HEIGHT)
+                        .clamp(62.0, TIMELINE_ROW_HEIGHT - 1.0);
+                    let gain_db = (6.0 - ((y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
+                    let mut points = track.volume_automation().to_vec();
+                    if drag.point_index < points.len() {
+                        let min_sample = drag
+                            .point_index
+                            .checked_sub(1)
+                            .map_or(0, |index| points[index].sample().saturating_add(1));
+                        let max_sample = points
+                            .get(drag.point_index + 1)
+                            .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
+                        if let Some(point) = aaadaw_core::VolumeAutomationPoint::new(
+                            sample.clamp(min_sample, max_sample),
+                            gain_db,
+                        ) {
+                            points[drag.point_index] = point;
+                        }
+                    }
+                    Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SetVolumeAutomation(track.id(), points),
+                        ))
+                        .and_capture(),
+                    )
+                } else if let Some(drag) = state.pending_item_drag.take() {
                     if drag.is_dragging {
                         state.last_item_click = None;
                         Some(
@@ -1212,6 +1426,34 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             waveform_bins: Arc::clone(&self.cache.waveform_bins),
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,
+            volume_automation: self
+                .project
+                .tracks()
+                .iter()
+                .enumerate()
+                .filter(|(_, track)| {
+                    self.volume_automation_tracks.contains(&track.id())
+                        || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                            && !track.volume_automation().is_empty())
+                })
+                .map(|(track_index, track)| renderer::AutomationLane {
+                    track_index: track_index as u32,
+                    selected_point: self
+                        .selected_volume_automation_point
+                        .filter(|(id, _)| *id == track.id())
+                        .map(|(_, index)| index),
+                    points: track
+                        .volume_automation()
+                        .iter()
+                        .filter_map(|point| {
+                            self.project
+                                .tick_at_sample(point.sample())
+                                .ok()
+                                .map(|tick| (tick, point.gain_db()))
+                        })
+                        .collect(),
+                })
+                .collect(),
             selected_track_index: track_index,
             width: bounds.width,
             height: bounds.height,
@@ -1441,6 +1683,30 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
+        for (track_index, track_id) in self.state.cache.track_ids.iter().enumerate() {
+            if !self.state.volume_automation_tracks.contains(track_id)
+                || self
+                    .state
+                    .hidden_volume_automation_tracks
+                    .contains(track_id)
+            {
+                continue;
+            }
+            for (label, y) in [("+6 dB", 67.0), ("-60", 82.0)] {
+                frame.fill_text(Text {
+                    content: label.to_owned(),
+                    position: Point::new(4.0, track_index as f32 * TIMELINE_ROW_HEIGHT + y),
+                    max_width: 34.0,
+                    color: Color::from_rgb8(137, 202, 172),
+                    size: Pixels(8.0),
+                    line_height: LineHeight::Relative(1.0),
+                    font: Font::default(),
+                    align_x: TextAlignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: Shaping::Basic,
+                });
+            }
+        }
         let first_visible_track =
             (self.state.vertical_scroll / TIMELINE_ROW_HEIGHT).floor() as usize;
         let end_visible_track = ((self.state.vertical_scroll + self.state.viewport_height)
@@ -1512,6 +1778,30 @@ fn tick_at_x(origin_tick: u64, pixels_per_tick: f32, x: f32) -> u64 {
     (origin_tick as f64 + f64::from(x.max(0.0)) / f64::from(pixels_per_tick))
         .clamp(0.0, u64::MAX as f64)
         .round() as u64
+}
+
+fn automation_point_at(
+    project: &Project,
+    pixels_per_tick: f32,
+    track_index: usize,
+    tick: u64,
+    y: f32,
+) -> Option<usize> {
+    let track = project.tracks().get(track_index)?;
+    track
+        .volume_automation()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, point)| {
+            let point_tick = project.tick_at_sample(point.sample()).ok()?;
+            let point_y = 66.0 + (6.0 - point.gain_db()) * (16.0 / 66.0);
+            let x_distance = (i128::from(point_tick) - i128::from(tick)).unsigned_abs() as f64
+                * f64::from(pixels_per_tick);
+            ((x_distance <= 7.0) && (point_y - y).abs() <= 7.0)
+                .then_some((index, x_distance + f64::from((point_y - y).abs())))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(index, _)| index)
 }
 
 fn snap_tick_to_grid(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
@@ -1593,6 +1883,37 @@ mod tests {
             project.midi_items()[2].id(),
         ];
         (project, tracks, items)
+    }
+
+    #[test]
+    fn automation_lane_defaults_visible_for_existing_points_and_can_be_toggled() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Automated".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id,
+                points: vec![aaadaw_core::VolumeAutomationPoint::new(0, -6.0).unwrap()],
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        assert!(timeline.volume_automation_tracks.contains(&track_id));
+        assert!(!timeline.hidden_volume_automation_tracks.contains(&track_id));
+
+        timeline.handle(TimelineEvent::ToggleVolumeAutomation(track_id));
+        assert!(!timeline.volume_automation_tracks.contains(&track_id));
+        assert!(timeline.hidden_volume_automation_tracks.contains(&track_id));
+
+        timeline.handle(TimelineEvent::ToggleVolumeAutomation(track_id));
+        assert!(timeline.volume_automation_tracks.contains(&track_id));
+        assert!(!timeline.hidden_volume_automation_tracks.contains(&track_id));
     }
 
     #[test]

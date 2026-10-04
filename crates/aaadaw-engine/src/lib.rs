@@ -60,7 +60,7 @@ pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_output::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 
-use aaadaw_core::{ItemId, Track, TrackId};
+use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 use std::sync::Arc;
@@ -83,6 +83,7 @@ struct TrackGains {
     stereo_right: f32,
     live: Arc<LiveTrackGains>,
     record_armed: bool,
+    volume_automation: Vec<VolumeAutomationPoint>,
 }
 
 #[derive(Debug)]
@@ -275,6 +276,36 @@ fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
     })
 }
 
+/// Returns envelope gain, the per-sample geometric step for the current linear-dB segment, and
+/// the next boundary that requires recalculating that segment.
+fn volume_automation_state(
+    points: &[VolumeAutomationPoint],
+    sample: u64,
+) -> (f32, f32, Option<u64>) {
+    if points.is_empty() {
+        return (1.0, 1.0, None);
+    }
+    let next_index = points.partition_point(|point| point.sample() <= sample);
+    if next_index == 0 {
+        let gain = 10.0_f64.powf(f64::from(points[0].gain_db()) / 20.0) as f32;
+        return (gain, 1.0, Some(points[0].sample()));
+    }
+    let previous = points[next_index - 1];
+    if next_index == points.len() {
+        let gain = 10.0_f64.powf(f64::from(previous.gain_db()) / 20.0) as f32;
+        return (gain, 1.0, None);
+    }
+
+    let next = points[next_index];
+    let span = next.sample() - previous.sample();
+    let offset = sample - previous.sample();
+    let delta_db = f64::from(next.gain_db() - previous.gain_db());
+    let current_db = f64::from(previous.gain_db()) + delta_db * (offset as f64 / span as f64);
+    let gain = 10.0_f64.powf(current_db / 20.0) as f32;
+    let gain_step = 10.0_f64.powf(delta_db / (span as f64 * 20.0)) as f32;
+    (gain, gain_step, Some(next.sample()))
+}
+
 /// The mix plan could not be compiled from project track controls.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MixerPlanError {
@@ -369,6 +400,7 @@ impl MixerPlan {
                     track.is_solo(),
                 )),
                 record_armed: track.is_record_armed(),
+                volume_automation: track.volume_automation().to_vec(),
             });
         }
 
@@ -423,36 +455,18 @@ impl MixerPlan {
 
         output.fill([0.0, 0.0]);
         for (track_index, input) in inputs.iter().enumerate() {
-            self.mix_track_unchecked(track_index, input, output);
+            self.mix_track_unchecked(track_index, input, output, 0, true);
         }
         Ok(())
     }
 
-    fn mix_track_unchecked(&self, track_index: usize, input: &[f32], output: &mut [[f32; 2]]) {
-        let track = &self.tracks[track_index];
-        if track.live.muted.load(Ordering::Acquire)
-            || (self.has_solo.load(Ordering::Acquire) && !track.live.solo.load(Ordering::Acquire))
-        {
-            return;
-        }
-        let fallback = GainCoefficients {
-            left: track.left,
-            right: track.right,
-            stereo_left: track.stereo_left,
-            stereo_right: track.stereo_right,
-        };
-        let gains = track.live.snapshot(fallback);
-        for (frame, sample) in output.iter_mut().zip(input.iter().copied()) {
-            frame[0] += sample * gains.left;
-            frame[1] += sample * gains.right;
-        }
-    }
-
-    fn mix_stereo_track_unchecked(
+    fn mix_track_unchecked(
         &self,
         track_index: usize,
-        input: &[[f32; 2]],
+        input: &[f32],
         output: &mut [[f32; 2]],
+        start_sample: u64,
+        advances_timeline: bool,
     ) {
         let track = &self.tracks[track_index];
         if track.live.muted.load(Ordering::Acquire)
@@ -467,9 +481,66 @@ impl MixerPlan {
             stereo_right: track.stereo_right,
         };
         let gains = track.live.snapshot(fallback);
-        for (frame, sample) in output.iter_mut().zip(input.iter()) {
-            frame[0] += sample[0] * gains.stereo_left;
-            frame[1] += sample[1] * gains.stereo_right;
+        let (mut automation_gain, mut gain_step, mut next_point_sample) =
+            volume_automation_state(&track.volume_automation, start_sample);
+        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter().copied()).enumerate() {
+            if advances_timeline
+                && next_point_sample.is_some_and(|next_sample| {
+                    start_sample.saturating_add(offset as u64) >= next_sample
+                })
+            {
+                (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                    &track.volume_automation,
+                    start_sample.saturating_add(offset as u64),
+                );
+            }
+            frame[0] += sample * gains.left * automation_gain;
+            frame[1] += sample * gains.right * automation_gain;
+            if advances_timeline {
+                automation_gain *= gain_step;
+            }
+        }
+    }
+
+    fn mix_stereo_track_unchecked(
+        &self,
+        track_index: usize,
+        input: &[[f32; 2]],
+        output: &mut [[f32; 2]],
+        start_sample: u64,
+        advances_timeline: bool,
+    ) {
+        let track = &self.tracks[track_index];
+        if track.live.muted.load(Ordering::Acquire)
+            || (self.has_solo.load(Ordering::Acquire) && !track.live.solo.load(Ordering::Acquire))
+        {
+            return;
+        }
+        let fallback = GainCoefficients {
+            left: track.left,
+            right: track.right,
+            stereo_left: track.stereo_left,
+            stereo_right: track.stereo_right,
+        };
+        let gains = track.live.snapshot(fallback);
+        let (mut automation_gain, mut gain_step, mut next_point_sample) =
+            volume_automation_state(&track.volume_automation, start_sample);
+        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter()).enumerate() {
+            if advances_timeline
+                && next_point_sample.is_some_and(|next_sample| {
+                    start_sample.saturating_add(offset as u64) >= next_sample
+                })
+            {
+                (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                    &track.volume_automation,
+                    start_sample.saturating_add(offset as u64),
+                );
+            }
+            frame[0] += sample[0] * gains.stereo_left * automation_gain;
+            frame[1] += sample[1] * gains.stereo_right * automation_gain;
+            if advances_timeline {
+                automation_gain *= gain_step;
+            }
         }
     }
 }
@@ -1805,7 +1876,13 @@ impl AudioRenderGraph {
                     frame[1] += sample;
                 }
             } else {
-                self.mixer.mix_track_unchecked(track_index, input, output);
+                self.mixer.mix_track_unchecked(
+                    track_index,
+                    input,
+                    output,
+                    block.start_sample,
+                    block.is_playing,
+                );
             }
         }
         if let Some(monitor) = &mut self.input_monitor {
@@ -1824,8 +1901,13 @@ impl AudioRenderGraph {
                         frame[1] += sample[1];
                     }
                 } else {
-                    self.mixer
-                        .mix_stereo_track_unchecked(*track_index, input, output);
+                    self.mixer.mix_stereo_track_unchecked(
+                        *track_index,
+                        input,
+                        output,
+                        block.start_sample,
+                        block.is_playing,
+                    );
                 }
             }
         }
@@ -1865,6 +1947,8 @@ impl AudioRenderGraph {
                     route.track_index,
                     &route.audio[..output.len()],
                     output,
+                    block.start_sample,
+                    block.is_playing,
                 );
             }
         }
@@ -1889,6 +1973,8 @@ impl AudioRenderGraph {
                     track_index,
                     &track_buffer[..output.len()],
                     output,
+                    block.start_sample,
+                    block.is_playing,
                 );
             }
         }

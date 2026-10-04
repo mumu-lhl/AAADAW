@@ -60,6 +60,52 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
 }
 
 #[test]
+fn track_volume_automation_is_sample_accurate_across_blocks_and_seeks() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Automated".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id,
+            points: vec![
+                aaadaw_core::VolumeAutomationPoint::new(0, 0.0).unwrap(),
+                aaadaw_core::VolumeAutomationPoint::new(4, -6.0).unwrap(),
+                aaadaw_core::VolumeAutomationPoint::new(8, 0.0).unwrap(),
+            ],
+        })
+        .expect("volume lane should be accepted");
+    let (mut producer, consumer) = pcm_stream(16).expect("queue should be created");
+    assert_eq!(producer.push_samples(&[1.0; 12]), 12);
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 4)
+        .expect("one stream should match the track");
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 4];
+    graph
+        .render_into(&mut output)
+        .expect("first automation block should render");
+    let center_pan = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((output[0][0] - center_pan).abs() < 1.0e-6);
+    assert!((output[3][0] - center_pan * 10.0_f32.powf(-4.5 / 20.0)).abs() < 1.0e-5);
+
+    graph
+        .render_into(&mut output)
+        .expect("point on the next block boundary should render");
+    assert!((output[0][0] - center_pan * 10.0_f32.powf(-6.0 / 20.0)).abs() < 1.0e-6);
+    assert!((output[3][0] - center_pan * 10.0_f32.powf(-1.5 / 20.0)).abs() < 1.0e-5);
+
+    graph.transport_mut().seek_sample(8);
+    graph
+        .render_into(&mut output)
+        .expect("seek should evaluate the envelope at the new playhead");
+    assert!((output[0][0] - center_pan).abs() < 1.0e-6);
+}
+
+#[test]
 fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
     let mut project = Project::new();
     project

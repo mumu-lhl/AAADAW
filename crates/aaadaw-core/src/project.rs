@@ -12,6 +12,18 @@ use crate::{
 use std::collections::HashSet;
 use std::sync::Arc;
 
+const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
+
+fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
+    points.len() <= MAX_VOLUME_AUTOMATION_POINTS
+        && points
+            .iter()
+            .all(|point| point.gain_db().is_finite() && (-60.0..=6.0).contains(&point.gain_db()))
+        && points
+            .windows(2)
+            .all(|pair| pair[0].sample() < pair[1].sample())
+}
+
 /// Mutable project state. All changes are made through [`DawAction`]s.
 #[derive(Debug, Default)]
 pub struct Project {
@@ -69,6 +81,11 @@ enum ProjectEvent {
         track_id: TrackId,
         before: f32,
         after: f32,
+    },
+    TrackVolumeAutomationChanged {
+        track_id: TrackId,
+        before: Vec<crate::VolumeAutomationPoint>,
+        after: Vec<crate::VolumeAutomationPoint>,
     },
     TrackPanChanged {
         track_id: TrackId,
@@ -230,6 +247,15 @@ impl ProjectEvent {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
+            },
+            Self::TrackVolumeAutomationChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackVolumeAutomationChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::TrackPanChanged {
                 track_id,
@@ -497,7 +523,11 @@ impl Project {
             self.history_cursor
                 .checked_sub(1)
                 .and_then(|index| self.history.get(index)),
-            Some(ProjectEvent::TrackVolumeChanged { .. } | ProjectEvent::TrackPanChanged { .. })
+            Some(
+                ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::TrackVolumeAutomationChanged { .. }
+                    | ProjectEvent::TrackPanChanged { .. },
+            )
         )
     }
 
@@ -505,7 +535,11 @@ impl Project {
     pub fn can_redo_track_mix(&self) -> bool {
         matches!(
             self.history.get(self.history_cursor),
-            Some(ProjectEvent::TrackVolumeChanged { .. } | ProjectEvent::TrackPanChanged { .. })
+            Some(
+                ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::TrackVolumeAutomationChanged { .. }
+                    | ProjectEvent::TrackPanChanged { .. },
+            )
         )
     }
 
@@ -618,6 +652,7 @@ impl Project {
                                 .collect(),
                         })
                         .collect(),
+                    volume_automation: track.volume_automation.clone(),
                 })
                 .collect(),
             audio_items: self
@@ -765,6 +800,7 @@ impl Project {
                 || !track.volume_db.is_finite()
                 || !track.pan.is_finite()
                 || !(-1.0..=1.0).contains(&track.pan)
+                || !valid_volume_automation(&track.volume_automation)
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -779,6 +815,7 @@ impl Project {
                 record_armed: track.record_armed,
                 instrument,
                 fx_chain,
+                volume_automation: track.volume_automation,
             });
         }
 
@@ -913,6 +950,7 @@ impl Project {
                     record_armed: false,
                     instrument: None,
                     fx_chain: Vec::new(),
+                    volume_automation: Vec::new(),
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -985,6 +1023,21 @@ impl Project {
                     track_id,
                     before: track.volume_db,
                     after: volume_db,
+                }
+            }
+            DawAction::SetTrackVolumeAutomation { track_id, points } => {
+                if !valid_volume_automation(&points) {
+                    return Err(ActionError::InvalidVolumeAutomation);
+                }
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackVolumeAutomationChanged {
+                    track_id,
+                    before: track.volume_automation.clone(),
+                    after: points,
                 }
             }
             DawAction::SetTrackPan { track_id, pan } => {
@@ -1754,6 +1807,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.volume_db = *after;
+            }
+            ProjectEvent::TrackVolumeAutomationChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.volume_automation != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.volume_automation = after.clone();
             }
             ProjectEvent::TrackPanChanged {
                 track_id,

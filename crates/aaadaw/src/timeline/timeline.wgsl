@@ -83,7 +83,10 @@ fn vs_main(
     } else {
         width = max(width, 3.0);
     }
-    let logical_y = y_height.x + corner.y * y_height.y;
+    var logical_y = y_height.x + corner.y * y_height.y;
+    if kind == 12u {
+        logical_y = mix(y_height.x, y_height.y, corner.x) + (corner.y - 0.5) * 2.5;
+    }
     let y = logical_y * uniforms.view.w;
     let screen_x = x;
     let screen_y = y;
@@ -116,6 +119,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     if input.kind == 8u {
         color.a = 0.22;
+    }
+    if input.kind == 12u || input.kind == 13u {
+        color = vec4<f32>(linearize_srgb_color(color.rgb), color.a);
     }
     return color;
 }

@@ -15,6 +15,8 @@ pub enum ActionError {
     },
     /// A track volume must be a finite decibel value.
     InvalidVolumeDb,
+    /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
+    InvalidVolumeAutomation,
     InvalidTrackInstrument,
     InvalidTrackFxPlugin,
     InvalidTrackFxParameter,
@@ -90,6 +92,9 @@ impl fmt::Display for ActionError {
                 write!(formatter, "track {} does not exist", track_id.value())
             }
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
+            Self::InvalidVolumeAutomation => formatter.write_str(
+                "volume automation points must be ordered, unique, and within -60..=6 dB",
+            ),
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
             Self::InvalidTrackFxPlugin => {

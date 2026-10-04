@@ -93,6 +93,16 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         })
         .expect("track should arm for live monitoring");
     project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id,
+            points: vec![
+                aaadaw_core::VolumeAutomationPoint::new(0, -3.0).unwrap(),
+                aaadaw_core::VolumeAutomationPoint::new(128 * 64, -12.0).unwrap(),
+                aaadaw_core::VolumeAutomationPoint::new(128 * 127, 0.0).unwrap(),
+            ],
+        })
+        .expect("automation should be available to the render callback");
+    project
         .apply(DawAction::InsertAudioItem {
             track_id,
             media_ref: "asset://realtime-allocation-check".to_owned(),

@@ -27,4 +27,4 @@ pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,
     ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
-pub use track::{Track, TrackFxPlugin, TrackId, TrackInstrument};
+pub use track::{Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint};

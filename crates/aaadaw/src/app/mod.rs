@@ -1328,6 +1328,85 @@ impl App {
                     .handle(timeline::TimelineEvent::CancelItemDrag);
                 self.status = "Item drag cancelled".to_owned();
             }
+            Message::Timeline(timeline::TimelineEvent::InsertVolumeAutomationAt {
+                track_index,
+                tick,
+                gain_db,
+            }) => {
+                if self.volume_automation_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before editing volume automation".to_owned();
+                } else if let (Some(track), Ok(sample)) = (
+                    self.project.tracks().get(track_index),
+                    self.project.sample_at_tick(tick),
+                ) {
+                    let track_id = track.id();
+                    let mut points = track.volume_automation().to_vec();
+                    if let Some(point) = aaadaw_core::VolumeAutomationPoint::new(sample, gain_db) {
+                        let point_index =
+                            match points.binary_search_by_key(&sample, |point| point.sample()) {
+                                Ok(index) => {
+                                    points[index] = point;
+                                    index
+                                }
+                                Err(index) => {
+                                    points.insert(index, point);
+                                    index
+                                }
+                            };
+                        self.timeline.volume_automation_tracks.insert(track_id);
+                        let revision = self.revision;
+                        self.apply_action(
+                            DawAction::SetTrackVolumeAutomation { track_id, points },
+                            "Automation point added",
+                        );
+                        if self.revision != revision {
+                            self.timeline.handle(
+                                timeline::TimelineEvent::SelectVolumeAutomationPoint {
+                                    track_id,
+                                    index: point_index,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::SetVolumeAutomation(track_id, points)) => {
+                if self.volume_automation_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before editing volume automation".to_owned();
+                } else {
+                    self.apply_action(
+                        DawAction::SetTrackVolumeAutomation { track_id, points },
+                        "Volume automation edited",
+                    );
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::DeleteVolumeAutomationPoint {
+                track_id,
+                index,
+            }) => {
+                self.timeline
+                    .handle(timeline::TimelineEvent::ClearSelectedVolumeAutomationPoint);
+                if self.volume_automation_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before editing volume automation".to_owned();
+                } else if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    let mut points = track.volume_automation().to_vec();
+                    if index < points.len() {
+                        points.remove(index);
+                        self.apply_action(
+                            DawAction::SetTrackVolumeAutomation { track_id, points },
+                            "Automation point deleted",
+                        );
+                    }
+                }
+            }
             Message::Timeline(event) => self.timeline.handle(event),
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
@@ -2856,6 +2935,15 @@ impl App {
         {
             false
         }
+    }
+
+    fn volume_automation_edit_busy(&self) -> bool {
+        #[cfg(feature = "audio-device")]
+        let recording =
+            self.recording.is_some() || self.recording_starting || self.recording_stopping;
+        #[cfg(not(feature = "audio-device"))]
+        let recording = false;
+        self.playback_busy() || self.playback_active() || recording
     }
 
     fn item_drag_action(
