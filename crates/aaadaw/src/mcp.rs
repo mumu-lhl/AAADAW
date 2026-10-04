@@ -1,5 +1,5 @@
 use aaadaw_core::{
-    DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TrackId,
+    DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TimeSignature, TrackId,
     VolumeAutomationPoint,
 };
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
@@ -40,6 +40,7 @@ const SET_TRACK_MIX_TOOL: &str = "daw_set_track_mix";
 const UNDO_TOOL: &str = "daw_undo";
 const REDO_TOOL: &str = "daw_redo";
 const SET_TEMPO_TOOL: &str = "daw_set_tempo_point";
+const SET_TIME_SIGNATURE_TOOL: &str = "daw_set_time_signature_point";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TrackMixChanges {
@@ -196,6 +197,7 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(set_track_record_arm_tool());
             tools.push(set_track_mix_tool());
             tools.push(set_tempo_tool());
+            tools.push(set_time_signature_tool());
             tools.push(history_tool(HistoryDirection::Undo));
             tools.push(history_tool(HistoryDirection::Redo));
         }
@@ -214,6 +216,7 @@ impl ServerHandler for ProjectMcpServer {
             SET_TRACK_RECORD_ARM_TOOL if self.writable => Some(set_track_record_arm_tool()),
             SET_TRACK_MIX_TOOL if self.writable => Some(set_track_mix_tool()),
             SET_TEMPO_TOOL if self.writable => Some(set_tempo_tool()),
+            SET_TIME_SIGNATURE_TOOL if self.writable => Some(set_time_signature_tool()),
             UNDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Undo)),
             REDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Redo)),
             _ => None,
@@ -271,6 +274,11 @@ impl ServerHandler for ProjectMcpServer {
                 parse_set_tempo_arguments(request.arguments.as_ref())
                     .and_then(|(start_tick, bpm)| self.set_tempo_point(start_tick, bpm))
             }
+            SET_TIME_SIGNATURE_TOOL if self.writable => {
+                parse_set_time_signature_arguments(request.arguments.as_ref()).and_then(
+                    |(start_tick, signature)| self.set_time_signature_point(start_tick, signature),
+                )
+            }
             UNDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
                 .and_then(|()| self.move_history(HistoryDirection::Undo)),
             REDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
@@ -286,6 +294,50 @@ impl ServerHandler for ProjectMcpServer {
 }
 
 impl ProjectMcpServer {
+    fn set_time_signature_point(
+        &self,
+        start_tick: u64,
+        signature: TimeSignature,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let current = project
+            .time_signature_points()
+            .find(|(tick, _)| *tick == start_tick)
+            .map(|(_, signature)| signature);
+        let changed = current != Some(signature);
+        if !changed {
+            return Ok(json!({
+                "tick": start_tick,
+                "numerator": signature.numerator(),
+                "denominator": signature.denominator(),
+                "changed": false
+            }));
+        }
+        project
+            .apply(DawAction::SetTimeSignature {
+                start_tick,
+                signature,
+            })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "set time-signature point")?;
+        Ok(json!({
+            "tick": start_tick,
+            "numerator": signature.numerator(),
+            "denominator": signature.denominator(),
+            "changed": true
+        }))
+    }
+
     fn set_tempo_point(&self, start_tick: u64, bpm: f64) -> Result<Value, String> {
         let mut project = self
             .project
@@ -815,6 +867,59 @@ fn set_tempo_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
+}
+
+fn set_time_signature_tool() -> Tool {
+    Tool::new(
+        SET_TIME_SIGNATURE_TOOL,
+        "Insert or update one project time-signature point at a bar boundary.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "tick": {"type": "integer", "minimum": 0},
+                "numerator": {"type": "integer", "minimum": 1},
+                "denominator": {"type": "integer", "minimum": 1}
+            },
+            "required": ["tick", "numerator", "denominator"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_set_time_signature_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, TimeSignature), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "tick" | "numerator" | "denominator"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let integer = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{key} must be a non-negative integer"))
+    };
+    let tick = integer("tick")?;
+    let numerator = u32::try_from(integer("numerator")?)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "numerator must be a positive 32-bit integer".to_owned())?;
+    let denominator = u32::try_from(integer("denominator")?)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "denominator must be a positive 32-bit integer".to_owned())?;
+    let signature =
+        TimeSignature::new(numerator, denominator).map_err(|error| error.to_string())?;
+    Ok((tick, signature))
 }
 
 fn parse_set_tempo_arguments(
@@ -1412,8 +1517,9 @@ mod tests {
         MAX_MAP_POINTS, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS,
         MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_track_arguments,
         parse_insert_midi_notes_arguments, parse_note_query_arguments,
-        parse_quantize_midi_item_arguments, parse_set_tempo_arguments, parse_track_summary_uri,
-        scoped_query_notes, structure_summary, track_midi_summary,
+        parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
+        parse_set_time_signature_arguments, parse_track_summary_uri, scoped_query_notes,
+        structure_summary, track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
     use serde_json::{Value, json};
@@ -1559,6 +1665,52 @@ mod tests {
         extra.insert("curve".to_owned(), json!("step"));
         assert!(parse_set_tempo_arguments(Some(&extra)).is_err());
         assert!(parse_set_tempo_arguments(None).is_err());
+    }
+
+    #[test]
+    fn set_time_signature_arguments_require_bounded_positive_integers() {
+        let arguments = |tick: Value, numerator: Value, denominator: Value| {
+            serde_json::Map::from_iter([
+                ("tick".to_owned(), tick),
+                ("numerator".to_owned(), numerator),
+                ("denominator".to_owned(), denominator),
+            ])
+        };
+        assert_eq!(
+            parse_set_time_signature_arguments(Some(&arguments(json!(11520), json!(3), json!(4))))
+                .unwrap(),
+            (11520, TimeSignature::new(3, 4).unwrap())
+        );
+        for invalid in [
+            arguments(json!(-1), json!(3), json!(4)),
+            arguments(json!(1.5), json!(3), json!(4)),
+            arguments(json!(0), json!(0), json!(4)),
+            arguments(json!(0), json!(3), json!(0)),
+            arguments(json!(0), json!(u64::from(u32::MAX) + 1), json!(4)),
+            arguments(json!(0), json!(3), json!("4")),
+        ] {
+            assert!(parse_set_time_signature_arguments(Some(&invalid)).is_err());
+        }
+        for missing in [
+            serde_json::Map::from_iter([
+                ("numerator".to_owned(), json!(3)),
+                ("denominator".to_owned(), json!(4)),
+            ]),
+            serde_json::Map::from_iter([
+                ("tick".to_owned(), json!(0)),
+                ("denominator".to_owned(), json!(4)),
+            ]),
+            serde_json::Map::from_iter([
+                ("tick".to_owned(), json!(0)),
+                ("numerator".to_owned(), json!(3)),
+            ]),
+        ] {
+            assert!(parse_set_time_signature_arguments(Some(&missing)).is_err());
+        }
+        let mut extra = arguments(json!(0), json!(3), json!(4));
+        extra.insert("swing".to_owned(), json!(0.5));
+        assert!(parse_set_time_signature_arguments(Some(&extra)).is_err());
+        assert!(parse_set_time_signature_arguments(None).is_err());
     }
 
     #[test]
