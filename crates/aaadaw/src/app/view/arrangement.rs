@@ -8,8 +8,8 @@ use iced::advanced::widget::Operation;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, pick_list, row, scrollable, slider,
-    stack, text, text_input,
+    button, column, container, float, mouse_area, pane_grid, pick_list, responsive, row,
+    scrollable, slider, stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 use std::fmt;
@@ -156,6 +156,16 @@ fn track_controls(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+fn is_volume_automation_visible(app: &App, track: &Track) -> bool {
+    let track_id = track.id();
+    app.timeline.volume_automation_tracks.contains(&track_id)
+        || (!app
+            .timeline
+            .hidden_volume_automation_tracks
+            .contains(&track_id)
+            && !track.volume_automation().is_empty())
+}
+
 fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
     let heading = row![
@@ -192,6 +202,10 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
                 Message::ClearTrackInstrument(track_id),
             ));
     }
+    actions = actions.push(action_button(
+        "Open FX chain…",
+        Message::OpenTrackFxChain(track_id),
+    ));
     actions = actions.push(iced::widget::rule::horizontal(1));
     let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
         track_id: None,
@@ -227,6 +241,15 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         output_choices,
         selected_output,
         move |choice| Message::SetTrackOutput(track_id, choice.track_id),
+    ));
+    let automation_visible = is_volume_automation_visible(app, track);
+    actions = actions.push(action_button(
+        if automation_visible {
+            "Hide volume automation"
+        } else {
+            "Show volume automation"
+        },
+        Message::Timeline(TimelineEvent::ToggleVolumeAutomation(track_id)),
     ));
     for entry in commands::for_track_context(app, track_id) {
         if entry.separator_before {
@@ -366,7 +389,13 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
         .into()
 }
 
+const COMPACT_TCP_WIDTH: f32 = 340.0;
+
 fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
+    responsive(move |size| track_row_layout(app, track, size.width < COMPACT_TCP_WIDTH)).into()
+}
+
+fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Element<'a, Message> {
     let track_id = track.id();
     let edited_name = app
         .track_name_edits
@@ -383,12 +412,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         })
         .map_or_else(|| "Master".to_owned(), |output| output.name().to_owned());
     let is_selected = app.timeline.selected_track == Some(track_id);
-    let automation_visible = app.timeline.volume_automation_tracks.contains(&track_id)
-        || (!app
-            .timeline
-            .hidden_volume_automation_tracks
-            .contains(&track_id)
-            && !track.volume_automation().is_empty());
+    let automation_visible = is_volume_automation_visible(app, track);
     let fx_chain = track.fx_chain();
     let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
     let fx_button = button(text(if fx_chain.is_empty() {
@@ -407,51 +431,60 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     })
     .on_press(Message::OpenTrackFxChain(track_id))
     .padding([2, 5]);
-    let heading = row![
-        button(if is_selected { "●" } else { "○" })
-            .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
-            .style(if is_selected {
-                iced::widget::button::warning
-            } else {
-                iced::widget::button::secondary
-            })
-            .padding([2, 4]),
-        if track.is_bus() {
-            text("BUS")
-                .size(10)
-                .color(iced::Color::from_rgb8(139, 196, 210))
+    let selection_button = button(if is_selected { "●" } else { "○" })
+        .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
+        .style(if is_selected {
+            iced::widget::button::warning
         } else {
-            text("").size(10)
-        },
-        text_input("Track name", edited_name)
-            .id(super::super::messages::track_name_input_id(track_id))
-            .on_input(move |name| Message::TrackNameChanged(track_id, name))
-            .on_submit(Message::CommitTrackName(track_id))
-            .padding([2, 4])
-            .width(Length::Fill),
-        fx_button,
-        text(format!("→ {output_label}")).size(10),
-        button(if automation_visible { "AUTO" } else { "auto" })
-            .style(if automation_visible {
-                iced::widget::button::success
+            iced::widget::button::secondary
+        })
+        .padding([2, 4]);
+    let name_input = text_input("Track name", edited_name)
+        .id(super::super::messages::track_name_input_id(track_id))
+        .on_input(move |name| Message::TrackNameChanged(track_id, name))
+        .on_submit(Message::CommitTrackName(track_id))
+        .padding([2, 4])
+        .width(Length::Fill);
+    let context_button = button(if has_edit { "✓" } else { "⋯" })
+        .on_press(if has_edit {
+            Message::CommitTrackName(track_id)
+        } else {
+            Message::Timeline(TimelineEvent::ToggleTrackContextMenu(track_id))
+        })
+        .style(iced::widget::button::secondary)
+        .padding([3, 7]);
+    let heading = if compact {
+        row![selection_button, name_input, context_button]
+            .spacing(3)
+            .align_y(Alignment::Center)
+    } else {
+        row![
+            selection_button,
+            if track.is_bus() {
+                text("BUS")
+                    .size(10)
+                    .color(iced::Color::from_rgb8(139, 196, 210))
             } else {
-                iced::widget::button::secondary
-            })
-            .on_press(Message::Timeline(TimelineEvent::ToggleVolumeAutomation(
-                track_id
-            )))
-            .padding([2, 4]),
-        button(if has_edit { "✓" } else { "⋯" })
-            .on_press(if has_edit {
-                Message::CommitTrackName(track_id)
-            } else {
-                Message::Timeline(TimelineEvent::ToggleTrackContextMenu(track_id))
-            })
-            .style(iced::widget::button::secondary)
-            .padding([3, 7]),
-    ]
-    .spacing(3)
-    .align_y(Alignment::Center);
+                text("").size(10)
+            },
+            name_input,
+            fx_button,
+            text(format!("→ {output_label}")).size(10),
+            button(if automation_visible { "AUTO" } else { "auto" })
+                .style(if automation_visible {
+                    iced::widget::button::success
+                } else {
+                    iced::widget::button::secondary
+                })
+                .on_press(Message::Timeline(TimelineEvent::ToggleVolumeAutomation(
+                    track_id
+                )))
+                .padding([2, 4]),
+            context_button,
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center)
+    };
     let mute_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleMute,
@@ -517,6 +550,10 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     #[cfg(feature = "audio-device")]
     let monitor_pending = app.standby_monitor_track == Some(track_id);
     #[cfg(feature = "audio-device")]
+    let show_input_monitor = monitor_enabled || monitor_pending;
+    #[cfg(not(feature = "audio-device"))]
+    let show_input_monitor = false;
+    #[cfg(feature = "audio-device")]
     let input_monitor = button(if monitor_enabled {
         "MON"
     } else if monitor_pending {
@@ -575,35 +612,51 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     .shift_step(0.001_f32)
     .on_release(Message::CommitTrackPan(track_id))
     .width(Length::Fill);
-    let volume_controls = row![
-        mute,
-        solo,
-        record_arm,
-        input_monitor,
-        text("Vol").size(11),
-        volume,
-        text_input("dB", &volume_text)
-            .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
-            .on_submit(Message::CommitTrackVolumeText(track_id))
-            .width(Length::Fixed(48.0)),
-        text("dB").size(10),
-        button("0")
-            .style(iced::widget::button::secondary)
-            .on_press(Message::ResetTrackVolume(track_id))
-            .padding([2, 5]),
-    ]
-    .spacing(2)
-    .align_y(Alignment::Center);
+    let volume_value = text_input("dB", &volume_text)
+        .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
+        .on_submit(Message::CommitTrackVolumeText(track_id))
+        .width(Length::Fixed(48.0));
+    let volume_controls = if compact {
+        let controls = row![mute, solo, record_arm];
+        let controls = if track.is_record_armed() || show_input_monitor {
+            controls.push(input_monitor)
+        } else {
+            controls
+        };
+        controls
+            .push(volume)
+            .push(volume_value)
+            .spacing(2)
+            .align_y(Alignment::Center)
+    } else {
+        row![
+            mute,
+            solo,
+            record_arm,
+            input_monitor,
+            text("Vol").size(11),
+            volume,
+            volume_value,
+            text("dB").size(10),
+            button("0")
+                .style(iced::widget::button::secondary)
+                .on_press(Message::ResetTrackVolume(track_id))
+                .padding([2, 5]),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center)
+    };
+    let pan_value = text_input("-1 to 1", &pan_text)
+        .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
+        .on_submit(Message::CommitTrackPanText(track_id))
+        .width(Length::Fixed(48.0));
     let pan_controls = row![
         text(format!("Pan {}", pan_label(pan))).size(11),
         reset_on_double_click(
             pan_slider.into(),
             Message::ResetTrackPanByDoubleClick(track_id),
         ),
-        text_input("-1 to 1", &pan_text)
-            .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
-            .on_submit(Message::CommitTrackPanText(track_id))
-            .width(Length::Fixed(48.0)),
+        pan_value,
         button("C")
             .style(iced::widget::button::secondary)
             .on_press(Message::ResetTrackPan(track_id))
