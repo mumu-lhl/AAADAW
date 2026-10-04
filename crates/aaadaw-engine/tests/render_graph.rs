@@ -319,7 +319,7 @@ fn track_volume_automation_holds_endpoint_values_before_and_after_points() {
 }
 
 #[test]
-fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
+fn live_mix_controller_starts_smoothing_on_the_next_render_block() {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -349,12 +349,78 @@ fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
     graph
         .render_into(&mut output)
         .expect("updated block should render");
-    let right_gain = 10.0_f32.powf(-6.0 / 20.0);
-    for frame in output {
-        assert_eq!(frame[0], 0.0);
-        assert!((frame[1] - right_gain).abs() < 1.0e-6);
-    }
+    assert!(output[0][0] < center && output[0][0] > 0.0);
+    assert!(output[0][1] < center);
+    assert!(output[1][0] < output[0][0]);
+    assert!(output[1][1] < output[0][1]);
     assert_eq!(graph.transport_mut().position_samples(), 4);
+}
+
+#[test]
+fn live_mix_ramp_applies_to_stereo_audio_routed_through_a_bus() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Source".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Bus".to_owned(),
+        })
+        .unwrap();
+    let source_id = project.tracks()[0].id();
+    let bus_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_id,
+            output_track: Some(bus_id),
+        })
+        .unwrap();
+
+    let ramp_frames = 240;
+    let (mut source_producer, source_consumer) = pcm_stream(ramp_frames + 2).unwrap();
+    let (mut bus_producer, bus_consumer) = pcm_stream(ramp_frames + 2).unwrap();
+    assert_eq!(
+        source_producer.push_samples(&vec![1.0; ramp_frames + 2]),
+        ramp_frames + 2
+    );
+    assert_eq!(
+        bus_producer.push_samples(&vec![0.0; ramp_frames + 2]),
+        ramp_frames + 2
+    );
+    let mut graph =
+        AudioRenderGraph::new(&project, vec![source_consumer, bus_consumer], ramp_frames)
+            .expect("track streams should compile into the bus graph");
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut initial = [[0.0_f32; 2]; 2];
+    graph
+        .render_into(&mut initial)
+        .expect("initial routed stereo frames should render");
+    let center = std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        initial.iter().all(|frame| {
+            (frame[0] - center).abs() < 1.0e-6 && (frame[1] - center).abs() < 1.0e-6
+        })
+    );
+
+    assert!(mix.set_track_mix(bus_id, -6.0, 1.0));
+    let mut output = vec![[0.0_f32; 2]; ramp_frames];
+    graph
+        .render_into(&mut output)
+        .expect("bus fader/pan ramp should render across the stereo route");
+    let right_gain = 10.0_f32.powf(-6.0 / 20.0);
+    assert!(output[0][0] > 0.0 && output[0][0] < center);
+    assert!(output[0][1] < center);
+    assert_eq!(output[ramp_frames - 1][0], 0.0);
+    assert!((output[ramp_frames - 1][1] - center * right_gain).abs() < 1.0e-6);
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        u64::try_from(ramp_frames + 2).unwrap()
+    );
 }
 
 #[test]
@@ -465,6 +531,58 @@ fn live_input_monitor_renders_while_transport_is_stopped_without_advancing_it() 
     assert_eq!(output, [[0.25, -0.5]]);
     assert!(!stats.block.is_playing);
     assert_eq!(stats.block.start_sample, 0);
+    assert_eq!(graph.transport_mut().position_samples(), 0);
+}
+
+#[test]
+fn live_mix_ramp_applies_while_monitoring_with_transport_stopped() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Armed input".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .unwrap();
+
+    let ramp_frames = 240;
+    let (mut producer, consumer, gate) = audio_monitor_stream(ramp_frames + 2);
+    let (_, stream) = pcm_stream(ramp_frames + 2).unwrap();
+    let mut graph = AudioRenderGraph::new(&project, vec![stream], ramp_frames)
+        .expect("track stream should compile");
+    graph.install_input_monitor(consumer, gate);
+    let monitor = graph
+        .input_monitor_controller()
+        .expect("graph should expose monitor controls");
+    assert!(monitor.set_track_enabled(track_id, true));
+    for _ in 0..ramp_frames + 1 {
+        assert!(producer.push_frame([0.25, -0.5]));
+    }
+
+    let mut first = [[0.0_f32; 2]; 1];
+    graph
+        .render_into(&mut first)
+        .expect("initial stopped-transport monitor frame should render");
+    assert_eq!(first[0], [0.25, -0.5]);
+    assert!(
+        graph
+            .track_mix_controller()
+            .set_track_mix(track_id, 0.0, 1.0)
+    );
+    let mut output = vec![[0.0_f32; 2]; ramp_frames];
+    graph
+        .render_into(&mut output)
+        .expect("monitor output should follow the live pan ramp");
+
+    assert!(output[0][0] < 0.25 && output[0][0] > 0.0);
+    assert!((output[0][1] + 0.5).abs() < 1.0e-6);
+    assert_eq!(output[ramp_frames - 1], [0.0, -0.5]);
     assert_eq!(graph.transport_mut().position_samples(), 0);
 }
 
