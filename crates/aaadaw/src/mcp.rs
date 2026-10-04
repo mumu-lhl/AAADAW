@@ -1,4 +1,7 @@
-use aaadaw_core::{DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TrackId};
+use aaadaw_core::{
+    DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TrackId,
+    VolumeAutomationPoint,
+};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
@@ -31,6 +34,7 @@ const MAX_TRACK_NAME_CHARS: usize = 128;
 const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
 const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
+const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
 
 pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
     let project_path = project_path.as_ref();
@@ -167,6 +171,7 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(create_track_tool());
             tools.push(insert_midi_notes_tool());
             tools.push(quantize_midi_item_tool());
+            tools.push(set_volume_automation_point_tool());
         }
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
@@ -177,6 +182,9 @@ impl ServerHandler for ProjectMcpServer {
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
             QUANTIZE_MIDI_ITEM_TOOL if self.writable => Some(quantize_midi_item_tool()),
+            SET_VOLUME_AUTOMATION_POINT_TOOL if self.writable => {
+                Some(set_volume_automation_point_tool())
+            }
             _ => None,
         }
     }
@@ -213,6 +221,13 @@ impl ServerHandler for ProjectMcpServer {
             .and_then(|(track_id, item_id, numerator, denominator, strength)| {
                 self.quantize_midi_item(track_id, item_id, numerator, denominator, strength)
             }),
+            SET_VOLUME_AUTOMATION_POINT_TOOL if self.writable => {
+                parse_volume_automation_point_arguments(request.arguments.as_ref()).and_then(
+                    |(track_id, sample, gain_db)| {
+                        self.set_volume_automation_point(track_id, sample, gain_db)
+                    },
+                )
+            }
             _ => Err("unknown or unavailable tool".to_owned()),
         };
         std::future::ready(Ok(match result {
@@ -348,6 +363,60 @@ impl ProjectMcpServer {
             return Ok(result);
         }
         persist_project_edit(&mut project, store, "quantized MIDI notes")?;
+        Ok(result)
+    }
+
+    fn set_volume_automation_point(
+        &self,
+        track_id: u64,
+        sample: u64,
+        gain_db: f32,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id().value() == track_id)
+            .ok_or_else(|| "unknown track id".to_owned())?;
+        let track_id = track.id();
+        let mut points = track.volume_automation().to_vec();
+        let point = VolumeAutomationPoint::new(sample, gain_db)
+            .ok_or_else(|| "gain_db must be finite and within -60..=6".to_owned())?;
+        let changed = match points.binary_search_by_key(&sample, |existing| existing.sample()) {
+            Ok(index) if points[index] == point => false,
+            Ok(index) => {
+                points[index] = point;
+                true
+            }
+            Err(index) => {
+                points.insert(index, point);
+                true
+            }
+        };
+        let result = json!({
+            "track_id": track_id.value(),
+            "sample": sample,
+            "gain_db": gain_db,
+            "point_count": points.len(),
+            "changed": changed,
+        });
+        if !changed {
+            return Ok(result);
+        }
+        project
+            .apply(DawAction::SetTrackVolumeAutomation { track_id, points })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "set volume automation point")?;
         Ok(result)
     }
 }
@@ -495,6 +564,56 @@ fn quantize_midi_item_tool() -> Tool {
             .idempotent(false)
             .open_world(false),
     )
+}
+
+fn set_volume_automation_point_tool() -> Tool {
+    Tool::new(
+        SET_VOLUME_AUTOMATION_POINT_TOOL,
+        "Insert or update a track volume automation point at an absolute project sample.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "sample": {"type": "integer", "minimum": 0},
+                "gain_db": {"type": "number", "minimum": -60, "maximum": 6}
+            },
+            "required": ["track_id", "sample", "gain_db"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_volume_automation_point_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, f32), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "track_id" | "sample" | "gain_db"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let track_id = arguments
+        .get("track_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "track_id must be a non-negative integer".to_owned())?;
+    let sample = arguments
+        .get("sample")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "sample must be a non-negative integer".to_owned())?;
+    let gain_db = arguments
+        .get("gain_db")
+        .and_then(Value::as_f64)
+        .filter(|gain| gain.is_finite() && (-60.0..=6.0).contains(gain))
+        .ok_or_else(|| "gain_db must be finite and within -60..=6".to_owned())?
+        as f32;
+    Ok((track_id, sample, gain_db))
 }
 
 fn parse_create_track_arguments(
