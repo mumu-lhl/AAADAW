@@ -380,7 +380,7 @@ fn wasapi_device_settings(
             column![text(title).size(13), text(description).size(10),]
                 .width(Length::Fill)
                 .spacing(tokens::SPACING_XS),
-            iced::widget::pick_list(choices, selected, |choice: WasapiDeviceChoice| {
+            iced::widget::pick_list(choices, selected, move |choice: WasapiDeviceChoice| {
                 select_message(choice.id)
             },)
             .placeholder(placeholder)
