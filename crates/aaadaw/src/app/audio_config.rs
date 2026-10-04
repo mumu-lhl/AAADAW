@@ -1,4 +1,4 @@
-use super::config_paths::config_file_path;
+use super::config_paths::{config_file_path, write_atomic};
 use aaadaw_engine::MasterOutputCeiling;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -109,27 +109,18 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
 }
 
 fn save_to(path: &Path, settings: AudioSettings) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension("conf.tmp");
-    let mut file = std::fs::File::create(&temporary)?;
+    let mut contents = Vec::new();
     writeln!(
-        file,
+        &mut contents,
         "master_output_ceiling_dbfs={}",
         settings.master_output_ceiling.as_dbfs()
     )?;
     writeln!(
-        file,
+        &mut contents,
         "recording_placement_offset_ms={}",
         format_recording_offset_ms(settings.recording_offset_us)
     )?;
-    file.sync_all()?;
-    drop(file);
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
-    std::fs::rename(temporary, path)
+    write_atomic(path, &contents)
 }
 
 pub(super) fn parse_recording_offset_ms(value: &str) -> Option<i32> {

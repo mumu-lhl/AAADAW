@@ -1,4 +1,4 @@
-use super::config_paths::config_file_path;
+use super::config_paths::{config_file_path, write_atomic};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -41,10 +41,7 @@ fn parse(contents: &str) -> Result<Vec<PathBuf>, String> {
 }
 
 fn save_to(path: &Path, paths: &[PathBuf]) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension("conf.tmp");
-    let mut file = std::fs::File::create(&temporary)?;
+    let mut contents = Vec::new();
     for path in paths {
         let path = path.to_string_lossy();
         if path.contains(['\n', '\r', '\t']) {
@@ -53,15 +50,9 @@ fn save_to(path: &Path, paths: &[PathBuf]) -> io::Result<()> {
                 "CLAP search paths cannot contain line breaks or tabs",
             ));
         }
-        writeln!(file, "{path}")?;
+        writeln!(&mut contents, "{path}")?;
     }
-    file.sync_all()?;
-    drop(file);
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
-    std::fs::rename(temporary, path)
+    write_atomic(path, &contents)
 }
 
 #[cfg(test)]
