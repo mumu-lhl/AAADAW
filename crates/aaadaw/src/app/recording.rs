@@ -407,6 +407,7 @@ impl App {
                             .playhead_sample;
                         if let Err(error) = self.playback.as_mut().expect("playback exists").play()
                         {
+                            tracing::error!(backend = self.playback_name(), error = %error, "playback could not start for recording");
                             self.recording_starting = false;
                             self.recording_tracks.clear();
                             self.status =
@@ -431,6 +432,7 @@ impl App {
                 Task::none()
             }
             None => {
+                tracing::error!("recording setup result was unavailable");
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();

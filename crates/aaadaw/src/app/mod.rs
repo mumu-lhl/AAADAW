@@ -2279,6 +2279,7 @@ impl App {
                     match result {
                         Ok(candidates) => self.recording_recovery_candidates = candidates,
                         Err(error) => {
+                            tracing::error!(error = %error, "recording recovery scan failed");
                             self.status = format!("Recording recovery scan failed: {error}")
                         }
                     }
@@ -2297,7 +2298,10 @@ impl App {
                             .retain(|candidate| candidate.manifest_path != path);
                         self.status = "Incomplete recording discarded".to_owned();
                     }
-                    Err(error) => self.status = format!("Recording discard failed: {error}"),
+                    Err(error) => {
+                        tracing::error!(error = %error, "recording recovery discard failed");
+                        self.status = format!("Recording discard failed: {error}");
+                    }
                 }
             }
             Message::RecordingRecoveryCleaned(result) => match result {
@@ -2308,6 +2312,7 @@ impl App {
                         .retain(|candidate| !paths.contains(&candidate.manifest_path));
                 }
                 Err(error) => {
+                    tracing::error!(error = %error, "recording recovery cleanup failed");
                     self.status = format!(
                         "Project saved, but recording source cleanup failed; saving again will retry: {error}"
                     );
@@ -3452,6 +3457,10 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn handle_playback_device_lost(&mut self) {
+        tracing::error!(
+            backend = self.playback_name(),
+            "playback output device was lost"
+        );
         self.playback_playing = false;
         self.playback_paused = false;
         self.reset_track_meters();

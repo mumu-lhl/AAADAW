@@ -501,6 +501,7 @@ impl App {
                 };
             }
             Err(error) => {
+                tracing::error!(error = %error, "audio asset operation failed");
                 self.audio_asset_management_status = format!("Asset operation failed: {error}");
             }
         }
@@ -578,7 +579,10 @@ impl App {
                 }
                 self.status = "External audio source relinked".to_owned();
             }
-            Err(error) => self.status = format!("Audio relink failed: {error}"),
+            Err(error) => {
+                tracing::error!(item_id = ?item_id, error = %error, "audio item relink failed");
+                self.status = format!("Audio relink failed: {error}");
+            }
         }
     }
 

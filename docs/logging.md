@@ -1,6 +1,6 @@
 # Application logs and diagnostics
 
-AAADAW initializes structured `tracing` logs before entering either the desktop UI or the MCP STDIO server. Logs are written to a daily rotating set of up to seven files. If the platform log directory cannot be created or opened, AAADAW reports the problem on stderr and falls back to stderr logging; this does not prevent startup. MCP JSON-RPC responses remain on stdout.
+AAADAW initializes structured `tracing` logs before entering either the desktop UI or the MCP STDIO server. Logs use size-based rotation: each file is capped at 10 MiB and at most seven files are retained (70 MiB total). If the platform log directory cannot be created or opened, AAADAW reports the problem on stderr and falls back to stderr logging; this does not prevent startup. MCP JSON-RPC responses remain on stdout.
 
 ## Log directory
 
@@ -10,7 +10,7 @@ The default directory is the application's per-user local data directory with a 
 - Windows: `%LOCALAPPDATA%\AAADAW\AAADAW\data\logs`.
 - macOS: `~/Library/Application Support/org.AAADAW.AAADAW/logs`.
 
-Set `AAADAW_LOG_DIR` to use a different directory, such as a portable or test location. The override names the log directory itself; AAADAW creates it when needed. Daily files use the `aaadaw.<UTC-date>.log` prefix pattern and retain at most seven files.
+Set `AAADAW_LOG_DIR` to use a different directory, such as a portable or test location. The override names the log directory itself; AAADAW creates it when needed. The active log is `aaadaw.log`; rotated files are numbered `aaadaw.1.log` through `aaadaw.6.log`.
 
 ## Levels and realtime boundary
 
