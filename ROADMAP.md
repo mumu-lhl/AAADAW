@@ -82,7 +82,7 @@
 - [x] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
 - [x] 增加 Windows WASAPI 默认立体声输出，让 Windows 工程可播放且记录设备格式协商、默认设备变化和移除行为（[Issue #50](https://github.com/mumu-lhl/AAADAW/issues/50)）。
 - [x] 增加 Windows WASAPI 输入，让用户可在 armed track 上录制、保留采集时间戳并通过现有 WAV/recovery/import 路径回放（[Issue #52](https://github.com/mumu-lhl/AAADAW/issues/52)）。
-- [x] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出；轨道可经一个或多个 subgroup bus 串接，bus 处理自己的 FX/fader 后继续输出至下游或 Master（[Issue #68](https://github.com/mumu-lhl/AAADAW/issues/68)）。Send/sidechain/feedback routing 不在本项范围。
+- [x] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出；轨道可经一个或多个 subgroup bus 串接，bus 处理自己的 FX/fader 后继续输出至下游或 Master（[Issue #68](https://github.com/mumu-lhl/AAADAW/issues/68)）。活动播放与输入监听中的实时音量/声像更新用 5 ms sample-rate-aware ramp 避免系数阶跃；Send/sidechain/feedback routing 不在本项范围（[Issue #99](https://github.com/mumu-lhl/AAADAW/issues/99)）。
 - [x] 采用静态拓扑分层调度；预分配每轨累加缓冲和 scratch 空间，控制线程与音频线程通过无锁队列/只读快照交接状态。总线创建、路由引用、迁移、撤销/重做和固定回调图有自动化覆盖。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
 - [x] 为 MIDI Item 实现 CC64 Sustain lane 编辑、撤销/重做、schema v8 持久化、sample-accurate 播放、seek chase 和停止释放（[Issue #26](https://github.com/mumu-lhl/AAADAW/issues/26)）。

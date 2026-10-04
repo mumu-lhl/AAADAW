@@ -61,6 +61,7 @@ pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
 pub use wasapi_output::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 
 use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
+use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 use std::sync::Arc;
@@ -80,11 +81,8 @@ struct TrackGains {
     track_id: TrackId,
     output_track_index: Option<usize>,
     is_bus: bool,
-    left: f32,
-    right: f32,
-    stereo_left: f32,
-    stereo_right: f32,
     live: Arc<LiveTrackGains>,
+    mix_ramp: Cell<GainRamp>,
     record_armed: bool,
     volume_automation: Vec<VolumeAutomationPoint>,
 }
@@ -100,12 +98,73 @@ struct LiveTrackGains {
     solo: AtomicBool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GainCoefficients {
     left: f32,
     right: f32,
     stereo_left: f32,
     stereo_right: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GainRamp {
+    current: GainCoefficients,
+    target: GainCoefficients,
+    step: GainCoefficients,
+    remaining_frames: usize,
+    ramp_frames: usize,
+}
+
+impl GainRamp {
+    fn new(initial: GainCoefficients, ramp_frames: usize) -> Self {
+        Self {
+            current: initial,
+            target: initial,
+            step: GainCoefficients::zero(),
+            remaining_frames: 0,
+            ramp_frames: ramp_frames.max(1),
+        }
+    }
+
+    fn retarget(&mut self, target: GainCoefficients) {
+        if target == self.target {
+            return;
+        }
+        self.target = target;
+        self.remaining_frames = self.ramp_frames;
+        let divisor = self.ramp_frames as f32;
+        self.step = GainCoefficients {
+            left: (target.left - self.current.left) / divisor,
+            right: (target.right - self.current.right) / divisor,
+            stereo_left: (target.stereo_left - self.current.stereo_left) / divisor,
+            stereo_right: (target.stereo_right - self.current.stereo_right) / divisor,
+        };
+    }
+
+    fn next_frame(&mut self) -> GainCoefficients {
+        if self.remaining_frames > 0 {
+            self.current.left += self.step.left;
+            self.current.right += self.step.right;
+            self.current.stereo_left += self.step.stereo_left;
+            self.current.stereo_right += self.step.stereo_right;
+            self.remaining_frames -= 1;
+            if self.remaining_frames == 0 {
+                self.current = self.target;
+            }
+        }
+        self.current
+    }
+}
+
+impl GainCoefficients {
+    fn zero() -> Self {
+        Self {
+            left: 0.0,
+            right: 0.0,
+            stereo_left: 0.0,
+            stereo_right: 0.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -115,11 +174,10 @@ struct MixBlock {
     frame_count: usize,
 }
 
-/// Control-thread handle for updating the active graph's per-track volume and pan.
+/// Control-thread handle for retargeting the active graph's per-track volume and pan.
 ///
 /// Values are fully converted to gain coefficients on the caller thread. The audio callback
-/// performs only bounded atomic loads and falls back to the graph's compiled coefficients if it
-/// observes an update in progress.
+/// performs bounded atomic loads and applies stable targets through preallocated sample ramps.
 #[derive(Clone, Debug)]
 pub struct TrackMixController {
     tracks: Vec<(TrackId, Arc<LiveTrackGains>)>,
@@ -186,7 +244,7 @@ impl AudioInputMonitorController {
 }
 
 impl TrackMixController {
-    /// Updates one track's volume and pan without rebuilding the render graph.
+    /// Retargets one track's volume and pan with a sample ramp and no graph rebuild.
     pub fn set_track_mix(&self, track_id: TrackId, volume_db: f32, pan: f32) -> bool {
         let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
             return false;
@@ -237,10 +295,10 @@ impl LiveTrackGains {
         }
     }
 
-    fn snapshot(&self, fallback: GainCoefficients) -> GainCoefficients {
+    fn snapshot(&self) -> Option<GainCoefficients> {
         let before = self.version.load(Ordering::SeqCst);
         if before % 2 != 0 {
-            return fallback;
+            return None;
         }
         let gains = GainCoefficients {
             left: f32::from_bits(self.left.load(Ordering::SeqCst)),
@@ -249,9 +307,9 @@ impl LiveTrackGains {
             stereo_right: f32::from_bits(self.stereo_right.load(Ordering::SeqCst)),
         };
         if self.version.load(Ordering::SeqCst) == before {
-            gains
+            Some(gains)
         } else {
-            fallback
+            None
         }
     }
 }
@@ -321,6 +379,8 @@ fn volume_automation_state(
 pub enum MixerPlanError {
     /// The maximum callback block size must be positive.
     ZeroBlockCapacity,
+    /// The project sample rate must be positive.
+    ZeroSampleRate,
     /// The track's volume cannot be represented as an `f32` gain.
     InvalidTrackGain { track_id: u64 },
 }
@@ -329,6 +389,7 @@ impl fmt::Display for MixerPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroBlockCapacity => formatter.write_str("maximum block size must be positive"),
+            Self::ZeroSampleRate => formatter.write_str("sample rate must be positive"),
             Self::InvalidTrackGain { track_id } => {
                 write!(formatter, "track {track_id} gain is not representable")
             }
@@ -383,12 +444,27 @@ impl fmt::Display for MixError {
 impl std::error::Error for MixError {}
 
 impl MixerPlan {
-    /// Compiles the project's current track controls for a maximum callback
-    /// block size. Call this on a control thread, not in the audio callback.
+    /// Compiles the project's current track controls for a maximum callback block size.
+    /// The live-control ramp uses a 48 kHz sample rate; use
+    /// [`compile_with_sample_rate`](Self::compile_with_sample_rate) for another rate.
+    /// Call this on a control thread, not in the audio callback.
     pub fn compile(tracks: &[Track], max_block_frames: usize) -> Result<Self, MixerPlanError> {
+        Self::compile_with_sample_rate(tracks, max_block_frames, 48_000)
+    }
+
+    /// Compiles a mixer with a live-control ramp duration of five milliseconds at `sample_rate`.
+    pub fn compile_with_sample_rate(
+        tracks: &[Track],
+        max_block_frames: usize,
+        sample_rate: u32,
+    ) -> Result<Self, MixerPlanError> {
         if max_block_frames == 0 {
             return Err(MixerPlanError::ZeroBlockCapacity);
         }
+        if sample_rate == 0 {
+            return Err(MixerPlanError::ZeroSampleRate);
+        }
+        let ramp_frames = (sample_rate / 200).max(1) as usize;
 
         let has_solo = Arc::new(AtomicBool::new(tracks.iter().any(Track::is_solo)));
         let mut compiled = Vec::with_capacity(tracks.len());
@@ -404,15 +480,12 @@ impl MixerPlan {
                     tracks.iter().position(|candidate| candidate.id() == output)
                 }),
                 is_bus: track.is_bus(),
-                left: gains.left,
-                right: gains.right,
-                stereo_left: gains.stereo_left,
-                stereo_right: gains.stereo_right,
                 live: Arc::new(LiveTrackGains::new(
                     gains,
                     track.is_muted(),
                     track.is_solo(),
                 )),
+                mix_ramp: Cell::new(GainRamp::new(gains, ramp_frames)),
                 record_armed: track.is_record_armed(),
                 volume_automation: track.volume_automation().to_vec(),
             });
@@ -500,16 +573,20 @@ impl MixerPlan {
         {
             return;
         }
-        let fallback = GainCoefficients {
-            left: track.left,
-            right: track.right,
-            stereo_left: track.stereo_left,
-            stereo_right: track.stereo_right,
-        };
-        let gains = track.live.snapshot(fallback);
+        let mut ramp = track.mix_ramp.get();
+        if let Some(target) = track.live.snapshot() {
+            ramp.retarget(target);
+        }
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, start_sample);
-        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter().copied()).enumerate() {
+        let ramp_frames = ramp.remaining_frames.min(output.len());
+        for (offset, (frame, sample)) in output
+            .iter_mut()
+            .zip(input.iter().copied())
+            .take(ramp_frames)
+            .enumerate()
+        {
+            let gains = ramp.next_frame();
             if advances_timeline
                 && next_point_sample.is_some_and(|next_sample| {
                     start_sample.saturating_add(offset as u64) >= next_sample
@@ -526,6 +603,33 @@ impl MixerPlan {
                 automation_gain *= gain_step;
             }
         }
+        if ramp_frames < output.len() {
+            let gains = ramp.current;
+            for (offset, (frame, sample)) in output
+                .iter_mut()
+                .zip(input.iter().copied())
+                .skip(ramp_frames)
+                .enumerate()
+            {
+                let offset = offset + ramp_frames;
+                if advances_timeline
+                    && next_point_sample.is_some_and(|next_sample| {
+                        start_sample.saturating_add(offset as u64) >= next_sample
+                    })
+                {
+                    (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                        &track.volume_automation,
+                        start_sample.saturating_add(offset as u64),
+                    );
+                }
+                frame[0] += sample * gains.left * automation_gain;
+                frame[1] += sample * gains.right * automation_gain;
+                if advances_timeline {
+                    automation_gain *= gain_step;
+                }
+            }
+        }
+        track.mix_ramp.set(ramp);
     }
 
     fn mix_stereo_routed_unchecked(
@@ -543,16 +647,20 @@ impl MixerPlan {
         {
             return;
         }
-        let fallback = GainCoefficients {
-            left: track.left,
-            right: track.right,
-            stereo_left: track.stereo_left,
-            stereo_right: track.stereo_right,
-        };
-        let gains = track.live.snapshot(fallback);
+        let mut ramp = track.mix_ramp.get();
+        if let Some(target) = track.live.snapshot() {
+            ramp.retarget(target);
+        }
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, block.start_sample);
-        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter()).enumerate() {
+        let ramp_frames = ramp.remaining_frames.min(output.len());
+        for (offset, (frame, sample)) in output
+            .iter_mut()
+            .zip(input.iter())
+            .take(ramp_frames)
+            .enumerate()
+        {
+            let gains = ramp.next_frame();
             if block.advances_timeline
                 && next_point_sample.is_some_and(|next_sample| {
                     block.start_sample.saturating_add(offset as u64) >= next_sample
@@ -574,6 +682,38 @@ impl MixerPlan {
                 automation_gain *= gain_step;
             }
         }
+        if ramp_frames < output.len() {
+            let gains = ramp.current;
+            let (left_gain, right_gain) = if mono_input {
+                (gains.left, gains.right)
+            } else {
+                (gains.stereo_left, gains.stereo_right)
+            };
+            for (offset, (frame, sample)) in output
+                .iter_mut()
+                .zip(input.iter())
+                .skip(ramp_frames)
+                .enumerate()
+            {
+                let offset = offset + ramp_frames;
+                if block.advances_timeline
+                    && next_point_sample.is_some_and(|next_sample| {
+                        block.start_sample.saturating_add(offset as u64) >= next_sample
+                    })
+                {
+                    (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                        &track.volume_automation,
+                        block.start_sample.saturating_add(offset as u64),
+                    );
+                }
+                frame[0] += sample[0] * left_gain * automation_gain;
+                frame[1] += sample[1] * right_gain * automation_gain;
+                if block.advances_timeline {
+                    automation_gain *= gain_step;
+                }
+            }
+        }
+        track.mix_ramp.set(ramp);
     }
 
     fn compile_solo_audibility(&self, audible: &mut [bool], solo_bus_subtrees: &mut [bool]) {
@@ -1379,8 +1519,12 @@ impl AudioRenderGraph {
         effect_processors: &mut Vec<TrackFxProcessor>,
         max_block_frames: usize,
     ) -> Result<Self, AudioGraphBuildError> {
-        let mixer = MixerPlan::compile(project.tracks(), max_block_frames)
-            .map_err(AudioGraphBuildError::MixerPlan)?;
+        let mixer = MixerPlan::compile_with_sample_rate(
+            project.tracks(),
+            max_block_frames,
+            project.settings().sample_rate(),
+        )
+        .map_err(AudioGraphBuildError::MixerPlan)?;
         let midi_plan =
             MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
         let mut instrument_routes = Vec::with_capacity(instrument_processors.len());
