@@ -302,6 +302,8 @@ impl JackAudioOutput {
             shutdown_acknowledged: AtomicBool::new(false),
             rendered_blocks: AtomicU64::new(0),
             underrun_samples: AtomicU64::new(0),
+            master_guarded_samples: AtomicU64::new(0),
+            master_non_finite_samples: AtomicU64::new(0),
             device_xruns: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
             playhead_sample: AtomicU64::new(0),
