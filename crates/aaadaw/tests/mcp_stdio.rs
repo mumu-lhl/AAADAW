@@ -516,6 +516,8 @@ fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
         call(11, json!({"tick": 1.5, "bpm": 120.0})),
         call(12, json!({"tick": 1920, "bpm": 120.0, "extra": true})),
         call(13, json!({"tick": u64::MAX, "bpm": 120.0})),
+        call(14, json!({"bpm": 120.0})),
+        call(15, json!({"tick": 1920})),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -551,10 +553,14 @@ fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
         response_for(3)["result"]["structuredContent"]["changed"],
         true
     );
+    assert_eq!(response_for(3)["result"]["structuredContent"]["tick"], 960);
+    assert_eq!(response_for(3)["result"]["structuredContent"]["bpm"], 90.0);
     assert_eq!(
         response_for(4)["result"]["structuredContent"]["changed"],
         false
     );
+    assert_eq!(response_for(4)["result"]["structuredContent"]["tick"], 960);
+    assert_eq!(response_for(4)["result"]["structuredContent"]["bpm"], 90.0);
     assert_eq!(
         response_for(5)["result"]["structuredContent"]["changed"],
         true
@@ -587,11 +593,14 @@ fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
             .iter()
             .any(|point| point["tick"] == 960 && point["bpm"] == 100.0)
     );
-    for id in [10, 11, 12, 13] {
+    for id in [10, 11, 12, 13, 14, 15] {
         assert_eq!(response_for(id)["result"]["isError"], true);
     }
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let tempo_points = reopened.tempo_points().collect::<Vec<_>>();
+    assert_eq!(tempo_points.len(), 2);
+    assert!(tempo_points.iter().all(|(tick, _, _)| *tick != 1920));
     assert_eq!(reopened.tempo_at_tick(960), 100.0);
 }
 

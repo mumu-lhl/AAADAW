@@ -1549,6 +1549,12 @@ mod tests {
         ] {
             assert!(parse_set_tempo_arguments(Some(&invalid)).is_err());
         }
+        for missing in [
+            serde_json::Map::from_iter([("tick".to_owned(), json!(0))]),
+            serde_json::Map::from_iter([("bpm".to_owned(), json!(120))]),
+        ] {
+            assert!(parse_set_tempo_arguments(Some(&missing)).is_err());
+        }
         let mut extra = arguments(json!(0), json!(120));
         extra.insert("curve".to_owned(), json!("step"));
         assert!(parse_set_tempo_arguments(Some(&extra)).is_err());
