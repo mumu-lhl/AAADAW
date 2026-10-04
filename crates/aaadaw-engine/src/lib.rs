@@ -53,7 +53,10 @@ pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
-pub use stream::{PcmStreamConsumer, PcmStreamError, PcmStreamProducer, pcm_stream};
+pub use stream::{
+    PcmStreamConsumer, PcmStreamError, PcmStreamProducer, StereoPcmStreamConsumer,
+    StereoPcmStreamProducer, pcm_stream, stereo_pcm_stream,
+};
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 pub use wasapi_input::{WasapiAudioInput, WasapiInputError};
@@ -1015,8 +1018,38 @@ pub struct AudioRenderStats {
 /// One SPSC consumer associated with a project AudioItem.
 pub struct AudioItemStream {
     item_id: ItemId,
-    consumer: PcmStreamConsumer,
+    consumer: AudioItemPcmConsumer,
     source_start_sample: Option<u64>,
+}
+
+enum AudioItemPcmConsumer {
+    Mono(PcmStreamConsumer),
+    Stereo(StereoPcmStreamConsumer),
+}
+
+impl AudioItemPcmConsumer {
+    fn is_stereo(&self) -> bool {
+        match self {
+            Self::Mono(_) => false,
+            Self::Stereo(consumer) => consumer.is_stereo_content(),
+        }
+    }
+
+    fn available_frames(&self) -> usize {
+        match self {
+            Self::Mono(consumer) => consumer.available_samples(),
+            Self::Stereo(consumer) => consumer.available_frames(),
+        }
+    }
+
+    fn read_into_stereo(&mut self, output: &mut [[f32; 2]]) -> usize {
+        match self {
+            Self::Mono(consumer) => consumer.read_stereo_into(output),
+            Self::Stereo(consumer) => consumer
+                .read_into(output)
+                .saturating_mul(if consumer.is_stereo_content() { 2 } else { 1 }),
+        }
+    }
 }
 
 /// A prepared CLAP processor associated with one project track.
@@ -1229,7 +1262,7 @@ fn mix_track_buffer_to_bus(
 }
 
 struct RenderGraphSources {
-    streams: Vec<PcmStreamConsumer>,
+    streams: Vec<AudioItemPcmConsumer>,
     track_indices: Vec<usize>,
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
@@ -1335,7 +1368,16 @@ impl AudioItemStream {
     pub fn new(item_id: ItemId, consumer: PcmStreamConsumer) -> Self {
         Self {
             item_id,
-            consumer,
+            consumer: AudioItemPcmConsumer::Mono(consumer),
+            source_start_sample: None,
+        }
+    }
+
+    /// Associates a stereo worker-fed PCM consumer with its timeline item.
+    pub fn new_stereo(item_id: ItemId, consumer: StereoPcmStreamConsumer) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
         }
     }
@@ -1349,7 +1391,20 @@ impl AudioItemStream {
     ) -> Self {
         Self {
             item_id,
-            consumer,
+            consumer: AudioItemPcmConsumer::Mono(consumer),
+            source_start_sample: Some(source_start_sample),
+        }
+    }
+
+    /// Associates a refilled stereo stream whose first frame corresponds to the given sample.
+    pub fn new_stereo_at_sample(
+        item_id: ItemId,
+        source_start_sample: u64,
+        consumer: StereoPcmStreamConsumer,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
         }
     }
@@ -1375,12 +1430,12 @@ pub struct AudioRenderGraph {
     transport: Transport,
     last_midi_sample_end: Option<u64>,
     last_midi_chase_generation: Option<u64>,
-    streams: Vec<PcmStreamConsumer>,
+    streams: Vec<AudioItemPcmConsumer>,
     stream_track_indices: Vec<usize>,
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
     source_item_ids: Vec<Option<ItemId>>,
-    scratch: Vec<Vec<f32>>,
+    scratch: Vec<Vec<[f32; 2]>>,
     input_monitor: Option<AudioMonitorConsumer>,
     input_monitor_gate: Option<AudioInputMonitorGate>,
     input_monitor_scratch: Vec<[f32; 2]>,
@@ -1405,7 +1460,10 @@ impl AudioRenderGraph {
             ranges: vec![None; streams.len()],
             cursors: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
-            streams,
+            streams: streams
+                .into_iter()
+                .map(AudioItemPcmConsumer::Mono)
+                .collect(),
         };
         let mut instruments = Vec::new();
         let mut effects = Vec::new();
@@ -1589,7 +1647,7 @@ impl AudioRenderGraph {
             )
         });
         let scratch = (0..sources.streams.len())
-            .map(|_| vec![0.0; max_block_frames])
+            .map(|_| vec![[0.0, 0.0]; max_block_frames])
             .collect();
         let midi_scratch = vec![None; midi_plan.len()];
         let track_has_stereo_input = vec![false; project.tracks().len()];
@@ -1653,7 +1711,7 @@ impl AudioRenderGraph {
             };
             let required = end.min(*item_end).saturating_sub(start.max(*item_start));
             if required > 0
-                && self.streams[index].available_samples() < usize::try_from(required).ok()?
+                && self.streams[index].available_frames() < usize::try_from(required).ok()?
             {
                 return self.source_item_ids[index];
             }
@@ -1681,7 +1739,7 @@ impl AudioRenderGraph {
             if active_start >= active_end {
                 continue;
             }
-            let queued = self.streams[index].available_samples() as u64;
+            let queued = self.streams[index].available_frames() as u64;
             let safe_until = active_start
                 .saturating_sub(start)
                 .saturating_add(queued.min(active_end.saturating_sub(active_start)));
@@ -2146,23 +2204,24 @@ impl AudioRenderGraph {
             0
         } {
             let input = &mut self.scratch[stream_index][..output.len()];
-            input.fill(0.0);
+            input.fill([0.0, 0.0]);
             if let Some((item_start, item_end)) = self.source_ranges[stream_index] {
                 let overlap_start = block.start_sample.max(item_start);
                 let overlap_end = block_end_sample.min(item_end);
                 if overlap_start < overlap_end {
                     let offset = (overlap_start - block.start_sample) as usize;
                     let length = (overlap_end - overlap_start) as usize;
-                    let underruns =
-                        self.streams[stream_index].read_into(&mut input[offset..offset + length]);
+                    let underruns = self.streams[stream_index]
+                        .read_into_stereo(&mut input[offset..offset + length]);
                     underrun_samples = underrun_samples.saturating_add(underruns);
                     self.source_cursors[stream_index] = Some(overlap_end);
                 }
             } else {
-                underrun_samples =
-                    underrun_samples.saturating_add(self.streams[stream_index].read_into(input));
+                underrun_samples = underrun_samples
+                    .saturating_add(self.streams[stream_index].read_into_stereo(input));
             }
             let track_index = self.stream_track_indices[stream_index];
+            self.track_has_stereo_input[track_index] |= self.streams[stream_index].is_stereo();
             let track_buffer = self.track_effect_buffers[track_index]
                 .as_mut()
                 .expect("every track has a preallocated routing buffer");
@@ -2170,8 +2229,8 @@ impl AudioRenderGraph {
                 .iter_mut()
                 .zip(input.iter().copied())
             {
-                frame[0] += sample;
-                frame[1] += sample;
+                frame[0] += sample[0];
+                frame[1] += sample[1];
             }
         }
         if let Some(monitor) = &mut self.input_monitor {
