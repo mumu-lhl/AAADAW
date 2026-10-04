@@ -24,6 +24,30 @@ fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
             .all(|pair| pair[0].sample() < pair[1].sample())
 }
 
+fn valid_track_routing(tracks: &[crate::Track]) -> bool {
+    for source in tracks {
+        let mut next = source.output_track;
+        let mut visited = 0;
+        while let Some(target_id) = next {
+            if target_id == source.id {
+                return false;
+            }
+            let Some(target) = tracks
+                .iter()
+                .find(|track| track.id == target_id && track.is_bus)
+            else {
+                return false;
+            };
+            visited += 1;
+            if visited > tracks.len() {
+                return false;
+            }
+            next = target.output_track;
+        }
+    }
+    true
+}
+
 /// Mutable project state. All changes are made through [`DawAction`]s.
 #[derive(Debug, Default)]
 pub struct Project {
@@ -130,6 +154,11 @@ enum ProjectEvent {
         track_id: TrackId,
         before: String,
         after: String,
+    },
+    TrackOutputChanged {
+        track_id: TrackId,
+        before: Option<TrackId>,
+        after: Option<TrackId>,
     },
     TrackMoved {
         track_id: TrackId,
@@ -336,6 +365,15 @@ impl ProjectEvent {
                 track_id: *track_id,
                 before: after.clone(),
                 after: before.clone(),
+            },
+            Self::TrackOutputChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackOutputChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
             },
             Self::TrackMoved { track_id, from, to } => Self::TrackMoved {
                 track_id: *track_id,
@@ -623,6 +661,8 @@ impl Project {
                 .map(|track| TrackSnapshot {
                     id: track.id.value(),
                     name: track.name.clone(),
+                    is_bus: track.is_bus,
+                    output_track_id: track.output_track.map(TrackId::value),
                     volume_db: track.volume_db,
                     pan: track.pan,
                     muted: track.muted,
@@ -808,6 +848,8 @@ impl Project {
             tracks.push(Track {
                 id: TrackId::from_raw(track.id),
                 name: track.name,
+                is_bus: track.is_bus,
+                output_track: track.output_track_id.map(TrackId::from_raw),
                 volume_db: track.volume_db,
                 pan: track.pan,
                 muted: track.muted,
@@ -817,6 +859,9 @@ impl Project {
                 fx_chain,
                 volume_automation: track.volume_automation,
             });
+        }
+        if !valid_track_routing(&tracks) {
+            return Err(SnapshotError::InvalidProjectData);
         }
 
         let mut item_ids = HashSet::with_capacity(
@@ -943,6 +988,36 @@ impl Project {
                 let track = Track {
                     id: TrackId::from_raw(ids.next_track_id),
                     name,
+                    is_bus: false,
+                    output_track: None,
+                    volume_db: 0.0,
+                    pan: 0.0,
+                    muted: false,
+                    solo: false,
+                    record_armed: false,
+                    instrument: None,
+                    fx_chain: Vec::new(),
+                    volume_automation: Vec::new(),
+                };
+                ids.next_track_id = next_id;
+                ProjectEvent::TrackCreated { index, track }
+            }
+            DawAction::CreateBusTrack { index, name } => {
+                if index > state.tracks.len() {
+                    return Err(ActionError::TrackIndexOutOfBounds {
+                        index,
+                        track_count: state.tracks.len(),
+                    });
+                }
+                let next_id = ids
+                    .next_track_id
+                    .checked_add(1)
+                    .ok_or(ActionError::TrackIdExhausted)?;
+                let track = Track {
+                    id: TrackId::from_raw(ids.next_track_id),
+                    name,
+                    is_bus: true,
+                    output_track: None,
                     volume_db: 0.0,
                     pan: 0.0,
                     muted: false,
@@ -1038,6 +1113,36 @@ impl Project {
                     track_id,
                     before: track.volume_automation.clone(),
                     after: points,
+                }
+            }
+            DawAction::SetTrackOutput {
+                track_id,
+                output_track,
+            } => {
+                let source = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if output_track == Some(track_id) {
+                    return Err(ActionError::InvalidTrackOutput);
+                }
+                let mut next = output_track;
+                while let Some(target_id) = next {
+                    if target_id == track_id {
+                        return Err(ActionError::TrackRoutingCycle);
+                    }
+                    let target = state
+                        .tracks
+                        .iter()
+                        .find(|track| track.id == target_id && track.is_bus)
+                        .ok_or(ActionError::InvalidTrackOutput)?;
+                    next = target.output_track;
+                }
+                ProjectEvent::TrackOutputChanged {
+                    track_id,
+                    before: source.output_track,
+                    after: output_track,
                 }
             }
             DawAction::SetTrackPan { track_id, pan } => {
@@ -1694,6 +1799,13 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
+                if state
+                    .tracks
+                    .iter()
+                    .any(|track| track.output_track == Some(track_id))
+                {
+                    return Err(ActionError::TrackHasRoutingDependents { track_id });
+                }
                 let audio_items = state
                     .audio_items
                     .iter()
@@ -1956,6 +2068,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.name.clone_from(after);
+            }
+            ProjectEvent::TrackOutputChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.output_track != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.output_track = *after;
             }
             ProjectEvent::TrackMoved { track_id, from, to } => {
                 if *to >= state.tracks.len()

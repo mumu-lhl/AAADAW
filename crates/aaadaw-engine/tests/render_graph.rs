@@ -60,6 +60,177 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
 }
 
 #[test]
+fn render_graph_routes_audio_through_bus_fader_and_mute() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bass".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Guitar".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 2,
+            name: "Band".into(),
+        })
+        .unwrap();
+    let bass = project.tracks()[0].id();
+    let guitar = project.tracks()[1].id();
+    let bus = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: bass,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: guitar,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackVolume {
+            track_id: bus,
+            volume_db: -6.0,
+        })
+        .unwrap();
+
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(4).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[0].push_samples(&[0.25; 2]);
+    producers[1].push_samples(&[0.5; 2]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = (0.25 + 0.5) * std::f32::consts::FRAC_1_SQRT_2 * 10.0_f32.powf(-6.0 / 20.0);
+    assert!(
+        (output[0][0] - expected).abs() < 1.0e-6,
+        "output={output:?} expected={expected}"
+    );
+    assert!(
+        (output[0][1] - expected).abs() < 1.0e-6,
+        "output={output:?} expected={expected}"
+    );
+
+    assert!(mix.set_track_mute_solo(bus, true, false));
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]]);
+}
+
+#[test]
+fn soloed_bus_keeps_its_inputs_and_mutes_unrelated_tracks() {
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Direct", "Bus"].into_iter().enumerate() {
+        let action = if index == 2 {
+            DawAction::CreateBusTrack {
+                index,
+                name: name.into(),
+            }
+        } else {
+            DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            }
+        };
+        project.apply(action).unwrap();
+    }
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(4).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[0].push_samples(&[0.25]);
+    producers[1].push_samples(&[0.5]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    let mix = graph.track_mix_controller();
+    assert!(mix.set_track_mute_solo(bus, false, true));
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!((output[0][0] - expected).abs() < 1.0e-6);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
+}
+
+#[test]
+fn nested_buses_render_in_dependency_order_independent_of_track_order() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 0,
+            name: "Master Submix".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Source Submix".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 2,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let master_submix = project.tracks()[0].id();
+    let source_submix = project.tracks()[1].id();
+    let source = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_submix,
+            output_track: Some(master_submix),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(source_submix),
+        })
+        .unwrap();
+
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(2).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[2].push_samples(&[0.5]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!((output[0][0] - expected).abs() < 1.0e-6);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
+}
+
+#[test]
 fn track_volume_automation_is_sample_accurate_across_blocks_and_seeks() {
     let mut project = Project::new();
     project

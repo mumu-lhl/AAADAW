@@ -896,6 +896,8 @@ impl App {
                     || matches!(
                         &message,
                         Message::AddTrack
+                            | Message::AddBusTrack
+                            | Message::SetTrackOutput(..)
                             | Message::AddMidiItem
                             | Message::AddMidiNote(_)
                             | Message::AddMidiNoteAt(..)
@@ -1436,6 +1438,29 @@ impl App {
             Message::AddTrack => {
                 self.active_menu = None;
                 self.add_track();
+            }
+            Message::AddBusTrack => {
+                if self.project_graph_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before changing track routing".to_owned();
+                } else {
+                    self.active_menu = None;
+                    self.add_bus_track();
+                }
+            }
+            Message::SetTrackOutput(track_id, output_track) => {
+                if self.project_graph_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before changing track routing".to_owned();
+                } else {
+                    self.apply_action(
+                        DawAction::SetTrackOutput {
+                            track_id,
+                            output_track,
+                        },
+                        "Track output changed",
+                    );
+                }
             }
             Message::AddMidiItem => {
                 let action = create_four_beat_midi_item(&self.project);
@@ -2593,6 +2618,34 @@ impl App {
         }
     }
 
+    fn add_bus_track(&mut self) {
+        let index = self.project.tracks().len();
+        let bus_number = self
+            .project
+            .tracks()
+            .iter()
+            .filter(|track| track.is_bus())
+            .count()
+            + 1;
+        let track_id = self.project.tracks().get(index).map(|track| track.id());
+        let previous_revision = self.revision;
+        self.apply_action(
+            DawAction::CreateBusTrack {
+                index,
+                name: format!("Bus {bus_number}"),
+            },
+            "Bus track created",
+        );
+        if self.revision != previous_revision {
+            self.timeline.selected_track = self
+                .project
+                .tracks()
+                .last()
+                .map(|track| track.id())
+                .or(track_id);
+        }
+    }
+
     fn apply_edit<E: std::fmt::Display>(&mut self, action: Result<DawAction, E>, success: &str) {
         match action {
             Ok(action) => self.apply_action(action, success),
@@ -2938,6 +2991,10 @@ impl App {
     }
 
     fn volume_automation_edit_busy(&self) -> bool {
+        self.project_graph_edit_busy()
+    }
+
+    fn project_graph_edit_busy(&self) -> bool {
         #[cfg(feature = "audio-device")]
         let recording =
             self.recording.is_some() || self.recording_starting || self.recording_stopping;

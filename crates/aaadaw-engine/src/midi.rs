@@ -146,7 +146,21 @@ impl MidiEventPlan {
                 .ok_or(MidiScheduleError::MissingTrack {
                     track_id: item.track_id().value(),
                 })?;
-            if track.is_muted() || (has_solo && !track.is_solo()) {
+            let mut target = track.output_track();
+            let mut routed_to_solo = false;
+            while let Some(target_id) = target {
+                let Some(target_track) =
+                    tracks.iter().find(|candidate| candidate.id() == target_id)
+                else {
+                    break;
+                };
+                if target_track.is_solo() {
+                    routed_to_solo = true;
+                    break;
+                }
+                target = target_track.output_track();
+            }
+            if track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo) {
                 continue;
             }
 

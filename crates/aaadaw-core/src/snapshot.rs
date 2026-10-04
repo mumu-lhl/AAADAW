@@ -19,6 +19,8 @@ pub struct ProjectSnapshot {
 pub struct TrackSnapshot {
     pub id: u64,
     pub name: String,
+    pub is_bus: bool,
+    pub output_track_id: Option<u64>,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,

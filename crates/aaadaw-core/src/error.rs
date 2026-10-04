@@ -17,6 +17,14 @@ pub enum ActionError {
     InvalidVolumeDb,
     /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
     InvalidVolumeAutomation,
+    /// The requested track output is not a different bus track.
+    InvalidTrackOutput,
+    /// The requested bus route would create a routing cycle.
+    TrackRoutingCycle,
+    /// A bus cannot be deleted while tracks are routed through it.
+    TrackHasRoutingDependents {
+        track_id: TrackId,
+    },
     InvalidTrackInstrument,
     InvalidTrackFxPlugin,
     InvalidTrackFxParameter,
@@ -94,6 +102,17 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
             Self::InvalidVolumeAutomation => formatter.write_str(
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
+            ),
+            Self::InvalidTrackOutput => {
+                formatter.write_str("track output must name a different bus or Master")
+            }
+            Self::TrackRoutingCycle => {
+                formatter.write_str("track output would create a routing cycle")
+            }
+            Self::TrackHasRoutingDependents { track_id } => write!(
+                formatter,
+                "track {} has routed tracks; route them elsewhere before deleting it",
+                track_id.value()
             ),
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),

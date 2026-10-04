@@ -43,6 +43,8 @@ impl VolumeAutomationPoint {
 pub struct Track {
     pub(crate) id: TrackId,
     pub(crate) name: String,
+    pub(crate) is_bus: bool,
+    pub(crate) output_track: Option<TrackId>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
     pub(crate) muted: bool,
@@ -194,6 +196,16 @@ impl Track {
     /// Returns this track's name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns whether this track is a subgroup bus destination.
+    pub fn is_bus(&self) -> bool {
+        self.is_bus
+    }
+
+    /// Returns this track's bus output, or `None` when routed directly to Master.
+    pub fn output_track(&self) -> Option<TrackId> {
+        self.output_track
     }
 
     /// Returns this track's volume in decibels.

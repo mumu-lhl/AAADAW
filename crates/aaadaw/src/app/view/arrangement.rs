@@ -12,6 +12,7 @@ use iced::widget::{
     stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
+use std::fmt;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = row![
@@ -21,6 +22,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 commands::is_enabled(app, CommandId::AddTrack)
                     .then_some(Message::ExecuteCommand(CommandId::AddTrack)),
             ),
+        button("+ Bus")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::AddBusTrack),
         button("+ MIDI item")
             .style(iced::widget::button::secondary)
             .on_press_maybe(
@@ -189,6 +193,41 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
             ));
     }
     actions = actions.push(iced::widget::rule::horizontal(1));
+    let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
+        track_id: None,
+        label: "Master".to_owned(),
+    })
+    .chain(app.project.tracks().iter().filter_map(|candidate| {
+        if !candidate.is_bus() || candidate.id() == track_id {
+            return None;
+        }
+        let mut ancestor = candidate.output_track();
+        while let Some(ancestor_id) = ancestor {
+            if ancestor_id == track_id {
+                return None;
+            }
+            ancestor = app
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == ancestor_id)
+                .and_then(Track::output_track);
+        }
+        Some(TrackOutputChoice {
+            track_id: Some(candidate.id()),
+            label: format!("{} (Bus)", candidate.name()),
+        })
+    }))
+    .collect();
+    let selected_output = output_choices
+        .iter()
+        .find(|choice| choice.track_id == track.output_track())
+        .cloned();
+    actions = actions.push(text("Output").size(11)).push(pick_list(
+        output_choices,
+        selected_output,
+        move |choice| Message::SetTrackOutput(track_id, choice.track_id),
+    ));
     for entry in commands::for_track_context(app, track_id) {
         if entry.separator_before {
             actions = actions.push(iced::widget::rule::horizontal(1));
@@ -214,6 +253,18 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
             ..container::Style::default()
         })
         .into()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TrackOutputChoice {
+    track_id: Option<aaadaw_core::TrackId>,
+    label: String,
+}
+
+impl fmt::Display for TrackOutputChoice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.label)
+    }
 }
 
 fn timeline_content(app: &App) -> Element<'_, Message> {
@@ -322,6 +373,15 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .get(&track_id)
         .map_or(track.name(), String::as_str);
     let has_edit = app.track_name_edits.contains_key(&track_id);
+    let output_label = track
+        .output_track()
+        .and_then(|output_id| {
+            app.project
+                .tracks()
+                .iter()
+                .find(|candidate| candidate.id() == output_id)
+        })
+        .map_or_else(|| "Master".to_owned(), |output| output.name().to_owned());
     let is_selected = app.timeline.selected_track == Some(track_id);
     let automation_visible = app.timeline.volume_automation_tracks.contains(&track_id)
         || (!app
@@ -356,6 +416,13 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
                 iced::widget::button::secondary
             })
             .padding([2, 4]),
+        if track.is_bus() {
+            text("BUS")
+                .size(10)
+                .color(iced::Color::from_rgb8(139, 196, 210))
+        } else {
+            text("").size(10)
+        },
         text_input("Track name", edited_name)
             .id(super::super::messages::track_name_input_id(track_id))
             .on_input(move |name| Message::TrackNameChanged(track_id, name))
@@ -363,6 +430,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
             .padding([2, 4])
             .width(Length::Fill),
         fx_button,
+        text(format!("→ {output_label}")).size(10),
         button(if automation_visible { "AUTO" } else { "auto" })
             .style(if automation_visible {
                 iced::widget::button::success

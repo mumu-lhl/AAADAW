@@ -2031,6 +2031,23 @@ fn track_delete_is_undoable() {
 }
 
 #[test]
+fn bus_track_creation_and_routing_are_available_as_undoable_actions() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddBusTrack);
+    let bus = app.project.tracks()[1].id();
+    assert!(app.project.tracks()[1].is_bus());
+
+    let _ = app.update(Message::SetTrackOutput(source, Some(bus)));
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].output_track(), None);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+}
+
+#[test]
 fn audio_timeline_exact_position_edit_preserves_source_and_is_undoable() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

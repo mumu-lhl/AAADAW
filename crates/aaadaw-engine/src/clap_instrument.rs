@@ -2533,6 +2533,25 @@ mod tests {
             })
             .expect("track effect should be valid");
         project
+            .apply(DawAction::CreateBusTrack {
+                index: 1,
+                name: "Instrument Bus".to_owned(),
+            })
+            .expect("bus track should be valid");
+        let bus_id = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackOutput {
+                track_id,
+                output_track: Some(bus_id),
+            })
+            .expect("instrument track should route through the bus");
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id: bus_id,
+                plugins: vec![TrackFxPlugin::new(EFFECT_PLUGIN_ID, "bus-effect.clap").unwrap()],
+            })
+            .expect("bus FX chain should be valid");
+        project
             .apply(DawAction::InsertAudioItem {
                 track_id,
                 media_ref: "asset://test".to_owned(),
@@ -2555,15 +2574,17 @@ mod tests {
             ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 32)
                 .expect("test effect should load");
         let effect_instance_id = effect_owner.instance_id();
+        let (bus_effect_owner, bus_effect_processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 32)
+                .expect("bus effect should load");
+        let bus_effect_instance_id = bus_effect_owner.instance_id();
         let (mut producer, consumer) = pcm_stream(32).expect("stream capacity is valid");
         assert_eq!(producer.push_samples(&[0.1; 32]), 32);
         let mut instruments = vec![TrackInstrumentProcessor::new(track_id, processor)];
-        let mut effects = vec![TrackFxProcessor::new(
-            track_id,
-            0,
-            EFFECT_PLUGIN_ID,
-            effect_processor,
-        )];
+        let mut effects = vec![
+            TrackFxProcessor::new(track_id, 0, EFFECT_PLUGIN_ID, effect_processor),
+            TrackFxProcessor::new(bus_id, 0, EFFECT_PLUGIN_ID, bus_effect_processor),
+        ];
         let mut graph = AudioRenderGraph::new_for_audio_items(
             &project,
             vec![AudioItemStream::new(item_id, consumer)],
@@ -2580,7 +2601,7 @@ mod tests {
         assert!(effects.is_empty());
         graph.transport_mut().start();
 
-        let (mut retired_instruments, mut retired_effects, output, stats) =
+        let (mut retired_instruments, retired_effects, output, stats) =
             std::thread::spawn(move || {
                 let mut output = [[0.0; 2]; 32];
                 let stats = graph
@@ -2600,7 +2621,7 @@ mod tests {
 
         assert_eq!(stats.midi_event_count, 2);
         assert_eq!(stats.underrun_samples, 0);
-        assert!(stats.master_guarded_samples > 0);
+        assert_eq!(stats.master_guarded_samples, 0);
         let midi_level = 64.0 / 127.0;
         let pcm_level = 0.1;
         let track_gain = 10.0_f32.powf(12.0 / 20.0);
@@ -2608,22 +2629,36 @@ mod tests {
         for (frame_index, frame) in output.iter().enumerate() {
             let instrument_level = if frame_index < 25 { midi_level } else { 0.0 };
             let expected_left =
-                ((pcm_level + instrument_level) * 0.5 * track_gain).clamp(-ceiling, ceiling);
+                ((pcm_level + instrument_level) * 0.25 * track_gain).clamp(-ceiling, ceiling);
             let expected_right =
-                ((pcm_level + instrument_level * 0.5) * 0.5 * track_gain).clamp(-ceiling, ceiling);
+                ((pcm_level + instrument_level * 0.5) * 0.25 * track_gain).clamp(-ceiling, ceiling);
             assert!((frame[0] - expected_left).abs() < 0.0001);
             assert!((frame[1] - expected_right).abs() < 0.0001);
         }
         assert_eq!(retired_instruments.len(), 1);
-        assert_eq!(retired_effects.len(), 1);
+        assert_eq!(retired_effects.len(), 2);
         let stopped_instrument = retired_instruments.pop().expect("instrument route exists");
         assert_eq!(stopped_instrument.instance_id(), instrument_instance_id);
         let (_, processor) = stopped_instrument.into_parts();
         instrument_owner.deactivate(processor);
-        let stopped_effect = retired_effects.pop().expect("effect route exists");
-        assert_eq!(stopped_effect.instance_id(), effect_instance_id);
-        let (_, _, _, processor) = stopped_effect.into_parts();
-        effect_owner.deactivate(processor);
+        let mut effect_owner = Some(effect_owner);
+        let mut bus_effect_owner = Some(bus_effect_owner);
+        for stopped_effect in retired_effects {
+            let instance_id = stopped_effect.instance_id();
+            let (_, _, _, processor) = stopped_effect.into_parts();
+            if instance_id == effect_instance_id {
+                effect_owner
+                    .take()
+                    .expect("source effect owner should be deactivated once")
+                    .deactivate(processor);
+            } else {
+                assert_eq!(instance_id, bus_effect_instance_id);
+                bus_effect_owner
+                    .take()
+                    .expect("bus effect owner should be deactivated once")
+                    .deactivate(processor);
+            }
+        }
         drop(producer);
     }
 
