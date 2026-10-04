@@ -97,7 +97,7 @@
 
 - [x] 用 Iced 0.14 建立桌面窗口、基础文件/编辑/轨道命令入口和固定 Arrangement 主窗口；底部常驻 transport，工程/音频路径使用原生文件选择器；状态修改只经 `Project.apply(DawAction)`。
 - [x] 按 `DESIGN.md` 将展开式命令面板重做为紧凑的 REAPER 式 File/Edit/View/Insert/Item/Track/Actions 菜单栏；菜单只列出现有可执行命令。基础 Actions 搜索与菜单操作已接入，完整可配置 Action 注册表仍待后续实现。
-- [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入追加到工程首条轨道，需先保存工程。
+- [x] 接入后台音频文件导入、进度/取消及完成后的 AudioItem Action 放置；导入落在启动时捕获的选中音轨和 edit cursor，未选择时用首条 audio track（[Issue #70](https://github.com/mumu-lhl/AAADAW/issues/70)）；需先保存工程。
 - [x] 接入可选 JACK 的播放/停止、播放头采样显示和后台 Seek refill；重建图时保留原播放状态。
 - [x] 建立首个可停靠面板 Media Browser（[`docs/tickets/2026-10-02-dock-media-browser.md`](docs/tickets/2026-10-02-dock-media-browser.md)）。
 - [x] 扩展 transport 至可选原生 PipeWire 后端，与 JACK 并列构建；播放/停止、seek refill、播放头和后端选择均复用现有传输路径（[`docs/tickets/2026-10-02-pipewire-playback.md`](docs/tickets/2026-10-02-pipewire-playback.md)）。

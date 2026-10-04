@@ -8,7 +8,7 @@ use aaadaw_app::{
     relink_external_audio_source, start_audio_asset_management as start_asset_worker,
     start_audio_item_import, start_audio_item_reimport,
 };
-use aaadaw_core::{DawAction, ItemId, Track};
+use aaadaw_core::{DawAction, ItemId, Track, TrackId};
 use iced::Task;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -127,30 +127,34 @@ impl App {
             self.status = "Save the project before importing audio".to_owned();
             return Task::none();
         };
-        let Some(track_id) = self.project.tracks().first().map(Track::id) else {
-            self.status = "Add a track before importing audio".to_owned();
-            return Task::none();
+        let (track_id, start_sample) = match self.audio_import_placement() {
+            Ok(placement) => placement,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
         };
         let Some(source_path) = project_path_from_query(&self.audio_file_path_query) else {
             self.status = "Enter an audio file path first".to_owned();
             return Task::none();
         };
-        let start_sample = self
-            .project
-            .audio_items()
-            .iter()
-            .filter(|item| item.track_id() == track_id)
-            .filter_map(|item| item.start_sample().checked_add(item.length_samples()))
-            .max()
-            .unwrap_or(0);
         let project_sample_rate = self.project.settings().sample_rate();
+        let track_name = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .map_or("audio track", Track::name);
 
         self.import_busy = true;
         self.import_finalizing = false;
         self.import_cancel_requested = false;
         self.import_bytes = 0;
         self.import_total_bytes = None;
-        self.status = format!("Starting import of {}…", source_path.display());
+        self.status = format!(
+            "Starting import of {} at the edit cursor on {track_name}…",
+            source_path.display()
+        );
         Task::perform(
             run_blocking("aaadaw-audio-import-start", move || {
                 start_audio_item_import(
@@ -168,6 +172,32 @@ impl App {
                 )))))
             },
         )
+    }
+
+    pub(super) fn audio_import_placement(&self) -> Result<(TrackId, u64), String> {
+        let track = if let Some(track_id) = self.selected_track_id() {
+            let track = self
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)
+                .expect("selected_track_id only returns existing tracks");
+            if track.is_bus() {
+                return Err("Select an audio track before importing audio".to_owned());
+            }
+            track
+        } else {
+            self.project
+                .tracks()
+                .iter()
+                .find(|track| !track.is_bus())
+                .ok_or_else(|| "Add an audio track before importing audio".to_owned())?
+        };
+        let start_sample = self
+            .project
+            .sample_at_tick(self.timeline.edit_cursor_tick)
+            .map_err(|error| format!("Edit cursor is outside the project time range: {error}"))?;
+        Ok((track.id(), start_sample))
     }
 
     pub(super) fn reimport_audio_item(&mut self, item_id: ItemId) -> Task<Message> {
@@ -743,7 +773,7 @@ impl App {
                     } else if new_media_ref.is_some() {
                         "Changed audio source reimported"
                     } else {
-                        "Audio imported and appended to the first track"
+                        "Audio imported at the edit cursor"
                     },
                 );
                 if self.revision != previous_revision
