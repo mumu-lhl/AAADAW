@@ -579,7 +579,13 @@ impl MixerPlan {
         }
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, start_sample);
-        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter().copied()).enumerate() {
+        let ramp_frames = ramp.remaining_frames.min(output.len());
+        for (offset, (frame, sample)) in output
+            .iter_mut()
+            .zip(input.iter().copied())
+            .take(ramp_frames)
+            .enumerate()
+        {
             let gains = ramp.next_frame();
             if advances_timeline
                 && next_point_sample.is_some_and(|next_sample| {
@@ -595,6 +601,32 @@ impl MixerPlan {
             frame[1] += sample * gains.right * automation_gain;
             if advances_timeline {
                 automation_gain *= gain_step;
+            }
+        }
+        if ramp_frames < output.len() {
+            let gains = ramp.current;
+            for (offset, (frame, sample)) in output
+                .iter_mut()
+                .zip(input.iter().copied())
+                .skip(ramp_frames)
+                .enumerate()
+            {
+                let offset = offset + ramp_frames;
+                if advances_timeline
+                    && next_point_sample.is_some_and(|next_sample| {
+                        start_sample.saturating_add(offset as u64) >= next_sample
+                    })
+                {
+                    (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                        &track.volume_automation,
+                        start_sample.saturating_add(offset as u64),
+                    );
+                }
+                frame[0] += sample * gains.left * automation_gain;
+                frame[1] += sample * gains.right * automation_gain;
+                if advances_timeline {
+                    automation_gain *= gain_step;
+                }
             }
         }
         track.mix_ramp.set(ramp);
@@ -621,7 +653,13 @@ impl MixerPlan {
         }
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, block.start_sample);
-        for (offset, (frame, sample)) in output.iter_mut().zip(input.iter()).enumerate() {
+        let ramp_frames = ramp.remaining_frames.min(output.len());
+        for (offset, (frame, sample)) in output
+            .iter_mut()
+            .zip(input.iter())
+            .take(ramp_frames)
+            .enumerate()
+        {
             let gains = ramp.next_frame();
             if block.advances_timeline
                 && next_point_sample.is_some_and(|next_sample| {
@@ -642,6 +680,37 @@ impl MixerPlan {
             frame[1] += sample[1] * right_gain * automation_gain;
             if block.advances_timeline {
                 automation_gain *= gain_step;
+            }
+        }
+        if ramp_frames < output.len() {
+            let gains = ramp.current;
+            let (left_gain, right_gain) = if mono_input {
+                (gains.left, gains.right)
+            } else {
+                (gains.stereo_left, gains.stereo_right)
+            };
+            for (offset, (frame, sample)) in output
+                .iter_mut()
+                .zip(input.iter())
+                .skip(ramp_frames)
+                .enumerate()
+            {
+                let offset = offset + ramp_frames;
+                if block.advances_timeline
+                    && next_point_sample.is_some_and(|next_sample| {
+                        block.start_sample.saturating_add(offset as u64) >= next_sample
+                    })
+                {
+                    (automation_gain, gain_step, next_point_sample) = volume_automation_state(
+                        &track.volume_automation,
+                        block.start_sample.saturating_add(offset as u64),
+                    );
+                }
+                frame[0] += sample[0] * left_gain * automation_gain;
+                frame[1] += sample[1] * right_gain * automation_gain;
+                if block.advances_timeline {
+                    automation_gain *= gain_step;
+                }
             }
         }
         track.mix_ramp.set(ramp);
