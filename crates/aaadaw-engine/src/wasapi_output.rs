@@ -1,6 +1,6 @@
 use crate::AudioRenderGraph;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, SampleFormat, SizedSample};
+use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
@@ -12,6 +12,28 @@ use std::time::{Duration, Instant};
 const COMMAND_CAPACITY: usize = 16;
 const RETIRED_GRAPH_CAPACITY: usize = 1;
 const PREFERRED_CALLBACK_FRAMES: u32 = 512;
+
+fn callback_buffer_size(
+    supported: &SupportedBufferSize,
+    graph_capacity: usize,
+) -> Result<BufferSize, WasapiOutputError> {
+    match supported {
+        SupportedBufferSize::Range { min, max } => {
+            let capacity = u32::try_from(graph_capacity).unwrap_or(u32::MAX);
+            let largest_supported = (*max).min(capacity);
+            if largest_supported < *min {
+                return Err(WasapiOutputError::DeviceBlockTooLarge {
+                    device: *min as usize,
+                    maximum: graph_capacity,
+                });
+            }
+            Ok(BufferSize::Fixed(
+                PREFERRED_CALLBACK_FRAMES.clamp(*min, largest_supported),
+            ))
+        }
+        SupportedBufferSize::Unknown => Ok(BufferSize::Default),
+    }
+}
 
 fn supports_project_output_config(
     channels: u16,
@@ -153,12 +175,16 @@ impl Callback {
     {
         output.fill(T::EQUILIBRIUM);
         self.apply_commands();
-        if self.shutting_down || self.counters.device_lost.load(Ordering::Relaxed) {
+        if self.shutting_down {
             return;
         }
         let Some(graph) = &mut self.graph else {
             return;
         };
+        if self.counters.device_lost.load(Ordering::Relaxed) {
+            graph.transport_mut().stop();
+            return;
+        }
         if output.len() % 2 != 0 || output.len() / 2 > self.scratch.len() {
             self.counters
                 .callback_errors
@@ -325,11 +351,11 @@ impl WasapiAudioOutput {
             })?;
         let sample_format = selected.sample_format();
         let mut config = selected.with_sample_rate(project_rate).config();
-        config.buffer_size = cpal::BufferSize::Fixed(PREFERRED_CALLBACK_FRAMES);
+        let max_block_frames = graph.max_block_frames();
+        config.buffer_size = callback_buffer_size(selected.buffer_size(), max_block_frames)?;
         let (commands, command_reader) = RingBuffer::new(COMMAND_CAPACITY);
         let (retired_writer, retired) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
         let counters = Arc::new(Counters::default());
-        let max_block_frames = graph.max_block_frames();
         let callback_counters = Arc::clone(&counters);
         let returned_graphs = Arc::new(Mutex::new(Vec::new()));
         let callback = Callback {
@@ -488,6 +514,7 @@ impl Drop for WasapiAudioOutput {
 mod tests {
     use super::*;
     use aaadaw_core::Project;
+    use cpal::FrameCount;
 
     struct CallbackFixture {
         callback: Callback,
@@ -565,6 +592,30 @@ mod tests {
             96_000,
             48_000
         ));
+    }
+
+    #[test]
+    fn callback_buffer_policy_stays_within_device_and_graph_limits() {
+        let range = SupportedBufferSize::Range {
+            min: 128 as FrameCount,
+            max: 1_024 as FrameCount,
+        };
+        assert_eq!(
+            callback_buffer_size(&range, 2_048).unwrap(),
+            BufferSize::Fixed(512)
+        );
+        assert_eq!(
+            callback_buffer_size(&range, 256).unwrap(),
+            BufferSize::Fixed(256)
+        );
+        assert!(matches!(
+            callback_buffer_size(&range, 64),
+            Err(WasapiOutputError::DeviceBlockTooLarge { .. })
+        ));
+        assert_eq!(
+            callback_buffer_size(&SupportedBufferSize::Unknown, 64).unwrap(),
+            BufferSize::Default
+        );
     }
 
     #[test]

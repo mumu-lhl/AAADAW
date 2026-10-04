@@ -2315,19 +2315,25 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn update_playback_stats(&mut self) {
-        let (retired_instruments, retired_effects) = if let Some(playback) = self.playback.as_mut()
-        {
-            self.playhead_sample = playback.stats().playhead_sample;
-            playback.collect_retired_graphs();
-            (
-                playback.take_retired_instrument_processors(),
-                playback.take_retired_fx_processors(),
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (retired_instruments, retired_effects, output_device_lost) =
+            if let Some(playback) = self.playback.as_mut() {
+                let stats = playback.stats();
+                self.playhead_sample = stats.playhead_sample;
+                playback.collect_retired_graphs();
+                (
+                    playback.take_retired_instrument_processors(),
+                    playback.take_retired_fx_processors(),
+                    stats.output_device_lost,
+                )
+            } else {
+                (Vec::new(), Vec::new(), false)
+            };
         self.deactivate_stopped_instruments(retired_instruments);
         self.deactivate_stopped_effects(retired_effects);
+        if output_device_lost {
+            self.playback_playing = false;
+            self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
+        }
     }
 
     fn add_track(&mut self) {
