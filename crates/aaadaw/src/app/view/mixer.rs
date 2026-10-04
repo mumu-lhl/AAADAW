@@ -1,6 +1,7 @@
 use super::super::commands::{self, CommandId};
 use super::arrangement::{
-    track_fx_button, track_mix_controls, track_output_selector, track_selection_background,
+    track_fx_button, track_mix_controls, track_name_input, track_output_selector,
+    track_selection_background,
 };
 use super::tokens;
 use super::{App, Message};
@@ -57,7 +58,7 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .padding([2, 4]);
     let header = row![
         selection,
-        text(track.name()).size(12).width(Length::Fill),
+        track_name_input(app, track),
         track_fx_button(track),
     ]
     .spacing(tokens::SPACING_XS)

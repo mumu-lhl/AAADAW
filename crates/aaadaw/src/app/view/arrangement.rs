@@ -406,10 +406,6 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
 
 fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Element<'a, Message> {
     let track_id = track.id();
-    let edited_name = app
-        .track_name_edits
-        .get(&track_id)
-        .map_or(track.name(), String::as_str);
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let output_label = track
         .output_track()
@@ -431,12 +427,7 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
             iced::widget::button::secondary
         })
         .padding([2, 4]);
-    let name_input = text_input("Track name", edited_name)
-        .id(super::super::messages::track_name_input_id(track_id))
-        .on_input(move |name| Message::TrackNameChanged(track_id, name))
-        .on_submit(Message::CommitTrackName(track_id))
-        .padding([2, 4])
-        .width(Length::Fill);
+    let name_input = track_name_input(app, track);
     let context_button = button(if has_edit { "✓" } else { "⋯" })
         .on_press(if has_edit {
             Message::CommitTrackName(track_id)
@@ -514,6 +505,21 @@ pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
     .on_press(Message::OpenTrackFxChain(track.id()))
     .padding([2, 5])
     .into()
+}
+
+pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
+    let track_id = track.id();
+    let edited_name = app
+        .track_name_edits
+        .get(&track_id)
+        .map_or(track.name(), String::as_str);
+    text_input("Track name", edited_name)
+        .id(super::super::messages::track_name_input_id(track_id))
+        .on_input(move |name| Message::TrackNameChanged(track_id, name))
+        .on_submit(Message::CommitTrackName(track_id))
+        .padding([2, 4])
+        .width(Length::Fill)
+        .into()
 }
 
 pub(super) fn track_selection_background(selected: bool) -> iced::Color {
