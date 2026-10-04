@@ -156,6 +156,8 @@ struct App {
     track_mix_gesture: Option<TrackMixGesture>,
     track_mix_commit_at: Option<Instant>,
     track_peak_levels: HashMap<TrackId, [f32; 2]>,
+    master_peak_level: [f32; 2],
+    master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
@@ -3124,6 +3126,19 @@ impl App {
             return;
         }
 
+        if let Some(playback) = self.playback.as_ref() {
+            let observed = playback.take_master_output_peak();
+            for (level, peak) in self.master_peak_level.iter_mut().zip(observed) {
+                *level = peak.max(*level * 0.96);
+            }
+            if playback.take_master_guard_active() {
+                self.master_guard_ticks_remaining = 15;
+            } else {
+                self.master_guard_ticks_remaining =
+                    self.master_guard_ticks_remaining.saturating_sub(1);
+            }
+        }
+
         for track in self.project.tracks() {
             let levels = self.track_peak_levels.entry(track.id()).or_default();
             let observed = self
@@ -3146,9 +3161,12 @@ impl App {
     #[cfg(feature = "audio-device")]
     fn reset_track_meters(&mut self) {
         self.track_peak_levels.clear();
+        self.master_peak_level = [0.0; 2];
+        self.master_guard_ticks_remaining = 0;
         #[cfg(feature = "audio-device")]
         if let Some(playback) = self.playback.as_ref() {
             playback.reset_track_peaks();
+            playback.reset_master_output_meter();
         }
     }
 

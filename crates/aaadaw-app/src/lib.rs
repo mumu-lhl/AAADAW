@@ -603,6 +603,21 @@ pub struct RunningAudioPlayback {
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioPlayback {
+    /// Takes accumulated post-guard stereo Master output peaks.
+    pub fn take_master_output_peak(&self) -> [f32; 2] {
+        self.master_output_safety.take_output_peak()
+    }
+
+    /// Takes the Master safety guard activity accumulated since the previous poll.
+    pub fn take_master_guard_active(&self) -> bool {
+        self.master_output_safety.take_guard_active()
+    }
+
+    /// Clears the Master output meter telemetry.
+    pub fn reset_master_output_meter(&self) {
+        self.master_output_safety.reset_meter();
+    }
+
     /// Takes the accumulated post-fader stereo sample peaks for one track.
     pub fn take_track_peak(&self, track_id: aaadaw_core::TrackId) -> Option<[f32; 2]> {
         self.mix_controller.take_track_peak(track_id)
@@ -1091,6 +1106,21 @@ pub struct RunningJackPlayback {
 
 #[cfg(feature = "jack-backend")]
 impl RunningJackPlayback {
+    /// Takes accumulated post-guard stereo Master output peaks.
+    pub fn take_master_output_peak(&self) -> [f32; 2] {
+        self.master_output_safety.take_output_peak()
+    }
+
+    /// Takes the Master safety guard activity accumulated since the previous poll.
+    pub fn take_master_guard_active(&self) -> bool {
+        self.master_output_safety.take_guard_active()
+    }
+
+    /// Clears the Master output meter telemetry.
+    pub fn reset_master_output_meter(&self) {
+        self.master_output_safety.reset_meter();
+    }
+
     /// Takes the accumulated post-fader stereo sample peaks for one track.
     pub fn take_track_peak(&self, track_id: aaadaw_core::TrackId) -> Option<[f32; 2]> {
         self.mix_controller.take_track_peak(track_id)

@@ -492,6 +492,10 @@ pub(super) fn track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, M
         .get(&track.id())
         .copied()
         .unwrap_or([0.0; 2]);
+    stereo_peak_meter(peaks)
+}
+
+pub(super) fn stereo_peak_meter<'a>(peaks: [f32; 2]) -> Element<'a, Message> {
     let channel_meter = |peak: f32| {
         let db = if peak > 0.0 {
             20.0 * peak.log10()
