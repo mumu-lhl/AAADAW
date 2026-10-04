@@ -565,6 +565,8 @@ fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
         response_for(5)["result"]["structuredContent"]["changed"],
         true
     );
+    assert_eq!(response_for(5)["result"]["structuredContent"]["tick"], 960);
+    assert_eq!(response_for(5)["result"]["structuredContent"]["bpm"], 100.0);
     assert_eq!(
         response_for(6)["result"]["structuredContent"]["changed"],
         true
