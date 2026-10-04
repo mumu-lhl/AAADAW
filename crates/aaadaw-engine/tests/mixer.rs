@@ -74,6 +74,18 @@ fn live_track_mix_rejects_unknown_tracks_and_invalid_pan() {
 fn mixer_obeys_mute_solo_and_hard_pan_controls() {
     let (mut project, track_ids) = project_with_tracks(&["Muted", "Solo", "Other"]);
     project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id: track_ids[0],
+            points: vec![VolumeAutomationPoint::new(0, 6.0).unwrap()],
+        })
+        .expect("a muted track may retain its automation");
+    project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id: track_ids[1],
+            points: vec![VolumeAutomationPoint::new(0, -6.0).unwrap()],
+        })
+        .expect("the solo track should accept automation");
+    project
         .apply(DawAction::SetTrackMute {
             track_id: track_ids[0],
             muted: true,
@@ -92,7 +104,7 @@ fn mixer_obeys_mute_solo_and_hard_pan_controls() {
     plan.mix_mono_into(&inputs, &mut output)
         .expect("matching buffers should mix");
 
-    let expected = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    let expected = 0.5 * 10.0_f32.powf(-6.0 / 20.0) * std::f32::consts::FRAC_1_SQRT_2;
     assert!((output[0][0] - expected).abs() < 1.0e-6);
     assert!((output[0][1] - expected).abs() < 1.0e-6);
 
