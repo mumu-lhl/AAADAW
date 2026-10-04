@@ -11,6 +11,7 @@ mod clap_instrument;
 mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
+mod master_output;
 mod midi;
 mod pcm;
 #[cfg(feature = "pipewire-backend")]
@@ -35,6 +36,9 @@ pub use clap_instrument::{
 pub use jack_input::{JackAudioInput, JackInputError};
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{JackAudioOutput, JackOutputError, JackOutputStats};
+pub use master_output::{
+    MASTER_OUTPUT_DEFAULT_CEILING_DBFS, MasterOutputSafetyController, MasterOutputSafetyError,
+};
 pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 #[cfg(feature = "pipewire-backend")]
@@ -626,6 +630,10 @@ pub struct AudioRenderStats {
     pub underrun_samples: usize,
     /// MIDI note events written to the caller's event buffer.
     pub midi_event_count: usize,
+    /// Interleaved samples clamped to the configured Master sample-peak ceiling.
+    pub master_guarded_samples: usize,
+    /// Non-finite interleaved samples replaced with silence by the Master output guard.
+    pub master_non_finite_samples: usize,
 }
 
 /// One SPSC consumer associated with a project AudioItem.
@@ -931,6 +939,7 @@ impl AudioItemStream {
 /// decode/resample PCM and feed one SPSC consumer per source.
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
+    master_output_safety: master_output::MasterOutputSafety,
     midi_plan: MidiEventPlan,
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
     instruments: Vec<InstrumentRoute>,
@@ -1147,6 +1156,7 @@ impl AudioRenderGraph {
         }
         Ok(Self {
             mixer,
+            master_output_safety: master_output::MasterOutputSafety::default(),
             midi_plan,
             midi_scratch,
             instruments: instrument_routes,
@@ -1178,6 +1188,11 @@ impl AudioRenderGraph {
     /// Returns a control-thread handle for live volume/pan updates on this graph.
     pub fn track_mix_controller(&self) -> TrackMixController {
         self.mixer.track_mix_controller()
+    }
+
+    /// Returns a lock-free control handle for the final Master sample-peak ceiling.
+    pub fn master_output_safety_controller(&self) -> MasterOutputSafetyController {
+        self.master_output_safety.controller()
     }
 
     /// Returns the callback-owned transport for start/stop/seek control.
@@ -1521,6 +1536,8 @@ impl AudioRenderGraph {
                 block,
                 underrun_samples: 0,
                 midi_event_count,
+                master_guarded_samples: 0,
+                master_non_finite_samples: 0,
             });
         }
         output.fill([0.0, 0.0]);
@@ -1628,6 +1645,7 @@ impl AudioRenderGraph {
                 );
             }
         }
+        let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
             self.last_midi_sample_end = Some(
                 block
@@ -1644,6 +1662,8 @@ impl AudioRenderGraph {
             block,
             underrun_samples,
             midi_event_count,
+            master_guarded_samples: master_guard.guarded_samples,
+            master_non_finite_samples: master_guard.non_finite_samples,
         })
     }
 }

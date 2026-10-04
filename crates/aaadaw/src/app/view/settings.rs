@@ -1,10 +1,21 @@
 use super::super::{App, Message, PathPickerTarget, SettingsCategory, commands};
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Alignment, Element, Length};
+use std::fmt;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MasterCeilingChoice(i8);
+
+impl fmt::Display for MasterCeilingChoice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} dBFS", self.0)
+    }
+}
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
     let plugins_selected = app.settings_category == SettingsCategory::ClapPlugins;
+    let audio_selected = app.settings_category == SettingsCategory::AudioOutput;
     let navigation = column![
         text("Settings").size(13),
         button("Keyboard Shortcuts")
@@ -27,12 +38,23 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_press(Message::SelectSettingsCategory(
                 SettingsCategory::ClapPlugins
             )),
+        button("Audio Output")
+            .width(Length::Fill)
+            .style(if audio_selected {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SelectSettingsCategory(
+                SettingsCategory::AudioOutput
+            )),
     ]
     .spacing(4);
 
     let details = match app.settings_category {
         SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app),
         SettingsCategory::ClapPlugins => clap_plugins(app),
+        SettingsCategory::AudioOutput => audio_output(app),
     };
 
     let content = row![
@@ -50,6 +72,38 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn audio_output(app: &App) -> Element<'_, Message> {
+    column![
+        text("Audio output").size(17),
+        text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
+        row![
+            column![
+            text("Master sample-peak ceiling").size(13),
+            text("Always active · default -1 dBFS").size(10),
+            ]
+            .width(Length::Fill)
+            .spacing(2),
+            iced::widget::pick_list(
+                [0_i8, -1, -3, -6, -12].map(MasterCeilingChoice),
+                Some(MasterCeilingChoice(
+                    app.audio_output_settings.master_output_ceiling_dbfs,
+                )),
+                |choice| Message::SetMasterOutputCeilingDbfs(choice.0),
+            )
+            .placeholder("Ceiling")
+            .width(Length::Fixed(128.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
+            .size(11),
+        text(app.audio_settings_feedback.clone()).size(11),
+    ]
+    .spacing(8)
+    .width(Length::Fill)
+    .into()
 }
 
 fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {

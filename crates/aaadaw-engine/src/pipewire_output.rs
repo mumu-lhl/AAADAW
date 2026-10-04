@@ -33,6 +33,8 @@ struct CallbackCounters {
     shutdown_acknowledged: AtomicBool,
     rendered_blocks: AtomicU64,
     underrun_samples: AtomicU64,
+    master_guarded_samples: AtomicU64,
+    master_non_finite_samples: AtomicU64,
     callback_errors: AtomicU64,
     playhead_sample: AtomicU64,
 }
@@ -164,6 +166,12 @@ impl ProcessData {
                     .underrun_samples
                     .fetch_add(stats.underrun_samples as u64, Ordering::Relaxed);
                 self.counters
+                    .master_guarded_samples
+                    .fetch_add(stats.master_guarded_samples as u64, Ordering::Relaxed);
+                self.counters
+                    .master_non_finite_samples
+                    .fetch_add(stats.master_non_finite_samples as u64, Ordering::Relaxed);
+                self.counters
                     .rendered_blocks
                     .fetch_add(1, Ordering::Relaxed);
                 self.counters
@@ -253,6 +261,8 @@ impl StdError for PipeWireOutputError {
 pub struct PipeWireOutputStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
+    pub master_guarded_samples: u64,
+    pub master_non_finite_samples: u64,
     pub callback_errors: u64,
     pub playhead_sample: u64,
 }
@@ -417,6 +427,11 @@ impl PipeWireAudioOutput {
         PipeWireOutputStats {
             rendered_blocks: self.counters.rendered_blocks.load(Ordering::Relaxed),
             underrun_samples: self.counters.underrun_samples.load(Ordering::Relaxed),
+            master_guarded_samples: self.counters.master_guarded_samples.load(Ordering::Relaxed),
+            master_non_finite_samples: self
+                .counters
+                .master_non_finite_samples
+                .load(Ordering::Relaxed),
             callback_errors: self.counters.callback_errors.load(Ordering::Relaxed),
             playhead_sample: self.counters.playhead_sample.load(Ordering::Relaxed),
         }

@@ -39,6 +39,7 @@ pub(crate) enum SettingsCategory {
     #[default]
     KeyboardShortcuts,
     ClapPlugins,
+    AudioOutput,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,7 @@ pub(crate) enum Message {
     ClearShortcutBinding(String),
     RestoreShortcutDefault(String),
     SelectSettingsCategory(SettingsCategory),
+    SetMasterOutputCeilingDbfs(i8),
     RemoveClapPluginPath(PathBuf),
     RescanClapPlugins,
     ClapPluginsScanned(Result<aaadaw_app::ClapPluginScanReport, String>),

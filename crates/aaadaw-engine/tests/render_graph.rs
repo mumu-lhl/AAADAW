@@ -42,6 +42,8 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
             },
             underrun_samples: 1,
             midi_event_count: 0,
+            master_guarded_samples: 0,
+            master_non_finite_samples: 0,
         }
     );
     assert_eq!(output, [[0.25, 0.0], [0.5, 0.0], [0.0, 0.0]]);
@@ -94,6 +96,40 @@ fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
         assert!((frame[1] - right_gain).abs() < 1.0e-6);
     }
     assert_eq!(graph.transport_mut().position_samples(), 4);
+}
+
+#[test]
+fn master_sample_peak_ceiling_applies_after_mixing_and_updates_live() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Hot audio".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let (mut producer, consumer) = pcm_stream(4).expect("positive queue capacity is valid");
+    assert_eq!(producer.push_samples(&[0.5, 1.5, -2.0]), 3);
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 4)
+        .expect("one stream should match the track count");
+    let safety = graph.master_output_safety_controller();
+    safety
+        .set_ceiling_dbfs(-6.0)
+        .expect("a supported ceiling should be accepted");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 3];
+
+    let stats = graph
+        .render_into(&mut output)
+        .expect("the guarded graph should render");
+
+    let center = std::f32::consts::FRAC_1_SQRT_2;
+    let ceiling = 10.0_f32.powf(-6.0 / 20.0);
+    assert!((output[0][0] - 0.5 * center).abs() < 1.0e-6);
+    assert!((output[0][1] - 0.5 * center).abs() < 1.0e-6);
+    assert_eq!(output[1], [ceiling; 2]);
+    assert_eq!(output[2], [-ceiling; 2]);
+    assert_eq!(stats.master_guarded_samples, 4);
+    assert_eq!(stats.master_non_finite_samples, 0);
 }
 
 #[test]

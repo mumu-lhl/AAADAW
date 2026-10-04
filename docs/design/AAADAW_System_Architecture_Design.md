@@ -245,12 +245,19 @@ BatchTransaction { tx_id: u64, actions: Vec\<DawAction\> },
   Line），确保所有音频流到达母带（Master）时在 1
   个采样点精度内完全对齐。
 
-### 5.3 母带防爆音硬限制器（Master Brickwall Guard）
+### 5.3 母带数字样本峰值保护（Master Sample-Peak Guard）
 
-- 在驱动最终送往 DAC 之前，固定挂载不可关闭的零延迟峰值软饱和限制器。
-
-- 当遭遇异常增益（如 AI 误传高增益参数或自激震荡）瞬态超标时，立即压制在
-  0.0 dBFS 并触发安全静音保护。
+- 当前实现始终在所有 PCM、乐器和轨道效果器汇总后、交给 JACK/PipeWire
+  之前执行 sample-peak ceiling。用户可在 Audio Settings 中设为 -12 至 0 dBFS，默认
+  -1 dBFS；高于 ceiling 的有限样本直接夹限，NaN/Infinity 替换为静音，并累计供 UI
+  读取的计数。
+- 音频回调只做一次原子读取和有界逐样本处理；不分配、不加锁、不进行 I/O。ceiling
+  由设置线程通过单次原子写入更新。
+- 这是最终数字 sample-peak guard，不是响度归一化器，也不是带 look-ahead/oversampling
+  的 true-peak limiter；瞬时硬夹限可能产生失真，重构后的模拟/true peak 仍可能超过
+  sample ceiling。它不保证扬声器声压或听力安全。
+- 若未来需要透明的 true-peak limiting，应将其作为独立 DSP 能力设计和测量，明确其
+  latency、oversampling、release 与 bypass 行为，不得把当前 guard 描述为该能力。
 
 ## 6. 插件宿主与沙盒隔离系统
 
