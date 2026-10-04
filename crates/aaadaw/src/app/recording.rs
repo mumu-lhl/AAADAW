@@ -345,12 +345,13 @@ impl App {
                 let frame_clock_mapping = recording
                     .input
                     .map_shared_frame_time(jack_clock_anchor.map(|anchor| anchor.backend_frame));
-                let transport_sample = match frame_clock_mapping {
-                    aaadaw_app::SharedFrameClockMapping::Mapped(_) => {
+                let (transport_sample, capture_frame) = match frame_clock_mapping {
+                    aaadaw_app::SharedFrameClockMapping::Mapped(frame) => (
                         jack_clock_anchor
                             .expect("a mapped clock requires an output anchor")
-                            .project_sample
-                    }
+                            .project_sample,
+                        Some(frame),
+                    ),
                     aaadaw_app::SharedFrameClockMapping::Unavailable => {
                         recording.control.fail();
                         discard_recording(recording);
@@ -361,14 +362,16 @@ impl App {
                                 .to_owned();
                         return Task::none();
                     }
-                    aaadaw_app::SharedFrameClockMapping::Unsupported => jack_clock_anchor
-                        .map_or_else(
+                    aaadaw_app::SharedFrameClockMapping::Unsupported => (
+                        jack_clock_anchor.map_or_else(
                             || {
                                 playback_stats
                                     .map_or(self.playhead_sample, |stats| stats.playhead_sample)
                             },
                             |anchor| anchor.project_sample,
                         ),
+                        None,
+                    ),
                 };
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
@@ -383,9 +386,7 @@ impl App {
                     self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
                     return Task::none();
                 };
-                if let aaadaw_app::SharedFrameClockMapping::Mapped(capture_frame) =
-                    frame_clock_mapping
-                {
+                if let Some(capture_frame) = capture_frame {
                     let Some(anchor) = aaadaw_app::CaptureTimelineAnchor::new(
                         capture_frame,
                         start_sample,
