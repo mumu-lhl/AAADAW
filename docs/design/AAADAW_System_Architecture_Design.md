@@ -203,6 +203,10 @@ BatchTransaction { tx_id: u64, actions: Vec\<DawAction\> },
 - 提供全局只读纳秒级精度的换算二叉搜索树： \$\$\\text{SampleIndex} \\iff
   \\text{PPQTick}\$\$
 
+- 当前阶梯/线性 TempoMap 使用 `f64` 积分锚点，tick 和 sample 的绝对位置限制在
+  `2^53` 以内以保证整数可精确表示；超出范围的转换或 tempo 锚点会返回范围错误。
+  若需要扩大该范围，应先改为拆分整数/小数锚点并增加长时间属性测试。
+
 - **弹性音频（Time-Stretching）**：音频素材变速不变调时，流式读取管道接入集成
   Rubber Band 算法库，实时计算弹性因子。
 
