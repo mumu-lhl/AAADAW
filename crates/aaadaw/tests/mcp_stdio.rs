@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, MidiNoteData, Project, VolumeAutomationPoint};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use serde_json::{Value, json};
 use std::io::Write;
@@ -134,6 +134,15 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
                 }
             }
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_set_volume_automation_point",
+                "arguments": {"track_id": 1, "sample": 0, "gain_db": -3}
+            }
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -183,6 +192,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         response_for(7)["result"]["tools"].as_array().unwrap().len(),
         1
     );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| tool["name"] != "daw_set_volume_automation_point")
+    );
     let structure = response_for(4)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
@@ -204,6 +220,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(response_for(9)["result"]["isError"], true);
     assert_eq!(response_for(10)["result"]["isError"], true);
     assert_eq!(response_for(11)["result"]["isError"], true);
+    assert_eq!(response_for(13)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -903,4 +920,144 @@ fn explicitly_authorized_mcp_quantize_is_undoable_validated_and_persistent() {
         .find(|item| item.id() == boundary_item_id)
         .unwrap();
     assert_eq!(boundary_item.notes()[0].tick(), 3800);
+}
+
+#[test]
+fn explicitly_authorized_mcp_sets_volume_automation_points_and_persists_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-volume-automation-test.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Lead".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id,
+            points: vec![
+                VolumeAutomationPoint::new(12_000, -3.0).unwrap(),
+                VolumeAutomationPoint::new(48_000, -9.0).unwrap(),
+            ],
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, sample: Value, gain_db: Value| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_set_volume_automation_point",
+                "arguments": {"track_id": track_id.value(), "sample": sample, "gain_db": gain_db}
+            }
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-volume-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(3, json!(24_000), json!(-6.0)),
+        call(4, json!(24_000), json!(-12.0)),
+        call(5, json!(24_000), json!(-12.0)),
+        call(6, json!(u64::MAX), json!(-1.0)),
+        call(7, json!(-1), json!(-1.0)),
+        call(8, json!(30_000), json!(6.1)),
+        call(9, json!(30_000), json!("NaN")),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_set_volume_automation_point",
+                "arguments": {"track_id": u64::MAX, "sample": 30_000, "gain_db": -1.0}
+            }
+        }),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["name"] == "daw_set_volume_automation_point")
+    );
+    assert_eq!(
+        response_for(3)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(3)["result"]["structuredContent"]["point_count"],
+        3
+    );
+    assert_eq!(
+        response_for(4)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(5)["result"]["structuredContent"]["changed"],
+        false
+    );
+    for id in [6, 7, 8, 9, 10] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    assert_eq!(
+        reopened.tracks()[0].volume_automation(),
+        [
+            VolumeAutomationPoint::new(12_000, -3.0).unwrap(),
+            VolumeAutomationPoint::new(24_000, -12.0).unwrap(),
+            VolumeAutomationPoint::new(48_000, -9.0).unwrap(),
+        ]
+    );
 }

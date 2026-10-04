@@ -174,6 +174,7 @@
 - [x] 通过显式 `--write` MCP 会话创建普通轨道；请求经 `DawAction::CreateTrack` 校验并原子保存，桌面工程会话与第二个 MCP writer 由独占 session lock 互斥（[Issue #107](https://github.com/mumu-lhl/AAADAW/issues/107)）。
 - [x] 通过显式 `--write` MCP 会话向指定 MIDI item 原子插入有限批次的音符；请求经 `DawAction::AddMidiNotes` 校验并返回稳定 Note ID（[Issue #109](https://github.com/mumu-lhl/AAADAW/issues/109)）。
 - [x] 通过显式 `--write` MCP 会话按指定音乐网格量化 MIDI item；请求经 `DawAction::QuantizeItem` 校验并返回发生变化的 Note ID（[Issue #111](https://github.com/mumu-lhl/AAADAW/issues/111)）。
+- [x] 通过显式 `--write` MCP 会话在绝对 sample-clock 位置插入/更新轨道音量自动化点；请求保留其余点，经 `DawAction::SetTrackVolumeAutomation` 校验并持久化（[Issue #113](https://github.com/mumu-lhl/AAADAW/issues/113)）。
 - [ ] 继续分批实现其他设计文档工具：设置自动化点、录音准备和触发 Action。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
