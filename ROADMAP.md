@@ -168,7 +168,8 @@
 
 ### 6. Action 系统与 MCP 原生控制
 
-- [ ] 建立稳定 Action ID、分类、搜索、快捷键映射和基础宏触发机制。
+- [x] 建立稳定 Action ID、分类、搜索和可配置快捷键映射；编辑菜单、Actions 搜索、轨道上下文菜单及快捷键共享命令定义（[`docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md`](docs/tickets/2026-10-02-configurable-keyboard-shortcuts.md)）。
+- [x] 保存并触发可排序的参数无关命令宏；宏经 Actions 搜索和快捷键复用现有命令分发，破坏性操作不纳入宏步骤（[Issue #137](https://github.com/mumu-lhl/AAADAW/issues/137)）。
 - [x] 提供只读 MCP STDIO 服务，可对启动时读取的已保存工程快照查询结构和单轨 MIDI 汇总；读取采用 SQLite 只读连接且不迁移 schema（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。后续写操作仍需经 Action 校验。
 - [x] 提供有范围与结果上限的 MIDI 音符 MCP 查询工具（[Issue #90](https://github.com/mumu-lhl/AAADAW/issues/90)）。
 - [x] 通过显式 `--write` MCP 会话创建普通轨道；请求经 `DawAction::CreateTrack` 校验并原子保存，桌面工程会话与第二个 MCP writer 由独占 session lock 互斥（[Issue #107](https://github.com/mumu-lhl/AAADAW/issues/107)）。
@@ -180,7 +181,8 @@
 - [x] 通过显式 `--write` MCP 工具原子设置轨道推子、声像、静音和独奏；省略字段保留原值，组合更新作为单步可撤销事务（[Issue #119](https://github.com/mumu-lhl/AAADAW/issues/119)）。
 - [x] 为 MCP writer 提供会话内 Undo/Redo，撤销/重做后保存快照；新 server 从空历史开始，工具仅作用于当前 writer 创建的编辑（[Issue #121](https://github.com/mumu-lhl/AAADAW/issues/121)）。
 - [x] 通过显式 `--write` MCP 工具插入/更新拍号地图和速度图节点；走 `DawAction` 校验、原子持久化及 writer 会话 Undo/Redo（[Issue #133](https://github.com/mumu-lhl/AAADAW/issues/133)、[Issue #135](https://github.com/mumu-lhl/AAADAW/issues/135)）。
-- [ ] 继续分批实现其他设计文档工具：设置自动化点、录音准备和触发 Action。
+- [x] 通过显式 `--write` MCP 工具设置轨道音量自动化点和录音预备状态；两项均经 Action 校验、持久化并有 no-op 处理（[Issue #113](https://github.com/mumu-lhl/AAADAW/issues/113)、[Issue #115](https://github.com/mumu-lhl/AAADAW/issues/115)）。
+- [ ] 继续评估其他适合 MCP 的无对话框 Action，并为危险操作保留显式授权边界。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
 - [ ] 为 MCP 增加协议错误、无效 ID、越界输入、事务回滚和并发修改测试；记录本地服务的信任边界。

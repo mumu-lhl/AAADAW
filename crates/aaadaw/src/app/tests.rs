@@ -1441,6 +1441,71 @@ fn action_search_dispatches_supported_commands() {
     assert!(app.project.midi_items().is_empty());
 }
 
+#[test]
+fn saved_macros_run_ordered_commands_from_actions_search_and_shortcuts() {
+    let mut app = App::default();
+    app.action_macros.push(super::action_macros::ActionMacro {
+        id: 7,
+        name: "Mixer then arrangement".to_owned(),
+        steps: vec![
+            "view.mixer-workspace".to_owned(),
+            "view.arrangement-workspace".to_owned(),
+        ],
+    });
+    *app.shortcut_bindings
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        HashMap::from([(commands::macro_id(7), "Mod+M".to_owned())]);
+    assert_eq!(
+        commands::find(&app, "Mixer then arrangement"),
+        Some(CommandId::Macro(7))
+    );
+    let _ = app.update(Message::ActionQueryChanged(
+        "Mixer then arrangement".to_owned(),
+    ));
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
+
+    let _ = app.update(Message::ShortcutPressed("m".to_owned(), Modifiers::COMMAND));
+    assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
+
+    app.action_macros[0].steps = vec![
+        "view.mixer-workspace".to_owned(),
+        "not-a-real-action".to_owned(),
+    ];
+    let _ = app.update(Message::ExecuteCommand(CommandId::Macro(7)));
+    assert_eq!(app.main_workspace, MainWorkspace::Mixer);
+    assert!(app.status.contains("unknown action at step 2"));
+}
+
+#[test]
+fn malformed_macro_config_blocks_create_and_delete_overwrites() {
+    let mut app = App {
+        action_macro_config_error: Some("invalid macro config".to_owned()),
+        action_macro_name: "Do not overwrite".to_owned(),
+        action_macro_steps: vec!["view.mixer-workspace".to_owned()],
+        ..App::default()
+    };
+    let _ = app.update(Message::SaveActionMacro);
+    assert!(app.action_macros.is_empty());
+    assert!(
+        app.action_macro_feedback
+            .contains("Fix the action macro config")
+    );
+
+    app.action_macros.push(super::action_macros::ActionMacro {
+        id: 11,
+        name: "Loaded before failure".to_owned(),
+        steps: vec!["view.mixer-workspace".to_owned()],
+    });
+    let _ = app.update(Message::DeleteActionMacro(11));
+    assert_eq!(app.action_macros.len(), 1);
+    assert!(
+        app.action_macro_feedback
+            .contains("Fix the action macro config")
+    );
+}
+
 #[cfg(feature = "audio-device")]
 #[test]
 fn midi_panic_without_an_open_output_reports_the_missing_backend() {

@@ -1,3 +1,4 @@
+use super::action_macros::ActionMacro;
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
@@ -38,6 +39,7 @@ pub(crate) enum CommandId {
     TogglePlayback,
     #[cfg(feature = "audio-device")]
     PanicMidi,
+    Macro(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,13 +494,13 @@ pub(super) struct CommandEntry {
     pub(super) enabled: bool,
     pub(super) destructive: bool,
     pub(super) separator_before: bool,
-    aliases: &'static [&'static str],
+    aliases: Vec<String>,
 }
 
 pub(super) struct ShortcutEntry {
-    pub(super) id: &'static str,
-    pub(super) label: &'static str,
-    pub(super) category: &'static str,
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) category: String,
     pub(super) binding: String,
     pub(super) default_binding: String,
 }
@@ -511,6 +513,96 @@ impl CommandEntry {
                 .aliases
                 .iter()
                 .any(|alias| alias.to_ascii_lowercase().contains(query))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct MacroStepChoice {
+    pub(super) id: String,
+    pub(super) label: String,
+}
+
+impl std::fmt::Display for MacroStepChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.label)
+    }
+}
+
+pub(super) fn macro_step_label(id: &str) -> &str {
+    COMMANDS
+        .iter()
+        .find(|definition| command_kind_id(definition.kind) == id)
+        .map(|definition| definition.label)
+        .unwrap_or(id)
+}
+
+pub(super) fn macro_id(id: u64) -> String {
+    format!("macro.{id}")
+}
+
+pub(super) fn macro_step_ids() -> std::collections::HashSet<String> {
+    COMMANDS
+        .iter()
+        .filter(|definition| macro_step_supported(definition.kind))
+        .map(|definition| command_kind_id(definition.kind).to_owned())
+        .collect()
+}
+
+pub(super) fn validate_action_macros(macros: Vec<ActionMacro>) -> Result<Vec<ActionMacro>, String> {
+    let macros = super::action_macros::validate(macros, &macro_step_ids())?;
+    for action_macro in &macros {
+        if COMMANDS.iter().any(|definition| {
+            definition.label.eq_ignore_ascii_case(&action_macro.name)
+                || definition
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(&action_macro.name))
+        }) {
+            return Err(format!(
+                "macro name conflicts with an existing action: {}",
+                action_macro.name
+            ));
+        }
+    }
+    Ok(macros)
+}
+
+pub(super) fn macro_step_choices() -> Vec<MacroStepChoice> {
+    COMMANDS
+        .iter()
+        .filter(|definition| macro_step_supported(definition.kind))
+        .map(|definition| MacroStepChoice {
+            id: command_kind_id(definition.kind).to_owned(),
+            label: definition.label.to_owned(),
+        })
+        .collect()
+}
+
+fn macro_step_supported(kind: CommandKind) -> bool {
+    matches!(
+        kind,
+        CommandKind::Undo
+            | CommandKind::Redo
+            | CommandKind::ToggleMediaBrowserPanel
+            | CommandKind::ShowArrangement
+            | CommandKind::ShowMixer
+            | CommandKind::AddMidiItem
+            | CommandKind::DuplicateSelectedAudioItem
+            | CommandKind::DuplicateSelectedMidiItem
+            | CommandKind::SplitSelectedItemsAtCursor
+            | CommandKind::SplitSelectedItemsAtTimeSelection
+            | CommandKind::AddTrack
+            | CommandKind::Track(TrackCommand::ToggleMute)
+            | CommandKind::Track(TrackCommand::ToggleSolo)
+            | CommandKind::Track(TrackCommand::ToggleRecordArm)
+            | CommandKind::Track(TrackCommand::MoveUp)
+            | CommandKind::Track(TrackCommand::MoveDown)
+    ) || {
+        #[cfg(feature = "audio-device")]
+        if kind == CommandKind::TogglePlayback {
+            return true;
+        }
+        false
     }
 }
 
@@ -530,14 +622,14 @@ pub(super) fn for_actions_menu(app: &App) -> Vec<CommandEntry> {
 }
 
 pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
-    COMMANDS
+    let mut entries = COMMANDS
         .iter()
         .map(|definition| {
             let id = command_kind_id(definition.kind);
             ShortcutEntry {
-                id,
-                label: definition.label,
-                category: definition.category,
+                id: id.to_owned(),
+                label: definition.label.to_owned(),
+                category: definition.category.to_owned(),
                 binding: if app.shortcut_defaults_restored.contains(id) {
                     definition
                         .shortcuts
@@ -561,17 +653,52 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                     .replace("Mod+", "Ctrl/Cmd+"),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    entries.extend(app.action_macros.iter().map(|action_macro| {
+        let id = macro_id(action_macro.id);
+        ShortcutEntry {
+            binding: app
+                .shortcut_defaults_restored
+                .contains(&id)
+                .then(String::new)
+                .unwrap_or_else(|| {
+                    app.shortcut_binding_edits
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| config_binding_for(app, &id, &[]))
+                })
+                .replace("Mod+", "Ctrl/Cmd+"),
+            id,
+            label: action_macro.name.clone(),
+            category: "Macros".to_owned(),
+            default_binding: String::new(),
+        }
+    }));
+    entries
 }
 
-pub(super) fn label_for_id(id: &str) -> Option<&'static str> {
+pub(super) fn label_for_id(app: &App, id: &str) -> Option<String> {
     COMMANDS
         .iter()
         .find(|definition| command_kind_id(definition.kind) == id)
-        .map(|definition| definition.label)
+        .map(|definition| definition.label.to_owned())
+        .or_else(|| {
+            app.action_macros
+                .iter()
+                .find(|action_macro| macro_id(action_macro.id) == id)
+                .map(|action_macro| action_macro.name.clone())
+        })
 }
 
+#[cfg(test)]
 pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutBindings, String> {
+    validate_bindings_with_macros(bindings, &[])
+}
+
+pub(super) fn validate_bindings_with_macros(
+    bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
+) -> Result<ShortcutBindings, String> {
     const RETIRED_WORKSPACE_IDS: &[&str] = &["view.arrangement", "view.media", "view.project"];
     let mut bindings = bindings.clone();
     for id in RETIRED_WORKSPACE_IDS {
@@ -581,6 +708,9 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
         if !COMMANDS
             .iter()
             .any(|definition| command_kind_id(definition.kind) == id)
+            && !macros
+                .iter()
+                .any(|action_macro| macro_id(action_macro.id) == *id)
         {
             return Err(format!("unknown action ID: {id}"));
         }
@@ -592,19 +722,14 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
         let Some(value) = bindings.get(id) else {
             continue;
         };
-        if !value.trim().is_empty() {
-            let shortcut = Shortcut::parse(value)?
-                .ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
-            let normalized = shortcut.config_label();
-            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
-                return Err(format!(
-                    "{normalized} is already assigned to both {other_id} and {id}"
-                ));
-            }
-            normalized_bindings.insert(id.to_owned(), normalized);
-        } else {
-            normalized_bindings.insert(id.to_owned(), String::new());
-        }
+        insert_normalized_binding(id, value, &mut resolved, &mut normalized_bindings)?;
+    }
+    for action_macro in macros {
+        let id = macro_id(action_macro.id);
+        let Some(value) = bindings.get(&id) else {
+            continue;
+        };
+        insert_normalized_binding(&id, value, &mut resolved, &mut normalized_bindings)?;
     }
     for definition in COMMANDS {
         let id = command_kind_id(definition.kind);
@@ -621,6 +746,28 @@ pub(super) fn validate_bindings(bindings: &ShortcutBindings) -> Result<ShortcutB
         }
     }
     Ok(normalized_bindings)
+}
+
+fn insert_normalized_binding(
+    id: &str,
+    value: &str,
+    resolved: &mut HashMap<String, String>,
+    normalized_bindings: &mut ShortcutBindings,
+) -> Result<(), String> {
+    if value.trim().is_empty() {
+        normalized_bindings.insert(id.to_owned(), String::new());
+        return Ok(());
+    }
+    let shortcut =
+        Shortcut::parse(value)?.ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
+    let normalized = shortcut.config_label();
+    if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
+        return Err(format!(
+            "{normalized} is already assigned to both {other_id} and {id}"
+        ));
+    }
+    normalized_bindings.insert(id.to_owned(), normalized);
+    Ok(())
 }
 
 pub(super) fn for_track_context(app: &App, track_id: TrackId) -> Vec<CommandEntry> {
@@ -645,6 +792,10 @@ pub(super) fn for_track_context(app: &App, track_id: TrackId) -> Vec<CommandEntr
 
 pub(super) fn is_enabled(app: &App, command: CommandId) -> bool {
     match command {
+        CommandId::Macro(id) => app
+            .action_macros
+            .iter()
+            .any(|action_macro| action_macro.id == id),
         CommandId::SelectedTrack(track_command) => {
             let track = app
                 .selected_track_id()
@@ -686,7 +837,17 @@ pub(super) fn from_shortcut(
     key: &Key<&str>,
     modifiers: Modifiers,
     bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
 ) -> Option<CommandId> {
+    if let Some(action_macro) = macros.iter().find(|action_macro| {
+        let id = macro_id(action_macro.id);
+        bindings
+            .get(&id)
+            .and_then(|binding| Shortcut::parse(binding).ok().flatten())
+            .is_some_and(|shortcut| shortcut.matches(key, modifiers))
+    }) {
+        return Some(CommandId::Macro(action_macro.id));
+    }
     COMMANDS.iter().find_map(|definition| {
         let id = command_kind_id(definition.kind);
         let custom = bindings
@@ -719,16 +880,21 @@ pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String,
         .ok_or_else(|| "That key cannot be used as a shortcut".to_owned())
 }
 
-pub(super) fn friendly_shortcut_error(error: &str) -> String {
+pub(super) fn friendly_shortcut_error(error: &str, macros: &[ActionMacro]) -> String {
     let mut definitions = COMMANDS.iter().collect::<Vec<_>>();
     definitions.sort_unstable_by_key(|definition| {
         std::cmp::Reverse(command_kind_id(definition.kind).len())
     });
-    definitions
+    let message = definitions
         .into_iter()
         .fold(error.to_owned(), |message, definition| {
             message.replace(command_kind_id(definition.kind), definition.label)
-        })
+        });
+    let mut macros = macros.iter().collect::<Vec<_>>();
+    macros.sort_unstable_by_key(|action_macro| std::cmp::Reverse(macro_id(action_macro.id).len()));
+    macros.into_iter().fold(message, |message, action_macro| {
+        message.replace(&macro_id(action_macro.id), &action_macro.name)
+    })
 }
 
 fn binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
@@ -787,6 +953,34 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
+    if let CommandId::Macro(id) = command {
+        let Some(action_macro) = app
+            .action_macros
+            .iter()
+            .find(|action_macro| action_macro.id == id)
+        else {
+            app.status = "Action macro no longer exists".to_owned();
+            return Task::none();
+        };
+        let steps = action_macro.steps.clone();
+        let mut tasks = Vec::with_capacity(steps.len());
+        for (index, step) in steps.iter().enumerate() {
+            let Some(step_command) = command_for_action_id(step) else {
+                app.status = format!("Macro stopped: unknown action at step {}", index + 1);
+                break;
+            };
+            if !is_enabled(app, step_command) {
+                app.status = format!(
+                    "Macro stopped at step {}: {} is unavailable",
+                    index + 1,
+                    label_for_action_id(step).unwrap_or(step)
+                );
+                break;
+            }
+            tasks.push(dispatch(app, step_command));
+        }
+        return Task::batch(tasks);
+    }
     let message = match command {
         CommandId::NewProject => Message::NewProject,
         CommandId::OpenProject => Message::OpenProject,
@@ -867,8 +1061,28 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::TogglePlayback => Message::TogglePlayback,
         #[cfg(feature = "audio-device")]
         CommandId::PanicMidi => Message::PanicMidi,
+        CommandId::Macro(_) => unreachable!("macros are dispatched before built-in commands"),
     };
     app.update(message)
+}
+
+fn command_for_action_id(id: &str) -> Option<CommandId> {
+    COMMANDS
+        .iter()
+        .find(|definition| {
+            macro_step_supported(definition.kind) && command_kind_id(definition.kind) == id
+        })
+        .map(|definition| match definition.kind {
+            CommandKind::Track(command) => CommandId::SelectedTrack(command),
+            kind => command_id(kind),
+        })
+}
+
+fn label_for_action_id(id: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .find(|definition| command_kind_id(definition.kind) == id)
+        .map(|definition| definition.label)
 }
 
 struct ResolvedEntry {
@@ -880,7 +1094,7 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
     let selected_track = app
         .selected_track_id()
         .and_then(|track_id| track_state(app, track_id));
-    COMMANDS
+    let mut entries = COMMANDS
         .iter()
         .map(|definition| {
             let command_id = match definition.kind {
@@ -893,7 +1107,24 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
                 section: definition.menu,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    entries.extend(app.action_macros.iter().map(|action_macro| {
+        let binding = binding_for(app, &macro_id(action_macro.id), &[]);
+        ResolvedEntry {
+            command: CommandEntry {
+                id: CommandId::Macro(action_macro.id),
+                category: "Macros",
+                label: action_macro.name.clone(),
+                shortcut: (!binding.is_empty()).then_some(binding),
+                enabled: true,
+                destructive: false,
+                separator_before: false,
+                aliases: vec![action_macro.name.clone()],
+            },
+            section: None,
+        }
+    }));
+    entries
 }
 
 #[derive(Clone, Copy)]
@@ -929,7 +1160,11 @@ fn entry_for(
         enabled: command_enabled(app, definition.kind, track),
         destructive: definition.destructive,
         separator_before: definition.separator_before,
-        aliases: definition.aliases,
+        aliases: definition
+            .aliases
+            .iter()
+            .map(|alias| (*alias).to_owned())
+            .collect(),
     }
 }
 
@@ -1093,4 +1328,74 @@ fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
 
 fn key_matches_character(key: &Key<&str>, expected: char) -> bool {
     matches!(key, Key::Character(character) if character.eq_ignore_ascii_case(&expected.to_string()))
+}
+
+#[cfg(test)]
+mod macro_tests {
+    use super::*;
+
+    fn test_macro() -> ActionMacro {
+        ActionMacro {
+            id: 23,
+            name: "Arrange and mix".to_owned(),
+            steps: vec![
+                "view.arrangement-workspace".to_owned(),
+                "view.mixer-workspace".to_owned(),
+            ],
+        }
+    }
+
+    #[test]
+    fn macro_shortcuts_validate_and_resolve_by_stable_id() {
+        let macros = [test_macro()];
+        let bindings = ShortcutBindings::from([("macro.23".to_owned(), "Ctrl+M".to_owned())]);
+        let bindings = validate_bindings_with_macros(&bindings, &macros).unwrap();
+        assert_eq!(bindings.get("macro.23").map(String::as_str), Some("Mod+M"));
+        assert_eq!(
+            from_shortcut(&Key::Character("m"), Modifiers::COMMAND, &bindings, &macros),
+            Some(CommandId::Macro(23))
+        );
+        assert!(
+            validate_bindings_with_macros(
+                &ShortcutBindings::from([("macro.23".to_owned(), "Mod+Z".to_owned())]),
+                &macros,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_bindings_with_macros(
+                &ShortcutBindings::from([("macro.999".to_owned(), "Mod+M".to_owned())]),
+                &macros,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn macro_shortcuts_reject_conflicts_between_macros() {
+        let first = test_macro();
+        let second = ActionMacro {
+            id: 24,
+            name: "Mix and arrange".to_owned(),
+            steps: first.steps.clone(),
+        };
+        let bindings = ShortcutBindings::from([
+            ("macro.23".to_owned(), "Mod+M".to_owned()),
+            ("macro.24".to_owned(), "Mod+M".to_owned()),
+        ]);
+        assert!(validate_bindings_with_macros(&bindings, &[first, second]).is_err());
+    }
+
+    #[test]
+    fn macro_names_cannot_shadow_existing_action_search_names() {
+        let mut action_macro = test_macro();
+        action_macro.name = "save project".to_owned();
+        assert!(validate_action_macros(vec![action_macro]).is_err());
+    }
+
+    #[test]
+    fn destructive_actions_are_not_available_as_macro_steps() {
+        assert!(!macro_step_ids().contains("item.delete-selected"));
+        assert!(!macro_step_ids().contains("track.delete"));
+    }
 }

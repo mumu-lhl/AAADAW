@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod action_macros;
 mod audio_config;
 mod audio_export;
 mod clap_plugin_cache;
@@ -142,6 +143,13 @@ struct MidiNoteClipboard {
 struct App {
     project: Project,
     action_query: String,
+    action_macros: Vec<action_macros::ActionMacro>,
+    action_macro_name: String,
+    action_macro_step: Option<String>,
+    action_macro_steps: Vec<String>,
+    action_macro_editing_id: Option<u64>,
+    action_macro_feedback: String,
+    action_macro_config_error: Option<String>,
     shortcut_bindings: Arc<std::sync::RwLock<commands::ShortcutBindings>>,
     shortcut_binding_edits: commands::ShortcutBindings,
     shortcut_defaults_restored: HashSet<String>,
@@ -558,9 +566,18 @@ impl App {
         });
         app.main_window_id = Some(main_window_id);
         let main_window_task = main_window_task.discard();
+        match action_macros::load().and_then(commands::validate_action_macros) {
+            Ok(macros) => app.action_macros = macros,
+            Err(error) => {
+                app.action_macro_feedback = format!("Action macros could not be loaded: {error}");
+                app.action_macro_config_error = Some(error);
+            }
+        }
         match keyboard_config::load() {
             Ok(bindings) => {
-                if let Ok(bindings) = commands::validate_bindings(&bindings) {
+                if let Ok(bindings) =
+                    commands::validate_bindings_with_macros(&bindings, &app.action_macros)
+                {
                     app.shortcut_binding_edits = bindings.clone();
                     *app.shortcut_bindings
                         .write()
@@ -1858,6 +1875,34 @@ impl App {
                 self.sync_all_track_mix_to_playback();
             }
             Message::ActionQueryChanged(query) => self.action_query = query,
+            Message::ActionMacroNameChanged(name) => self.action_macro_name = name,
+            Message::ActionMacroStepSelected(step) => self.action_macro_step = Some(step),
+            Message::AddActionMacroStep => self.add_action_macro_step(),
+            Message::RemoveActionMacroStep(index) => {
+                if index < self.action_macro_steps.len() {
+                    self.action_macro_steps.remove(index);
+                }
+            }
+            Message::MoveActionMacroStep(index, direction) => {
+                let destination = index.saturating_add_signed(direction);
+                if index < self.action_macro_steps.len()
+                    && destination < self.action_macro_steps.len()
+                {
+                    self.action_macro_steps.swap(index, destination);
+                }
+            }
+            Message::NewActionMacro => {
+                self.action_macro_editing_id = None;
+                self.action_macro_name.clear();
+                self.action_macro_steps.clear();
+                self.action_macro_step = commands::macro_step_choices()
+                    .first()
+                    .map(|choice| choice.id.clone());
+                self.action_macro_feedback.clear();
+            }
+            Message::EditActionMacro(id) => self.edit_action_macro(id),
+            Message::SaveActionMacro => self.save_action_macro(),
+            Message::DeleteActionMacro(id) => self.delete_action_macro(id),
             Message::ShortcutPressed(key, modifiers) => {
                 let key = if key == " " {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Space)
@@ -1869,7 +1914,8 @@ impl App {
                         .shortcut_bindings
                         .read()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    commands::from_shortcut(&key, modifiers, &bindings).map(Message::ExecuteCommand)
+                    commands::from_shortcut(&key, modifiers, &bindings, &self.action_macros)
+                        .map(Message::ExecuteCommand)
                 };
                 if let Some(message) = shortcut {
                     task = self.update(message);
@@ -2593,7 +2639,7 @@ impl App {
     fn clear_shortcut_binding(&mut self, action_id: String) {
         let mut candidate = self.shortcut_binding_edits.clone();
         candidate.insert(action_id.clone(), String::new());
-        match commands::validate_bindings(&candidate) {
+        match commands::validate_bindings_with_macros(&candidate, &self.action_macros) {
             Ok(bindings) => {
                 self.shortcut_binding_edits = bindings;
                 self.shortcut_defaults_restored.remove(&action_id);
@@ -2610,20 +2656,20 @@ impl App {
     fn restore_shortcut_default(&mut self, action_id: String) {
         let mut candidate = self.shortcut_binding_edits.clone();
         candidate.remove(&action_id);
-        match commands::validate_bindings(&candidate) {
+        match commands::validate_bindings_with_macros(&candidate, &self.action_macros) {
             Ok(bindings) => {
                 self.shortcut_binding_edits = bindings;
                 self.shortcut_defaults_restored.insert(action_id.clone());
                 self.shortcut_capture_id = None;
                 self.shortcut_editor_feedback = format!(
                     "{} restored to its default. Save to apply this change.",
-                    commands::label_for_id(&action_id).unwrap_or(&action_id)
+                    commands::label_for_id(self, &action_id).unwrap_or(action_id)
                 );
             }
             Err(error) => {
                 self.shortcut_editor_feedback = format!(
                     "Default shortcut could not be restored: {}",
-                    commands::friendly_shortcut_error(&error)
+                    commands::friendly_shortcut_error(&error, &self.action_macros)
                 );
             }
         }
@@ -2644,7 +2690,7 @@ impl App {
         };
         let mut candidate = self.shortcut_binding_edits.clone();
         candidate.insert(action_id, binding.clone());
-        match commands::validate_bindings(&candidate) {
+        match commands::validate_bindings_with_macros(&candidate, &self.action_macros) {
             Ok(bindings) => {
                 if let Some(action_id) = self.shortcut_capture_id.take() {
                     self.shortcut_defaults_restored.remove(&action_id);
@@ -2658,7 +2704,8 @@ impl App {
             Err(error) => {
                 self.shortcut_editor_feedback = format!(
                     "{}; press another key or Escape",
-                    commands::friendly_shortcut_error(&error).replace("Mod+", "Ctrl/Cmd+")
+                    commands::friendly_shortcut_error(&error, &self.action_macros)
+                        .replace("Mod+", "Ctrl/Cmd+")
                 );
             }
         }
@@ -4003,8 +4050,180 @@ impl App {
         }
     }
 
+    fn add_action_macro_step(&mut self) {
+        if self.action_macro_steps.len() >= action_macros::MAX_MACRO_STEPS {
+            self.action_macro_feedback = format!(
+                "A macro can contain at most {} steps",
+                action_macros::MAX_MACRO_STEPS
+            );
+            return;
+        }
+        let Some(step) = self.action_macro_step.clone() else {
+            self.action_macro_feedback = "Choose a supported action first".to_owned();
+            return;
+        };
+        if !commands::macro_step_ids().contains(&step) {
+            self.action_macro_feedback = "That action cannot be used in a macro".to_owned();
+            return;
+        }
+        self.action_macro_steps.push(step);
+        self.action_macro_feedback.clear();
+    }
+
+    fn edit_action_macro(&mut self, id: u64) {
+        if let Some(action_macro) = self
+            .action_macros
+            .iter()
+            .find(|action_macro| action_macro.id == id)
+        {
+            self.action_macro_editing_id = Some(id);
+            self.action_macro_name = action_macro.name.clone();
+            self.action_macro_steps = action_macro.steps.clone();
+            self.action_macro_step = commands::macro_step_choices()
+                .first()
+                .map(|choice| choice.id.clone());
+            self.action_macro_feedback.clear();
+        }
+    }
+
+    fn save_action_macro(&mut self) {
+        if self.action_macro_config_error.is_some() {
+            self.action_macro_feedback =
+                "Fix the action macro config file before saving".to_owned();
+            return;
+        }
+        let id = match self.action_macro_editing_id {
+            Some(id) => id,
+            None => match self
+                .action_macros
+                .iter()
+                .map(|action_macro| action_macro.id)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+            {
+                Some(id) => id,
+                None => {
+                    self.action_macro_feedback = "No more macro IDs are available".to_owned();
+                    return;
+                }
+            },
+        };
+        let action_macro = action_macros::ActionMacro {
+            id,
+            name: self.action_macro_name.trim().to_owned(),
+            steps: self.action_macro_steps.clone(),
+        };
+        let mut candidate = self.action_macros.clone();
+        if let Some(index) = candidate.iter().position(|existing| existing.id == id) {
+            candidate[index] = action_macro;
+        } else {
+            candidate.push(action_macro);
+        }
+        let candidate = match commands::validate_action_macros(candidate) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                self.action_macro_feedback = format!("Macro was not saved: {error}");
+                return;
+            }
+        };
+        match action_macros::save(&candidate) {
+            Ok(()) => {
+                self.action_macros = candidate;
+                self.action_macro_editing_id = Some(id);
+                self.action_macro_feedback = "Macro saved".to_owned();
+                self.status = "Action macro saved".to_owned();
+            }
+            Err(error) => {
+                self.action_macro_feedback = format!("Macro could not be saved: {error}");
+            }
+        }
+    }
+
+    fn delete_action_macro(&mut self, id: u64) {
+        if self.action_macro_config_error.is_some() {
+            self.action_macro_feedback =
+                "Fix the action macro config file before editing".to_owned();
+            return;
+        }
+        if !self
+            .action_macros
+            .iter()
+            .any(|action_macro| action_macro.id == id)
+        {
+            return;
+        }
+        let mut candidate = self.action_macros.clone();
+        candidate.retain(|action_macro| action_macro.id != id);
+        let mut saved_bindings = match keyboard_config::load() {
+            Ok(bindings) => bindings,
+            Err(error) => {
+                self.action_macro_feedback =
+                    format!("Shortcut config could not be loaded: {error}");
+                return;
+            }
+        };
+        saved_bindings.remove(&commands::macro_id(id));
+        let saved_bindings =
+            match commands::validate_bindings_with_macros(&saved_bindings, &candidate) {
+                Ok(bindings) => bindings,
+                Err(error) => {
+                    self.action_macro_feedback = format!("Macro could not be deleted: {error}");
+                    return;
+                }
+            };
+        let mut staged_bindings = self.shortcut_binding_edits.clone();
+        staged_bindings.remove(&commands::macro_id(id));
+        let staged_bindings =
+            match commands::validate_bindings_with_macros(&staged_bindings, &candidate) {
+                Ok(bindings) => bindings,
+                Err(error) => {
+                    self.action_macro_feedback = format!("Macro could not be deleted: {error}");
+                    return;
+                }
+            };
+        if let Err(error) = action_macros::save(&candidate) {
+            self.action_macro_feedback = format!("Macro could not be deleted: {error}");
+            return;
+        }
+        if let Err(error) = keyboard_config::save(&saved_bindings) {
+            let rollback = action_macros::save(&self.action_macros);
+            self.action_macro_feedback = match rollback {
+                Ok(()) => format!("Macro could not be deleted: shortcut save failed: {error}"),
+                Err(rollback_error) => format!(
+                    "Macro deletion partially failed: shortcut save failed: {error}; macro rollback failed: {rollback_error}"
+                ),
+            };
+            return;
+        }
+        let mut active_bindings = self
+            .shortcut_bindings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        active_bindings.remove(&commands::macro_id(id));
+        self.action_macros = candidate;
+        self.shortcut_binding_edits = staged_bindings;
+        self.shortcut_defaults_restored
+            .remove(&commands::macro_id(id));
+        *self
+            .shortcut_bindings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = active_bindings;
+        if self.action_macro_editing_id == Some(id) {
+            self.action_macro_editing_id = None;
+            self.action_macro_name.clear();
+            self.action_macro_steps.clear();
+        }
+        self.action_macro_feedback = "Macro deleted".to_owned();
+        self.status = "Action macro deleted".to_owned();
+    }
+
     fn save_shortcut_bindings(&mut self) {
-        let bindings = match commands::validate_bindings(&self.shortcut_binding_edits) {
+        let bindings = match commands::validate_bindings_with_macros(
+            &self.shortcut_binding_edits,
+            &self.action_macros,
+        ) {
             Ok(bindings) => bindings,
             Err(error) => {
                 self.status = format!("Shortcut bindings not saved: {error}");
@@ -4750,7 +4969,7 @@ fn shortcut_message(
     {
         return Some(Message::Escape);
     }
-    commands::from_shortcut(&key, modifiers, bindings).map(Message::ExecuteCommand)
+    commands::from_shortcut(&key, modifiers, bindings, &[]).map(Message::ExecuteCommand)
 }
 
 fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {

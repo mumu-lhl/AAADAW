@@ -73,6 +73,7 @@ pub(crate) enum PathPickerTarget {
 pub(crate) enum SettingsCategory {
     #[default]
     KeyboardShortcuts,
+    ActionMacros,
     ClapPlugins,
     Audio,
 }
@@ -233,6 +234,15 @@ pub(crate) enum Message {
     Undo,
     Redo,
     ActionQueryChanged(String),
+    ActionMacroNameChanged(String),
+    ActionMacroStepSelected(String),
+    AddActionMacroStep,
+    RemoveActionMacroStep(usize),
+    MoveActionMacroStep(usize, isize),
+    NewActionMacro,
+    EditActionMacro(u64),
+    SaveActionMacro,
+    DeleteActionMacro(u64),
     ShortcutPressed(String, iced::keyboard::Modifiers),
     SaveShortcutBindings,
     ResetShortcutBindings,
