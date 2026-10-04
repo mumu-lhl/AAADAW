@@ -75,6 +75,7 @@
 - [x] 将后台 packet 解码、单声道下混、跨 packet 线性重采样和有界 SPSC 队列背压串成媒体流 feeder；音频回调仍不执行解码、锁或 I/O。
 - [x] 新建 `aaadaw-app` 控制层，解析 AudioItem 的嵌入/外链媒体引用，等待后台源打开、启动 feeder 并编译固定渲染图；支持 sample seek refill、JACK 图替换、实际 PCM 渲染与缺失外链报错。
 - [x] 为 Linux JACK/PipeWire 增加默认立体声输入捕获和 armed-track 录音路径；真实设备验证仍待完成。
+- [ ] 保留 JACK 每个捕获周期的帧位置；录音队列溢出或时钟回退时使 take 失败，短暂的周期间隔在 WAV 中写为静音，避免 overdub 时间被压缩（[Issue #38](https://github.com/mumu-lhl/AAADAW/issues/38)）。PipeWire 每缓冲区时间戳与设备延迟补偿仍另行推进。
 - [ ] 增加 Windows WASAPI 输入；明确各平台的设备枚举、热插拔和延迟语义。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。

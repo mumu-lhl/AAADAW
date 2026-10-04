@@ -19,6 +19,7 @@ use std::time::Duration;
 const WAV_HEADER_SIZE: u64 = 44;
 const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - WAV_HEADER_SIZE;
 const MAX_SEGMENT_DATA_BYTES: u64 = MAX_RIFF_DATA_BYTES - MAX_RIFF_DATA_BYTES % 6;
+const MAX_CAPTURE_GAP_SECONDS: u64 = 10;
 const DRAIN_FRAMES: usize = 4096;
 static NEXT_RECORDING_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -76,6 +77,7 @@ pub enum AudioRecordingError {
     ProjectDirectoryUnavailable(PathBuf),
     Io(io::Error),
     CaptureFailed { overflow_frames: u64 },
+    CaptureTimingInvalid,
     EmptyTake,
     TakeTooLarge,
     WorkerPanicked,
@@ -95,6 +97,9 @@ impl fmt::Display for AudioRecordingError {
                 f,
                 "audio capture failed; {overflow_frames} frames were dropped"
             ),
+            Self::CaptureTimingInvalid => {
+                f.write_str("audio capture timing was invalid; the take was not aligned")
+            }
             Self::EmptyTake => f.write_str("no audio frames were recorded"),
             Self::TakeTooLarge => f.write_str("take exceeds the WAV RIFF size limit"),
             Self::WorkerPanicked => f.write_str("recording file worker stopped unexpectedly"),
@@ -341,6 +346,116 @@ struct RecordingWriter {
     recovery_manifest: Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
 }
 
+struct RecordingSegments {
+    directory: PathBuf,
+    stem: String,
+    sample_rate: u32,
+    segment_data_limit: u64,
+    recovery_manifest: Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
+    current_segment: Option<OpenRecordingSegment>,
+    completed_segments: Vec<PathBuf>,
+    bytes: Vec<u8>,
+}
+
+impl RecordingSegments {
+    fn new(
+        directory: PathBuf,
+        stem: String,
+        sample_rate: u32,
+        segment_data_limit: u64,
+        recovery_manifest: Option<(PathBuf, Arc<Mutex<RecordingRecoveryManifest>>)>,
+    ) -> Self {
+        Self {
+            directory,
+            stem,
+            sample_rate,
+            segment_data_limit,
+            recovery_manifest,
+            current_segment: None,
+            completed_segments: Vec::new(),
+            bytes: Vec::with_capacity(DRAIN_FRAMES * 6),
+        }
+    }
+
+    fn append_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), AudioRecordingError> {
+        let mut frame_offset = 0;
+        while frame_offset < frames.len() {
+            if self.current_segment.is_none() {
+                self.current_segment = Some(OpenRecordingSegment::create(
+                    &self.directory,
+                    &self.stem,
+                    self.completed_segments.len(),
+                    self.recovery_manifest.is_some(),
+                )?);
+            }
+            let segment = self
+                .current_segment
+                .as_mut()
+                .expect("segment was created before writing");
+            let remaining_frames = ((self.segment_data_limit - segment.data_bytes) / 6) as usize;
+            let write_frames = remaining_frames.min(frames.len() - frame_offset);
+            self.bytes.clear();
+            for frame in &frames[frame_offset..frame_offset + write_frames] {
+                for sample in frame {
+                    let sample = if sample.is_finite() {
+                        sample.clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let pcm = if sample <= -1.0 {
+                        -8_388_608_i32
+                    } else {
+                        (sample * 8_388_607.0).round() as i32
+                    };
+                    self.bytes.extend_from_slice(&pcm.to_le_bytes()[..3]);
+                }
+            }
+            segment
+                .file
+                .as_mut()
+                .expect("open segment retains its file")
+                .write_all(&self.bytes)?;
+            segment.data_bytes += (write_frames as u64) * 6;
+            frame_offset += write_frames;
+            if segment.data_bytes == self.segment_data_limit {
+                let segment = self
+                    .current_segment
+                    .take()
+                    .expect("full recording segment exists");
+                let frame_count = segment.data_bytes / 6;
+                let path = segment.finish(self.sample_rate)?;
+                self.completed_segments.push(path.clone());
+                record_finalized_segment(&self.recovery_manifest, path, frame_count)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<Vec<PathBuf>, AudioRecordingError> {
+        if let Some(segment) = self.current_segment.take() {
+            let frame_count = segment.data_bytes / 6;
+            let path = segment.finish(self.sample_rate)?;
+            self.completed_segments.push(path.clone());
+            record_finalized_segment(&self.recovery_manifest, path, frame_count)?;
+        }
+        if let Some((path, manifest)) = &self.recovery_manifest {
+            let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
+            manifest.finalized = true;
+            write_recovery_manifest(path, &manifest)?;
+        }
+        Ok(self.completed_segments.clone())
+    }
+
+    fn cleanup_after_error(&mut self) {
+        self.current_segment.take();
+        if self.recovery_manifest.is_none() {
+            for path in self.completed_segments.drain(..) {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
 fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingError> {
     let RecordingWriter {
         directory,
@@ -352,103 +467,77 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
         commands,
         recovery_manifest,
     } = writer;
-    let mut completed_segments = Vec::new();
-    let mut current_segment = None;
+    let mut segments = RecordingSegments::new(
+        directory,
+        stem,
+        sample_rate,
+        segment_data_limit,
+        recovery_manifest,
+    );
     let result = (|| {
         let mut frames = [[0.0_f32; 2]; DRAIN_FRAMES];
-        let mut bytes = Vec::with_capacity(DRAIN_FRAMES * 6);
+        let silence = [[0.0_f32; 2]; DRAIN_FRAMES];
         let mut finishing = false;
+        let mut expected_frame = None;
         loop {
             if !finishing {
                 match commands.recv_timeout(Duration::from_millis(5)) {
                     Ok(Command::Finish) | Err(RecvTimeoutError::Disconnected) => finishing = true,
                     Ok(Command::RefineStartSample(sample)) => {
-                        refine_recovery_start_sample(&recovery_manifest, sample)?;
+                        refine_recovery_start_sample(&segments.recovery_manifest, sample)?;
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                 }
             }
-            let count = consumer.pop_frames(&mut frames);
-            if count == 0 {
+            let Some(block) = consumer.pop_timed_frames(&mut frames) else {
                 if finishing {
                     break;
                 }
                 continue;
+            };
+            if block.frame_count == 0 {
+                return Err(AudioRecordingError::CaptureTimingInvalid);
             }
-            let mut frame_offset = 0;
-            while frame_offset < count {
-                if current_segment.is_none() {
-                    current_segment = Some(OpenRecordingSegment::create(
-                        &directory,
-                        &stem,
-                        completed_segments.len(),
-                        recovery_manifest.is_some(),
-                    )?);
+            let block_end = block
+                .first_frame
+                .checked_add(block.frame_count as u64)
+                .ok_or(AudioRecordingError::CaptureTimingInvalid)?;
+            let max_gap_frames = u64::from(sample_rate)
+                .checked_mul(MAX_CAPTURE_GAP_SECONDS)
+                .ok_or(AudioRecordingError::CaptureTimingInvalid)?;
+            if let Some(expected) = expected_frame {
+                if block.first_frame < expected {
+                    return Err(AudioRecordingError::CaptureTimingInvalid);
                 }
-                let segment = current_segment.as_mut().expect("segment was created");
-                let remaining_frames = ((segment_data_limit - segment.data_bytes) / 6) as usize;
-                let write_frames = remaining_frames.min(count - frame_offset);
-                bytes.clear();
-                for frame in &frames[frame_offset..frame_offset + write_frames] {
-                    for sample in frame {
-                        let sample = if sample.is_finite() {
-                            sample.clamp(-1.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        let pcm = if sample <= -1.0 {
-                            -8_388_608_i32
-                        } else {
-                            (sample * 8_388_607.0).round() as i32
-                        };
-                        bytes.extend_from_slice(&pcm.to_le_bytes()[..3]);
-                    }
+                let mut gap = block.first_frame - expected;
+                if gap > max_gap_frames {
+                    return Err(AudioRecordingError::CaptureTimingInvalid);
                 }
-                segment
-                    .file
-                    .as_mut()
-                    .expect("open segment retains its file")
-                    .write_all(&bytes)?;
-                segment.data_bytes += (write_frames as u64) * 6;
-                frame_offset += write_frames;
-                if segment.data_bytes == segment_data_limit {
-                    let segment = current_segment.take().expect("full segment exists");
-                    let frame_count = segment.data_bytes / 6;
-                    let path = segment.finish(sample_rate)?;
-                    completed_segments.push(path.clone());
-                    record_finalized_segment(&recovery_manifest, path, frame_count)?;
+                while gap > 0 {
+                    let silence_frames = gap.min(DRAIN_FRAMES as u64) as usize;
+                    segments.append_frames(&silence[..silence_frames])?;
+                    gap -= silence_frames as u64;
                 }
             }
+            segments.append_frames(&frames[..block.frame_count])?;
+            expected_frame = Some(block_end);
         }
         if control.has_failed() {
+            if control.has_timing_error() {
+                return Err(AudioRecordingError::CaptureTimingInvalid);
+            }
             return Err(AudioRecordingError::CaptureFailed {
                 overflow_frames: control.overflow_frames(),
             });
         }
-        if current_segment.is_none() && completed_segments.is_empty() {
+        if segments.current_segment.is_none() && segments.completed_segments.is_empty() {
             return Err(AudioRecordingError::EmptyTake);
         }
-        if let Some(segment) = current_segment.take() {
-            let frame_count = segment.data_bytes / 6;
-            let path = segment.finish(sample_rate)?;
-            completed_segments.push(path.clone());
-            record_finalized_segment(&recovery_manifest, path, frame_count)?;
-        }
-        if let Some((path, manifest)) = &recovery_manifest {
-            let mut manifest = manifest.lock().unwrap_or_else(|error| error.into_inner());
-            manifest.finalized = true;
-            write_recovery_manifest(path, &manifest)?;
-        }
-        Ok(completed_segments.clone())
+        segments.finish()
     })();
     if result.is_err() {
         control.fail();
-        drop(current_segment);
-        if recovery_manifest.is_none() {
-            for path in completed_segments {
-                let _ = fs::remove_file(path);
-            }
-        }
+        segments.cleanup_after_error();
     }
     result
 }
@@ -903,6 +992,99 @@ mod tests {
                 .all(|entry| !entry.file_name().to_string_lossy().ends_with(".part"))
         );
         fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn capture_timestamp_gaps_become_silence_without_compressing_timeline_duration() {
+        for sample_rate in [44_100, 48_000] {
+            let (directory, project) = test_project_path();
+            let (mut producer, consumer, control) = audio_capture_stream(16);
+            let worker = AudioRecordingWorker::start_recoverable(
+                &project,
+                sample_rate,
+                vec![41],
+                consumer,
+                control.clone(),
+            )
+            .expect("recoverable writer should start");
+            let manifest_path = worker
+                .recovery_manifest_path()
+                .expect("manifest should be available")
+                .to_path_buf();
+            worker
+                .set_start_sample(48_000)
+                .expect("recording anchor should be persisted");
+            control.start();
+            producer.push_planar_at(100, &[0.1, 0.2], &[0.1, 0.2]);
+            producer.push_planar_at(104, &[0.3], &[0.3]);
+            control.stop();
+
+            let recordings = worker
+                .finish()
+                .expect("take with a short gap should finalize");
+            assert_eq!(recordings.len(), 1);
+            let mut decoder = AudioStreamDecoder::open(&recordings[0]).expect("WAV should decode");
+            assert_eq!(decoder.metadata().sample_rate, Some(sample_rate));
+            assert_eq!(decoder.metadata().frame_count, Some(5));
+            let chunk = decoder
+                .next_chunk()
+                .expect("recording should decode")
+                .expect("recording should contain frames");
+            let left = chunk
+                .samples()
+                .iter()
+                .step_by(2)
+                .copied()
+                .collect::<Vec<_>>();
+            assert_eq!(left.len(), 5);
+            for (actual, expected) in left.iter().zip([0.1_f32, 0.2, 0.0, 0.0, 0.3]) {
+                assert!((actual - expected).abs() < 0.001);
+            }
+
+            let manifest: RecordingRecoveryManifest = serde_json::from_slice(
+                &fs::read(&manifest_path).expect("manifest should be readable"),
+            )
+            .expect("manifest should decode");
+            assert_eq!(manifest.segments[0].frame_count, 5);
+            discard_recording_recovery(&manifest_path).expect("test recovery should be discarded");
+            fs::remove_dir_all(directory).expect("test directory should be removed");
+        }
+    }
+
+    #[test]
+    fn regressing_capture_timestamp_invalidates_the_take() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(16);
+        let worker = AudioRecordingWorker::start(&project, 48_000, consumer, control.clone())
+            .expect("writer should start");
+        control.start();
+        producer.push_planar_at(100, &[0.1, 0.2], &[0.1, 0.2]);
+        producer.push_planar_at(101, &[0.3], &[0.3]);
+        control.stop();
+
+        assert!(matches!(
+            worker.finish(),
+            Err(AudioRecordingError::CaptureTimingInvalid)
+        ));
+        fs::remove_dir_all(directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn oversized_capture_gap_is_rejected_before_gap_fill_work() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(8);
+        let worker = AudioRecordingWorker::start(&project, 48_000, consumer, control.clone())
+            .expect("writer should start");
+        control.start();
+        producer.push_planar_at(100, &[0.1], &[0.1]);
+        producer.push_planar_at(480_102, &[0.2], &[0.2]);
+        control.stop();
+
+        assert!(matches!(
+            worker.finish(),
+            Err(AudioRecordingError::CaptureTimingInvalid)
+        ));
+        fs::remove_dir_all(directory).expect("test directory should be removed");
     }
 
     #[test]
