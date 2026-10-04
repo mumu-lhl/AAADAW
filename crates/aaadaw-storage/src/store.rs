@@ -243,6 +243,7 @@ pub enum StorageError {
     Sql(rusqlite::Error),
     Snapshot(SnapshotError),
     UnsupportedSchemaVersion { found: i64, current: u32 },
+    ReadOnlySchemaVersion { found: i64, required: u32 },
     WrongApplicationId(i64),
     MissingMigration(i64),
     InvalidStoredData(&'static str),
@@ -274,6 +275,10 @@ impl fmt::Display for StorageError {
             Self::UnsupportedSchemaVersion { found, current } => write!(
                 formatter,
                 "project schema version {found} is newer than supported version {current}"
+            ),
+            Self::ReadOnlySchemaVersion { found, required } => write!(
+                formatter,
+                "read-only project access requires schema version {required}, found {found}"
             ),
             Self::WrongApplicationId(id) => {
                 write!(
@@ -863,6 +868,40 @@ pub struct ProjectStore {
 }
 
 impl ProjectStore {
+    /// Loads a project without running schema migrations or enabling writes.
+    ///
+    /// This is intended for external read-only consumers such as the MCP server.
+    /// The project must already use the current schema; opening it cannot create,
+    /// migrate, or modify project files.
+    pub fn load_read_only(path: impl AsRef<Path>) -> Result<Project, StorageError> {
+        let requested_path = path.as_ref().to_owned();
+        let connection = Connection::open_with_flags(
+            &requested_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+
+        let application_id: i64 =
+            connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        if application_id != APPLICATION_ID {
+            return Err(StorageError::WrongApplicationId(application_id));
+        }
+        let schema_version: i64 =
+            connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if schema_version != i64::from(CURRENT_SCHEMA_VERSION) {
+            return Err(StorageError::ReadOnlySchemaVersion {
+                found: schema_version,
+                required: CURRENT_SCHEMA_VERSION,
+            });
+        }
+
+        ProjectStore {
+            connection,
+            database_path: requested_path,
+        }
+        .load()
+    }
+
     /// Opens or creates a project database and applies pending schema migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let requested_path = path.as_ref().to_owned();

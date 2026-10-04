@@ -9,6 +9,7 @@ The core project model includes sample-clock `AudioItem`s with undoable edits, A
 - [System architecture](docs/design/AAADAW_System_Architecture_Design.md)
 - [UI/UX design contract](DESIGN.md)
 - [Implementation roadmap](ROADMAP.md)
+- [MCP project inspection](docs/mcp.md)
 - [Project action-history decision](docs/adr/0001-project-action-history.md)
 
 ## Desktop shell

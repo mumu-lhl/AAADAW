@@ -25,6 +25,44 @@ fn remove_database(path: &PathBuf) {
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
 }
 
+#[test]
+fn readonly_project_load_does_not_modify_saved_database() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    let original_bytes = std::fs::read(&path).unwrap();
+    let project = ProjectStore::load_read_only(&path).unwrap();
+    assert!(project.tracks().is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+
+    remove_database(&path);
+}
+
+#[test]
+fn readonly_project_load_rejects_older_schema_without_migrating_it() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION - 1)
+        .unwrap();
+    drop(connection);
+    let original_bytes = std::fs::read(&path).unwrap();
+
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+
+    remove_database(&path);
+}
+
 struct FailingReader {
     remaining_bytes: usize,
 }
