@@ -285,6 +285,7 @@ impl App {
                     .map_or(error.clone(), |cleanup_error| {
                         format!("{error}; take cleanup failed: {cleanup_error}")
                     });
+                tracing::error!(error = %error, "audio import setup failed");
                 self.status = format!("Audio import could not start: {error}");
             }
             None => {
@@ -500,6 +501,7 @@ impl App {
                 };
             }
             Err(error) => {
+                tracing::error!(error = %error, "audio asset operation failed");
                 self.audio_asset_management_status = format!("Asset operation failed: {error}");
             }
         }
@@ -577,7 +579,10 @@ impl App {
                 }
                 self.status = "External audio source relinked".to_owned();
             }
-            Err(error) => self.status = format!("Audio relink failed: {error}"),
+            Err(error) => {
+                tracing::error!(item_id = ?item_id, error = %error, "audio item relink failed");
+                self.status = format!("Audio relink failed: {error}");
+            }
         }
     }
 
@@ -800,7 +805,10 @@ impl App {
                 }
                 self.start_audio_waveform_scan(false);
             }
-            Err(error) => self.status = format!("Audio import could not be finalized: {error}"),
+            Err(error) => {
+                tracing::error!(error = %error, "audio import finalization failed");
+                self.status = format!("Audio import could not be finalized: {error}");
+            }
         }
         Task::none()
     }

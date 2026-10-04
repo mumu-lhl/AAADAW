@@ -26,6 +26,10 @@ serde_json = "1.0"
 tempfile = "3.27.0"
 rmcp = { version = "3.5.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+directories = "6.0.0"
+tracing = "0.1"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }

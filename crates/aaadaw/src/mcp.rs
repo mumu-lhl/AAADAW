@@ -287,7 +287,10 @@ impl ServerHandler for ProjectMcpServer {
         };
         std::future::ready(Ok(match result {
             Ok(value) => CallToolResult::structured(value),
-            Err(message) => CallToolResult::structured_error(json!({"error": message})),
+            Err(message) => {
+                tracing::warn!(tool = request.name.as_ref(), error = %message, "MCP tool call failed");
+                CallToolResult::structured_error(json!({"error": message}))
+            }
         }
         .into()))
     }

@@ -61,6 +61,7 @@ impl App {
         let candidate = match result {
             Ok(candidate) => candidate,
             Err(error) => {
+                tracing::error!(error = %error, "recording recovery validation failed");
                 self.status = format!("Recording recovery validation failed: {error}");
                 return Task::none();
             }
@@ -175,6 +176,7 @@ impl App {
             |result| match result {
                 Ok((path, result)) => Message::RecordingRecoveryDiscarded(path, result),
                 Err(error) => {
+                    tracing::error!(error = %error, "recording recovery discard worker failed");
                     Message::RecordingRecoveryDiscarded(std::path::PathBuf::new(), Err(error))
                 }
             },
