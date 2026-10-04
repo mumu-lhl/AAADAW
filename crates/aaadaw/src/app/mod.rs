@@ -2366,7 +2366,6 @@ impl App {
                         playback_backend: Some(Self::playback_backend_setting(backend)),
                         ..self.audio_settings.clone()
                     };
-                    self.audio_settings = settings;
                     match audio_config::save(&settings) {
                         Ok(()) => {
                             self.status = format!("{} selected for playback", backend.name());
@@ -2381,6 +2380,7 @@ impl App {
                             self.audio_settings_feedback = self.status.clone();
                         }
                     }
+                    self.audio_settings = settings;
                 }
             }
         }
@@ -2918,7 +2918,6 @@ impl App {
             PlaybackBackend::PipeWire => audio_config::PlaybackBackendSetting::PipeWire,
             #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
             PlaybackBackend::Wasapi => audio_config::PlaybackBackendSetting::Wasapi,
-            _ => unreachable!("the playback selector only lists available backends"),
         }
     }
 
