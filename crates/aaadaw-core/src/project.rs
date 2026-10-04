@@ -6,8 +6,8 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, ItemId, MidiControllerData, MidiItem, MidiNote,
-    MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track,
-    TrackFxPlugin, TrackId, TrackInstrument,
+    MidiPitchBendData, MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature,
+    TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -226,6 +226,11 @@ enum ProjectEvent {
         item_id: ItemId,
         before: Vec<MidiControllerData>,
         after: Vec<MidiControllerData>,
+    },
+    MidiPitchBendsChanged {
+        item_id: ItemId,
+        before: Vec<crate::MidiPitchBendData>,
+        after: Vec<crate::MidiPitchBendData>,
     },
     MidiNotesQuantized {
         item_id: ItemId,
@@ -462,6 +467,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::MidiControllersChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::MidiPitchBendsChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiPitchBendsChanged {
                 item_id: *item_id,
                 before: after.clone(),
                 after: before.clone(),
@@ -726,6 +740,7 @@ impl Project {
                         })
                         .collect(),
                     controllers: item.controllers.as_ref().clone(),
+                    pitch_bends: item.pitch_bends.as_ref().clone(),
                 })
                 .collect(),
             tempo_points: self
@@ -928,6 +943,11 @@ impl Project {
             if !valid_midi_controllers(&controllers, item.length_ticks) {
                 return Err(SnapshotError::InvalidProjectData);
             }
+            let mut pitch_bends = item.pitch_bends;
+            pitch_bends.sort_unstable_by_key(|bend| bend.tick);
+            if !valid_midi_pitch_bends(&pitch_bends, item.length_ticks) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
@@ -935,6 +955,7 @@ impl Project {
                 length_ticks: item.length_ticks,
                 notes: Arc::new(notes),
                 controllers: Arc::new(controllers),
+                pitch_bends: Arc::new(pitch_bends),
             });
         }
 
@@ -1432,6 +1453,7 @@ impl Project {
                     length_ticks,
                     notes: Arc::new(Vec::new()),
                     controllers: Arc::new(Vec::new()),
+                    pitch_bends: Arc::new(Vec::new()),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::MidiItemInserted {
@@ -1462,6 +1484,12 @@ impl Project {
                         .is_none_or(|end| end > length_ticks)
                 }) {
                     return Err(ActionError::InvalidMidiNote);
+                }
+                if !valid_midi_controllers(&item.controllers, length_ticks) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                if !valid_midi_pitch_bends(&item.pitch_bends, length_ticks) {
+                    return Err(ActionError::InvalidMidiPitchBend);
                 }
                 let before = item.clone();
                 let after = MidiItem {
@@ -1507,6 +1535,7 @@ impl Project {
                     length_ticks: item_end - start_tick,
                     notes: Arc::new(notes),
                     controllers: Arc::clone(&original.controllers),
+                    pitch_bends: Arc::clone(&original.pitch_bends),
                 };
                 ids.next_item_id = next_item_id;
                 ids.next_note_id = next_note_id;
@@ -1605,6 +1634,11 @@ impl Project {
                         notes: Arc::new(notes),
                         controllers: Arc::new(controllers_for_segment(
                             &original.controllers,
+                            relative_points[index],
+                            relative_points[index + 1],
+                        )),
+                        pitch_bends: Arc::new(pitch_bends_for_segment(
+                            &original.pitch_bends,
                             relative_points[index],
                             relative_points[index + 1],
                         )),
@@ -1744,6 +1778,25 @@ impl Project {
                     item_id,
                     before: item.controllers.as_ref().clone(),
                     after: controllers,
+                }
+            }
+            DawAction::SetMidiPitchBends {
+                item_id,
+                mut pitch_bends,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                pitch_bends.sort_unstable_by_key(|bend| bend.tick);
+                if !valid_midi_pitch_bends(&pitch_bends, item.length_ticks) {
+                    return Err(ActionError::InvalidMidiPitchBend);
+                }
+                ProjectEvent::MidiPitchBendsChanged {
+                    item_id,
+                    before: item.pitch_bends.as_ref().clone(),
+                    after: pitch_bends,
                 }
             }
             DawAction::QuantizeItem {
@@ -2210,6 +2263,8 @@ impl Project {
                             .checked_add(note.data.duration)
                             .is_none_or(|end| end > after.length_ticks)
                     })
+                    || !valid_midi_controllers(&after.controllers, after.length_ticks)
+                    || !valid_midi_pitch_bends(&after.pitch_bends, after.length_ticks)
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
@@ -2253,6 +2308,7 @@ impl Project {
                             || item.length_ticks == 0
                             || item.start_tick.checked_add(item.length_ticks).is_none()
                             || !valid_midi_controllers(&item.controllers, item.length_ticks)
+                            || !valid_midi_pitch_bends(&item.pitch_bends, item.length_ticks)
                             || !existing_item_ids.insert(item.id)
                             || item.notes.iter().any(|note| {
                                 note.data.pitch > 127
@@ -2349,6 +2405,23 @@ impl Project {
                 }
                 item.controllers = Arc::new(after.clone());
             }
+            ProjectEvent::MidiPitchBendsChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.pitch_bends.as_ref() != before
+                    || !valid_midi_pitch_bends(after, item.length_ticks)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.pitch_bends = Arc::new(after.clone());
+            }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
                 let item = state
                     .midi_items
@@ -2424,6 +2497,13 @@ fn valid_midi_controllers(controllers: &[MidiControllerData], length_ticks: u64)
     })
 }
 
+fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData], length_ticks: u64) -> bool {
+    let mut positions = HashSet::with_capacity(pitch_bends.len());
+    pitch_bends
+        .iter()
+        .all(|bend| bend.value <= 16_383 && bend.tick < length_ticks && positions.insert(bend.tick))
+}
+
 fn controllers_for_segment(
     controllers: &[MidiControllerData],
     start_tick: u64,
@@ -2461,6 +2541,34 @@ fn controllers_for_segment(
     }
     segment.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
     segment
+}
+
+fn pitch_bends_for_segment(
+    pitch_bends: &[MidiPitchBendData],
+    start_tick: u64,
+    end_tick: u64,
+) -> Vec<MidiPitchBendData> {
+    let mut result = Vec::new();
+    if let Some(latest) = pitch_bends
+        .iter()
+        .filter(|bend| bend.tick <= start_tick)
+        .max_by_key(|bend| bend.tick)
+    {
+        result.push(MidiPitchBendData {
+            tick: 0,
+            value: latest.value,
+        });
+    }
+    result.extend(
+        pitch_bends
+            .iter()
+            .filter(|bend| bend.tick > start_tick && bend.tick < end_tick)
+            .map(|bend| MidiPitchBendData {
+                tick: bend.tick - start_tick,
+                value: bend.value,
+            }),
+    );
+    result
 }
 
 fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {

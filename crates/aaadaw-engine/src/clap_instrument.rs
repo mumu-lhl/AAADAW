@@ -380,9 +380,9 @@ impl ClapInstrumentOwner {
                 left: vec![0.0; max_block_frames],
                 right: vec![0.0; max_block_frames],
                 event_scratch: Vec::with_capacity(max_events),
-                // A reset block may need CC64/CC123/CC120 on every MIDI channel
+                // A reset block sends three all-channel CCs and a centered pitch bend,
                 // in addition to every preallocated active-note release.
-                input_events: EventBuffer::with_capacity(max_events.saturating_add(48)),
+                input_events: EventBuffer::with_capacity(max_events.saturating_add(64)),
                 active_notes: Vec::with_capacity(max_events),
                 active_note_scratch: Vec::with_capacity(max_events),
                 input_note_port,
@@ -876,7 +876,10 @@ impl ClapInstrumentProcessor {
         self.active_note_scratch
             .extend_from_slice(&self.active_notes);
         for event in &self.event_scratch {
-            if event.kind == MidiEventKind::ControllerChange {
+            if matches!(
+                event.kind,
+                MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+            ) {
                 continue;
             }
             let note_id = u32::try_from(
@@ -917,6 +920,9 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::ControllerChange => {
                     unreachable!("controller events were skipped while updating active note state")
                 }
+                MidiEventKind::PitchBend => {
+                    unreachable!("pitch-bend events were skipped while updating active note state")
+                }
             }
         }
 
@@ -925,18 +931,30 @@ impl ClapInstrumentProcessor {
             let sample_offset = u32::try_from(event.sample_offset).map_err(|_| {
                 ClapInstrumentError::new("MIDI event offset exceeds the CLAP range")
             })?;
-            if event.kind == MidiEventKind::ControllerChange {
-                let controller = event.controller.expect("controller event number");
+            if matches!(
+                event.kind,
+                MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+            ) {
                 let port = self.input_midi_port.ok_or_else(|| {
                     ClapInstrumentError::new(
-                        "CLAP instrument does not support MIDI 1.0 controller events",
+                        "CLAP instrument does not support MIDI 1.0 control events",
                     )
                 })?;
-                self.input_events.push(&MidiEvent::new(
-                    sample_offset,
-                    port,
-                    [0xb0, controller, event.velocity],
-                ));
+                let midi_bytes = match event.kind {
+                    MidiEventKind::ControllerChange => [
+                        0xb0,
+                        event.controller.expect("controller event number"),
+                        event.velocity,
+                    ],
+                    MidiEventKind::PitchBend => {
+                        pitch_bend_midi_bytes(event.pitch_bend.expect("pitch-bend event value"))
+                    }
+                    MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
+                        unreachable!("only control events are handled in this branch")
+                    }
+                };
+                self.input_events
+                    .push(&MidiEvent::new(sample_offset, port, midi_bytes));
                 continue;
             }
             let note_id = u32::try_from(
@@ -964,6 +982,9 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::ControllerChange => {
                     unreachable!("controller events were emitted as raw MIDI events above")
                 }
+                MidiEventKind::PitchBend => {
+                    unreachable!("pitch-bend events were emitted as raw MIDI events above")
+                }
             }
         }
         output.fill([0.0, 0.0]);
@@ -981,6 +1002,7 @@ impl ClapInstrumentProcessor {
                 self.push_midi_controller_all_channels(port, 64);
                 self.push_midi_controller_all_channels(port, 123);
                 self.push_midi_controller_all_channels(port, 120);
+                self.push_midi_pitch_bend_center_all_channels(port);
             } else {
                 return Ok(());
             }
@@ -1005,6 +1027,7 @@ impl ClapInstrumentProcessor {
             self.push_midi_controller_all_channels(port, 64);
             self.push_midi_controller_all_channels(port, 123);
             self.push_midi_controller_all_channels(port, 120);
+            self.push_midi_pitch_bend_center_all_channels(port);
         }
         let mut discarded_audio = [[0.0, 0.0]];
         self.process_prepared_events(&mut discarded_audio)?;
@@ -1017,6 +1040,14 @@ impl ClapInstrumentProcessor {
             let status = 0xb0 | channel;
             self.input_events
                 .push(&MidiEvent::new(0, port, [status, controller, 0]));
+        }
+    }
+
+    fn push_midi_pitch_bend_center_all_channels(&mut self, port: u16) {
+        for channel in 0..16 {
+            let status = 0xe0 | channel;
+            self.input_events
+                .push(&MidiEvent::new(0, port, [status, 0, 64]));
         }
     }
 
@@ -1093,6 +1124,10 @@ impl ClapInstrumentProcessor {
     pub(crate) fn supports_midi_controllers(&self) -> bool {
         self.input_midi_port.is_some()
     }
+}
+
+fn pitch_bend_midi_bytes(value: u16) -> [u8; 3] {
+    [0xe0, (value & 0x7f) as u8, (value >> 7) as u8]
 }
 
 /// Lists plugin descriptors exposed by one CLAP entry file.
@@ -1357,6 +1392,13 @@ fn validate_stereo_effect_ports(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pitch_bend_values_encode_as_little_endian_14_bit_midi_data() {
+        assert_eq!(pitch_bend_midi_bytes(0), [0xe0, 0, 0]);
+        assert_eq!(pitch_bend_midi_bytes(8192), [0xe0, 0, 64]);
+        assert_eq!(pitch_bend_midi_bytes(16_383), [0xe0, 127, 127]);
+    }
     use crate::{
         AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor,
         audio_monitor_stream, pcm_stream,
@@ -2225,6 +2267,7 @@ mod tests {
                 pitch: 64,
                 velocity: 127,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -2234,6 +2277,7 @@ mod tests {
                 pitch: 64,
                 velocity: 127,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -2243,6 +2287,7 @@ mod tests {
                 pitch: 64,
                 velocity: 0,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOff,
             },
         ];
@@ -2271,7 +2316,7 @@ mod tests {
     fn processor_delivers_midi_controller_events_at_their_sample_offsets() {
         let entry = test_plugin_entry::<true, 2>();
         let (owner, mut processor) =
-            ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 16, 8)
+            ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 16, 10)
                 .expect("test synth should load");
         let (track_id, note_id) = test_ids();
         let events = [
@@ -2282,6 +2327,7 @@ mod tests {
                 pitch: 64,
                 velocity: 127,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -2291,6 +2337,7 @@ mod tests {
                 pitch: 64,
                 velocity: 127,
                 controller: Some(64),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2300,6 +2347,7 @@ mod tests {
                 pitch: 64,
                 velocity: 32,
                 controller: Some(11),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2309,6 +2357,7 @@ mod tests {
                 pitch: 64,
                 velocity: 64,
                 controller: Some(1),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2318,6 +2367,7 @@ mod tests {
                 pitch: 64,
                 velocity: 0,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -2327,6 +2377,7 @@ mod tests {
                 pitch: 64,
                 velocity: 0,
                 controller: Some(123),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2336,6 +2387,7 @@ mod tests {
                 pitch: 64,
                 velocity: 0,
                 controller: Some(120),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -2345,7 +2397,18 @@ mod tests {
                 pitch: 64,
                 velocity: 0,
                 controller: Some(64),
+                pitch_bend: None,
                 kind: MidiEventKind::ControllerChange,
+            },
+            ScheduledMidiEvent {
+                sample_offset: 9,
+                track_id,
+                note_id: None,
+                pitch: 0,
+                velocity: 0,
+                controller: None,
+                pitch_bend: Some(16_383),
+                kind: MidiEventKind::PitchBend,
             },
         ];
         let mut output = [[0.0; 2]; 12];
@@ -2391,6 +2454,7 @@ mod tests {
             pitch: 127,
             velocity: 127,
             controller: None,
+            pitch_bend: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -2421,6 +2485,7 @@ mod tests {
             pitch: 64,
             velocity: 127,
             controller: None,
+            pitch_bend: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -2469,6 +2534,7 @@ mod tests {
             pitch: 60,
             velocity: 100,
             controller: None,
+            pitch_bend: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[1.0; 2]; 4];

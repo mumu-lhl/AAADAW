@@ -1181,6 +1181,15 @@ impl App {
                     "MIDI controller lane edited",
                 );
             }
+            Message::SetMidiPitchBends(item_id, pitch_bends) => {
+                self.apply_action(
+                    DawAction::SetMidiPitchBends {
+                        item_id,
+                        pitch_bends,
+                    },
+                    "MIDI pitch-bend lane edited",
+                );
+            }
             Message::PianoRollPan(beats) => {
                 let delta = i128::from(beats) * i128::from(self.project.settings().ppq());
                 self.midi_editor_origin_tick = (i128::from(self.midi_editor_origin_tick) + delta)

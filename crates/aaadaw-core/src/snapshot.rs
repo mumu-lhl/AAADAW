@@ -1,6 +1,6 @@
 use crate::{
-    MidiControllerData, MidiNoteData, ProjectSettings, TempoCurve, TimebaseError,
-    VolumeAutomationPoint,
+    MidiControllerData, MidiNoteData, MidiPitchBendData, ProjectSettings, TempoCurve,
+    TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -75,6 +75,7 @@ pub struct MidiItemSnapshot {
     pub length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,
+    pub pitch_bends: Vec<MidiPitchBendData>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

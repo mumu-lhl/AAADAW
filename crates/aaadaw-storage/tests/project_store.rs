@@ -1,5 +1,6 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiNoteData, Project, TimeSignature, VolumeAutomationPoint,
+    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
+    VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -218,6 +219,21 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         })
         .expect("MIDI sustain events should be stored in the project");
     project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    tick: 0,
+                    value: 8192,
+                },
+                MidiPitchBendData {
+                    tick: 720,
+                    value: 11_337,
+                },
+            ],
+        })
+        .expect("MIDI pitch bends should be stored in the project");
+    project
         .apply(DawAction::SetTempo {
             start_tick: 960,
             bpm: 90.0,
@@ -295,6 +311,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE track_fx_plugins DROP COLUMN state; \
              DROP TABLE track_fx_parameter_values; \
              DROP TABLE midi_controllers; \
+             DROP TABLE midi_pitch_bends; \
              DROP TABLE track_volume_automation; \
              ALTER TABLE tracks DROP COLUMN output_track_id; \
              ALTER TABLE tracks DROP COLUMN is_bus; \
@@ -1260,7 +1277,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; PRAGMA user_version = 6;",
+            "DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1307,7 +1324,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_controllers; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1334,7 +1351,7 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
@@ -1360,7 +1377,7 @@ fn schema_nine_projects_migrate_tracks_to_master_by_default() {
     store.close().expect("project should close");
 
     let connection = Connection::open(&path).expect("project should be SQLite");
-    connection.execute_batch("ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; PRAGMA user_version = 9;").unwrap();
+    connection.execute_batch("ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 9;").unwrap();
     drop(connection);
     let store = ProjectStore::open(&path).expect("schema nine should migrate");
     let restored = store.load().unwrap();

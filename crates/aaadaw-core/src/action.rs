@@ -1,6 +1,6 @@
 use crate::{
-    GridFraction, ItemId, MidiControllerData, MidiNoteData, NoteId, TempoCurve, TimeSignature,
-    TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
+    GridFraction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, TempoCurve,
+    TimeSignature, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 /// A command that changes project state.
@@ -125,6 +125,11 @@ pub enum DawAction {
     SetMidiControllers {
         item_id: ItemId,
         controllers: Vec<MidiControllerData>,
+    },
+    /// Replace the 14-bit pitch-bend events belonging to a MIDI item.
+    SetMidiPitchBends {
+        item_id: ItemId,
+        pitch_bends: Vec<MidiPitchBendData>,
     },
     /// Move note starts toward the nearest musical grid position.
     QuantizeItem {

@@ -214,13 +214,13 @@ BatchTransaction { tx_id: u64, actions: Vec\<DawAction\> },
 
 - **事件追逐机制（Event Chasing）**：当用户在时间轴进行 Seeking
   或跳转时，引擎自动向后追溯并扫描当前位置之前的 MIDI 控制器状态（如
-  CC64 延音踏板、CC1 调制轮、Pitch Bend 弯音及 Program Change
-  变音色指令），并在新位置立刻补发最新的 CC
-  状态，防止踏板状态丢失或音色错乱。
+  CC64 延音踏板、CC1 调制轮和 14-bit Pitch Bend 弯音），并在新位置立刻补发
+  最新状态。Pitch Bend 作为独立于 7-bit CC 的事件存储；无历史弯音时发送中心值
+  8192，避免反向 seek 后残留旧弯音。
 
 - **复位与 Panic 保护**：跳转或停止播放时，自动向所有激活通道发送 Note
   Off、All Notes Off (CC 123) 与 All Sound Off (CC 120)
-  消息，彻底杜绝音符挂起（Stuck Notes）与尾音发声问题。
+  消息和中心 Pitch Bend（8192），避免音符挂起（Stuck Notes）和弯音状态泄漏。
 
 ## 5. 实时音频图与无锁调度引擎
 

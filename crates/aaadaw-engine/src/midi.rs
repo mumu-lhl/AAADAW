@@ -5,6 +5,7 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MidiEventKind {
     ControllerChange,
+    PitchBend,
     NoteOff,
     NoteOn,
 }
@@ -18,6 +19,7 @@ pub struct ScheduledMidiEvent {
     pub pitch: u8,
     pub velocity: u8,
     pub controller: Option<u8>,
+    pub pitch_bend: Option<u16>,
     pub kind: MidiEventKind,
 }
 
@@ -35,6 +37,7 @@ struct CompiledMidiEvent {
     pitch: u8,
     velocity: u8,
     controller: Option<u8>,
+    pitch_bend: Option<u16>,
     kind: MidiEventKind,
 }
 
@@ -49,6 +52,18 @@ struct ControllerTimeline {
     track_id: TrackId,
     controller: u8,
     values: Vec<CompiledControllerValue>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompiledPitchBendValue {
+    absolute_sample: u64,
+    value: u16,
+}
+
+#[derive(Clone, Debug)]
+struct PitchBendTimeline {
+    track_id: TrackId,
+    values: Vec<CompiledPitchBendValue>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +95,7 @@ struct ActiveNoteQuery {
 pub struct MidiEventPlan {
     events: Vec<CompiledMidiEvent>,
     controller_timelines: Vec<ControllerTimeline>,
+    pitch_bend_timelines: Vec<PitchBendTimeline>,
     notes: Vec<CompiledMidiNote>,
     note_interval_nodes: Vec<MidiNoteIntervalNode>,
     note_interval_root: Option<usize>,
@@ -138,6 +154,7 @@ impl MidiEventPlan {
         let mut events = Vec::new();
         let mut notes = Vec::new();
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
+        let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
 
         for item in project.midi_items() {
             let track = tracks
@@ -193,6 +210,7 @@ impl MidiEventPlan {
                     pitch: note.pitch(),
                     velocity: note.velocity(),
                     controller: None,
+                    pitch_bend: None,
                     kind: MidiEventKind::NoteOn,
                 });
                 events.push(CompiledMidiEvent {
@@ -202,6 +220,7 @@ impl MidiEventPlan {
                     pitch: note.pitch(),
                     velocity: 0,
                     controller: None,
+                    pitch_bend: None,
                     kind: MidiEventKind::NoteOff,
                 });
             }
@@ -240,7 +259,45 @@ impl MidiEventPlan {
                     pitch: controller.controller,
                     velocity: controller.value,
                     controller: Some(controller.controller),
+                    pitch_bend: None,
                     kind: MidiEventKind::ControllerChange,
+                });
+            }
+            for bend in item.pitch_bends() {
+                let absolute_tick = item
+                    .start_tick()
+                    .checked_add(bend.tick)
+                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
+                let absolute_sample = project
+                    .sample_at_tick(absolute_tick)
+                    .map_err(MidiScheduleError::Timebase)?;
+                let timeline = pitch_bend_timelines
+                    .iter_mut()
+                    .find(|timeline| timeline.track_id == item.track_id());
+                let timeline = if let Some(timeline) = timeline {
+                    timeline
+                } else {
+                    pitch_bend_timelines.push(PitchBendTimeline {
+                        track_id: item.track_id(),
+                        values: Vec::new(),
+                    });
+                    pitch_bend_timelines
+                        .last_mut()
+                        .expect("pitch-bend timeline was just inserted")
+                };
+                timeline.values.push(CompiledPitchBendValue {
+                    absolute_sample,
+                    value: bend.value,
+                });
+                events.push(CompiledMidiEvent {
+                    absolute_sample,
+                    track_id: item.track_id(),
+                    note_id: None,
+                    pitch: 0,
+                    velocity: 0,
+                    controller: None,
+                    pitch_bend: Some(bend.value),
+                    kind: MidiEventKind::PitchBend,
                 });
             }
         }
@@ -252,9 +309,13 @@ impl MidiEventPlan {
                 event.track_id.value(),
                 event.pitch,
                 event.note_id.map_or(0, NoteId::value),
+                event.pitch_bend.unwrap_or(0),
             )
         });
         for timeline in &mut controller_timelines {
+            timeline.values.sort_by_key(|value| value.absolute_sample);
+        }
+        for timeline in &mut pitch_bend_timelines {
             timeline.values.sort_by_key(|value| value.absolute_sample);
         }
         notes.sort_unstable_by_key(|note| {
@@ -268,6 +329,7 @@ impl MidiEventPlan {
         Ok(Self {
             events,
             controller_timelines,
+            pitch_bend_timelines,
             notes,
             note_interval_nodes,
             note_interval_root,
@@ -347,10 +409,66 @@ impl MidiEventPlan {
                     pitch: timeline.controller,
                     velocity: value.value,
                     controller: Some(timeline.controller),
+                    pitch_bend: None,
                     kind: MidiEventKind::ControllerChange,
                 });
                 written += 1;
             }
+        }
+        Ok(written)
+    }
+
+    /// Copies the pitch-bend state at `sample`, once per track, for seek chase.
+    pub fn active_pitch_bends_at(
+        &self,
+        sample: u64,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, MidiScheduleError> {
+        let active = self
+            .pitch_bend_timelines
+            .iter()
+            .filter(|timeline| {
+                let before = timeline
+                    .values
+                    .partition_point(|value| value.absolute_sample < sample);
+                let through = timeline
+                    .values
+                    .partition_point(|value| value.absolute_sample <= sample);
+                before == through
+            })
+            .count();
+        if output.len() < active {
+            return Err(MidiScheduleError::OutputBufferTooSmall {
+                required: active,
+                available: output.len(),
+            });
+        }
+        let mut written = 0;
+        for timeline in &self.pitch_bend_timelines {
+            let end = timeline
+                .values
+                .partition_point(|value| value.absolute_sample < sample);
+            let through = timeline
+                .values
+                .partition_point(|value| value.absolute_sample <= sample);
+            if through != end {
+                // The block event at this exact sample will apply the state once.
+                continue;
+            }
+            let value = end
+                .checked_sub(1)
+                .map_or(8192, |index| timeline.values[index].value);
+            output[written] = Some(ScheduledMidiEvent {
+                sample_offset: 0,
+                track_id: timeline.track_id,
+                note_id: None,
+                pitch: 0,
+                velocity: 0,
+                controller: None,
+                pitch_bend: Some(value),
+                kind: MidiEventKind::PitchBend,
+            });
+            written += 1;
         }
         Ok(written)
     }
@@ -424,6 +542,7 @@ impl MidiEventPlan {
                 pitch: note.pitch,
                 velocity: note.velocity,
                 controller: None,
+                pitch_bend: None,
                 kind: MidiEventKind::NoteOn,
             });
             *written += 1;
@@ -438,11 +557,15 @@ impl MidiEventPlan {
             .count()
     }
 
-    pub(crate) fn controller_event_count_for_track(&self, track_id: TrackId) -> usize {
+    pub(crate) fn midi_control_event_count_for_track(&self, track_id: TrackId) -> usize {
         self.events
             .iter()
             .filter(|event| {
-                event.track_id == track_id && event.kind == MidiEventKind::ControllerChange
+                event.track_id == track_id
+                    && matches!(
+                        event.kind,
+                        MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+                    )
             })
             .count()
     }
@@ -482,6 +605,7 @@ impl MidiEventPlan {
                 pitch: event.pitch,
                 velocity: event.velocity,
                 controller: event.controller,
+                pitch_bend: event.pitch_bend,
                 kind: event.kind,
             });
         }
@@ -542,6 +666,7 @@ fn compile_note_interval_tree(
 
 fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -> u8 {
     match kind {
+        MidiEventKind::PitchBend => 0,
         MidiEventKind::ControllerChange if controller == Some(64) && value < 64 => 2,
         MidiEventKind::ControllerChange => 0,
         MidiEventKind::NoteOff => 1,

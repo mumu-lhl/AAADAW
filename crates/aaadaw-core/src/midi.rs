@@ -48,6 +48,14 @@ pub struct MidiControllerData {
     pub value: u8,
 }
 
+/// Input data for a MIDI 14-bit pitch-bend event; `tick` is relative to its item.
+/// The neutral pitch-bend value is 8192.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MidiPitchBendData {
+    pub tick: u64,
+    pub value: u16,
+}
+
 /// A MIDI note stored in a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiNote {
@@ -91,6 +99,7 @@ pub struct MidiItem {
     pub(crate) length_ticks: u64,
     pub(crate) notes: Arc<Vec<MidiNote>>,
     pub(crate) controllers: Arc<Vec<MidiControllerData>>,
+    pub(crate) pitch_bends: Arc<Vec<MidiPitchBendData>>,
 }
 
 impl MidiItem {
@@ -122,5 +131,10 @@ impl MidiItem {
     /// Returns control-change events sorted by tick, then controller number.
     pub fn controllers(&self) -> &[MidiControllerData] {
         &self.controllers
+    }
+
+    /// Returns pitch-bend events sorted by tick.
+    pub fn pitch_bends(&self) -> &[MidiPitchBendData] {
+        &self.pitch_bends
     }
 }

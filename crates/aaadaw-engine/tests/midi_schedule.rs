@@ -1,4 +1,6 @@
-use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TempoCurve};
+use aaadaw_core::{
+    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TempoCurve,
+};
 use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
@@ -72,6 +74,52 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     let event = output[0].expect("the event should be initialized");
     assert_eq!(event.kind, MidiEventKind::NoteOff);
     assert_eq!(event.velocity, 0);
+}
+
+#[test]
+fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
+    let (mut project, track_id) = project_with_note(69, 480, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    tick: 0,
+                    value: 8192,
+                },
+                MidiPitchBendData {
+                    tick: 960,
+                    value: 16_383,
+                },
+            ],
+        })
+        .expect("pitch-bend points should be accepted");
+    let bend_sample = project.sample_at_tick(960).expect("bend tick should map");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 4];
+
+    assert_eq!(
+        plan.events_for_block(bend_sample, 1, &mut output)
+            .expect("bend point should be scheduled at its sample"),
+        1
+    );
+    let event = output[0].unwrap();
+    assert_eq!(event.kind, MidiEventKind::PitchBend);
+    assert_eq!(event.track_id, track_id);
+    assert_eq!(event.pitch_bend, Some(16_383));
+    assert_eq!(event.controller, None);
+    assert_eq!(event.sample_offset, 0);
+
+    assert_eq!(
+        plan.active_pitch_bends_at(bend_sample + 1, &mut output)
+            .expect("seek chase should return the latest bend"),
+        1
+    );
+    let chased = output[0].unwrap();
+    assert_eq!(chased.kind, MidiEventKind::PitchBend);
+    assert_eq!(chased.pitch_bend, Some(16_383));
+    assert_eq!(chased.sample_offset, 0);
 }
 
 #[test]
