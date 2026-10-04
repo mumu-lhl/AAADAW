@@ -55,6 +55,6 @@ Add `--write` after the project path to expose `daw_create_track`:
 }
 ```
 
-The tool accepts one non-empty track name of at most 128 characters, creates a normal audio track at the end of the track list through `DawAction::CreateTrack`, and saves it before returning the new track ID. Invalid requests do not change the project. This opt-in currently enables track creation only.
+The `daw_create_track` tool accepts one non-empty track name of at most 128 characters, creates a normal audio track at the end of the track list through `DawAction::CreateTrack`, and saves it before returning the new track ID. `daw_insert_midi_notes` accepts a track ID, an existing MIDI item ID, and 1–512 notes with clip-relative tick, duration, pitch, and velocity. It applies the whole batch through one `DawAction::AddMidiNotes`, saves it before returning the new note IDs, and rejects items that do not belong to the named track. Invalid requests do not change the project.
 
 Write mode takes an exclusive project session lock for the server's lifetime. The desktop app and a second MCP writer refuse to open the same project until the MCP server exits. Stop the writer before opening the project in the desktop app; its completed changes are then available when the project is reopened. A sibling `.lock` file may remain after the session ends; the operating-system lock is released automatically. Only enable write mode for a project you intend to modify.
