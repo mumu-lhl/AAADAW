@@ -15,6 +15,7 @@ dependencies = [
  "iced",
  "rfd",
  "rmcp",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

@@ -1,8 +1,21 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project, VolumeAutomationPoint};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use serde_json::{Value, json};
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::process::{Command, Stdio};
+
+fn send_mcp_request(stdin: &mut impl Write, stdout: &mut impl BufRead, request: Value) -> Value {
+    writeln!(stdin, "{request}").unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+fn send_mcp_notification(stdin: &mut impl Write, method: &str) {
+    writeln!(stdin, "{}", json!({"jsonrpc": "2.0", "method": method})).unwrap();
+    stdin.flush().unwrap();
+}
 
 #[test]
 fn stdio_server_lists_and_reads_bounded_project_resources() {
@@ -460,6 +473,151 @@ fn explicitly_authorized_mcp_track_creation_persists_and_validates() {
             .as_u64()
             .unwrap()
     );
+}
+
+#[test]
+fn mcp_save_failure_rolls_back_the_session_and_later_edits_still_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-save-rollback-test.aaadaw");
+    let store = ProjectStore::open(&project_path).unwrap();
+    store.close().unwrap();
+
+    // Fail only the deliberately named first track so a later valid write can
+    // prove that both the in-memory history and SQLite connection recovered.
+    let connection = rusqlite::Connection::open(&project_path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_named_track_insert
+             BEFORE INSERT ON tracks
+             WHEN NEW.name = 'Force save failure'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected snapshot save failure');
+             END;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let initialize = send_mcp_request(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "aaadaw-save-rollback-test", "version": "0.1"}
+            }
+        }),
+    );
+    assert_eq!(initialize["id"], 1);
+    send_mcp_notification(&mut stdin, "notifications/initialized");
+
+    let failed_edit = send_mcp_request(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+            "name": "daw_create_track",
+            "arguments": {"name": "Force save failure"}
+            }
+        }),
+    );
+    assert_eq!(failed_edit["result"]["isError"], true);
+    assert!(
+        failed_edit["result"]["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("injected snapshot save failure")
+    );
+
+    // Read through a separate SQLite connection before any later successful
+    // save can hide a partial commit from the failed snapshot transaction.
+    let reopened_after_failure = ProjectStore::load_read_only(&project_path).unwrap();
+    assert!(reopened_after_failure.tracks().is_empty());
+
+    let in_memory_after_failure = send_mcp_request(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+    );
+    let structure: Value = serde_json::from_str(
+        in_memory_after_failure["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(structure["tracks"].as_array().unwrap().is_empty());
+
+    let successful_edit = send_mcp_request(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "daw_create_track", "arguments": {"name": "Lead Vocal"}}
+        }),
+    );
+    assert_eq!(successful_edit["result"]["isError"], false);
+    assert_eq!(
+        successful_edit["result"]["structuredContent"]["name"],
+        "Lead Vocal"
+    );
+    let in_memory_after_success = send_mcp_request(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+    );
+    let structure: Value = serde_json::from_str(
+        in_memory_after_success["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(structure["tracks"].as_array().unwrap().len(), 1);
+    assert_eq!(structure["tracks"][0]["name"], "Lead Vocal");
+
+    drop(stdin);
+    drop(stdout);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    assert_eq!(reopened.tracks().len(), 1);
+    assert_eq!(reopened.tracks()[0].name(), "Lead Vocal");
 }
 
 #[test]
