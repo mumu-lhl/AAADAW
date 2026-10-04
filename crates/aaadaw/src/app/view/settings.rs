@@ -76,7 +76,7 @@ fn audio_output(app: &App) -> Element<'_, Message> {
             text("Always active · default -1 dBFS").size(10),
             ]
             .width(Length::Fill)
-            .spacing(2),
+            .spacing(tokens::SPACING_XS),
             iced::widget::pick_list(
                 master_ceiling_choices(),
                 Some(app.audio_output_settings.master_output_ceiling),
