@@ -6,6 +6,8 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 pub const DEFAULT_PPQ: u32 = 960;
 /// Default project tempo in quarter notes per minute.
 pub const DEFAULT_TEMPO_BPM: f64 = 120.0;
+// Tempo segment integration uses f64 positions; reject integers beyond its exact range.
+const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
 
 /// Immutable construction settings for a project's timebase.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,7 +71,7 @@ pub enum TimebaseError {
     InvalidPpq,
     /// Tempo must be finite and greater than zero.
     InvalidTempo,
-    /// Tick/sample position exceeds the supported range.
+    /// Tick/sample position exceeds the exact range of the floating-point integrator.
     PositionOutOfRange,
     /// The initial tempo point at tick zero cannot be removed.
     CannotRemoveInitialTempo,
@@ -489,6 +491,9 @@ impl TempoMap {
     }
 
     pub(crate) fn sample_at_tick(&self, tick: u64) -> Result<u64, TimebaseError> {
+        if tick > MAX_EXACT_FLOAT_POSITION {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
         let index = self
             .points
             .partition_point(|point| point.start_tick <= tick)
@@ -515,6 +520,9 @@ impl TempoMap {
     }
 
     pub(crate) fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
+        if sample > MAX_EXACT_FLOAT_POSITION {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
         let sample = sample as f64;
         let index = self
             .points
@@ -547,6 +555,9 @@ impl TempoMap {
             .start_tick
             .checked_add(offset)
             .ok_or(TimebaseError::PositionOutOfRange)?;
+        if tick > MAX_EXACT_FLOAT_POSITION {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
         Ok(next.map_or(tick, |next| tick.min(next.start_tick)))
     }
 
@@ -559,6 +570,9 @@ impl TempoMap {
         for index in 1..points.len() {
             let previous = points[index - 1];
             let next = points[index];
+            if next.start_tick > MAX_EXACT_FLOAT_POSITION {
+                return Err(TimebaseError::PositionOutOfRange);
+            }
             let length = next.start_tick - previous.start_tick;
             let duration = segment_sample_offset(
                 sample_rate,
@@ -572,7 +586,7 @@ impl TempoMap {
             let start_sample = previous.start_sample + duration;
             if !start_sample.is_finite()
                 || start_sample <= previous.start_sample
-                || start_sample >= u64::MAX as f64
+                || start_sample > MAX_EXACT_FLOAT_POSITION as f64
             {
                 return Err(TimebaseError::PositionOutOfRange);
             }
@@ -664,7 +678,7 @@ fn is_valid_tempo_for(sample_rate: u32, ppq: u32, bpm: f64) -> bool {
 
 fn rounded_position(position: f64) -> Result<u64, TimebaseError> {
     let rounded = position.round();
-    if !rounded.is_finite() || rounded < 0.0 || rounded >= u64::MAX as f64 {
+    if !rounded.is_finite() || rounded < 0.0 || rounded > MAX_EXACT_FLOAT_POSITION as f64 {
         return Err(TimebaseError::PositionOutOfRange);
     }
     Ok(rounded as u64)
