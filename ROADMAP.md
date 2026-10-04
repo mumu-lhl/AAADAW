@@ -168,9 +168,9 @@
 ### 6. Action 系统与 MCP 原生控制
 
 - [ ] 建立稳定 Action ID、分类、搜索、快捷键映射和基础宏触发机制。
-- [ ] 实现本地 MCP 服务，优先提供 STDIO 通道；查询和修改都调用应用层接口，不直接访问 UI 内部状态或绕开 Action 校验。
+- [x] 提供只读 MCP STDIO 服务，可对启动时读取的已保存工程快照查询结构和单轨 MIDI 汇总；读取采用 SQLite 只读连接且不迁移 schema（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。后续写操作仍需经 Action 校验。
 - [ ] 分批实现设计文档中的工具：创建轨道、插入 MIDI 音符、视口范围内查询音符、量化、设置自动化点、录音准备和触发 Action。
-- [ ] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；查询必须有范围/数量上限，避免返回整个大型工程。
+- [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
 - [ ] 为 MCP 增加协议错误、无效 ID、越界输入、事务回滚和并发修改测试；记录本地服务的信任边界。
 
