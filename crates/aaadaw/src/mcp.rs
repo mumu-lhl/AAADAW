@@ -1,5 +1,5 @@
-use aaadaw_core::{Project, TempoCurve, TrackId};
-use aaadaw_storage::ProjectStore;
+use aaadaw_core::{DawAction, Project, TempoCurve, TrackId};
+use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
@@ -12,7 +12,11 @@ use rmcp::{
     service::{RequestContext, RoleServer},
 };
 use serde_json::{Value, json};
-use std::{error::Error, path::Path};
+use std::{
+    error::Error,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 const STRUCTURE_URI: &str = "daw://project/structure";
 const MIDI_SUMMARY_TEMPLATE: &str = "daw://project/track/{track_id}/midi_summary";
@@ -22,22 +26,50 @@ const MIDI_QUERY_TOOL: &str = "daw_scoped_query_notes";
 const MAX_NOTE_RESULTS: usize = 512;
 const DEFAULT_NOTE_RESULTS: usize = 256;
 const MAX_NOTE_QUERY_TICKS: u64 = 245_760;
+const CREATE_TRACK_TOOL: &str = "daw_create_track";
+const MAX_TRACK_NAME_CHARS: usize = 128;
 
-pub fn run(project_path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
-    let project = ProjectStore::load_read_only(project_path)?;
+pub fn run(project_path: impl AsRef<Path>, writable: bool) -> Result<(), Box<dyn Error>> {
+    let project_path = project_path.as_ref();
+    let (project, store, _session_lock) = if writable {
+        if !project_path.is_file() {
+            return Err(format!("project file {} does not exist", project_path.display()).into());
+        }
+        let session_lock = ProjectSessionLock::acquire(project_path)?;
+        let store = ProjectStore::open(project_path)?;
+        let project = store.load()?;
+        (project, Some(store), Some(session_lock))
+    } else {
+        (ProjectStore::load_read_only(project_path)?, None, None)
+    };
+    let project = Arc::new(Mutex::new(project));
+    let store = Arc::new(Mutex::new(store));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async move {
-        let server = ProjectMcpServer { project };
+        let server = ProjectMcpServer {
+            project,
+            store: store.clone(),
+            writable,
+        };
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
+        if let Some(store) = store
+            .lock()
+            .map_err(|_| "project store lock was poisoned")?
+            .take()
+        {
+            store.close()?;
+        }
         Ok::<_, Box<dyn Error>>(())
     })
 }
 
 struct ProjectMcpServer {
-    project: Project,
+    project: Arc<Mutex<Project>>,
+    store: Arc<Mutex<Option<ProjectStore>>>,
+    writable: bool,
 }
 
 impl ServerHandler for ProjectMcpServer {
@@ -51,7 +83,11 @@ impl ServerHandler for ProjectMcpServer {
         .with_server_info(Implementation::new("aaadaw", env!("CARGO_PKG_VERSION")))
         .with_protocol_version(ProtocolVersion::default())
         .with_instructions(
-            "Read-only snapshot of the saved AAADAW project loaded at server startup.",
+                if self.writable {
+                    "Authorized writer for one AAADAW project session. All changes are validated through DawAction and saved atomically."
+                } else {
+                    "Read-only snapshot of the saved AAADAW project loaded at server startup."
+                },
         )
     }
 
@@ -83,27 +119,33 @@ impl ServerHandler for ProjectMcpServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_ {
-        let result = if request.uri == STRUCTURE_URI {
-            serde_json::to_string(&structure_summary(&self.project))
-                .map(|text| (request.uri, text))
-                .map_err(|error| McpError::internal_error(error.to_string(), None))
-        } else if let Some(track_id) = parse_track_summary_uri(&request.uri) {
-            self.project
-                .tracks()
-                .iter()
-                .find(|track| track.id().value() == track_id)
-                .ok_or_else(|| McpError::invalid_params("unknown track id", None))
-                .and_then(|track| {
-                    serde_json::to_string(&track_midi_summary(&self.project, track.id()))
+        let result = self
+            .project
+            .lock()
+            .map_err(|_| McpError::internal_error("project lock was poisoned", None))
+            .and_then(|project| {
+                if request.uri == STRUCTURE_URI {
+                    serde_json::to_string(&structure_summary(&project))
                         .map(|text| (request.uri, text))
                         .map_err(|error| McpError::internal_error(error.to_string(), None))
-                })
-        } else {
-            Err(McpError::invalid_params(
-                "unknown project resource URI",
-                None,
-            ))
-        };
+                } else if let Some(track_id) = parse_track_summary_uri(&request.uri) {
+                    project
+                        .tracks()
+                        .iter()
+                        .find(|track| track.id().value() == track_id)
+                        .ok_or_else(|| McpError::invalid_params("unknown track id", None))
+                        .and_then(|track| {
+                            serde_json::to_string(&track_midi_summary(&project, track.id()))
+                                .map(|text| (request.uri, text))
+                                .map_err(|error| McpError::internal_error(error.to_string(), None))
+                        })
+                } else {
+                    Err(McpError::invalid_params(
+                        "unknown project resource URI",
+                        None,
+                    ))
+                }
+            });
         std::future::ready(result.map(|(uri, text)| {
             ReadResourceResult::new(vec![
                 ResourceContents::text(text, uri).with_mime_type("application/json"),
@@ -117,11 +159,19 @@ impl ServerHandler for ProjectMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(vec![midi_query_tool()])))
+        let mut tools = vec![midi_query_tool()];
+        if self.writable {
+            tools.push(create_track_tool());
+        }
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        (name == MIDI_QUERY_TOOL).then(midi_query_tool)
+        match name {
+            MIDI_QUERY_TOOL => Some(midi_query_tool()),
+            CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
+            _ => None,
+        }
     }
 
     fn call_tool(
@@ -129,20 +179,64 @@ impl ServerHandler for ProjectMcpServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_ {
-        let result = if request.name != MIDI_QUERY_TOOL {
-            Err("unknown tool".to_owned())
-        } else {
-            parse_note_query_arguments(request.arguments.as_ref()).and_then(
-                |(track_id, start_tick, end_tick, limit)| {
-                    scoped_query_notes(&self.project, track_id, start_tick, end_tick, limit)
-                },
-            )
+        let result = match request.name.as_ref() {
+            MIDI_QUERY_TOOL => self
+                .project
+                .lock()
+                .map_err(|_| "project lock was poisoned".to_owned())
+                .and_then(|project| {
+                    parse_note_query_arguments(request.arguments.as_ref()).and_then(
+                        |(track_id, start_tick, end_tick, limit)| {
+                            scoped_query_notes(&project, track_id, start_tick, end_tick, limit)
+                        },
+                    )
+                }),
+            CREATE_TRACK_TOOL if self.writable => {
+                parse_create_track_arguments(request.arguments.as_ref())
+                    .and_then(|name| self.create_track(name))
+            }
+            _ => Err("unknown or unavailable tool".to_owned()),
         };
         std::future::ready(Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(message) => CallToolResult::structured_error(json!({"error": message})),
         }
         .into()))
+    }
+}
+
+impl ProjectMcpServer {
+    fn create_track(&self, name: String) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let index = project.tracks().len();
+        project
+            .apply(DawAction::CreateTrack { index, name })
+            .map_err(|error| error.to_string())?;
+        let track = &project.tracks()[index];
+        let result = json!({
+            "track_id": track.id().value(),
+            "index": index,
+            "name": track.name(),
+        });
+        if let Err(error) = store.save(&project) {
+            if let Err(undo_error) = project.undo() {
+                return Err(format!(
+                    "failed to save created track: {error}; rollback failed: {undo_error}"
+                ));
+            }
+            return Err(format!("failed to save created track: {error}"));
+        }
+        Ok(result)
     }
 }
 
@@ -168,6 +262,50 @@ fn midi_query_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
+}
+
+fn create_track_tool() -> Tool {
+    Tool::new(
+        CREATE_TRACK_TOOL,
+        "Create one audio track at the end of the project track list.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "minLength": 1, "maxLength": MAX_TRACK_NAME_CHARS}
+            },
+            "required": ["name"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn parse_create_track_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<String, String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments.keys().any(|key| key != "name") {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let name = arguments
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "name must be a string".to_owned())?;
+    let name_length = name.chars().count();
+    if name.trim().is_empty() {
+        return Err("name must not be empty".to_owned());
+    }
+    if name_length > MAX_TRACK_NAME_CHARS {
+        return Err(format!(
+            "name must be at most {MAX_TRACK_NAME_CHARS} characters"
+        ));
+    }
+    Ok(name.to_owned())
 }
 
 fn parse_note_query_arguments(
@@ -394,11 +532,31 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACKS,
-        parse_note_query_arguments, parse_track_summary_uri, scoped_query_notes, structure_summary,
-        track_midi_summary,
+        MAX_MAP_POINTS, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
+        parse_create_track_arguments, parse_note_query_arguments, parse_track_summary_uri,
+        scoped_query_notes, structure_summary, track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
+    use serde_json::{Value, json};
+
+    #[test]
+    fn create_track_arguments_require_a_bounded_non_empty_name() {
+        let arguments = |name: Value| serde_json::Map::from_iter([("name".to_owned(), name)]);
+        assert_eq!(
+            parse_create_track_arguments(Some(&arguments(json!("Lead")))).unwrap(),
+            "Lead"
+        );
+        for name in ["", "   "] {
+            assert!(parse_create_track_arguments(Some(&arguments(json!(name)))).is_err());
+        }
+        assert!(
+            parse_create_track_arguments(Some(&arguments(json!(
+                "x".repeat(MAX_TRACK_NAME_CHARS + 1)
+            ))))
+            .is_err()
+        );
+        assert!(parse_create_track_arguments(None).is_err());
+    }
 
     #[test]
     fn track_resource_uri_requires_a_decimal_numeric_id() {

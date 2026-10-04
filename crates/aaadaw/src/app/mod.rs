@@ -24,7 +24,7 @@ use aaadaw_core::{
 use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
-use aaadaw_storage::ProjectStore;
+use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet};
@@ -147,6 +147,7 @@ struct App {
     media_panel_dock: MediaPanelDock,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
     track_volume_edits: HashMap<TrackId, String>,
     track_pan_edits: HashMap<TrackId, String>,
@@ -604,7 +605,7 @@ impl App {
         let message_path = path.clone();
         let task = Task::perform(
             run_blocking("aaadaw-project-open", move || {
-                project_io::load_project_file(path)
+                project_io::load_project_session(path)
             }),
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
@@ -1939,7 +1940,8 @@ impl App {
                 self.io_busy = false;
                 let result = result.lock().ok().and_then(|mut result| result.take());
                 match result {
-                    Some(Ok(project)) => {
+                    Some(Ok((project, project_lock))) => {
+                        self.project_lock = Some(project_lock);
                         self.project = project;
                         self.refresh_tempo_map_edits();
                         self.refresh_meter_map_edits();
@@ -2001,10 +2003,13 @@ impl App {
                     None => self.status = "Project open result was unavailable".to_owned(),
                 }
             }
-            Message::ProjectSaved(path, revision, result, plugin_state_warning) => {
+            Message::ProjectSaved(path, revision, result, plugin_state_warning, shared_lock) => {
                 self.io_busy = false;
                 match result {
                     Ok(()) => {
+                        if let Some(lock) = shared_lock.take() {
+                            self.project_lock = Some(lock);
+                        }
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.saved_revision = revision;
@@ -2255,6 +2260,7 @@ impl App {
         self.midi_note_clipboard.source_item_id = None;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
+        self.project_lock = None;
         self.project_path_query.clear();
         self.revision = 0;
         self.saved_revision = 0;
