@@ -371,6 +371,26 @@ pub enum PlaybackBackend {
 
 #[cfg(feature = "audio-device")]
 impl PlaybackBackend {
+    pub fn is_available(self) -> bool {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack => true,
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire => true,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi => true,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(feature = "wasapi-backend", target_os = "windows")
+                ))
+            ))]
+            Self::Unavailable => false,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             #[cfg(feature = "jack-backend")]

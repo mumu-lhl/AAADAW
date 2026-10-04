@@ -1,13 +1,13 @@
 use super::super::{App, Message, PathPickerTarget, SettingsCategory, commands};
 use super::tokens;
 use aaadaw_engine::MasterOutputCeiling;
-use iced::widget::{button, column, container, row, rule, scrollable, text};
+use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
     let plugins_selected = app.settings_category == SettingsCategory::ClapPlugins;
-    let audio_selected = app.settings_category == SettingsCategory::AudioOutput;
+    let audio_selected = app.settings_category == SettingsCategory::Audio;
     let navigation = column![
         text("Settings").size(13),
         button("Keyboard Shortcuts")
@@ -30,23 +30,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_press(Message::SelectSettingsCategory(
                 SettingsCategory::ClapPlugins
             )),
-        button("Audio Output")
+        button("Audio")
             .width(Length::Fill)
             .style(if audio_selected {
                 button::primary
             } else {
                 button::secondary
             })
-            .on_press(Message::SelectSettingsCategory(
-                SettingsCategory::AudioOutput
-            )),
+            .on_press(Message::SelectSettingsCategory(SettingsCategory::Audio)),
     ]
     .spacing(4);
 
     let details = match app.settings_category {
         SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app),
         SettingsCategory::ClapPlugins => clap_plugins(app),
-        SettingsCategory::AudioOutput => audio_output(app),
+        SettingsCategory::Audio => audio_settings(app),
     };
 
     let content = row![
@@ -66,9 +64,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn audio_output(app: &App) -> Element<'_, Message> {
+fn audio_settings(app: &App) -> Element<'_, Message> {
+    let recording_offset = app.audio_recording_offset_query.clone().unwrap_or_else(|| {
+        super::super::audio_config::format_recording_offset_ms(
+            app.audio_settings.recording_offset_us,
+        )
+    });
     column![
-        text("Audio output").size(17),
+        text("Audio output and recording").size(17),
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
         row![
             column![
@@ -79,13 +82,28 @@ fn audio_output(app: &App) -> Element<'_, Message> {
             .spacing(tokens::SPACING_XS),
             iced::widget::pick_list(
                 master_ceiling_choices(),
-                Some(app.audio_output_settings.master_output_ceiling),
+                Some(app.audio_settings.master_output_ceiling),
                 Message::SetMasterOutputCeilingDbfs,
             )
             .placeholder("Ceiling")
             .width(Length::Fixed(128.0)),
         ]
     .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            column![
+                text("Recording placement offset (ms)").size(13),
+                text("Positive moves the resulting item later; negative moves it earlier. This is a user calibration value, not a device latency measurement.").size(10),
+            ]
+            .width(Length::Fill)
+            .spacing(tokens::SPACING_XS),
+            text_input("0.000", &recording_offset)
+                .on_input(Message::RecordingOffsetTextChanged)
+                .width(Length::Fixed(108.0)),
+            button("Apply")
+                .on_press(Message::ApplyRecordingOffset),
+        ]
+        .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
         text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
             .size(11),

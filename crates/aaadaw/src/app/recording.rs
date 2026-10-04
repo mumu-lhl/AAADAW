@@ -42,6 +42,7 @@ impl App {
         let recovery_track_ids = tracks.iter().map(|track| track.value()).collect();
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
+        let recording_offset_us = self.audio_settings.recording_offset_us;
         self.recording_tracks = tracks;
         self.recording_starting = true;
         self.recording_cancel_requested = false;
@@ -67,6 +68,7 @@ impl App {
                         input,
                         writer,
                         control,
+                        recording_offset_us,
                         recovery_manifest_path,
                     }),
                     Err(error) => {
@@ -272,13 +274,26 @@ impl App {
     }
 
     fn begin_recording(&mut self, recording: ActiveRecording) -> Task<Message> {
-        self.recording_start_sample = self
+        let transport_sample = self
             .playback
             .as_ref()
             .map_or(self.playhead_sample, |playback| {
                 playback.stats().playhead_sample
             });
-        let start_sample = self.recording_start_sample;
+        let Some(start_sample) = super::audio_config::apply_recording_offset(
+            transport_sample,
+            self.project.settings().sample_rate(),
+            recording.recording_offset_us,
+        ) else {
+            self.recording_starting = false;
+            self.recording_tracks.clear();
+            discard_recording(recording);
+            self.status =
+                "Recording offset moves the take outside the supported project sample range"
+                    .to_owned();
+            return Task::none();
+        };
+        self.recording_start_sample = start_sample;
         self.status = "Preparing recording recovery metadata…".to_owned();
         Task::perform(
             run_blocking("aaadaw-recording-position", move || {
@@ -311,7 +326,7 @@ impl App {
                 self.status = "Recording setup cancelled".to_owned();
             }
             Some(Ok((recording, _provisional_start_sample))) => {
-                let start_sample = self
+                let transport_sample = self
                     .playback
                     .as_ref()
                     .map_or(self.playhead_sample, |playback| {
@@ -319,7 +334,17 @@ impl App {
                     });
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
-                recording.control.start();
+                let Some(start_sample) = super::audio_config::apply_recording_offset(
+                    transport_sample,
+                    self.project.settings().sample_rate(),
+                    recording.recording_offset_us,
+                ) else {
+                    discard_recording(recording);
+                    self.recording_starting = false;
+                    self.recording_tracks.clear();
+                    self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
+                    return;
+                };
                 if let Err(error) = recording.writer.refine_start_sample(start_sample) {
                     recording.control.fail();
                     discard_recording(recording);
@@ -328,6 +353,7 @@ impl App {
                     self.status = format!("Could not update recording recovery position: {error}");
                     return;
                 }
+                recording.control.start();
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;

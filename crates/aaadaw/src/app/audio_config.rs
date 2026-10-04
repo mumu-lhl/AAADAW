@@ -4,23 +4,25 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "audio.conf";
+const MAX_RECORDING_OFFSET_US: i32 = 5_000_000;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct AudioOutputSettings {
+pub(super) struct AudioSettings {
     pub(super) master_output_ceiling: MasterOutputCeiling,
+    pub(super) recording_offset_us: i32,
 }
 
-pub(super) fn load() -> Result<AudioOutputSettings, String> {
+pub(super) fn load() -> Result<AudioSettings, String> {
     let Some(path) = config_path() else {
-        return Ok(AudioOutputSettings::default());
+        return Ok(AudioSettings::default());
     };
     match std::fs::read_to_string(path) {
         Ok(contents) => parse(&contents),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AudioOutputSettings::default()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AudioSettings::default()),
         Err(error) => Err(error.to_string()),
     }
 }
 
-pub(super) fn save(settings: AudioOutputSettings) -> Result<(), String> {
+pub(super) fn save(settings: AudioSettings) -> Result<(), String> {
     let Some(path) = config_path() else {
         return Err("no platform config directory is available".to_owned());
     };
@@ -31,9 +33,10 @@ fn config_path() -> Option<PathBuf> {
     config_file_path(FILE_NAME)
 }
 
-fn parse(contents: &str) -> Result<AudioOutputSettings, String> {
-    let mut settings = AudioOutputSettings::default();
+fn parse(contents: &str) -> Result<AudioSettings, String> {
+    let mut settings = AudioSettings::default();
     let mut found_ceiling = false;
+    let mut found_recording_offset = false;
     for (line_number, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -42,24 +45,34 @@ fn parse(contents: &str) -> Result<AudioOutputSettings, String> {
         let Some((key, value)) = line.split_once('=') else {
             return Err(format!("invalid audio config line {}", line_number + 1));
         };
-        if key != "master_output_ceiling_dbfs" || found_ceiling {
-            return Err(format!("invalid audio config line {}", line_number + 1));
+        match key {
+            "master_output_ceiling_dbfs" if !found_ceiling => {
+                let ceiling_dbfs = value.parse::<i8>().map_err(|_| {
+                    format!("invalid Master output ceiling on line {}", line_number + 1)
+                })?;
+                settings.master_output_ceiling =
+                    MasterOutputCeiling::new(ceiling_dbfs).map_err(|_| {
+                        format!(
+                            "unsupported Master output ceiling on line {}",
+                            line_number + 1
+                        )
+                    })?;
+                found_ceiling = true;
+            }
+            "recording_placement_offset_ms" if !found_recording_offset => {
+                settings.recording_offset_us =
+                    parse_recording_offset_ms(value).ok_or_else(|| {
+                        format!("invalid recording offset on line {}", line_number + 1)
+                    })?;
+                found_recording_offset = true;
+            }
+            _ => return Err(format!("invalid audio config line {}", line_number + 1)),
         }
-        let ceiling_dbfs = value
-            .parse::<i8>()
-            .map_err(|_| format!("invalid Master output ceiling on line {}", line_number + 1))?;
-        settings.master_output_ceiling = MasterOutputCeiling::new(ceiling_dbfs).map_err(|_| {
-            format!(
-                "unsupported Master output ceiling on line {}",
-                line_number + 1
-            )
-        })?;
-        found_ceiling = true;
     }
     Ok(settings)
 }
 
-fn save_to(path: &Path, settings: AudioOutputSettings) -> io::Result<()> {
+fn save_to(path: &Path, settings: AudioSettings) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
     let temporary = path.with_extension("conf.tmp");
@@ -68,6 +81,11 @@ fn save_to(path: &Path, settings: AudioOutputSettings) -> io::Result<()> {
         file,
         "master_output_ceiling_dbfs={}",
         settings.master_output_ceiling.as_dbfs()
+    )?;
+    writeln!(
+        file,
+        "recording_placement_offset_ms={}",
+        format_recording_offset_ms(settings.recording_offset_us)
     )?;
     file.sync_all()?;
     drop(file);
@@ -78,14 +96,77 @@ fn save_to(path: &Path, settings: AudioOutputSettings) -> io::Result<()> {
     std::fs::rename(temporary, path)
 }
 
+pub(super) fn parse_recording_offset_ms(value: &str) -> Option<i32> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let (negative, magnitude) = match value.as_bytes()[0] {
+        b'-' => (true, &value[1..]),
+        b'+' => (false, &value[1..]),
+        _ => (false, value),
+    };
+    if magnitude.is_empty() {
+        return None;
+    }
+    let mut pieces = magnitude.split('.');
+    let whole = pieces.next()?.parse::<u32>().ok()?;
+    let fraction = pieces.next().unwrap_or("");
+    if pieces.next().is_some()
+        || fraction.len() > 3
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let fraction = if fraction.is_empty() {
+        0
+    } else {
+        let padded = format!("{fraction:0<3}");
+        padded.parse::<u32>().ok()?
+    };
+    let magnitude_us = whole.checked_mul(1_000)?.checked_add(fraction)?;
+    if magnitude_us > MAX_RECORDING_OFFSET_US as u32 {
+        return None;
+    }
+    let signed = i32::try_from(magnitude_us).ok()?;
+    Some(if negative { -signed } else { signed })
+}
+
+pub(super) fn format_recording_offset_ms(offset_us: i32) -> String {
+    let sign = if offset_us < 0 { "-" } else { "" };
+    let magnitude = offset_us.unsigned_abs();
+    format!("{sign}{}.{:03}", magnitude / 1_000, magnitude % 1_000)
+}
+
+#[cfg(any(feature = "audio-device", test))]
+pub(super) fn apply_recording_offset(
+    start_sample: u64,
+    sample_rate: u32,
+    offset_us: i32,
+) -> Option<u64> {
+    if sample_rate == 0 || offset_us.unsigned_abs() > MAX_RECORDING_OFFSET_US as u32 {
+        return None;
+    }
+    let numerator = i128::from(offset_us).checked_mul(i128::from(sample_rate))?;
+    let rounded_numerator = if numerator < 0 {
+        numerator.checked_sub(500_000)?
+    } else {
+        numerator.checked_add(500_000)?
+    };
+    let offset_frames = rounded_numerator / 1_000_000;
+    let adjusted = i128::from(start_sample).checked_add(offset_frames)?;
+    u64::try_from(adjusted).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn audio_output_settings_round_trip() {
-        let settings = AudioOutputSettings {
+    fn audio_settings_round_trip() {
+        let settings = AudioSettings {
             master_output_ceiling: MasterOutputCeiling::new(-6).unwrap(),
+            recording_offset_us: -125_500,
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",
@@ -112,5 +193,43 @@ mod tests {
         ] {
             assert!(parse(contents).is_err(), "accepted {contents:?}");
         }
+    }
+
+    #[test]
+    fn old_audio_config_defaults_the_recording_offset_to_zero() {
+        assert_eq!(
+            parse("master_output_ceiling_dbfs=-1\n").unwrap(),
+            AudioSettings::default()
+        );
+    }
+
+    #[test]
+    fn recording_offset_config_is_signed_bounded_and_has_microsecond_precision() {
+        assert_eq!(parse_recording_offset_ms("-0.125"), Some(-125));
+        assert_eq!(parse_recording_offset_ms("+12.5"), Some(12_500));
+        assert_eq!(parse_recording_offset_ms("5000"), Some(5_000_000));
+        for value in ["", "-", "1.0001", "5000.001", "-5000.001", "1.2.3", "nan"] {
+            assert_eq!(parse_recording_offset_ms(value), None, "accepted {value:?}");
+        }
+        assert_eq!(format_recording_offset_ms(-125), "-0.125");
+        assert_eq!(format_recording_offset_ms(12_500), "12.500");
+    }
+
+    #[test]
+    fn recording_offset_maps_milliseconds_to_signed_project_samples_safely() {
+        for (sample_rate, expected) in [(44_100, 22), (48_000, 24)] {
+            assert_eq!(
+                apply_recording_offset(100_000, sample_rate, 500),
+                Some(100_000 + expected)
+            );
+            assert_eq!(
+                apply_recording_offset(100_000, sample_rate, -500),
+                Some(100_000 - expected)
+            );
+        }
+        assert_eq!(apply_recording_offset(0, 48_000, -1_000), None);
+        assert_eq!(apply_recording_offset(u64::MAX - 1, 48_000, 1_000), None);
+        assert_eq!(apply_recording_offset(1, 0, 1_000), None);
+        assert_eq!(apply_recording_offset(1, 48_000, i32::MAX), None);
     }
 }

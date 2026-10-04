@@ -247,12 +247,7 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
 #[cfg(feature = "audio-device")]
 fn playback_controls(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
-    let playback_available = !cfg!(all(
-        feature = "wasapi-backend",
-        not(target_os = "windows"),
-        not(feature = "jack-backend"),
-        not(feature = "pipewire-backend")
-    ));
+    let playback_available = app.selected_playback_backend().is_available();
     let armed = app
         .project
         .tracks()
