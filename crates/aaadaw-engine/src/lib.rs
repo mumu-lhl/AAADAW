@@ -1293,6 +1293,57 @@ impl AudioRenderGraph {
         self.mixer.max_block_frames
     }
 
+    /// Returns an AudioItem whose PCM queue cannot yet supply the next render block.
+    ///
+    /// This control-thread readiness query is intended for pull-based offline rendering. Device
+    /// callbacks must continue calling `render_into` directly and rely on its silence-on-underrun
+    /// behavior. `None` means all active AudioItem ranges have enough queued frames.
+    pub fn audio_item_missing_for_next_block(&self, frame_count: usize) -> Option<ItemId> {
+        let start = self.transport.position_samples();
+        let end = start.checked_add(u64::try_from(frame_count).ok()?)?;
+        for (index, range) in self.source_ranges.iter().enumerate() {
+            let Some((item_start, item_end)) = range else {
+                continue;
+            };
+            let required = end.min(*item_end).saturating_sub(start.max(*item_start));
+            if required > 0
+                && self.streams[index].available_samples() < usize::try_from(required).ok()?
+            {
+                return self.source_item_ids[index];
+            }
+        }
+        None
+    }
+
+    /// Returns the largest prefix of the next render block available from every active AudioItem.
+    ///
+    /// The offline control thread uses this to consume bounded queues even when their capacity is
+    /// smaller than the graph's maximum block size. Device callbacks should continue rendering
+    /// their negotiated block directly and handle underruns through `render_into`.
+    pub fn audio_item_frames_available_for_next_block(&self, max_frames: usize) -> usize {
+        let start = self.transport.position_samples();
+        let Some(end) = start.checked_add(max_frames as u64) else {
+            return 0;
+        };
+        let mut available_frames = max_frames;
+        for (index, range) in self.source_ranges.iter().enumerate() {
+            let Some((item_start, item_end)) = range else {
+                continue;
+            };
+            let active_start = start.max(*item_start);
+            let active_end = end.min(*item_end);
+            if active_start >= active_end {
+                continue;
+            }
+            let queued = self.streams[index].available_samples() as u64;
+            let safe_until = active_start
+                .saturating_sub(start)
+                .saturating_add(queued.min(active_end.saturating_sub(active_start)));
+            available_frames = available_frames.min(safe_until as usize);
+        }
+        available_frames
+    }
+
     /// Returns a control-thread handle for live volume/pan updates on this graph.
     pub fn track_mix_controller(&self) -> TrackMixController {
         self.mixer.track_mix_controller()
@@ -1476,12 +1527,6 @@ impl AudioRenderGraph {
 
     /// Releases held MIDI voices and resets controller-capable instruments without
     /// changing the transport state.
-    #[cfg(any(
-        feature = "jack-backend",
-        feature = "pipewire-backend",
-        all(feature = "wasapi-backend", target_os = "windows"),
-        test
-    ))]
     pub(crate) fn release_midi_notes(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.instruments {
@@ -1496,13 +1541,7 @@ impl AudioRenderGraph {
         failures
     }
 
-    /// Stops processors on the audio thread before their graph moves to the retirement queue.
-    #[cfg(any(
-        feature = "jack-backend",
-        feature = "pipewire-backend",
-        all(feature = "wasapi-backend", target_os = "windows"),
-        test
-    ))]
+    /// Stops processors before their graph moves to the retirement queue.
     pub(crate) fn stop_instruments(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.instruments {
@@ -1515,13 +1554,7 @@ impl AudioRenderGraph {
         failures
     }
 
-    /// Stops track FX processors on the audio thread before graph retirement.
-    #[cfg(any(
-        feature = "jack-backend",
-        feature = "pipewire-backend",
-        all(feature = "wasapi-backend", target_os = "windows"),
-        test
-    ))]
+    /// Stops track FX processors before graph retirement.
     pub(crate) fn stop_fx_processors(&mut self) -> usize {
         let mut failures = 0;
         for route in &mut self.effects {
@@ -1532,6 +1565,14 @@ impl AudioRenderGraph {
             }
         }
         failures
+    }
+
+    /// Stops CLAP processors after an offline render so their owners can deactivate them safely.
+    ///
+    /// Call on the same background thread that rendered this graph. Device output callbacks use
+    /// their backend-specific retirement path instead.
+    pub fn stop_processors_after_offline_render(&mut self) -> usize {
+        self.release_midi_notes() + self.stop_instruments() + self.stop_fx_processors()
     }
 
     /// Moves stopped processors out after the retired graph reaches a control thread.

@@ -416,6 +416,47 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
 }
 
 #[test]
+fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
+    let mut app = App {
+        project_path: Some(std::path::PathBuf::from("session.aaadaw")),
+        ..App::default()
+    };
+    let export = commands::for_menu(&app, MainMenu::File)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ExportWav)
+        .expect("File menu should expose WAV rendering");
+    assert!(export.enabled);
+    assert_eq!(export.label, "Render project to WAV…");
+
+    app.offline_render_busy = true;
+    let file_commands = commands::for_menu(&app, MainMenu::File);
+    assert!(
+        file_commands
+            .iter()
+            .find(|entry| entry.id == CommandId::ExportWav)
+            .is_some_and(|entry| !entry.enabled)
+    );
+    assert!(
+        file_commands
+            .iter()
+            .find(|entry| entry.id == CommandId::CancelOfflineRender)
+            .is_some_and(|entry| entry.enabled)
+    );
+
+    #[cfg(feature = "audio-device")]
+    {
+        app.offline_render_busy = false;
+        app.recording_starting = true;
+        assert!(
+            commands::for_menu(&app, MainMenu::File)
+                .into_iter()
+                .find(|entry| entry.id == CommandId::ExportWav)
+                .is_some_and(|entry| !entry.enabled)
+        );
+    }
+}
+
+#[test]
 fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
     assert_eq!(
         commands::capture_binding("x", Modifiers::COMMAND).unwrap(),

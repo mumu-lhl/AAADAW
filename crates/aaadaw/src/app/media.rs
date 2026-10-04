@@ -33,6 +33,11 @@ impl App {
                         .set_file_name("project.aaadaw")
                         .add_filter("AAADAW project", &["aaadaw"])
                         .save_file(),
+                    PathPickerTarget::ExportWav => rfd::FileDialog::new()
+                        .set_title("Render project to WAV")
+                        .set_file_name("render.wav")
+                        .add_filter("WAV audio", &["wav"])
+                        .save_file(),
                     PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
                         rfd::FileDialog::new()
                             .set_title("Choose audio to import")
@@ -77,6 +82,7 @@ impl App {
                     self.active_menu = None;
                     super::project_io::save_project(self, Some(path))
                 }
+                PathPickerTarget::ExportWav => self.start_offline_render(path),
                 PathPickerTarget::ImportAudio => {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();
                     Task::none()

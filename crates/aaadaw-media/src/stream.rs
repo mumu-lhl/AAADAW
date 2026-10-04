@@ -197,6 +197,11 @@ impl AudioFeedWorker {
         self.join_worker()
     }
 
+    /// Returns whether decoding and queue feeding have completed.
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
     /// Requests cancellation and waits for the worker to exit.
     pub fn cancel(mut self) -> Result<(), MediaError> {
         self.cancelled.store(true, Ordering::Release);

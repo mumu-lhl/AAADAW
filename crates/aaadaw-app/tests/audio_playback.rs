@@ -1,8 +1,12 @@
-use aaadaw_app::{PlaybackBuildError, prepare_audio_playback, prepare_audio_playback_at};
+use aaadaw_app::{
+    PlaybackBuildError, prepare_audio_playback, prepare_audio_playback_at,
+    render_prepared_audio_to_pcm24_wav,
+};
 use aaadaw_core::{DawAction, Project};
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
@@ -100,6 +104,47 @@ fn prepares_and_renders_an_embedded_audio_item() {
     assert!((output[2][0] - center_gain * 0.5).abs() < 1.0e-5);
 
     store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn offline_render_waits_for_bounded_media_feeders_and_exports_the_mix() {
+    let database_path = unique_path("aaadaw");
+    let export_path = unique_path("wav");
+    let wav = pcm_wav(&[16384, 0, -16384, 32767], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://offline", "offline.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let project = project_with_audio_item("asset://offline".to_owned(), 4);
+    let prepared =
+        prepare_audio_playback(&project, &store, 1, 4).expect("embedded source should prepare");
+    store.close().expect("project should close");
+    let cancel = AtomicBool::new(false);
+    let mut progress = Vec::new();
+
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &export_path,
+        4,
+        &cancel,
+        |done, total| progress.push((done, total)),
+    )
+    .expect("offline render should finish");
+
+    let mut decoder =
+        aaadaw_media::AudioStreamDecoder::open(&export_path).expect("export should be a valid WAV");
+    assert_eq!(decoder.metadata().sample_rate, Some(48_000));
+    assert_eq!(decoder.metadata().channel_count, Some(2));
+    let mut decoded_frames = 0;
+    while let Some(chunk) = decoder.next_chunk().expect("WAV should decode") {
+        assert_eq!(chunk.channels(), 2);
+        decoded_frames += chunk.frame_count();
+    }
+    assert_eq!(decoded_frames, 4);
+    assert_eq!(progress, [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]);
+    std::fs::remove_file(export_path).expect("test export should be removed");
     remove_database(&database_path);
 }
 

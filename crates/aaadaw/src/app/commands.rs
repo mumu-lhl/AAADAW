@@ -13,6 +13,8 @@ pub(crate) enum CommandId {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    ExportWav,
+    CancelOfflineRender,
     OpenSettings,
     Undo,
     Redo,
@@ -53,6 +55,8 @@ enum CommandKind {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    ExportWav,
+    CancelOfflineRender,
     OpenSettings,
     Undo,
     Redo,
@@ -196,6 +200,26 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "File",
         label: "Save project as…",
         aliases: &["save project as", "save project as…", "save as", "save as…"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ExportWav,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Render project to WAV…",
+        aliases: &["render", "export audio", "bounce project", "render wav"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::CancelOfflineRender,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Cancel WAV render",
+        aliases: &["cancel render", "cancel export"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -708,6 +732,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
+        CommandKind::ExportWav => "audio.export-wav",
+        CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
@@ -740,6 +766,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
+        CommandId::ExportWav => Message::PickPath(PathPickerTarget::ExportWav),
+        CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
@@ -884,6 +912,13 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
+        CommandKind::ExportWav => {
+            app.project_path.is_some()
+                && !project_file_busy(app)
+                && !recording_busy(app)
+                && !app.offline_render_busy
+        }
+        CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => history_command_enabled(
             app,
             app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
@@ -968,6 +1003,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
+        CommandKind::ExportWav => CommandId::ExportWav,
+        CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
@@ -1001,6 +1038,17 @@ fn project_edit_busy(app: &App) -> bool {
 
 fn project_file_busy(app: &App) -> bool {
     app.io_busy || app.path_picker_busy || app.import_busy || app.audio_asset_management_busy
+}
+
+fn recording_busy(_app: &App) -> bool {
+    #[cfg(feature = "audio-device")]
+    {
+        _app.recording.is_some() || _app.recording_starting || _app.recording_stopping
+    }
+    #[cfg(not(feature = "audio-device"))]
+    {
+        false
+    }
 }
 
 fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
