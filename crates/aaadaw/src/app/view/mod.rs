@@ -157,6 +157,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             )
             .padding([tokens::SPACING_XS, tokens::SPACING_SM])
             .on_press(Message::OpenTempoMap),
+            button(
+                text(format!(
+                    "{}/{}",
+                    app.project
+                        .time_signature_at_tick(app.timeline.edit_cursor_tick)
+                        .numerator(),
+                    app.project
+                        .time_signature_at_tick(app.timeline.edit_cursor_tick)
+                        .denominator()
+                ))
+                .size(12)
+            )
+            .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+            .on_press(Message::OpenMeterMap),
             playback_controls(app),
             iced::widget::Space::new().width(Length::Fill),
             time_selection_readout(app),

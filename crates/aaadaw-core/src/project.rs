@@ -180,6 +180,10 @@ enum ProjectEvent {
         before: Option<TimeSignature>,
         after: Option<TimeSignature>,
     },
+    MeterMapReplaced {
+        before: Vec<MeterPointSnapshot>,
+        after: Vec<MeterPointSnapshot>,
+    },
     AudioItemInserted {
         index: usize,
         item: AudioItem,
@@ -412,6 +416,10 @@ impl ProjectEvent {
                 before: *after,
                 after: *before,
             },
+            Self::MeterMapReplaced { before, after } => Self::MeterMapReplaced {
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::AudioItemInserted { index, item } => Self::AudioItemRemoved {
                 index: *index,
                 item: item.clone(),
@@ -572,6 +580,19 @@ impl Project {
     /// Returns the project's ordered time-signature changes, including tick zero.
     pub fn time_signature_points(&self) -> impl Iterator<Item = (u64, TimeSignature)> + '_ {
         self.state.meter_map.points()
+    }
+
+    /// Returns the meter map as ordered tick/signature snapshots.
+    pub fn time_signature_map(&self) -> Vec<MeterPointSnapshot> {
+        self.state
+            .meter_map
+            .points()
+            .map(|(start_tick, signature)| MeterPointSnapshot {
+                start_tick,
+                numerator: signature.numerator(),
+                denominator: signature.denominator(),
+            })
+            .collect()
     }
 
     /// Returns whether the next undo changes only a track's volume or pan.
@@ -803,10 +824,14 @@ impl Project {
             .meter_points
             .first()
             .ok_or(SnapshotError::InvalidProjectData)?;
-        if first_meter.start_tick != 0 || first_meter.numerator != 4 || first_meter.denominator != 4
-        {
+        if first_meter.start_tick != 0 {
             return Err(SnapshotError::InvalidProjectData);
         }
+        let initial_signature = TimeSignature::new(first_meter.numerator, first_meter.denominator)
+            .map_err(SnapshotError::InvalidTimebase)?;
+        meter_map
+            .set_point(0, Some(initial_signature))
+            .map_err(SnapshotError::InvalidTimebase)?;
         previous_tick = 0;
         for point in snapshot.meter_points.iter().skip(1) {
             if point.start_tick <= previous_tick {
@@ -1129,6 +1154,43 @@ impl Project {
                     start_tick,
                     before: state.meter_map.point_at(start_tick),
                     after: Some(signature),
+                }
+            }
+            DawAction::SetTimeSignatureMap { points } => {
+                let before = state
+                    .meter_map
+                    .points()
+                    .map(|(start_tick, signature)| MeterPointSnapshot {
+                        start_tick,
+                        numerator: signature.numerator(),
+                        denominator: signature.denominator(),
+                    })
+                    .collect::<Vec<_>>();
+                let mut candidate_map = state.meter_map.clone();
+                let candidates = points
+                    .iter()
+                    .map(|point| {
+                        TimeSignature::new(point.numerator, point.denominator)
+                            .map(|signature| (point.start_tick, signature))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| ActionError::InvalidTimeSignature)?;
+                candidate_map
+                    .replace_points(&candidates)
+                    .map_err(|error| match error {
+                        TimebaseError::InvalidTimeSignature => ActionError::InvalidTimeSignature,
+                        TimebaseError::MeterChangeNotOnBarBoundary => {
+                            ActionError::MeterChangeNotOnBarBoundary
+                        }
+                        TimebaseError::CannotRemoveInitialMeter => {
+                            ActionError::CannotRemoveInitialMeter
+                        }
+                        TimebaseError::InvalidMeterMap => ActionError::InvalidMeterMap,
+                        _ => ActionError::MeterMapOutOfRange,
+                    })?;
+                ProjectEvent::MeterMapReplaced {
+                    before,
+                    after: points,
                 }
             }
             DawAction::SetTrackVolume {
@@ -2211,6 +2273,32 @@ impl Project {
                 state
                     .meter_map
                     .set_point(*start_tick, *after)
+                    .map_err(|_| ActionError::HistoryInvariantViolation)?;
+            }
+            ProjectEvent::MeterMapReplaced { before, after } => {
+                if state
+                    .meter_map
+                    .points()
+                    .map(|(start_tick, signature)| MeterPointSnapshot {
+                        start_tick,
+                        numerator: signature.numerator(),
+                        denominator: signature.denominator(),
+                    })
+                    .ne(before.iter().copied())
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                let replacement = after
+                    .iter()
+                    .map(|point| {
+                        TimeSignature::new(point.numerator, point.denominator)
+                            .map(|signature| (point.start_tick, signature))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| ActionError::HistoryInvariantViolation)?;
+                state
+                    .meter_map
+                    .replace_points(&replacement)
                     .map_err(|_| ActionError::HistoryInvariantViolation)?;
             }
             ProjectEvent::AudioItemInserted { index, item } => {

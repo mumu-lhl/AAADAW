@@ -1,6 +1,7 @@
 use crate::{
-    GridFraction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, TempoCurve,
-    TimeSignature, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
+    GridFraction, ItemId, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
+    NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId, TrackInstrument,
+    VolumeAutomationPoint,
 };
 
 /// A command that changes project state.
@@ -21,6 +22,8 @@ pub enum DawAction {
         start_tick: u64,
         signature: TimeSignature,
     },
+    /// Replace the complete meter map as one validated, undoable operation.
+    SetTimeSignatureMap { points: Vec<MeterPointSnapshot> },
     /// Set a track's volume in decibels.
     SetTrackVolume { track_id: TrackId, volume_db: f32 },
     /// Replace a track's read-mode sample-clock volume automation lane.

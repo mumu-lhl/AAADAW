@@ -85,6 +85,8 @@ pub enum TimebaseError {
     MeterChangeNotOnBarBoundary,
     /// The initial meter point at tick zero cannot be removed.
     CannotRemoveInitialMeter,
+    /// Meter-map points are unordered or duplicated.
+    InvalidMeterMap,
     /// A meter point expected to exist is missing.
     MeterPointNotFound,
     /// The measure number cannot be represented.
@@ -109,6 +111,9 @@ impl fmt::Display for TimebaseError {
             }
             Self::CannotRemoveInitialMeter => {
                 formatter.write_str("the initial meter point cannot be removed")
+            }
+            Self::InvalidMeterMap => {
+                formatter.write_str("meter map points must be ordered and have unique positions")
             }
             Self::MeterPointNotFound => formatter.write_str("meter point does not exist"),
             Self::MusicalPositionOutOfRange => {
@@ -260,6 +265,32 @@ impl MeterMap {
         self.points
             .iter()
             .map(|point| (point.start_tick, point.signature))
+    }
+
+    pub(crate) fn replace_points(
+        &mut self,
+        points: &[(u64, TimeSignature)],
+    ) -> Result<(), TimebaseError> {
+        if points.first().map(|point| point.0) != Some(0) {
+            return Err(TimebaseError::CannotRemoveInitialMeter);
+        }
+        if points.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return Err(TimebaseError::InvalidMeterMap);
+        }
+        let mut replacement = points
+            .iter()
+            .map(|(start_tick, signature)| MeterPoint {
+                start_tick: *start_tick,
+                signature: *signature,
+                start_measure: 0,
+            })
+            .collect::<Vec<_>>();
+        for point in &replacement {
+            point.signature.ticks_per_measure(self.ppq)?;
+        }
+        Self::recalculate_measures(&mut replacement, self.ppq)?;
+        self.points = replacement;
+        Ok(())
     }
 
     pub(crate) fn point_at(&self, start_tick: u64) -> Option<TimeSignature> {

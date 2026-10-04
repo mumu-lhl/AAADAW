@@ -53,6 +53,7 @@
 - [x] 实现线性 BPM 渐变，并通过 schema migration v2 持久化 tempo curve。
 - [x] 增加对数 BPM ramp 与端点水平切线的三次 Bézier ramp；使用一致的 tick/sample 积分与逆变换，并通过 schema v12 持久化（[Issue #82](https://github.com/mumu-lhl/AAADAW/issues/82)）。
 - [x] 在 Transport 提供可编辑的 Tempo Map 窗口，支持 tempo point 的添加、移动、删除、BPM/curve 编辑及单步 Undo/Redo（[Issue #84](https://github.com/mumu-lhl/AAADAW/issues/84)）。
+- [x] 在 Transport 显示 edit-cursor 拍号，并在 map 窗口提供完整 Meter Map 编辑；整表替换先按新初始拍号验证所有 bar boundary，再原子提交并支持 Undo/Redo（[Issue #86](https://github.com/mumu-lhl/AAADAW/issues/86)）。
 - [x] 用固定种子的属性式测试覆盖阶梯/线性 tempo 段边界和 12 小时时基精度；将依赖 `f64` 的 tick/sample 转换显式限制在整数精确表示范围内，超出时返回范围错误（[Issue #76](https://github.com/mumu-lhl/AAADAW/issues/76)）。
 - [x] 建立 `rusqlite` 存储 crate，完成 `.aaadaw` schema v1–v12、`PRAGMA user_version` 事务迁移、未来 schema 版本拒绝，以及 Project 快照保存/加载。
 - [x] 扩展 schema 保存 sample-clock 轨道音量自动化（v9）和总线类型/输出目标（v10）；插件私有状态已通过 schema v6 持久化（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）；音频资产内容与解码器头部元数据已用当前开发 schema 的附加表存储。全量快照写入仍待按工程规模优化。

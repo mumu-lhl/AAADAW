@@ -118,6 +118,43 @@ fn tempo_map_editor_adds_edits_curves_deletes_and_undoes_as_one_action() {
 }
 
 #[test]
+fn meter_map_editor_applies_bar_aligned_changes_as_one_undoable_map() {
+    let mut app = App::default();
+    app.timeline.edit_cursor_tick = 2880;
+    app.refresh_meter_map_edits();
+
+    let _ = app.update(Message::AddMeterPoint);
+    let _ = app.update(Message::MeterPointNumeratorChanged(0, "3".to_owned()));
+    let _ = app.update(Message::MeterPointNumeratorChanged(1, "7".to_owned()));
+    let _ = app.update(Message::MeterPointDenominatorChanged(1, "8".to_owned()));
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyMeterMap);
+
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(
+        app.project.time_signature_map(),
+        vec![
+            aaadaw_core::MeterPointSnapshot {
+                start_tick: 0,
+                numerator: 3,
+                denominator: 4,
+            },
+            aaadaw_core::MeterPointSnapshot {
+                start_tick: 2880,
+                numerator: 7,
+                denominator: 8,
+            },
+        ]
+    );
+    assert!(app.project.undo().unwrap());
+    assert!(app.project.redo().unwrap());
+    assert_eq!(
+        app.project.time_signature_at_tick(2880),
+        aaadaw_core::TimeSignature::new(7, 8).unwrap()
+    );
+}
+
+#[test]
 fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
     let mut app = App::default();
     let new_project = commands::for_menu(&app, MainMenu::File)
