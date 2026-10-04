@@ -245,7 +245,7 @@ impl From<jack::Error> for JackOutputError {
 /// atomics, and the render graph. Replaced graphs return through a second SPSC
 /// queue and are reclaimed by the control thread.
 pub struct JackAudioOutput {
-    _active: Option<jack::AsyncClient<(), JackProcessHandler>>,
+    _active: Option<jack::AsyncClient<JackNotifications, JackProcessHandler>>,
     commands: Producer<TransportCommand>,
     retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
