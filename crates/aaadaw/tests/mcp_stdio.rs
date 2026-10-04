@@ -161,9 +161,10 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         response_for(8)["result"]["structuredContent"]["notes"][0]["tick"],
         960
     );
+    // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
             .iter()
-            .any(|response| response["error"]["code"] == -32700)
+            .all(|response| response["error"]["code"] != -32700)
     );
 }
