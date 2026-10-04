@@ -102,7 +102,7 @@
 - [x] 建立首个可停靠面板 Media Browser（[`docs/tickets/2026-10-02-dock-media-browser.md`](docs/tickets/2026-10-02-dock-media-browser.md)）。
 - [x] 扩展 transport 至可选原生 PipeWire 后端，与 JACK 并列构建；播放/停止、seek refill、播放头和后端选择均复用现有传输路径（[`docs/tickets/2026-10-02-pipewire-playback.md`](docs/tickets/2026-10-02-pipewire-playback.md)）。
 - [x] 建立空间化 Arrangement：Audio/MIDI Item 按轨道和音乐时间显示；拍号感知标尺、水平缩放/平移、轨道/item 选择、edit cursor、垂直轨道滚动、可调 TCP 分割和 Inspector。AudioItem 保留 sample-clock 精确输入、撤销微调、复制/删除及设备 transport 定位；MIDI 保留 Item/音符列表与可撤销编辑和 1/16 量化。
-- [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；内容、来源偏移和无效放置保护均已验证。
+- [x] 支持 Audio/MIDI Item 多选、1/16 网格吸附、跨轨道拖放，以及每次拖动一次撤销/重做；Audio Item 左右边缘可向内拖动裁剪，左裁剪同步推进源偏移，右裁剪保持起点；内容、来源偏移和无效编辑保护均已验证（[Issue #72](https://github.com/mumu-lhl/AAADAW/issues/72)）。
 - [x] 增加时间选区和切分（A3.1/A3.2：[`docs/tickets/2026-10-02-arrangement-time-selection.md`](docs/tickets/2026-10-02-arrangement-time-selection.md)）；精确 sample-clock 起点编辑和当前 track/item 选择、edit cursor 已可用。
 - [x] 为 Arrange Audio/MIDI Item 增加右键上下文菜单（[`docs/tickets/2026-10-02-arrangement-item-context-menu.md`](docs/tickets/2026-10-02-arrangement-item-context-menu.md)）。
 - [x] 为 MIDI Item 增加独立可撤销的重复命令（[`docs/tickets/2026-10-02-duplicate-midi-item.md`](docs/tickets/2026-10-02-duplicate-midi-item.md)）。
