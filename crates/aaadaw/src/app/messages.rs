@@ -207,6 +207,8 @@ pub(crate) enum Message {
     #[cfg(feature = "audio-device")]
     RecordingPositionSaved(super::SharedRecordingPositionSaved),
     #[cfg(feature = "audio-device")]
+    RecordingClockAnchorReady(super::SharedRecordingClockAnchorReady),
+    #[cfg(feature = "audio-device")]
     RecordingStopped(super::SharedRecordingStop),
     #[cfg(feature = "audio-device")]
     RestartPlayback,

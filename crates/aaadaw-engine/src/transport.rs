@@ -1,6 +1,14 @@
 use aaadaw_core::{Project, TimebaseError};
 use std::fmt;
 
+/// Pairs a backend frame position with the project transport sample observed at the same instant.
+/// The backend frame may be a wrapping counter; its meaning is defined by the backend adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransportClockAnchor {
+    pub backend_frame: u32,
+    pub project_sample: u64,
+}
+
 /// A block's position and transport state as observed by one engine callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioBlock {

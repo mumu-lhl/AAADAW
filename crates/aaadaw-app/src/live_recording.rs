@@ -3,6 +3,7 @@
 //! The audio callback only writes fixed-size stereo frames to the bounded engine queue. This
 //! worker drains that queue, writes bounded PCM WAV segments, and publishes them on stop.
 
+use crate::CaptureTimelineAnchor;
 use aaadaw_engine::{AudioCaptureConsumer, AudioCaptureControl};
 use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
@@ -11,7 +12,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -63,6 +64,7 @@ pub struct RecordingRecoveryCandidate {
 
 enum Command {
     RefineStartSample(u64),
+    SetCaptureTimelineAnchor(CaptureTimelineAnchor, SyncSender<()>),
     Finish,
 }
 
@@ -295,6 +297,23 @@ impl AudioRecordingWorker {
             .map_err(|_| AudioRecordingError::WorkerPanicked)
     }
 
+    /// Installs the frame-to-project anchor on the writer before enabling a timestamped backend.
+    pub fn set_capture_timeline_anchor(
+        &self,
+        anchor: CaptureTimelineAnchor,
+    ) -> Result<(), AudioRecordingError> {
+        if self.recovery_manifest.is_none() {
+            return Ok(());
+        }
+        let (reply, response) = mpsc::sync_channel(0);
+        self.command
+            .send(Command::SetCaptureTimelineAnchor(anchor, reply))
+            .map_err(|_| AudioRecordingError::WorkerPanicked)?;
+        response
+            .recv()
+            .map_err(|_| AudioRecordingError::WorkerPanicked)
+    }
+
     /// Returns the durable recovery sidecar path, if this writer is recoverable.
     pub fn recovery_manifest_path(&self) -> Option<&Path> {
         self.recovery_manifest
@@ -479,12 +498,17 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
         let silence = [[0.0_f32; 2]; DRAIN_FRAMES];
         let mut finishing = false;
         let mut expected_frame = None;
+        let mut capture_timeline_anchor = None;
         loop {
             if !finishing {
                 match commands.recv_timeout(Duration::from_millis(5)) {
                     Ok(Command::Finish) | Err(RecvTimeoutError::Disconnected) => finishing = true,
                     Ok(Command::RefineStartSample(sample)) => {
                         refine_recovery_start_sample(&segments.recovery_manifest, sample)?;
+                    }
+                    Ok(Command::SetCaptureTimelineAnchor(anchor, reply)) => {
+                        capture_timeline_anchor = Some(anchor);
+                        let _ = reply.send(());
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                 }
@@ -502,6 +526,12 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
                 .first_frame
                 .checked_add(block.frame_count as u64)
                 .ok_or(AudioRecordingError::CaptureTimingInvalid)?;
+            if let Some(anchor) = capture_timeline_anchor.take() {
+                let start_sample = anchor
+                    .project_sample_at(block.first_frame)
+                    .ok_or(AudioRecordingError::CaptureTimingInvalid)?;
+                refine_recovery_start_sample(&segments.recovery_manifest, start_sample)?;
+            }
             let max_gap_frames = u64::from(sample_rate)
                 .checked_mul(MAX_CAPTURE_GAP_SECONDS)
                 .ok_or(AudioRecordingError::CaptureTimingInvalid)?;
@@ -936,6 +966,7 @@ mod tests {
         discard_recording_recovery, recover_recording_candidate, scan_recording_recoveries,
         write_recovery_manifest,
     };
+    use crate::CaptureTimelineAnchor;
     use crate::{audio_capture_stream, prepare_audio_playback, start_audio_item_import};
     use aaadaw_core::{DawAction, Project};
     use aaadaw_media::AudioStreamDecoder;
@@ -1227,6 +1258,52 @@ mod tests {
             Some(capture_start_sample)
         );
         assert!(!candidates[0].manifest.start_sample_is_estimate);
+        fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn first_capture_frame_refines_recovery_to_its_mapped_project_sample() {
+        let (directory, project) = test_project_path();
+        let (mut producer, consumer, control) = audio_capture_stream(8);
+        let worker = AudioRecordingWorker::start_recoverable(
+            &project,
+            48_000,
+            vec![41],
+            consumer,
+            control.clone(),
+        )
+        .expect("recoverable recording worker should start");
+        let manifest_path = worker
+            .recovery_manifest_path()
+            .expect("manifest should exist")
+            .to_path_buf();
+        let anchor = CaptureTimelineAnchor::new(10_000, 96_000, 48_000, 48_000)
+            .expect("JACK capture clock should map to the project rate");
+        worker
+            .set_start_sample(96_000)
+            .expect("provisional start should be saved");
+        worker
+            .set_capture_timeline_anchor(anchor)
+            .expect("capture clock anchor should be queued before capture starts");
+        control.start();
+        producer.push_planar_at(10_256, &[0.25, 0.5], &[-0.25, -0.5]);
+        control.stop();
+
+        worker.finish().expect("take should finalize");
+        let manifest: RecordingRecoveryManifest = serde_json::from_slice(
+            &fs::read(&manifest_path).expect("recovery manifest should be readable"),
+        )
+        .expect("recovery manifest should decode");
+        assert_eq!(manifest.start_sample, Some(96_256));
+        assert!(!manifest.start_sample_is_estimate);
+
+        let recovered = scan_recording_recoveries(&project)
+            .expect("take should remain discoverable")
+            .pop()
+            .expect("take should have one recovery candidate");
+        assert_eq!(recovered.manifest.start_sample, Some(96_256));
+        assert!(!recovered.manifest.start_sample_is_estimate);
+        discard_recording_recovery(&manifest_path).expect("test recording should be discarded");
         fs::remove_dir_all(directory).expect("test files should be removed");
     }
 

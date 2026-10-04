@@ -69,6 +69,7 @@ impl App {
                         writer,
                         control,
                         recording_offset_us,
+                        capture_timeline_anchor: None,
                         recovery_manifest_path,
                     }),
                     Err(error) => {
@@ -155,15 +156,27 @@ impl App {
         self.recording_cancelled_transport_start = true;
         recording.control.stop();
         let manifest_path = recording.recovery_manifest_path.clone();
+        let fallback_start_sample = self.recording_start_sample;
         self.stop_playback();
         self.status = "Finalizing take…".to_owned();
         Task::perform(
             run_blocking("aaadaw-recording-finish", move || {
                 recording.input.shutdown();
+                let start_sample = match (
+                    recording.capture_timeline_anchor,
+                    recording.control.first_capture_frame(),
+                ) {
+                    (Some(anchor), Some(first_frame)) => {
+                        anchor.project_sample_at(first_frame).ok_or_else(|| {
+                            "JACK capture frame maps outside the project sample range".to_owned()
+                        })?
+                    }
+                    _ => fallback_start_sample,
+                };
                 recording
                     .writer
                     .finish()
-                    .map(|paths| (paths, manifest_path))
+                    .map(|paths| (paths, manifest_path, start_sample))
                     .map_err(|error| error.to_string())
             }),
             |result| {
@@ -176,10 +189,9 @@ impl App {
         self.recording_stopping = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
-            Some(Ok((paths, recovery_manifest_path))) => {
+            Some(Ok((paths, recovery_manifest_path, start_sample))) => {
                 self.close_playback();
                 let tracks = std::mem::take(&mut self.recording_tracks);
-                let start_sample = self.recording_start_sample;
                 let Some(project_path) = self.project_path.clone() else {
                     self.status = "Project path disappeared; the finalized take remains available for recovery".to_owned();
                     return Task::none();
@@ -315,7 +327,7 @@ impl App {
     pub(super) fn finish_recording_position_saved(
         &mut self,
         result: super::SharedRecordingPositionSaved,
-    ) {
+    ) -> Task<Message> {
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
             Some(Ok((recording, _start_sample))) if self.recording_cancel_requested => {
@@ -324,14 +336,43 @@ impl App {
                 self.recording_tracks.clear();
                 discard_recording(recording);
                 self.status = "Recording setup cancelled".to_owned();
+                Task::none()
             }
             Some(Ok((recording, _provisional_start_sample))) => {
-                let transport_sample = self
-                    .playback
-                    .as_ref()
-                    .map_or(self.playhead_sample, |playback| {
-                        playback.stats().playhead_sample
-                    });
+                let playback_stats = self.playback.as_ref().map(|playback| playback.stats());
+                let jack_clock_anchor =
+                    playback_stats.and_then(|stats| stats.transport_clock_anchor);
+                let frame_clock_mapping = recording
+                    .input
+                    .map_shared_frame_time(jack_clock_anchor.map(|anchor| anchor.backend_frame));
+                let (transport_sample, capture_frame) = match frame_clock_mapping {
+                    aaadaw_app::SharedFrameClockMapping::Mapped(frame) => (
+                        jack_clock_anchor
+                            .expect("a mapped clock requires an output anchor")
+                            .project_sample,
+                        Some(frame),
+                    ),
+                    aaadaw_app::SharedFrameClockMapping::Unavailable => {
+                        recording.control.fail();
+                        discard_recording(recording);
+                        self.recording_starting = false;
+                        self.recording_tracks.clear();
+                        self.status =
+                            "JACK transport/input clock is unavailable; recording was not started"
+                                .to_owned();
+                        return Task::none();
+                    }
+                    aaadaw_app::SharedFrameClockMapping::Unsupported => (
+                        jack_clock_anchor.map_or_else(
+                            || {
+                                playback_stats
+                                    .map_or(self.playhead_sample, |stats| stats.playhead_sample)
+                            },
+                            |anchor| anchor.project_sample,
+                        ),
+                        None,
+                    ),
+                };
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
                 let Some(start_sample) = super::audio_config::apply_recording_offset(
@@ -343,33 +384,112 @@ impl App {
                     self.recording_starting = false;
                     self.recording_tracks.clear();
                     self.status = "Recording offset moves the take outside the supported project sample range".to_owned();
-                    return;
+                    return Task::none();
                 };
-                if let Err(error) = recording.writer.refine_start_sample(start_sample) {
+                if let Some(capture_frame) = capture_frame {
+                    let Some(anchor) = aaadaw_app::CaptureTimelineAnchor::new(
+                        capture_frame,
+                        start_sample,
+                        self.project.settings().sample_rate(),
+                        self.project.settings().sample_rate(),
+                    ) else {
+                        recording.control.fail_timing();
+                        discard_recording(recording);
+                        self.recording_starting = false;
+                        self.recording_tracks.clear();
+                        self.status =
+                            "JACK capture clock could not be mapped to the project sample rate"
+                                .to_owned();
+                        return Task::none();
+                    };
+                    self.status = "Aligning JACK capture clock…".to_owned();
+                    return Task::perform(
+                        run_blocking("aaadaw-recording-clock-anchor", move || {
+                            if let Err(error) = recording.writer.set_capture_timeline_anchor(anchor)
+                            {
+                                recording.control.fail();
+                                discard_recording(recording);
+                                return Err(error.to_string());
+                            }
+                            let mut recording = recording;
+                            recording.capture_timeline_anchor = Some(anchor);
+                            Ok((recording, start_sample))
+                        }),
+                        |result| {
+                            Message::RecordingClockAnchorReady(
+                                super::SharedRecordingClockAnchorReady(Arc::new(Mutex::new(Some(
+                                    result,
+                                )))),
+                            )
+                        },
+                    );
+                } else if let Err(error) = recording.writer.refine_start_sample(start_sample) {
                     recording.control.fail();
                     discard_recording(recording);
                     self.recording_starting = false;
                     self.recording_tracks.clear();
                     self.status = format!("Could not update recording recovery position: {error}");
-                    return;
+                    return Task::none();
                 }
                 recording.control.start();
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;
                 self.status = "Recording".to_owned();
+                Task::none()
             }
             Some(Err(error)) => {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
                 self.status = format!("Could not persist recording recovery metadata: {error}");
+                Task::none()
             }
             None => {
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
                 self.status = "Recording recovery metadata result was unavailable".to_owned();
+                Task::none()
+            }
+        }
+    }
+
+    pub(super) fn finish_recording_clock_anchor_ready(
+        &mut self,
+        result: super::SharedRecordingClockAnchorReady,
+    ) -> Task<Message> {
+        let result = result.0.lock().ok().and_then(|mut result| result.take());
+        match result {
+            Some(Ok((recording, _start_sample))) if self.recording_cancel_requested => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                discard_recording(recording);
+                self.status = "Recording setup cancelled".to_owned();
+                Task::none()
+            }
+            Some(Ok((recording, start_sample))) => {
+                recording.control.start();
+                self.recording_start_sample = start_sample;
+                self.recording = Some(recording);
+                self.recording_starting = false;
+                self.status = "Recording".to_owned();
+                Task::none()
+            }
+            Some(Err(error)) => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                self.status = format!("Could not initialize JACK recording timeline: {error}");
+                Task::none()
+            }
+            None => {
+                self.recording_cancel_requested = false;
+                self.recording_starting = false;
+                self.recording_tracks.clear();
+                self.status = "JACK recording timeline result was unavailable".to_owned();
+                Task::none()
             }
         }
     }

@@ -130,6 +130,7 @@
 - [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
 - [x] 实现进程异常退出后的未完成录音恢复：项目旁路 manifest 持久化录音轨道、起点和已完成分段；打开工程后异步扫描，用户可显式恢复/丢弃，校验完整可解码分段并报告缺失帧/截断尾部，工程成功保存前保留恢复源（[Issue #8](https://github.com/mumu-lhl/AAADAW/issues/8)）。录音起点在恢复元数据同步后、启用捕获前重新取样，并由写入线程异步精确更新；崩溃发生在更新完成前时，恢复流程明确提示采用的是估算位置（[Issue #36](https://github.com/mumu-lhl/AAADAW/issues/36)）。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
+- [ ] 将 JACK capture frame clock 映射到工程 transport sample，让第一块输入回调的时间差也能进入录音、恢复和导入位置（[Issue #56](https://github.com/mumu-lhl/AAADAW/issues/56)）。该映射不代替设备 latency 补偿。
 - [x] 增加带符号的用户录音放置校准值，并让录音导入和崩溃恢复使用同一修正锚点（[Issue #54](https://github.com/mumu-lhl/AAADAW/issues/54)）。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。

@@ -7,6 +7,7 @@
 mod asset_management;
 mod audio_editing;
 mod audio_import;
+mod capture_timeline;
 mod clap_plugins;
 mod live_recording;
 mod midi_editing;
@@ -25,6 +26,7 @@ pub use audio_import::{
     AudioItemImportError, AudioItemImportProgress, AudioItemImportWorker,
     cleanup_unplaced_audio_assets, start_audio_item_import, start_audio_item_reimport,
 };
+pub use capture_timeline::CaptureTimelineAnchor;
 pub use clap_plugins::{
     ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,
 };
@@ -47,6 +49,8 @@ use aaadaw_engine::MasterOutputSafetyController;
 use aaadaw_engine::StoppedTrackFxProcessor;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackMixController;
+#[cfg(feature = "audio-device")]
+use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, pcm_stream,
 };
@@ -79,6 +83,18 @@ pub enum RunningAudioInput {
     PipeWire(aaadaw_engine::PipeWireAudioInput),
     #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
     Wasapi(WasapiAudioInput),
+}
+
+/// Result of mapping the output clock into the active input clock domain.
+#[cfg(feature = "audio-device")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SharedFrameClockMapping {
+    /// The input backend does not share an output frame clock.
+    Unsupported,
+    /// The backend shares the clock, but either the output anchor or input clock sample is absent.
+    Unavailable,
+    /// The output frame expressed in the input backend's extended clock domain.
+    Mapped(u64),
 }
 
 /// Opens the selected native input backend for a stereo take.
@@ -121,6 +137,29 @@ pub fn open_audio_input(
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioInput {
+    /// Maps an optional playback frame anchor into the input backend's extended clock domain.
+    pub fn map_shared_frame_time(&self, _frame: Option<u32>) -> SharedFrameClockMapping {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(input) => _frame
+                .and_then(|frame| input.map_shared_frame_time(frame))
+                .map_or(
+                    SharedFrameClockMapping::Unavailable,
+                    SharedFrameClockMapping::Mapped,
+                ),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(_) => SharedFrameClockMapping::Unsupported,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(_) => SharedFrameClockMapping::Unsupported,
+            #[cfg(not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(feature = "wasapi-backend", target_os = "windows")
+            )))]
+            _ => SharedFrameClockMapping::Unsupported,
+        }
+    }
+
     /// Stops the input callback and releases the device.
     pub fn shutdown(self) {
         match self {
@@ -766,6 +805,8 @@ pub struct PlaybackStats {
     pub jack_xruns: Option<u64>,
     pub callback_errors: u64,
     pub playhead_sample: u64,
+    /// JACK server frame paired with the project sample at that callback's start.
+    pub transport_clock_anchor: Option<TransportClockAnchor>,
     /// True after Windows invalidates the active stream because its device changed or disappeared.
     pub output_device_lost: bool,
 }
@@ -781,6 +822,7 @@ impl From<JackOutputStats> for PlaybackStats {
             jack_xruns: Some(stats.device_xruns),
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
+            transport_clock_anchor: stats.transport_clock_anchor,
             output_device_lost: false,
         }
     }
@@ -797,6 +839,7 @@ impl From<PipeWireOutputStats> for PlaybackStats {
             jack_xruns: None,
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
+            transport_clock_anchor: None,
             output_device_lost: false,
         }
     }
@@ -813,6 +856,7 @@ impl From<WasapiOutputStats> for PlaybackStats {
             jack_xruns: None,
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
+            transport_clock_anchor: None,
             output_device_lost: stats.device_lost,
         }
     }

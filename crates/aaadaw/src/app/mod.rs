@@ -315,6 +315,7 @@ struct ActiveRecording {
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
     recording_offset_us: i32,
+    capture_timeline_anchor: Option<aaadaw_app::CaptureTimelineAnchor>,
     recovery_manifest_path: PathBuf,
 }
 
@@ -366,7 +367,21 @@ impl std::fmt::Debug for SharedRecordingPositionSaved {
 }
 
 #[cfg(feature = "audio-device")]
-type RecordingStopResult = Result<(Vec<PathBuf>, PathBuf), String>;
+type RecordingClockAnchorReadyResult = Arc<Mutex<Option<Result<(ActiveRecording, u64), String>>>>;
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone)]
+pub(super) struct SharedRecordingClockAnchorReady(RecordingClockAnchorReadyResult);
+
+#[cfg(feature = "audio-device")]
+impl std::fmt::Debug for SharedRecordingClockAnchorReady {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingClockAnchorReady(..)")
+    }
+}
+
+#[cfg(feature = "audio-device")]
+type RecordingStopResult = Result<(Vec<PathBuf>, PathBuf, u64), String>;
 
 #[cfg(feature = "audio-device")]
 #[derive(Clone)]
@@ -789,6 +804,7 @@ impl App {
                         | Message::StopRecording
                         | Message::RecordingStarted(_)
                         | Message::RecordingPositionSaved(_)
+                        | Message::RecordingClockAnchorReady(_)
                         | Message::RecordingStopped(_)
                         | Message::BackgroundTick
                         | Message::ToggleMainMenu(_)
@@ -810,6 +826,7 @@ impl App {
                         | Message::StopRecording
                         | Message::RecordingStarted(_)
                         | Message::RecordingPositionSaved(_)
+                        | Message::RecordingClockAnchorReady(_)
                         | Message::RecordingStopped(_)
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
@@ -1738,7 +1755,11 @@ impl App {
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
             #[cfg(feature = "audio-device")]
             Message::RecordingPositionSaved(result) => {
-                self.finish_recording_position_saved(result);
+                task = self.finish_recording_position_saved(result);
+            }
+            #[cfg(feature = "audio-device")]
+            Message::RecordingClockAnchorReady(result) => {
+                task = self.finish_recording_clock_anchor_ready(result);
             }
             #[cfg(feature = "audio-device")]
             Message::RecordingStopped(result) => task = self.finish_recording_stop(result),
