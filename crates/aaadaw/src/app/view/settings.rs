@@ -93,7 +93,7 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
         row![
             column![
                 text("Recording placement offset (ms)").size(13),
-                text("Positive moves the resulting item later; negative moves it earlier. This is a user calibration value, not a device latency measurement.").size(10),
+                text("Positive moves the take later; negative moves it earlier. JACK's precise reported capture latency is applied automatically when available; this value calibrates the remaining offset.").size(10),
             ]
             .width(Length::Fill)
             .spacing(tokens::SPACING_XS),

@@ -15,6 +15,14 @@ JACK capture blocks retain `ProcessScope::last_frame_time()` in a bounded descri
 
 Latency ranges are not necessarily exact hardware measurements. JACK's latency API is a graph-wide contract: clients report their port latency and JACK propagates it across connections. PipeWire timing describes the stream/device path known to the graph. Interface converters, external digital devices, and unreported graph nodes can leave residual offset. The user may still need a calibrated recording offset.
 
+## JACK capture placement policy (Issue #58)
+
+The JACK adapter queries the connected left and right capture ports' `Capture` ranges on the setup/control path. Automatic correction is used only when both channels report the same precise nonzero range (`min == max`). A zero/default range, an ambiguous range, a missing port, or a channel mismatch is treated as unavailable: the take uses the user calibration value alone and the app reports that automatic capture-latency compensation is unavailable. This avoids presenting JACK's default zero as a trustworthy hardware measurement.
+
+For the accepted value, the app subtracts the reported capture-path frames from the transport-to-capture placement anchor, then combines that signed sample correction with the existing user calibration before persistence. The audio samples are not shifted or resampled. The corrected anchor is the one written to recovery metadata and used for normal import. JACK defines capture latency as the time elapsed since samples read from a port buffer arrived at a terminal port; this is the input-path quantity relevant to the capture placement correction. The reported range still reflects the graph's report and may omit physical converter/device delay. Output latency remains separate and is not added to ordinary takes.
+
+The JACK 2 API documents capture/playback latency ranges as graph-path values, defaults unreported port latency to zero, and says the range should be read after a port is connected (normally in the latency callback). The pinned `jack` Rust crate does not expose that callback, so this slice refreshes a bounded atomic snapshot from JACK's non-realtime port-connection notification and immediately after the explicit connections succeed. Each take reads that snapshot on the control path. Real-server timing and hardware accuracy still require Issue #7 validation.
+
 ## Deterministic clock-mapping slice
 
 Issue #56 implements the first backend-independent sample-domain rule and the JACK adapter; its
@@ -34,6 +42,7 @@ The repository pins `jack = 0.13.5` and `pipewire = 0.10` in `crates/aaadaw-engi
 Primary references:
 
 - JACK API, latency functions: <https://jackaudio.org/api/group__LatencyFunctions.html>
+- JACK 2 API header, latency semantics and connected-port requirements: <https://github.com/jackaudio/jack2/blob/17959465a722225a36a8b612aed26764036f258e/common/jack/jack.h>
 - JACK API, time functions: <https://jackaudio.org/api/group__TimeFunctions.html>
 - JACK API, port functions: <https://jackaudio.org/api/group__PortFunctions.html>
 - JACK Rust bindings 0.13.5, `ProcessScope` and client timing: <https://docs.rs/jack/0.13.5/jack/struct.ProcessScope.html> and <https://docs.rs/jack/0.13.5/jack/struct.Client.html>
