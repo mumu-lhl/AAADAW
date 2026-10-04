@@ -592,7 +592,23 @@ impl App {
             }
         }
         match audio_config::load() {
-            Ok(settings) => app.audio_settings = settings,
+            Ok(settings) => {
+                #[cfg(any(
+                    all(feature = "jack-backend", feature = "pipewire-backend"),
+                    all(
+                        feature = "jack-backend",
+                        feature = "wasapi-backend",
+                        target_os = "windows"
+                    ),
+                    all(
+                        feature = "pipewire-backend",
+                        feature = "wasapi-backend",
+                        target_os = "windows"
+                    )
+                ))]
+                app.restore_playback_backend(settings.playback_backend);
+                app.audio_settings = settings;
+            }
             Err(error) => {
                 app.audio_settings_feedback =
                     format!("Audio config unavailable; using defaults ({error})");
@@ -2289,7 +2305,25 @@ impl App {
                     self.status = "Close the current output before switching backends".to_owned();
                 } else {
                     self.playback_backend = backend;
-                    self.status = format!("{} selected for playback", backend.name());
+                    let settings = audio_config::AudioSettings {
+                        playback_backend: Some(Self::playback_backend_setting(backend)),
+                        ..self.audio_settings
+                    };
+                    self.audio_settings = settings;
+                    match audio_config::save(settings) {
+                        Ok(()) => {
+                            self.status = format!("{} selected for playback", backend.name());
+                            self.audio_settings_feedback =
+                                format!("{} selected for playback", backend.name());
+                        }
+                        Err(error) => {
+                            self.status = format!(
+                                "{} selected for this session but could not be saved: {error}",
+                                backend.name()
+                            );
+                            self.audio_settings_feedback = self.status.clone();
+                        }
+                    }
                 }
             }
         }
@@ -2762,6 +2796,59 @@ impl App {
         {
             PlaybackBackend::Unavailable
         }
+    }
+
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
+    fn playback_backend_setting(backend: PlaybackBackend) -> audio_config::PlaybackBackendSetting {
+        match backend {
+            #[cfg(feature = "jack-backend")]
+            PlaybackBackend::Jack => audio_config::PlaybackBackendSetting::Jack,
+            #[cfg(feature = "pipewire-backend")]
+            PlaybackBackend::PipeWire => audio_config::PlaybackBackendSetting::PipeWire,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            PlaybackBackend::Wasapi => audio_config::PlaybackBackendSetting::Wasapi,
+            _ => unreachable!("the playback selector only lists available backends"),
+        }
+    }
+
+    #[cfg(any(
+        all(feature = "jack-backend", feature = "pipewire-backend"),
+        all(
+            feature = "jack-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        ),
+        all(
+            feature = "pipewire-backend",
+            feature = "wasapi-backend",
+            target_os = "windows"
+        )
+    ))]
+    fn restore_playback_backend(&mut self, setting: Option<audio_config::PlaybackBackendSetting>) {
+        let Some(setting) = setting else {
+            return;
+        };
+        self.playback_backend = match setting {
+            #[cfg(feature = "jack-backend")]
+            audio_config::PlaybackBackendSetting::Jack => PlaybackBackend::Jack,
+            #[cfg(feature = "pipewire-backend")]
+            audio_config::PlaybackBackendSetting::PipeWire => PlaybackBackend::PipeWire,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            audio_config::PlaybackBackendSetting::Wasapi => PlaybackBackend::Wasapi,
+            _ => self.playback_backend,
+        };
     }
 
     #[cfg(feature = "audio-device")]

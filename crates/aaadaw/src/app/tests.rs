@@ -9,6 +9,8 @@ use super::{
     App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
     shortcut_message,
 };
+#[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
@@ -17,6 +19,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
+#[test]
+fn saved_playback_backend_restores_only_when_available_in_this_build() {
+    let mut app = App::default();
+    app.restore_playback_backend(Some(super::audio_config::PlaybackBackendSetting::PipeWire));
+    assert_eq!(app.selected_playback_backend(), PlaybackBackend::PipeWire);
+
+    app.restore_playback_backend(Some(super::audio_config::PlaybackBackendSetting::Wasapi));
+    assert_eq!(app.selected_playback_backend(), PlaybackBackend::PipeWire);
+}
 
 #[test]
 fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {

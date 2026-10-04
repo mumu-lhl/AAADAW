@@ -6,6 +6,32 @@ use std::path::{Path, PathBuf};
 const FILE_NAME: &str = "audio.conf";
 const MAX_RECORDING_OFFSET_US: i32 = 5_000_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PlaybackBackendSetting {
+    Jack,
+    PipeWire,
+    Wasapi,
+}
+
+impl PlaybackBackendSetting {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "JACK" => Some(Self::Jack),
+            "PipeWire" => Some(Self::PipeWire),
+            "WASAPI" => Some(Self::Wasapi),
+            _ => None,
+        }
+    }
+
+    fn as_config_value(self) -> &'static str {
+        match self {
+            Self::Jack => "JACK",
+            Self::PipeWire => "PipeWire",
+            Self::Wasapi => "WASAPI",
+        }
+    }
+}
+
 #[cfg(feature = "audio-device")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RecordingPlacementCorrection {
@@ -45,6 +71,7 @@ impl RecordingPlacementCorrection {
 pub(super) struct AudioSettings {
     pub(super) master_output_ceiling: MasterOutputCeiling,
     pub(super) recording_offset_us: i32,
+    pub(super) playback_backend: Option<PlaybackBackendSetting>,
 }
 
 pub(super) fn load() -> Result<AudioSettings, String> {
@@ -73,6 +100,7 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
     let mut settings = AudioSettings::default();
     let mut found_ceiling = false;
     let mut found_recording_offset = false;
+    let mut found_playback_backend = false;
     for (line_number, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -102,6 +130,10 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
                     })?;
                 found_recording_offset = true;
             }
+            "playback_backend" if !found_playback_backend => {
+                settings.playback_backend = PlaybackBackendSetting::parse(value);
+                found_playback_backend = true;
+            }
             _ => return Err(format!("invalid audio config line {}", line_number + 1)),
         }
     }
@@ -120,6 +152,13 @@ fn save_to(path: &Path, settings: AudioSettings) -> io::Result<()> {
         "recording_placement_offset_ms={}",
         format_recording_offset_ms(settings.recording_offset_us)
     )?;
+    if let Some(playback_backend) = settings.playback_backend {
+        writeln!(
+            &mut contents,
+            "playback_backend={}",
+            playback_backend.as_config_value()
+        )?;
+    }
     write_atomic(path, &contents)
 }
 
@@ -207,6 +246,7 @@ mod tests {
         let settings = AudioSettings {
             master_output_ceiling: MasterOutputCeiling::new(-6).unwrap(),
             recording_offset_us: -125_500,
+            playback_backend: Some(PlaybackBackendSetting::PipeWire),
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",
@@ -241,6 +281,20 @@ mod tests {
             parse("master_output_ceiling_dbfs=-1\n").unwrap(),
             AudioSettings::default()
         );
+    }
+
+    #[test]
+    fn unknown_saved_backend_falls_back_without_invalidating_other_audio_settings() {
+        let settings = parse(
+            "master_output_ceiling_dbfs=-6\nrecording_placement_offset_ms=1.250\nplayback_backend=CoreAudio\n",
+        )
+        .unwrap();
+        assert_eq!(
+            settings.master_output_ceiling,
+            MasterOutputCeiling::new(-6).unwrap()
+        );
+        assert_eq!(settings.recording_offset_us, 1_250);
+        assert_eq!(settings.playback_backend, None);
     }
 
     #[test]

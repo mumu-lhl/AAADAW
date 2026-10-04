@@ -44,6 +44,8 @@ jobs:
         run: cargo check --workspace --all-targets --features aaadaw/jack-backend
       - name: Check Linux PipeWire backend
         run: cargo check --workspace --all-targets --features aaadaw/pipewire-backend
+      - name: Test persisted playback backend selection
+        run: cargo test -p aaadaw --features jack-backend,pipewire-backend saved_playback_backend_restores_only_when_available_in_this_build
       - name: Test PipeWire capture timing
         run: cargo nextest run -p aaadaw-engine --features pipewire-backend
       - name: Run Clippy
