@@ -127,7 +127,7 @@
 - [x] 增加后台导入的 UI 进度/取消和完成后 placement；目前追加到首条轨道。
 - [x] 接入源文件扫描、外链工程级打包的进度/取消 UI；显示素材源状态，并可为缺失的 live external link 重新指定文件。
 - [x] 为选中的 Audio Item 提供嵌入快照源变化后的重新导入操作（[`docs/tickets/2026-10-02-reimport-changed-embedded-audio.md`](docs/tickets/2026-10-02-reimport-changed-embedded-audio.md)）。
-- [ ] 为已编排的 Audio/MIDI 工程离线渲染立体声 PCM24 WAV：复用完整渲染图及 Master ceiling、追加 2 秒固定效果尾音、后台增量写盘并报告进度/支持取消（[Issue #64](https://github.com/mumu-lhl/AAADAW/issues/64)）。
+- [x] 为已编排的 Audio/MIDI 工程离线渲染立体声 PCM24 WAV：复用完整渲染图及 Master ceiling、追加 2 秒固定效果尾音、后台增量写盘并报告进度/支持取消（[Issue #64](https://github.com/mumu-lhl/AAADAW/issues/64)）。
 - [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
 - [x] 实现进程异常退出后的未完成录音恢复：项目旁路 manifest 持久化录音轨道、起点和已完成分段；打开工程后异步扫描，用户可显式恢复/丢弃，校验完整可解码分段并报告缺失帧/截断尾部，工程成功保存前保留恢复源（[Issue #8](https://github.com/mumu-lhl/AAADAW/issues/8)）。录音起点在恢复元数据同步后、启用捕获前重新取样，并由写入线程异步精确更新；崩溃发生在更新完成前时，恢复流程明确提示采用的是估算位置（[Issue #36](https://github.com/mumu-lhl/AAADAW/issues/36)）。
 - [x] 计算并补偿可靠的 JACK 输入设备延迟；当设备数据为零、含糊或不一致时只应用用户校准，并明确报告自动补偿不可用（[`Issue #58`](https://github.com/mumu-lhl/AAADAW/issues/58)）。PipeWire/WASAPI 适配仍待单独实现。
