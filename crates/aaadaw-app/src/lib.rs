@@ -463,6 +463,8 @@ impl RunningAudioPlayback {
 pub struct PlaybackStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
+    /// JACK-reported device xruns. `None` means the active backend has no verified signal.
+    pub jack_xruns: Option<u64>,
     pub callback_errors: u64,
     pub playhead_sample: u64,
 }
@@ -473,6 +475,7 @@ impl From<JackOutputStats> for PlaybackStats {
         Self {
             rendered_blocks: stats.rendered_blocks,
             underrun_samples: stats.underrun_samples,
+            jack_xruns: Some(stats.device_xruns),
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
         }
@@ -485,6 +488,7 @@ impl From<PipeWireOutputStats> for PlaybackStats {
         Self {
             rendered_blocks: stats.rendered_blocks,
             underrun_samples: stats.underrun_samples,
+            jack_xruns: None,
             callback_errors: stats.callback_errors,
             playhead_sample: stats.playhead_sample,
         }
