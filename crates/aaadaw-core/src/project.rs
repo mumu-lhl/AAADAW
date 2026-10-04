@@ -629,6 +629,12 @@ impl Project {
         let mut state = self.state.clone();
         let mut ids = self.ids.clone();
         let event = Self::apply_action(&mut state, &mut ids, action)?;
+        if matches!(
+            &event,
+            ProjectEvent::MidiNotesQuantized { changes, .. } if changes.is_empty()
+        ) {
+            return Ok(());
+        }
 
         self.state = state;
         self.ids = ids;

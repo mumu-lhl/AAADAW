@@ -53,4 +53,16 @@ fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
     let notes = project.midi_items()[0].notes();
     assert_eq!(notes[0].tick(), 110);
     assert_eq!(notes[1].tick(), 510);
+
+    project
+        .apply(DawAction::QuantizeItem {
+            item_id,
+            grid: GridFraction::new(1, 16).expect("1/16 is a valid grid"),
+            strength: 0.0,
+        })
+        .expect("zero-strength quantize should be a no-op");
+    assert!(project.redo().expect("no-op should preserve redo history"));
+    let notes = project.midi_items()[0].notes();
+    assert_eq!(notes[0].tick(), 0);
+    assert_eq!(notes[1].tick(), 480);
 }
