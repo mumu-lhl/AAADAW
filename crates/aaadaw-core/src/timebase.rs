@@ -373,7 +373,7 @@ impl MeterMap {
             let previous = points[index - 1];
             let ticks_per_measure = previous.signature.ticks_per_measure(ppq)?;
             let offset = points[index].start_tick - previous.start_tick;
-            if offset % ticks_per_measure != 0 {
+            if !offset.is_multiple_of(ticks_per_measure) {
                 return Err(TimebaseError::MeterChangeNotOnBarBoundary);
             }
             points[index].start_measure = previous

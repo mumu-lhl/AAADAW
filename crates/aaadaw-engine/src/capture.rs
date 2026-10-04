@@ -416,11 +416,9 @@ impl AudioCaptureProducer {
             .is_some_and(|monitor| monitor.gate.is_enabled());
         let mut frames = frames.into_iter();
         if !capture_enabled {
-            if monitor_enabled {
-                if let Some(monitor) = &mut self.monitor {
-                    for frame in frames {
-                        monitor.write_frame(frame);
-                    }
+            if monitor_enabled && let Some(monitor) = &mut self.monitor {
+                for frame in frames {
+                    monitor.write_frame(frame);
                 }
             }
             return 0;
@@ -428,10 +426,8 @@ impl AudioCaptureProducer {
 
         let mut frame_count = 0_usize;
         while let Some(frame) = frames.next() {
-            if monitor_enabled {
-                if let Some(monitor) = &mut self.monitor {
-                    monitor.write_frame(frame);
-                }
+            if monitor_enabled && let Some(monitor) = &mut self.monitor {
+                monitor.write_frame(frame);
             }
             if let Err(PushError::Full(_)) = self.producer.push(frame) {
                 let dropped_frames = 1_u64.saturating_add(frames.count() as u64);

@@ -46,16 +46,16 @@ pub(super) fn dock_view(app: &App) -> Element<'_, Message> {
     for entry in entries {
         let status = format!("{} · {:?}", entry.media_ref, entry.status);
         let mut source_row = row![text(status).size(11).width(Length::Fill)];
-        if entry.is_external_link && entry.status == AudioAssetSourceStatus::Missing {
-            if let Some(item) = app
+        if entry.is_external_link
+            && entry.status == AudioAssetSourceStatus::Missing
+            && let Some(item) = app
                 .project
                 .audio_items()
                 .iter()
                 .find(|item| item.media_ref() == entry.media_ref)
-            {
-                source_row =
-                    source_row.push(button("Relink").on_press(Message::RelinkAudioItem(item.id())));
-            }
+        {
+            source_row =
+                source_row.push(button("Relink").on_press(Message::RelinkAudioItem(item.id())));
         }
         source_rows = source_rows.push(source_row.spacing(4).align_y(Alignment::Center));
     }

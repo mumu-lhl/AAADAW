@@ -723,14 +723,13 @@ impl ClapEffectProcessor {
         while let Ok(command) = self.parameter_commands.pop() {
             match command {
                 ClapParameterCommand::Begin { id } => {
-                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id) {
-                        if self.active_parameter_gestures.len()
+                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id)
+                        && self.active_parameter_gestures.len()
                             < self.active_parameter_gestures.capacity()
-                        {
-                            self.active_parameter_gestures.push(id);
-                            self.input_events
-                                .push(&ParamGestureBeginEvent::new(0, param_id));
-                        }
+                    {
+                        self.active_parameter_gestures.push(id);
+                        self.input_events
+                            .push(&ParamGestureBeginEvent::new(0, param_id));
                     }
                 }
                 ClapParameterCommand::Set { id, value } => {
@@ -744,16 +743,15 @@ impl ClapEffectProcessor {
                     }
                 }
                 ClapParameterCommand::End { id } => {
-                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id) {
-                        if let Some(index) = self
+                    if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id)
+                        && let Some(index) = self
                             .active_parameter_gestures
                             .iter()
                             .position(|active| *active == id)
-                        {
-                            self.active_parameter_gestures.swap_remove(index);
-                            self.input_events
-                                .push(&ParamGestureEndEvent::new(0, param_id));
-                        }
+                    {
+                        self.active_parameter_gestures.swap_remove(index);
+                        self.input_events
+                            .push(&ParamGestureEndEvent::new(0, param_id));
                     }
                 }
             }
@@ -1742,11 +1740,11 @@ mod tests {
             _output: &mut clack_plugin::events::io::OutputEvents,
         ) {
             for event in input {
-                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event() {
-                    if value.param_id().is_some_and(|id| id.get() == 1) {
-                        self.0
-                            .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
-                    }
+                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event()
+                    && value.param_id().is_some_and(|id| id.get() == 1)
+                {
+                    self.0
+                        .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
                 }
             }
         }
@@ -1883,11 +1881,11 @@ mod tests {
         ) -> Result<ProcessStatus, PluginError> {
             self.0.fetch_add(1, Ordering::Relaxed);
             for event in events.input {
-                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event() {
-                    if value.param_id().is_some_and(|id| id.get() == 1) {
-                        self.0
-                            .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
-                    }
+                if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event()
+                    && value.param_id().is_some_and(|id| id.get() == 1)
+                {
+                    self.0
+                        .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
                 }
             }
             for mut port in &mut audio {

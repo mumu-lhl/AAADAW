@@ -671,7 +671,9 @@ impl DecodedAudioChunk {
             1 => output.extend(self.samples().iter().map(|sample| [*sample, *sample])),
             2 => output.extend(
                 self.samples()
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|frame| [frame[0], frame[1]]),
             ),
             channels => {
