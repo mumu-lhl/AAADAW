@@ -9,9 +9,32 @@ use aaadaw_core::{
     TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
+use aaadaw_storage::ProjectSessionLock;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub(crate) struct SharedProjectSessionLock(Arc<Mutex<Option<ProjectSessionLock>>>);
+
+pub(crate) type SharedProjectLoadResult =
+    Arc<Mutex<Option<Result<(Project, ProjectSessionLock), String>>>>;
+
+impl SharedProjectSessionLock {
+    pub(crate) fn new(lock: Option<ProjectSessionLock>) -> Self {
+        Self(Arc::new(Mutex::new(lock)))
+    }
+
+    pub(crate) fn take(&self) -> Option<ProjectSessionLock> {
+        self.0.lock().ok().and_then(|mut lock| lock.take())
+    }
+}
+
+impl std::fmt::Debug for SharedProjectSessionLock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedProjectSessionLock(..)")
+    }
+}
 
 pub(crate) fn track_name_input_id(track_id: TrackId) -> iced::widget::Id {
     iced::widget::Id::from(format!("aaadaw-track-name-{}", track_id.value()))
@@ -223,8 +246,14 @@ pub(crate) enum Message {
     RelinkAudioItem(ItemId),
     AudioItemRelinked(ItemId, Result<(), String>),
     BackgroundTick,
-    ProjectLoaded(PathBuf, Arc<Mutex<Option<Result<Project, String>>>>),
-    ProjectSaved(PathBuf, u64, Result<(), String>, Option<String>),
+    ProjectLoaded(PathBuf, SharedProjectLoadResult),
+    ProjectSaved(
+        PathBuf,
+        u64,
+        Result<(), String>,
+        Option<String>,
+        SharedProjectSessionLock,
+    ),
     CancelOfflineRender,
     OfflineRenderFinished(Result<PathBuf, String>),
     RecordingRecoveryScanned(

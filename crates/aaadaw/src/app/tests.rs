@@ -1,10 +1,13 @@
 use super::commands::{self, CommandId, TrackCommand};
+use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
 use super::prepare_project_playback_file;
-use super::project_io::{load_project_file, save_project_file};
+use super::project_io::{
+    load_project_file, load_project_session, save_project_file, save_project_session_file,
+};
 use super::{App, MainMenu, Message, PathPickerTarget, keyboard_shortcut_event, shortcut_message};
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
-use aaadaw_storage::ProjectStore;
+use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -321,6 +324,9 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
 #[test]
 fn loading_a_project_clears_the_previous_time_selection() {
     let mut app = App::default();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("loaded.aaadaw");
+    let lock = ProjectSessionLock::acquire(&path).unwrap();
     let _ = app.update(Message::Timeline(
         crate::timeline::TimelineEvent::SetTimeSelection {
             start_tick: 240,
@@ -329,8 +335,8 @@ fn loading_a_project_clears_the_previous_time_selection() {
     ));
 
     let _ = app.update(Message::ProjectLoaded(
-        std::path::PathBuf::from("loaded.aaadaw"),
-        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok(Project::new())))),
+        path,
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok((Project::new(), lock))))),
     ));
 
     assert_eq!(app.timeline.time_selection, None);
@@ -1447,6 +1453,62 @@ fn opening_missing_path_does_not_create_a_project_file() {
     #[cfg(feature = "audio-device")]
     assert!(prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0).is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn an_open_desktop_project_excludes_an_mcp_writer_until_released() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("locked-session.aaadaw");
+    let store = ProjectStore::open(&path).unwrap();
+    store.close().unwrap();
+
+    let (_, session_lock) = load_project_session(path.clone()).unwrap();
+    let error = ProjectSessionLock::acquire(&path).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+
+    drop(session_lock);
+    ProjectSessionLock::acquire(path).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_a_new_project_publishes_it_with_the_session_identity_lock_held() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("new-session.aaadaw");
+    let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Lead Vocal".to_owned(),
+        })
+        .unwrap();
+
+    save_project_session_file(
+        path.clone(),
+        project.snapshot(),
+        false,
+        Some(&mut session_lock),
+    )
+    .unwrap();
+
+    let persisted = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(persisted.tracks()[0].name(), "Lead Vocal");
+    let hard_link = directory.path().join("new-session-link.aaadaw");
+    std::fs::hard_link(&path, &hard_link).unwrap();
+    let error = ProjectSessionLock::acquire(&hard_link).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    assert_eq!(
+        std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".aaadaw-save-"))
+            .count(),
+        0
+    );
 }
 
 #[cfg(feature = "audio-device")]
@@ -2741,6 +2803,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         app.revision,
         Ok(()),
         None,
+        SharedProjectSessionLock::new(None),
     ));
     assert_eq!(app.pending_recording_cleanup.len(), 1);
     let imported_revision = app.pending_recording_cleanup[0].saved_revision;
@@ -2757,6 +2820,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         app.revision,
         Ok(()),
         None,
+        SharedProjectSessionLock::new(None),
     ));
     let manifest_path = app.pending_recording_cleanup[0].manifest_path.clone();
     assert_eq!(

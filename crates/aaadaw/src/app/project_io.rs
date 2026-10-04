@@ -1,6 +1,7 @@
+use super::messages::SharedProjectSessionLock;
 use super::{App, Message, project_path_from_query, run_blocking};
 use aaadaw_core::{Project, ProjectSnapshot};
-use aaadaw_storage::ProjectStore;
+use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::Task;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -26,11 +27,15 @@ pub(super) fn open_project(app: &mut App) -> Task<Message> {
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
+    if app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some() {
+        app.status = format!("{} is already open", path.display());
+        return Task::none();
+    }
     app.io_busy = true;
     app.status = format!("Opening {}…", path.display());
     let message_path = path.clone();
     Task::perform(
-        run_blocking("aaadaw-project-open", move || load_project_file(path)),
+        run_blocking("aaadaw-project-open", move || load_project_session(path)),
         move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
     )
 }
@@ -54,14 +59,34 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
+    let reuse_session_lock =
+        app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some();
     app.io_busy = true;
     app.status = format!("Saving {}…", path.display());
     let message_path = path.clone();
     Task::perform(
         run_blocking("aaadaw-project-save", move || {
-            save_project_file(path, snapshot, can_overwrite)
+            let mut new_lock = if reuse_session_lock {
+                None
+            } else {
+                Some(ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?)
+            };
+            save_project_session_file(path, snapshot, can_overwrite, new_lock.as_mut())?;
+            Ok(new_lock)
         }),
-        move |result| Message::ProjectSaved(message_path, revision, result, plugin_state_warning),
+        move |result| {
+            let (result, lock) = match result {
+                Ok(lock) => (Ok(()), lock),
+                Err(error) => (Err(error), None),
+            };
+            Message::ProjectSaved(
+                message_path,
+                revision,
+                result,
+                plugin_state_warning,
+                SharedProjectSessionLock::new(lock),
+            )
+        },
     )
 }
 
@@ -92,6 +117,12 @@ pub(super) fn load_project_file(path: PathBuf) -> Result<Project, String> {
     Ok(project)
 }
 
+pub(super) fn load_project_session(path: PathBuf) -> Result<(Project, ProjectSessionLock), String> {
+    let lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    let project = load_project_file(path)?;
+    Ok((project, lock))
+}
+
 pub(super) fn save_project_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
@@ -109,5 +140,56 @@ pub(super) fn save_project_file(
     let close = store.close().map_err(|error| error.to_string());
     save?;
     close?;
+    Ok(())
+}
+
+pub(super) fn save_project_session_file(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    can_overwrite: bool,
+    new_session_lock: Option<&mut ProjectSessionLock>,
+) -> Result<(), String> {
+    if path == Path::new(":memory:") {
+        return Err("project path must name a file".to_owned());
+    }
+    if !can_overwrite && path.exists() {
+        return Err("file exists; open it before saving to that path".to_owned());
+    }
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    if let Some(new_session_lock) = new_session_lock {
+        if can_overwrite {
+            return Err("cannot replace a project without its session lock".to_owned());
+        }
+        return save_new_project_session_file(path, &project, new_session_lock);
+    }
+    save_project_file(path, project.snapshot(), can_overwrite)
+}
+
+fn save_new_project_session_file(
+    path: PathBuf,
+    project: &Project,
+    new_session_lock: &mut ProjectSessionLock,
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let temporary_path = tempfile::Builder::new()
+        .prefix(".aaadaw-save-")
+        .tempfile_in(parent)
+        .map_err(|error| error.to_string())?
+        .into_temp_path();
+    let mut store = ProjectStore::open(&temporary_path).map_err(|error| error.to_string())?;
+    if let Err(error) = new_session_lock.lock_file_identity(&temporary_path) {
+        let _ = store.close();
+        return Err(error.to_string());
+    }
+    let save = store.save(project).map_err(|error| error.to_string());
+    let close = store.close().map_err(|error| error.to_string());
+    save?;
+    close?;
+    temporary_path
+        .persist_noclobber(&path)
+        .map_err(|error| error.error.to_string())?;
     Ok(())
 }
