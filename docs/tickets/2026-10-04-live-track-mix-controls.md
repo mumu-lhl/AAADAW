@@ -15,6 +15,7 @@ change without rebuilding playback.
 
 - Use compact continuous controls with readable dB and pan values.
 - Allow precise numeric entry and an obvious reset to 0 dB / center.
+- Support Shift fine adjustment and double-click reset on both sliders.
 - Apply each completed drag or numeric edit through one `DawAction`, making one gesture one undo
   step.
 - Make a value audible in active playback within the next block without allocation, locks, or I/O

@@ -441,16 +441,19 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         .get(&track_id)
         .cloned()
         .unwrap_or_else(|| format!("{pan:.2}"));
-    let volume = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
+    let volume_slider = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
         Message::PreviewTrackVolume(track_id, value)
     })
     .step(0.1_f32)
+    .shift_step(0.01_f32)
     .on_release(Message::CommitTrackVolume(track_id))
     .width(Length::Fill);
+    let volume = mouse_area(volume_slider).on_double_click(Message::ResetTrackVolume(track_id));
     let pan_slider = slider(-1.0..=1.0, pan, move |value| {
         Message::PreviewTrackPan(track_id, value)
     })
     .step(0.01_f32)
+    .shift_step(0.001_f32)
     .on_release(Message::CommitTrackPan(track_id))
     .width(Length::Fill);
     let volume_controls = row![
