@@ -1,6 +1,6 @@
 use super::super::commands::{self, CommandId};
 use super::arrangement::{
-    track_fx_button, track_mix_controls, track_name_input, track_output_selector,
+    track_fx_button, track_mix_controls, track_name_input, track_output_selector, track_peak_meter,
     track_selection_background,
 };
 use super::tokens;
@@ -69,6 +69,7 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
         rule::horizontal(1),
         text("Volume · dB").size(11),
         volume,
+        track_peak_meter(app, track),
         text("Pan").size(11),
         pan,
         rule::horizontal(1),

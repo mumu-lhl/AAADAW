@@ -254,6 +254,7 @@ pub(crate) enum Message {
     RelinkAudioItem(ItemId),
     AudioItemRelinked(ItemId, Result<(), String>),
     BackgroundTick,
+    MeterTick,
     ProjectLoaded(PathBuf, SharedProjectLoadResult),
     ProjectSaved(
         PathBuf,

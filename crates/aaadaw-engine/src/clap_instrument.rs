@@ -2190,6 +2190,7 @@ mod tests {
             .install_fx_processors(&project, &mut effects)
             .expect("enabled effect processors should match their chain slots");
         assert!(effects.is_empty());
+        let meter = graph.track_mix_controller();
         let (mut monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(4);
         graph.install_input_monitor(monitor_consumer, monitor_gate);
         let monitor = graph
@@ -2204,6 +2205,11 @@ mod tests {
         let track_gain = 10.0_f32.powf(12.0 / 20.0);
         assert!((stopped_output[0][0] - 0.05 * track_gain).abs() < 1.0e-6);
         assert!((stopped_output[0][1] + 0.05 * track_gain).abs() < 1.0e-6);
+        let peak = meter
+            .take_track_peak(track_id)
+            .expect("track meter should be available");
+        assert!((peak[0] - 0.05 * track_gain).abs() < 1.0e-6);
+        assert!((peak[1] - 0.05 * track_gain).abs() < 1.0e-6);
         assert_eq!(graph.transport_mut().position_samples(), 0);
         graph.transport_mut().start();
         let (retired, output, stats) = std::thread::spawn(move || {

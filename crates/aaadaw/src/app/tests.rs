@@ -32,6 +32,37 @@ fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
 }
 
 #[test]
+#[cfg(feature = "audio-device")]
+fn resetting_track_meters_clears_the_visible_peak_values() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.track_peak_levels.insert(track_id, [0.75, 0.5]);
+
+    app.reset_track_meters();
+
+    assert!(app.track_peak_levels.is_empty());
+}
+
+#[test]
+#[cfg(feature = "audio-device")]
+fn output_device_loss_stops_transport_and_clears_track_meters() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.track_peak_levels.insert(track_id, [0.9, 0.8]);
+    app.playback_playing = true;
+    app.playback_paused = true;
+
+    app.handle_playback_device_lost();
+
+    assert!(!app.playback_playing);
+    assert!(!app.playback_paused);
+    assert!(app.track_peak_levels.is_empty());
+    assert!(app.status.contains("output device unavailable"));
+}
+
+#[test]
 fn switching_arrange_and_mixer_preserves_track_selection_and_transport_position() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

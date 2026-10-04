@@ -603,6 +603,16 @@ pub struct RunningAudioPlayback {
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioPlayback {
+    /// Takes the accumulated post-fader stereo sample peaks for one track.
+    pub fn take_track_peak(&self, track_id: aaadaw_core::TrackId) -> Option<[f32; 2]> {
+        self.mix_controller.take_track_peak(track_id)
+    }
+
+    /// Clears all current graph peak accumulators from the control thread.
+    pub fn reset_track_peaks(&self) {
+        self.mix_controller.reset_track_peaks();
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
@@ -740,6 +750,7 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Unavailable => Err(PlaybackBuildError::NoAudioOutputBackend),
         }?;
         self.is_playing = false;
+        self.mix_controller.reset_track_peaks();
         Ok(())
     }
 
@@ -1080,6 +1091,16 @@ pub struct RunningJackPlayback {
 
 #[cfg(feature = "jack-backend")]
 impl RunningJackPlayback {
+    /// Takes the accumulated post-fader stereo sample peaks for one track.
+    pub fn take_track_peak(&self, track_id: aaadaw_core::TrackId) -> Option<[f32; 2]> {
+        self.mix_controller.take_track_peak(track_id)
+    }
+
+    /// Clears all current graph peak accumulators from the control thread.
+    pub fn reset_track_peaks(&self) {
+        self.mix_controller.reset_track_peaks();
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
@@ -1133,6 +1154,7 @@ impl RunningJackPlayback {
     pub fn stop(&mut self) -> Result<(), JackOutputError> {
         self.output.stop()?;
         self.is_playing = false;
+        self.mix_controller.reset_track_peaks();
         Ok(())
     }
 

@@ -25,6 +25,7 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
     assert_eq!(producer.push_samples(&[0.25, 0.5]), 2);
     let mut graph = AudioRenderGraph::new(&project, vec![consumer], 8)
         .expect("one input stream should match the track count");
+    let meter = graph.track_mix_controller();
     graph.transport_mut().start();
     let mut output = [[9.0_f32, 9.0_f32]; 3];
 
@@ -47,6 +48,7 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
         }
     );
     assert_eq!(output, [[0.25, 0.0], [0.5, 0.0], [0.0, 0.0]]);
+    assert_eq!(meter.take_track_peak(track_id), Some([0.5, 0.0]));
     assert_eq!(graph.transport_mut().position_samples(), 3);
 
     graph.transport_mut().stop();
@@ -56,7 +58,16 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
         .expect("stopped block should render silence");
     assert_eq!(stopped.underrun_samples, 0);
     assert_eq!(output[..2], [[0.0, 0.0]; 2]);
+    assert_eq!(meter.take_track_peak(track_id), Some([0.0, 0.0]));
     assert_eq!(graph.transport_mut().position_samples(), 3);
+
+    let (_, replacement_consumer) = pcm_stream(4).expect("replacement stream is valid");
+    let replacement = AudioRenderGraph::new(&project, vec![replacement_consumer], 8)
+        .expect("replacement graph should compile");
+    assert_eq!(
+        replacement.track_mix_controller().take_track_peak(track_id),
+        Some([0.0, 0.0])
+    );
 }
 
 #[test]
@@ -216,10 +227,14 @@ fn render_graph_routes_audio_through_bus_fader_and_mute() {
         (output[0][1] - expected).abs() < 1.0e-6,
         "output={output:?} expected={expected}"
     );
+    assert_eq!(mix.take_track_peak(bus), Some([expected, expected]));
+    let bass_peak = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    assert_eq!(mix.take_track_peak(bass), Some([bass_peak, bass_peak]));
 
     assert!(mix.set_track_mute_solo(bus, true, false));
     graph.render_into(&mut output).unwrap();
     assert_eq!(output, [[0.0, 0.0]]);
+    assert_eq!(mix.take_track_peak(bus), Some([0.0, 0.0]));
 }
 
 #[test]
@@ -265,6 +280,10 @@ fn soloed_bus_keeps_its_inputs_and_mutes_unrelated_tracks() {
     let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
     assert!((output[0][0] - expected).abs() < 1.0e-6);
     assert!((output[0][1] - expected).abs() < 1.0e-6);
+    assert_eq!(mix.take_track_peak(source), Some([expected, expected]));
+    assert_eq!(mix.take_track_peak(bus), Some([expected, expected]));
+    let direct = project.tracks()[1].id();
+    assert_eq!(mix.take_track_peak(direct), Some([0.0, 0.0]));
 }
 
 #[test]

@@ -8,8 +8,8 @@ use iced::advanced::widget::Operation;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, pick_list, responsive, row,
-    scrollable, slider, stack, text, text_input,
+    button, column, container, float, mouse_area, pane_grid, pick_list, progress_bar, responsive,
+    row, scrollable, slider, stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 use std::fmt;
@@ -470,7 +470,8 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
     };
     let (volume_controls, pan_controls) = track_mix_controls(app, track, compact);
     let selected = app.timeline.selected_track == Some(track_id);
-    let row = container(column![heading, volume_controls, pan_controls].spacing(2))
+    let meter = track_peak_meter(app, track);
+    let row = container(column![heading, volume_controls, meter, pan_controls].spacing(2))
         .padding([5, 4])
         .height(TIMELINE_ROW_HEIGHT)
         .width(Length::Fill)
@@ -483,6 +484,47 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
             track_id,
         )))
         .into()
+}
+
+pub(super) fn track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message> {
+    let peaks = app
+        .track_peak_levels
+        .get(&track.id())
+        .copied()
+        .unwrap_or([0.0; 2]);
+    let channel_meter = |peak: f32| {
+        let db = if peak > 0.0 {
+            20.0 * peak.log10()
+        } else {
+            -60.0
+        };
+        let value = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        let color = if peak >= 1.0 {
+            iced::Color::from_rgb8(237, 77, 68)
+        } else if peak >= 0.708 {
+            iced::Color::from_rgb8(226, 177, 72)
+        } else {
+            iced::Color::from_rgb8(93, 190, 127)
+        };
+        progress_bar(0.0..=1.0, value).girth(4.0).style(move |_| {
+            iced::widget::progress_bar::Style {
+                background: iced::Background::Color(iced::Color::from_rgb8(23, 27, 29)),
+                bar: iced::Background::Color(color),
+                border: iced::Border::default(),
+            }
+        })
+    };
+    column![
+        row![text("L").size(8), channel_meter(peaks[0])]
+            .spacing(3)
+            .align_y(Alignment::Center),
+        row![text("R").size(8), channel_meter(peaks[1])]
+            .spacing(3)
+            .align_y(Alignment::Center),
+    ]
+    .spacing(1)
+    .width(Length::Fill)
+    .into()
 }
 
 pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
