@@ -36,7 +36,7 @@ jobs:
       - name: Check Linux PipeWire backend
         run: cargo check --workspace --all-targets --features aaadaw/pipewire-backend
       - name: Test PipeWire capture timing
-        run: cargo nextest run -p aaadaw-engine --features aaadaw/pipewire-backend
+        run: cargo nextest run -p aaadaw-engine --features pipewire-backend
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests with nextest
