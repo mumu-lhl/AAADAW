@@ -1356,6 +1356,123 @@ mod tests {
     }
 
     #[test]
+    fn capture_gap_crossing_segment_boundary_survives_recovery_import_and_playback() {
+        let (directory, project_path) = test_project_path();
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Gap take".to_owned(),
+            })
+            .expect("track should be created");
+        let track_id = project.tracks()[0].id();
+        let sample_rate = project.settings().sample_rate();
+        let project_anchor = 12_000;
+        let mut store = ProjectStore::open(&project_path).expect("project store should open");
+        store.save(&project).expect("project should be saved");
+        store.close().expect("project store should close");
+
+        let (mut producer, consumer, control) = audio_capture_stream(16);
+        let writer = AudioRecordingWorker::start_internal(
+            &project_path,
+            sample_rate,
+            consumer,
+            control.clone(),
+            12,
+            Some(vec![track_id.value()]),
+        )
+        .expect("recoverable writer should start");
+        let manifest_path = writer
+            .recovery_manifest_path()
+            .expect("recovery manifest should exist")
+            .to_path_buf();
+        writer
+            .set_start_sample(project_anchor)
+            .expect("capture anchor should persist");
+        control.start();
+        producer.push_planar_at(50_000, &[0.1, 0.2], &[0.1, 0.2]);
+        producer.push_planar_at(50_003, &[0.4], &[0.4]);
+        control.stop();
+
+        let recordings = writer.finish().expect("gapped take should finalize");
+        assert_eq!(recordings.len(), 2);
+        let manifest: RecordingRecoveryManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should be readable"))
+                .expect("manifest should decode");
+        assert_eq!(manifest.start_sample, Some(project_anchor));
+        assert_eq!(
+            manifest
+                .segments
+                .iter()
+                .map(|segment| segment.frame_count)
+                .collect::<Vec<_>>(),
+            [2, 2]
+        );
+        assert!(manifest.finalized);
+
+        let candidates = scan_recording_recoveries(&project_path)
+            .expect("finalized gapped take should be discoverable");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].recorded_frames, 4);
+        let recovered = recover_recording_candidate(candidates[0].clone())
+            .expect("finalized take should survive recovery validation");
+        assert_eq!(recovered.recorded_frames, 4);
+
+        let mut cursor = project_anchor;
+        let mut placements = Vec::new();
+        for recording in &recordings {
+            let worker =
+                start_audio_item_import(&project_path, recording, track_id, cursor, sample_rate)
+                    .expect("each recovered segment should import");
+            while !worker.is_finished() {
+                let _ = worker.progress().try_iter().count();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let action = worker.finish().expect("segment should produce a placement");
+            let DawAction::InsertAudioItem { length_samples, .. } = &action else {
+                panic!("segment import should create an audio item");
+            };
+            cursor += length_samples;
+            placements.push(action);
+        }
+        assert_eq!(cursor - project_anchor, 4);
+        project
+            .apply(DawAction::BatchTransaction {
+                tx_id: 1,
+                actions: placements,
+            })
+            .expect("gapped segments should be placed as one take");
+        let mut store = ProjectStore::open(&project_path).expect("project store should reopen");
+        store.save(&project).expect("imported take should save");
+        store.close().expect("project store should close");
+
+        let store = ProjectStore::open(&project_path).expect("saved project should reopen");
+        let reopened = store.load().expect("saved take should load");
+        assert_eq!(reopened.audio_items().len(), 2);
+        assert_eq!(reopened.audio_items()[0].start_sample(), project_anchor);
+        assert_eq!(reopened.audio_items()[1].start_sample(), project_anchor + 2);
+        let prepared = prepare_audio_playback(&reopened, &store, 16, 8)
+            .expect("imported segments should resolve for playback");
+        let (mut graph, feeders) = prepared.into_parts();
+        for feeder in feeders {
+            feeder.join().expect("take feeder should finish");
+        }
+        graph.transport_mut().seek_sample(project_anchor);
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 4];
+        let stats = graph
+            .render_into(&mut output)
+            .expect("gapped take should render");
+        assert_eq!(stats.underrun_samples, 0);
+        assert!(output[0][0] > 0.0 && output[1][0] > 0.0);
+        assert!(output[2][0].abs() < 0.001);
+        assert!(output[3][0] > 0.0);
+
+        discard_recording_recovery(&manifest_path).expect("recovery sidecar should be cleaned");
+        fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
     fn overflow_invalidates_the_take_and_removes_partial_audio() {
         let (directory, project) = test_project_path();
         let (mut producer, consumer, control) = audio_capture_stream(1);

@@ -27,7 +27,9 @@ contiguous. This shifted all later audio earlier in the take.
 ## Acceptance checks
 
 - Hardware-free tests cover 44.1 kHz and 48 kHz, varying block lengths, short gaps, regression,
-  excessive gaps, frame-position overflow, and both sample and descriptor overflow.
+  excessive gaps, frame-position overflow, and both sample and descriptor overflow. An integration
+  test also covers a gap crossing a segment boundary through recovery validation, project import,
+  save/reopen, and playback.
 - Existing capture callback remains bounded and real-time safe.
 - Run `cargo xtest -p aaadaw-engine -p aaadaw-app`, strict workspace Clippy, and formatting checks.
 - Linux JACK feature CI compiles the backend; real-device loopback and latency calibration are not
@@ -35,6 +37,7 @@ contiguous. This shifted all later audio earlier in the take.
 
 ## Status
 
-Implementation is in progress on the JACK timestamp and gap-preservation path. See
+Complete: JACK timestamps and bounded gap preservation flow through segmented recovery, import,
+save/reopen, and playback tests. See
 [recording latency research](../research/2026-10-03-recording-latency-compensation.md) for backend
 clock and latency semantics.
