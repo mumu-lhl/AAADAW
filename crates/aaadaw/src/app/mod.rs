@@ -155,6 +155,7 @@ struct App {
     track_pan_edits: HashMap<TrackId, String>,
     track_mix_gesture: Option<TrackMixGesture>,
     track_mix_commit_at: Option<Instant>,
+    track_peak_levels: HashMap<TrackId, [f32; 2]>,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
@@ -672,6 +673,11 @@ impl App {
         } else {
             iced::Subscription::none()
         };
+        let meter_ticks = if playback_active {
+            iced::time::every(Duration::from_millis(33)).map(|_| Message::MeterTick)
+        } else {
+            iced::Subscription::none()
+        };
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
             iced::window::close_events().map(Message::WindowClosed),
@@ -679,6 +685,7 @@ impl App {
             iced::window::resize_events()
                 .map(|(window_id, size)| Message::FxChainWindowResized(window_id, size)),
             background_ticks,
+            meter_ticks,
         ])
     }
 
@@ -702,7 +709,7 @@ impl App {
             _ => false,
         };
         if self.track_mix_commit_at.is_some()
-            && !matches!(&message, Message::BackgroundTick)
+            && !matches!(&message, Message::BackgroundTick | Message::MeterTick)
             && !completes_pending_mix_reset
         {
             self.commit_track_mix_gesture();
@@ -801,6 +808,7 @@ impl App {
                     | Message::OfflineRenderFinished(_)
                     | Message::AudioItemRelinked(..)
                     | Message::BackgroundTick
+                    | Message::MeterTick
             );
         if matches!(
             &message,
@@ -841,6 +849,7 @@ impl App {
                     | Message::TcpScrolled { .. }
                     | Message::TimelineScrolled { .. }
                     | Message::BackgroundTick
+                    | Message::MeterTick
             )
         {
             self.status = "Wait for the file dialog to finish".to_owned();
@@ -854,6 +863,7 @@ impl App {
                     | Message::RecordingRecoveryDiscarded(..)
                     | Message::RecordingRecoveryCleaned(_)
                     | Message::BackgroundTick
+                    | Message::MeterTick
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::Escape
@@ -878,6 +888,7 @@ impl App {
                     | Message::AudioImportStarted(_)
                     | Message::AudioImportFinished(_)
                     | Message::BackgroundTick
+                    | Message::MeterTick
             )
         {
             self.status = "Wait for audio import to finish or cancel it".to_owned();
@@ -899,6 +910,7 @@ impl App {
                     | Message::AudioAssetManagementFinished(_)
                     | Message::CancelAudioAssetManagement
                     | Message::BackgroundTick
+                    | Message::MeterTick
             )
         {
             self.status = "Wait for audio asset maintenance to finish or cancel it".to_owned();
@@ -921,6 +933,7 @@ impl App {
                         | Message::RecordingClockAnchorReady(_)
                         | Message::RecordingStopped(_)
                         | Message::BackgroundTick
+                        | Message::MeterTick
                         | Message::ToggleMainMenu(_)
                         | Message::DismissMainMenu
                         | Message::Escape
@@ -948,6 +961,7 @@ impl App {
                         | Message::Escape
                         | Message::ToggleMediaBrowserPanel
                         | Message::BackgroundTick
+                        | Message::MeterTick
                 )
             {
                 self.status = "Wait for playback preparation to finish".to_owned();
@@ -1943,6 +1957,10 @@ impl App {
                     ]);
                 }
             }
+            Message::MeterTick => {
+                #[cfg(feature = "audio-device")]
+                self.update_track_peak_levels();
+            }
             Message::ProjectLoaded(path, result) => {
                 self.io_busy = false;
                 let result = result.lock().ok().and_then(|mut result| result.take());
@@ -2824,6 +2842,7 @@ impl App {
     fn close_playback(&mut self) -> Task<Message> {
         self.standby_monitor_track = None;
         self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
+        self.reset_track_meters();
         #[cfg(feature = "audio-device")]
         let state_error = self.persist_clap_plugin_states().err();
         let mut shutdown_error = None;
@@ -2985,6 +3004,7 @@ impl App {
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
                     self.playback_graph_dirty = false;
+                    self.reset_track_meters();
                     if let Err(error) = play_result {
                         self.playback_playing = false;
                         self.status = format!("{} play failed: {error}", self.playback_name());
@@ -3039,6 +3059,7 @@ impl App {
             None
         };
         self.playback = Some(playback);
+        self.reset_track_meters();
         self.playback_graph_dirty = false;
         self.playback_playing = start_when_ready && play_error.is_none();
         self.playback_paused = false;
@@ -3080,9 +3101,54 @@ impl App {
         self.deactivate_stopped_instruments(retired_instruments);
         self.deactivate_stopped_effects(retired_effects);
         if output_device_lost {
-            self.playback_playing = false;
-            self.playback_paused = false;
-            self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
+            self.handle_playback_device_lost();
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn handle_playback_device_lost(&mut self) {
+        self.playback_playing = false;
+        self.playback_paused = false;
+        self.reset_track_meters();
+        self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn update_track_peak_levels(&mut self) {
+        let meter_active = self
+            .playback
+            .as_ref()
+            .is_some_and(|playback| self.playback_playing || playback.has_enabled_input_monitor());
+        if !meter_active {
+            self.reset_track_meters();
+            return;
+        }
+
+        for track in self.project.tracks() {
+            let levels = self.track_peak_levels.entry(track.id()).or_default();
+            let observed = self
+                .playback
+                .as_ref()
+                .and_then(|playback| playback.take_track_peak(track.id()))
+                .unwrap_or([0.0; 2]);
+            for channel in 0..2 {
+                levels[channel] = observed[channel].max(levels[channel] * 0.96);
+            }
+        }
+        self.track_peak_levels.retain(|track_id, _| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == *track_id)
+        });
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn reset_track_meters(&mut self) {
+        self.track_peak_levels.clear();
+        #[cfg(feature = "audio-device")]
+        if let Some(playback) = self.playback.as_ref() {
+            playback.reset_track_peaks();
         }
     }
 

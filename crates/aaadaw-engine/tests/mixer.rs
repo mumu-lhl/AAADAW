@@ -39,6 +39,36 @@ fn mixer_applies_equal_power_center_pan_and_track_gain() {
 }
 
 #[test]
+fn mixer_exposes_post_fader_stereo_peaks_and_clears_muted_tracks() {
+    let (project, track_ids) = project_with_tracks(&["Metered"]);
+    let plan = MixerPlan::compile(project.tracks(), 8).expect("track controls should compile");
+    let controller = plan.track_mix_controller();
+    let mut output = [[0.0_f32; 2]; 1];
+
+    plan.mix_mono_into(&[&[2.0]], &mut output)
+        .expect("matching buffers should mix");
+    let expected_peak = 2.0 * std::f32::consts::FRAC_1_SQRT_2;
+    let peak = controller
+        .take_track_peak(track_ids[0])
+        .expect("compiled track should expose its meter");
+    assert!((peak[0] - expected_peak).abs() < 1.0e-6);
+    assert!((peak[1] - expected_peak).abs() < 1.0e-6);
+    assert_eq!(controller.take_track_peak(track_ids[0]), Some([0.0, 0.0]));
+
+    plan.mix_mono_into(&[&[1.0]], &mut output)
+        .expect("track should mix before muting");
+    controller.reset_track_peaks();
+    assert_eq!(controller.take_track_peak(track_ids[0]), Some([0.0, 0.0]));
+
+    plan.mix_mono_into(&[&[1.0]], &mut output)
+        .expect("track should mix before muting");
+    assert!(controller.set_track_mute_solo(track_ids[0], true, false));
+    plan.mix_mono_into(&[&[1.0]], &mut output)
+        .expect("muted track buffers should still validate");
+    assert_eq!(controller.take_track_peak(track_ids[0]), Some([0.0, 0.0]));
+}
+
+#[test]
 fn live_track_mix_ramps_to_a_new_target_over_five_milliseconds() {
     let (project, track_ids) = project_with_tracks(&["Track"]);
     let ramp_frames = 240;

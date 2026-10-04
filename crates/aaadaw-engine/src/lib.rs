@@ -99,6 +99,8 @@ struct LiveTrackGains {
     stereo_right: AtomicU32,
     muted: AtomicBool,
     solo: AtomicBool,
+    peak_left: AtomicU32,
+    peak_right: AtomicU32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -283,6 +285,25 @@ impl TrackMixController {
         );
         true
     }
+
+    /// Takes and clears the largest post-fader stereo sample peaks accumulated since the last
+    /// read. This is a nonblocking control-thread read of values published by the audio callback.
+    pub fn take_track_peak(&self, track_id: TrackId) -> Option<[f32; 2]> {
+        let (_, live) = self.tracks.iter().find(|(id, _)| *id == track_id)?;
+        Some([
+            f32::from_bits(live.peak_left.swap(0, Ordering::Relaxed)),
+            f32::from_bits(live.peak_right.swap(0, Ordering::Relaxed)),
+        ])
+    }
+
+    /// Clears every track's accumulated meter peak. Call on the control thread when playback
+    /// stops or the output device becomes unavailable.
+    pub fn reset_track_peaks(&self) {
+        for (_, live) in &self.tracks {
+            live.peak_left.store(0, Ordering::Relaxed);
+            live.peak_right.store(0, Ordering::Relaxed);
+        }
+    }
 }
 
 impl LiveTrackGains {
@@ -295,6 +316,8 @@ impl LiveTrackGains {
             stereo_right: AtomicU32::new(gains.stereo_right.to_bits()),
             muted: AtomicBool::new(muted),
             solo: AtomicBool::new(solo),
+            peak_left: AtomicU32::new(0),
+            peak_right: AtomicU32::new(0),
         }
     }
 
@@ -314,6 +337,26 @@ impl LiveTrackGains {
         } else {
             None
         }
+    }
+
+    fn publish_peak(&self, left: f32, right: f32) {
+        self.peak_left.fetch_max(left.to_bits(), Ordering::Relaxed);
+        self.peak_right
+            .fetch_max(right.to_bits(), Ordering::Relaxed);
+    }
+
+    fn reset_peak(&self) {
+        self.peak_left.store(0, Ordering::Relaxed);
+        self.peak_right.store(0, Ordering::Relaxed);
+    }
+}
+
+fn meter_peak(value: f32) -> f32 {
+    let magnitude = value.abs();
+    if magnitude.is_finite() {
+        magnitude
+    } else {
+        1.0
     }
 }
 
@@ -574,6 +617,7 @@ impl MixerPlan {
         if track.live.muted.load(Ordering::Acquire)
             || (self.has_solo.load(Ordering::Acquire) && !track.live.solo.load(Ordering::Acquire))
         {
+            track.live.reset_peak();
             return;
         }
         let mut ramp = track.mix_ramp.get();
@@ -583,6 +627,8 @@ impl MixerPlan {
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, start_sample);
         let ramp_frames = ramp.remaining_frames.min(output.len());
+        let mut peak_left = 0.0_f32;
+        let mut peak_right = 0.0_f32;
         for (offset, (frame, sample)) in output
             .iter_mut()
             .zip(input.iter().copied())
@@ -600,8 +646,12 @@ impl MixerPlan {
                     start_sample.saturating_add(offset as u64),
                 );
             }
-            frame[0] += sample * gains.left * automation_gain;
-            frame[1] += sample * gains.right * automation_gain;
+            let left = sample * gains.left * automation_gain;
+            let right = sample * gains.right * automation_gain;
+            frame[0] += left;
+            frame[1] += right;
+            peak_left = peak_left.max(meter_peak(left));
+            peak_right = peak_right.max(meter_peak(right));
             if advances_timeline {
                 automation_gain *= gain_step;
             }
@@ -625,13 +675,18 @@ impl MixerPlan {
                         start_sample.saturating_add(offset as u64),
                     );
                 }
-                frame[0] += sample * gains.left * automation_gain;
-                frame[1] += sample * gains.right * automation_gain;
+                let left = sample * gains.left * automation_gain;
+                let right = sample * gains.right * automation_gain;
+                frame[0] += left;
+                frame[1] += right;
+                peak_left = peak_left.max(meter_peak(left));
+                peak_right = peak_right.max(meter_peak(right));
                 if advances_timeline {
                     automation_gain *= gain_step;
                 }
             }
         }
+        track.live.publish_peak(peak_left, peak_right);
         track.mix_ramp.set(ramp);
     }
 
@@ -648,6 +703,7 @@ impl MixerPlan {
         if track.live.muted.load(Ordering::Acquire)
             || (self.has_solo.load(Ordering::Acquire) && !solo_allowed)
         {
+            track.live.reset_peak();
             return;
         }
         let mut ramp = track.mix_ramp.get();
@@ -657,6 +713,8 @@ impl MixerPlan {
         let (mut automation_gain, mut gain_step, mut next_point_sample) =
             volume_automation_state(&track.volume_automation, block.start_sample);
         let ramp_frames = ramp.remaining_frames.min(output.len());
+        let mut peak_left = 0.0_f32;
+        let mut peak_right = 0.0_f32;
         for (offset, (frame, sample)) in output
             .iter_mut()
             .zip(input.iter())
@@ -679,8 +737,12 @@ impl MixerPlan {
             } else {
                 (gains.stereo_left, gains.stereo_right)
             };
-            frame[0] += sample[0] * left_gain * automation_gain;
-            frame[1] += sample[1] * right_gain * automation_gain;
+            let left = sample[0] * left_gain * automation_gain;
+            let right = sample[1] * right_gain * automation_gain;
+            frame[0] += left;
+            frame[1] += right;
+            peak_left = peak_left.max(meter_peak(left));
+            peak_right = peak_right.max(meter_peak(right));
             if block.advances_timeline {
                 automation_gain *= gain_step;
             }
@@ -709,13 +771,18 @@ impl MixerPlan {
                         block.start_sample.saturating_add(offset as u64),
                     );
                 }
-                frame[0] += sample[0] * left_gain * automation_gain;
-                frame[1] += sample[1] * right_gain * automation_gain;
+                let left = sample[0] * left_gain * automation_gain;
+                let right = sample[1] * right_gain * automation_gain;
+                frame[0] += left;
+                frame[1] += right;
+                peak_left = peak_left.max(meter_peak(left));
+                peak_right = peak_right.max(meter_peak(right));
                 if block.advances_timeline {
                     automation_gain *= gain_step;
                 }
             }
         }
+        track.live.publish_peak(peak_left, peak_right);
         track.mix_ramp.set(ramp);
     }
 
@@ -2167,6 +2234,9 @@ impl AudioRenderGraph {
             }
             if let Some(gate) = &self.input_monitor_gate {
                 gate.set_enabled(false);
+            }
+            for track in &self.mixer.tracks {
+                track.live.reset_peak();
             }
             output.fill([0.0, 0.0]);
             return Ok(AudioRenderStats {
