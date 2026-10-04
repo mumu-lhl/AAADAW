@@ -4,7 +4,10 @@ use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
 use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
-use aaadaw_core::{DawAction, ItemId, MidiControllerData, MidiNoteData, NoteId, Project, TrackId};
+use aaadaw_core::{
+    DawAction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, Project,
+    TrackId,
+};
 use aaadaw_engine::MasterOutputCeiling;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -52,6 +55,7 @@ pub(crate) enum MidiEditorLane {
     Volume,
     Modulation,
     Expression,
+    PitchBend,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +78,7 @@ pub(crate) enum Message {
     EditMidiNotes(ItemId, Vec<(NoteId, MidiNoteData)>),
     DeleteMidiNotes(ItemId, Vec<NoteId>),
     SetMidiControllers(ItemId, Vec<MidiControllerData>),
+    SetMidiPitchBends(ItemId, Vec<MidiPitchBendData>),
     PianoRollPan(i8),
     PianoRollZoom(f32),
     PianoRollPitchScroll(i8),

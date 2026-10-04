@@ -1045,6 +1045,21 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
             ],
         })
         .expect("sustain pedal events should be added");
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                aaadaw_core::MidiPitchBendData {
+                    tick: 0,
+                    value: 8192,
+                },
+                aaadaw_core::MidiPitchBendData {
+                    tick: 720,
+                    value: 12_288,
+                },
+            ],
+        })
+        .expect("pitch-bend events should be added");
     let seek_sample = project.sample_at_tick(480).expect("tick should map");
     let (_, consumer) = pcm_stream(16).expect("positive queue capacity is valid");
     let mut graph = AudioRenderGraph::new(&project, vec![consumer], 16)
@@ -1058,33 +1073,33 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
         .render_with_midi(&mut midi_output, &mut output)
         .expect("seeked MIDI block should render");
 
-    assert_eq!(stats.midi_event_count, 4);
-    let pedal = midi_output[0].expect("sustain state should be chased");
-    let modulation = midi_output[1].expect("modulation state should be chased");
-    assert_eq!(pedal.kind, aaadaw_engine::MidiEventKind::ControllerChange);
-    assert_eq!(
-        modulation.kind,
-        aaadaw_engine::MidiEventKind::ControllerChange
-    );
+    assert_eq!(stats.midi_event_count, 5);
     assert!(
-        midi_output[..3]
+        midi_output[..4]
             .iter()
             .flatten()
             .any(|event| { event.controller == Some(64) && event.velocity == 127 })
     );
     assert!(
-        midi_output[..3]
+        midi_output[..4]
             .iter()
             .flatten()
             .any(|event| { event.controller == Some(1) && event.velocity == 80 })
     );
     assert!(
-        midi_output[..3]
+        midi_output[..4]
             .iter()
             .flatten()
             .any(|event| { event.controller == Some(11) && event.velocity == 96 })
     );
-    let note = midi_output[3].expect("sustained note should be chased");
+    assert!(midi_output[..4].iter().flatten().any(|event| {
+        event.kind == aaadaw_engine::MidiEventKind::PitchBend && event.pitch_bend == Some(8192)
+    }));
+    let note = midi_output
+        .iter()
+        .flatten()
+        .find(|event| event.kind == aaadaw_engine::MidiEventKind::NoteOn)
+        .expect("sustained note should be chased");
     assert_eq!(note.kind, aaadaw_engine::MidiEventKind::NoteOn);
     assert_eq!(note.sample_offset, 0);
 }

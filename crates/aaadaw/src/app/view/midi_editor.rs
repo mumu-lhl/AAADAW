@@ -1,6 +1,8 @@
 use super::super::{App, Message, MidiEditorLane};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
-use aaadaw_core::{ItemId, MidiControllerData, MidiItem, MidiNoteData, NoteId, Project};
+use aaadaw_core::{
+    ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
+};
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{button, canvas as canvas_widget, column, container, row, scrollable, text};
@@ -16,6 +18,7 @@ const PITCH_COUNT: u8 = 36;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
 const VOLUME_LANE_HEIGHT: f32 = 72.0;
+const PITCH_BEND_LANE_HEIGHT: f32 = 72.0;
 const MODULATION_LANE_HEIGHT: f32 = 72.0;
 const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
@@ -110,6 +113,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         lane_button("Velocity", MidiEditorLane::Velocity, app.midi_editor_lane),
         lane_button("Sustain", MidiEditorLane::Sustain, app.midi_editor_lane),
         lane_button("Volume CC7", MidiEditorLane::Volume, app.midi_editor_lane),
+        lane_button(
+            "Pitch Bend",
+            MidiEditorLane::PitchBend,
+            app.midi_editor_lane
+        ),
         lane_button("Mod CC1", MidiEditorLane::Modulation, app.midi_editor_lane),
         lane_button(
             "Expression",
@@ -140,7 +148,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             item,
             item_id,
             64,
-            "Sustain CC64",
+            "Sustain",
             SUSTAIN_LANE_HEIGHT,
             app,
             ticks_per_beat,
@@ -154,6 +162,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             app,
             ticks_per_beat,
         ),
+        MidiEditorLane::PitchBend => {
+            pitch_bend_lane(item, item_id, PITCH_BEND_LANE_HEIGHT, app, ticks_per_beat)
+        }
         MidiEditorLane::Modulation => controller_lane(
             item,
             item_id,
@@ -167,7 +178,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             item,
             item_id,
             11,
-            "Expression CC11",
+            "Expression",
             EXPRESSION_LANE_HEIGHT,
             app,
             ticks_per_beat,
@@ -240,6 +251,26 @@ fn controller_lane<'a>(
     .width(Length::Fill)
     .height(Length::Fixed(lane_height));
     lane_row(label, lane_height, canvas)
+}
+
+fn pitch_bend_lane<'a>(
+    item: &'a MidiItem,
+    item_id: ItemId,
+    lane_height: f32,
+    app: &App,
+    ticks_per_beat: u64,
+) -> Element<'a, Message> {
+    let canvas = canvas_widget::Canvas::new(PitchBendLane {
+        item,
+        item_id,
+        lane_height,
+        origin_tick: app.midi_editor_origin_tick,
+        pixels_per_beat: app.midi_editor_pixels_per_beat,
+        ticks_per_beat,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(lane_height));
+    lane_row("Pitch Bend", lane_height, canvas)
 }
 
 struct ControllerLane<'a> {
@@ -553,6 +584,320 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         }
         vec![frame.into_geometry()]
     }
+}
+
+struct PitchBendLane<'a> {
+    item: &'a MidiItem,
+    item_id: ItemId,
+    lane_height: f32,
+    origin_tick: u64,
+    pixels_per_beat: f32,
+    ticks_per_beat: u64,
+}
+
+#[derive(Default)]
+struct PitchBendLaneInteraction {
+    drag: Option<PitchBendDrag>,
+    context_menu: Option<(usize, Point)>,
+}
+
+struct PitchBendDrag {
+    bends: Vec<MidiPitchBendData>,
+    index: Option<usize>,
+    original: Option<MidiPitchBendData>,
+    current: MidiPitchBendData,
+}
+
+impl PitchBendLane<'_> {
+    fn mapping(&self) -> RollMapping {
+        RollMapping {
+            origin_tick: self.origin_tick,
+            pixels_per_beat: self.pixels_per_beat,
+            ticks_per_beat: self.ticks_per_beat,
+            high_pitch: 0,
+        }
+    }
+
+    fn point_data(&self, point: Point) -> MidiPitchBendData {
+        let mapping = self.mapping();
+        MidiPitchBendData {
+            tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+                .min(self.item.length_ticks().saturating_sub(1)),
+            value: pitch_bend_value_at_y(point.y, self.lane_height),
+        }
+    }
+
+    fn closest_point(&self, point: Point) -> Option<usize> {
+        let mapping = self.mapping();
+        self.item
+            .pitch_bends()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, bend)| {
+                let x_distance = mapping.x_at_tick(bend.tick) - point.x;
+                let y_distance = pitch_bend_y(bend.value, self.lane_height) - point.y;
+                let distance = x_distance.hypot(y_distance);
+                (distance <= 12.0).then_some((index, distance))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(index, _)| index)
+    }
+}
+
+impl canvas::Program<Message> for PitchBendLane<'_> {
+    type State = PitchBendLaneInteraction;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let point = cursor.position_in(bounds)?;
+                if let Some((index, origin)) = state.context_menu.take() {
+                    let menu_bounds = Rectangle::new(
+                        origin,
+                        Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
+                    );
+                    if menu_bounds.contains(point) {
+                        let mut bends = self.item.pitch_bends().to_vec();
+                        if index < bends.len() {
+                            bends.remove(index);
+                            return Some(canvas::Action::publish(Message::SetMidiPitchBends(
+                                self.item_id,
+                                bends,
+                            )));
+                        }
+                    }
+                    return Some(canvas::Action::capture());
+                }
+                if point.x < 0.0 || point.y < 0.0 || self.item.length_ticks() == 0 {
+                    return Some(canvas::Action::capture());
+                }
+                let bends = self.item.pitch_bends().to_vec();
+                if let Some(index) = self.closest_point(point) {
+                    let original = bends[index];
+                    state.drag = Some(PitchBendDrag {
+                        bends,
+                        index: Some(index),
+                        original: Some(original),
+                        current: original,
+                    });
+                } else {
+                    state.drag = Some(PitchBendDrag {
+                        bends,
+                        index: None,
+                        original: None,
+                        current: self.point_data(point),
+                    });
+                }
+                Some(canvas::Action::capture())
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let point = cursor.position_in(bounds)?;
+                let Some(index) = self.closest_point(point) else {
+                    state.context_menu = None;
+                    return Some(canvas::Action::capture());
+                };
+                let origin = Point::new(
+                    point
+                        .x
+                        .min((bounds.width - CONTROLLER_CONTEXT_WIDTH).max(0.0)),
+                    point
+                        .y
+                        .min((bounds.height - CONTROLLER_CONTEXT_HEIGHT).max(0.0)),
+                );
+                state.context_menu = Some((index, origin));
+                Some(canvas::Action::request_redraw())
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let point = cursor.position_in(bounds)?;
+                let Some(drag) = &mut state.drag else {
+                    return None;
+                };
+                let mapping = self.mapping();
+                drag.current = MidiPitchBendData {
+                    tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+                        .min(self.item.length_ticks().saturating_sub(1)),
+                    value: pitch_bend_value_at_y(point.y, self.lane_height),
+                };
+                Some(canvas::Action::request_redraw())
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let drag = state.drag.take()?;
+                let mut bends = drag.bends;
+                if let Some(index) = drag.index {
+                    bends[index] = drag.current;
+                } else {
+                    bends.push(drag.current);
+                }
+                let changed_index = drag.index.unwrap_or(bends.len() - 1);
+                let duplicate_position = bends
+                    .iter()
+                    .enumerate()
+                    .any(|(index, bend)| index != changed_index && bend.tick == drag.current.tick);
+                if duplicate_position || drag.original == Some(drag.current) {
+                    return Some(canvas::Action::capture());
+                }
+                Some(canvas::Action::publish(Message::SetMidiPitchBends(
+                    self.item_id,
+                    bends,
+                )))
+            }
+            Event::Window(iced::window::Event::RedrawRequested(_)) if state.drag.is_some() => {
+                Some(canvas::Action::request_redraw())
+            }
+            _ => None,
+        }
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
+        let mapping = self.mapping();
+        let grid_ticks = mapping.grid_ticks();
+        let end_tick = mapping.tick_at_x(bounds.width);
+        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
+        while tick <= end_tick.saturating_add(grid_ticks) {
+            let x = mapping.x_at_tick(tick);
+            if (0.0..=bounds.width).contains(&x) {
+                let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default().with_color(Color::from_rgb8(43, 48, 51)),
+                );
+            }
+            if tick > u64::MAX - grid_ticks {
+                break;
+            }
+            tick += grid_ticks;
+        }
+        let center_y = pitch_bend_y(8192, bounds.height);
+        let center_line = canvas::Path::line(
+            Point::new(0.0, center_y),
+            Point::new(bounds.width, center_y),
+        );
+        frame.stroke(
+            &center_line,
+            canvas::Stroke::default()
+                .with_width(1.5)
+                .with_color(Color::from_rgb8(106, 112, 118)),
+        );
+
+        let mut value = self
+            .item
+            .pitch_bends()
+            .iter()
+            .filter(|bend| bend.tick < self.origin_tick)
+            .max_by_key(|bend| bend.tick)
+            .map_or(8192, |bend| bend.value);
+        let mut segment_start = 0.0;
+        for bend in self
+            .item
+            .pitch_bends()
+            .iter()
+            .filter(|bend| self.origin_tick <= bend.tick && bend.tick <= end_tick)
+        {
+            let x = mapping.x_at_tick(bend.tick).clamp(0.0, bounds.width);
+            let old_y = pitch_bend_y(value, bounds.height);
+            let new_y = pitch_bend_y(bend.value, bounds.height);
+            let path = canvas::Path::line(Point::new(segment_start, old_y), Point::new(x, old_y));
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(128, 165, 226)),
+            );
+            let transition = canvas::Path::line(Point::new(x, old_y), Point::new(x, new_y));
+            frame.stroke(
+                &transition,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(128, 165, 226)),
+            );
+            frame.fill_rectangle(
+                Point::new(x - 4.0, new_y - 4.0),
+                Size::new(8.0, 8.0),
+                Color::from_rgb8(177, 201, 245),
+            );
+            segment_start = x;
+            value = bend.value;
+        }
+        if let Some(drag) = &state.drag {
+            let x = mapping
+                .x_at_tick(drag.current.tick)
+                .clamp(0.0, bounds.width);
+            let y = pitch_bend_y(drag.current.value, bounds.height);
+            let path =
+                canvas::Path::line(Point::new(segment_start, y), Point::new(bounds.width, y));
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(128, 165, 226)),
+            );
+            frame.fill_rectangle(
+                Point::new(x - 5.0, y - 5.0),
+                Size::new(10.0, 10.0),
+                Color::WHITE,
+            );
+        } else {
+            let y = pitch_bend_y(value, bounds.height);
+            let path =
+                canvas::Path::line(Point::new(segment_start, y), Point::new(bounds.width, y));
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(2.0)
+                    .with_color(Color::from_rgb8(128, 165, 226)),
+            );
+        }
+        if let Some((_, origin)) = state.context_menu {
+            frame.fill_rectangle(
+                origin,
+                Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
+                Color::from_rgb8(49, 54, 59),
+            );
+            frame.stroke_rectangle(
+                origin,
+                Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
+                canvas::Stroke::default().with_color(Color::from_rgb8(104, 112, 118)),
+            );
+            frame.fill_text(Text {
+                content: "Delete pitch bend".to_owned(),
+                position: Point::new(origin.x + 7.0, origin.y + 2.0),
+                max_width: CONTROLLER_CONTEXT_WIDTH - 12.0,
+                color: Color::WHITE,
+                size: Pixels(11.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+fn pitch_bend_y(value: u16, height: f32) -> f32 {
+    height - 10.0 - (f32::from(value) / 16_383.0) * (height - 20.0)
+}
+
+fn pitch_bend_value_at_y(y: f32, height: f32) -> u16 {
+    (((height - 10.0 - y) / (height - 20.0)) * 16_383.0)
+        .round()
+        .clamp(0.0, 16_383.0) as u16
 }
 
 fn controller_y(value: u8, height: f32) -> f32 {
@@ -1306,6 +1651,153 @@ mod tests {
         assert_eq!(app.midi_editor_lane, MidiEditorLane::Volume);
         let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::Expression));
         assert_eq!(app.midi_editor_lane, MidiEditorLane::Expression);
+        let _ = app.update(Message::SelectMidiEditorLane(MidiEditorLane::PitchBend));
+        assert_eq!(app.midi_editor_lane, MidiEditorLane::PitchBend);
+    }
+
+    #[test]
+    fn pitch_bend_lane_adds_moves_and_deletes_points_across_the_signed_range() {
+        assert_eq!(pitch_bend_value_at_y(10.0, 72.0), 16_383);
+        assert_eq!(pitch_bend_value_at_y(36.0, 72.0), 8192);
+        assert_eq!(pitch_bend_value_at_y(62.0, 72.0), 0);
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, PITCH_BEND_LANE_HEIGHT));
+        let mut interaction = PitchBendLaneInteraction::default();
+        let lane = PitchBendLane {
+            item: &project.midi_items()[0],
+            item_id,
+            lane_height: PITCH_BEND_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let center = mouse::Cursor::Available(Point::new(96.0, 36.0));
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            center,
+        )
+        .expect("click should begin inserting a pitch bend");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                center,
+            )
+            .expect("release should submit a neutral pitch bend");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiPitchBends(changed_item, bends) = message.unwrap() else {
+            panic!("pitch-bend lane should submit pitch-bend edits");
+        };
+        assert_eq!(changed_item, item_id);
+        assert_eq!(
+            bends,
+            [MidiPitchBendData {
+                tick: 960,
+                value: 8192
+            }]
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: bends,
+            })
+            .unwrap();
+
+        let lane = PitchBendLane {
+            item: &project.midi_items()[0],
+            item_id,
+            lane_height: PITCH_BEND_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            center,
+        )
+        .expect("existing pitch bend should start dragging");
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(144.0, 10.0),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(144.0, 10.0)),
+        )
+        .expect("drag should preview the full positive bend");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(144.0, 10.0)),
+            )
+            .expect("release should submit the moved bend");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiPitchBends(_, bends) = message.unwrap() else {
+            panic!("pitch-bend drag should submit a pitch-bend edit");
+        };
+        assert_eq!(
+            bends,
+            [MidiPitchBendData {
+                tick: 1_440,
+                value: 16_383,
+            }]
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: bends,
+            })
+            .unwrap();
+        let lane = PitchBendLane {
+            item: &project.midi_items()[0],
+            item_id,
+            lane_height: PITCH_BEND_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        lane.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            bounds,
+            mouse::Cursor::Available(Point::new(144.0, 10.0)),
+        )
+        .expect("right-click should open the bend context menu");
+        let action = lane
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(160.0, 20.0)),
+            )
+            .expect("Delete pitch bend should remove the point");
+        let (message, _, _) = action.into_inner();
+        let Message::SetMidiPitchBends(_, bends) = message.unwrap() else {
+            panic!("pitch-bend deletion should submit an empty lane");
+        };
+        assert!(bends.is_empty());
     }
 
     #[test]

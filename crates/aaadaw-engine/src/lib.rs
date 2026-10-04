@@ -1415,7 +1415,7 @@ impl AudioRenderGraph {
                     available: available_events,
                 });
             }
-            if midi_plan.controller_event_count_for_track(instrument.track_id) > 0
+            if midi_plan.midi_control_event_count_for_track(instrument.track_id) > 0
                 && !instrument.processor.supports_midi_controllers()
             {
                 return Err(AudioGraphBuildError::InstrumentControllerDialect {
@@ -1668,7 +1668,7 @@ impl AudioRenderGraph {
             }
             if self
                 .midi_plan
-                .controller_event_count_for_track(instrument.track_id)
+                .midi_control_event_count_for_track(instrument.track_id)
                 > 0
                 && !instrument.processor.supports_midi_controllers()
             {
@@ -1882,7 +1882,7 @@ impl AudioRenderGraph {
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed = !self.instruments.is_empty() || include_midi;
         let midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
-            let (chase_controller_count, chase_note_count) = if self.last_midi_sample_end
+            let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
                 != Some(block_start_sample)
                 || self.last_midi_chase_generation != Some(chase_generation)
             {
@@ -1890,18 +1890,25 @@ impl AudioRenderGraph {
                     .midi_plan
                     .active_controllers_at(block_start_sample, &mut self.midi_scratch)
                     .map_err(AudioGraphError::MidiSchedule)?;
-                let note_count = self
+                let pitch_bend_count = self
                     .midi_plan
-                    .active_notes_at(
+                    .active_pitch_bends_at(
                         block_start_sample,
                         &mut self.midi_scratch[controller_count..],
                     )
                     .map_err(AudioGraphError::MidiSchedule)?;
-                (controller_count, note_count)
+                let note_count = self
+                    .midi_plan
+                    .active_notes_at(
+                        block_start_sample,
+                        &mut self.midi_scratch[controller_count + pitch_bend_count..],
+                    )
+                    .map_err(AudioGraphError::MidiSchedule)?;
+                (controller_count + pitch_bend_count, note_count)
             } else {
                 (0, 0)
             };
-            let chase_count = chase_controller_count + chase_note_count;
+            let chase_count = chase_state_count + chase_note_count;
             let scheduled_count = self
                 .midi_plan
                 .events_for_block(

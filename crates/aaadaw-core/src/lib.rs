@@ -16,7 +16,9 @@ mod track;
 pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
-pub use midi::{ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, NoteId};
+pub use midi::{
+    ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
+};
 pub use project::{FxParameterChange, Project};
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,

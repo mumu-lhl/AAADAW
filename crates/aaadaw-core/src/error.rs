@@ -73,6 +73,8 @@ pub enum ActionError {
     },
     /// A MIDI control change has an invalid controller, value, or in-item position.
     InvalidMidiController,
+    /// A MIDI pitch bend exceeds the 14-bit range or item bounds.
+    InvalidMidiPitchBend,
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -167,6 +169,7 @@ impl fmt::Display for ActionError {
                 item_id.value()
             ),
             Self::InvalidMidiController => formatter.write_str("MIDI controller data is invalid"),
+            Self::InvalidMidiPitchBend => formatter.write_str("MIDI pitch-bend data is invalid"),
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")
             }

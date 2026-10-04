@@ -1,7 +1,7 @@
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
-    MidiNoteSnapshot, Project, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve,
-    TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
+    TempoCurve, TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
 use rusqlite::{
@@ -20,7 +20,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 10;
+pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -152,6 +152,18 @@ const MIGRATION_10: &str = r#"
 ALTER TABLE tracks ADD COLUMN is_bus INTEGER NOT NULL DEFAULT 0 CHECK (is_bus IN (0, 1));
 ALTER TABLE tracks ADD COLUMN output_track_id INTEGER REFERENCES tracks(id)
     DEFERRABLE INITIALLY DEFERRED;
+"#;
+
+const MIGRATION_11: &str = r#"
+CREATE TABLE midi_pitch_bends (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, tick)
+);
+CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -1769,6 +1781,7 @@ impl ProjectStore {
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
             (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
              (SELECT COUNT(*) FROM midi_controllers) + \
+             (SELECT COUNT(*) FROM midi_pitch_bends) + \
                  (SELECT COUNT(*) FROM tempo_points) + (SELECT COUNT(*) FROM meter_points)",
                 [],
                 |row| row.get(0),
@@ -1939,6 +1952,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             8 => transaction.execute_batch(MIGRATION_8)?,
             9 => transaction.execute_batch(MIGRATION_9)?,
             10 => transaction.execute_batch(MIGRATION_10)?,
+            11 => transaction.execute_batch(MIGRATION_11)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1957,6 +1971,7 @@ fn write_snapshot(
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
+    transaction.execute("DELETE FROM midi_pitch_bends", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
@@ -2095,6 +2110,18 @@ fn write_snapshot(
                     i64::from(controller.controller),
                     to_sql_integer(controller.tick)?,
                     i64::from(controller.value)
+                ],
+            )?;
+        }
+        for (position, bend) in item.pitch_bends.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_pitch_bends(item_id, position, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(bend.tick)?,
+                    i64::from(bend.value)
                 ],
             )?;
         }
@@ -2399,6 +2426,34 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             ));
     }
 
+    let mut bend_statement = connection.prepare(
+        "SELECT item_id, position, tick, value \
+         FROM midi_pitch_bends ORDER BY item_id, position",
+    )?;
+    let bend_rows = bend_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut bends_by_item: HashMap<u64, Vec<(u64, MidiPitchBendData)>> = HashMap::new();
+    for (item_id, position, tick, value) in bend_rows {
+        bends_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiPitchBendData {
+                    tick: from_sql_u64(tick)?,
+                    value: from_sql_u16(value)?,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
         "SELECT id, track_id, position, start_tick, length_ticks \
          FROM items ORDER BY position",
@@ -2420,6 +2475,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         let _ = from_sql_u64(position)?;
         let notes = notes_by_item.remove(&id).unwrap_or_default();
         let controllers = controllers_by_item.remove(&id).unwrap_or_default();
+        let pitch_bends = bends_by_item.remove(&id).unwrap_or_default();
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
@@ -2427,11 +2483,12 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             length_ticks: from_sql_u64(length_ticks)?,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
             controllers: controllers.into_iter().map(|(_, event)| event).collect(),
+            pitch_bends: pitch_bends.into_iter().map(|(_, event)| event).collect(),
         });
     }
     Ok((
         items,
-        !notes_by_item.is_empty() || !controllers_by_item.is_empty(),
+        !notes_by_item.is_empty() || !controllers_by_item.is_empty() || !bends_by_item.is_empty(),
     ))
 }
 
@@ -2511,6 +2568,10 @@ fn from_sql_u64(value: i64) -> Result<u64, StorageError> {
 
 fn from_sql_u32(value: i64) -> Result<u32, StorageError> {
     u32::try_from(value).map_err(|_| StorageError::InvalidStoredData("integer is out of range"))
+}
+
+fn from_sql_u16(value: i64) -> Result<u16, StorageError> {
+    u16::try_from(value).map_err(|_| StorageError::InvalidStoredData("integer is out of range"))
 }
 
 fn from_sql_u8(value: i64) -> Result<u8, StorageError> {
