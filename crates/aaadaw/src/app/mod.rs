@@ -178,7 +178,8 @@ struct App {
     shortcut_capture_id: Option<String>,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
-    audio_output_settings: audio_config::AudioOutputSettings,
+    audio_settings: audio_config::AudioSettings,
+    audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
@@ -313,6 +314,7 @@ struct ActiveRecording {
     input: RunningAudioInput,
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
+    recording_offset_us: i32,
     recovery_manifest_path: PathBuf,
 }
 
@@ -485,7 +487,7 @@ impl App {
             }
         }
         match audio_config::load() {
-            Ok(settings) => app.audio_output_settings = settings,
+            Ok(settings) => app.audio_settings = settings,
             Err(error) => {
                 app.audio_settings_feedback =
                     format!("Audio config unavailable; using defaults ({error})");
@@ -657,6 +659,8 @@ impl App {
                 | Message::ClearShortcutBinding(_)
                 | Message::RestoreShortcutDefault(_)
                 | Message::SelectSettingsCategory(_)
+                | Message::RecordingOffsetTextChanged(_)
+                | Message::ApplyRecordingOffset
                 | Message::CancelShortcutCapture
                 | Message::ShortcutCaptureKey { .. }
                 | Message::SaveShortcutBindings
@@ -1199,6 +1203,10 @@ impl App {
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
                 self.set_master_output_ceiling_dbfs(ceiling_dbfs);
             }
+            Message::RecordingOffsetTextChanged(value) => {
+                self.audio_recording_offset_query = Some(value);
+            }
+            Message::ApplyRecordingOffset => self.apply_recording_offset(),
             Message::RemoveClapPluginPath(path) => {
                 task = self.remove_clap_plugin_path(path);
             }
@@ -2001,10 +2009,9 @@ impl App {
             PlaybackBackend::Wasapi
         }
         #[cfg(all(
-            feature = "wasapi-backend",
-            not(target_os = "windows"),
             not(feature = "jack-backend"),
-            not(feature = "pipewire-backend")
+            not(feature = "pipewire-backend"),
+            not(all(feature = "wasapi-backend", target_os = "windows"))
         ))]
         {
             PlaybackBackend::Unavailable
@@ -2206,7 +2213,7 @@ impl App {
                 return;
             }
         };
-        prepared.set_master_output_ceiling_dbfs(self.audio_output_settings.master_output_ceiling);
+        prepared.set_master_output_ceiling_dbfs(self.audio_settings.master_output_ceiling);
 
         let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
@@ -3037,14 +3044,15 @@ impl App {
     }
 
     fn set_master_output_ceiling_dbfs(&mut self, ceiling: aaadaw_engine::MasterOutputCeiling) {
-        let settings = audio_config::AudioOutputSettings {
+        let settings = audio_config::AudioSettings {
             master_output_ceiling: ceiling,
+            ..self.audio_settings
         };
         #[cfg(feature = "audio-device")]
         if let Some(playback) = &self.playback {
             playback.set_master_output_ceiling_dbfs(ceiling);
         }
-        self.audio_output_settings = settings;
+        self.audio_settings = settings;
         match audio_config::save(settings) {
             Ok(()) => {
                 self.audio_settings_feedback =
@@ -3053,6 +3061,39 @@ impl App {
             Err(error) => {
                 self.audio_settings_feedback =
                     format!("Ceiling is active for this session but could not be saved: {error}");
+            }
+        }
+    }
+
+    fn apply_recording_offset(&mut self) {
+        let value = self
+            .audio_recording_offset_query
+            .as_deref()
+            .unwrap_or("0.000");
+        let Some(offset_us) = audio_config::parse_recording_offset_ms(value) else {
+            self.audio_settings_feedback =
+                "Enter a recording offset from -5000 to 5000 ms, with up to 3 decimal places"
+                    .to_owned();
+            return;
+        };
+        let settings = audio_config::AudioSettings {
+            recording_offset_us: offset_us,
+            ..self.audio_settings
+        };
+        self.audio_settings = settings;
+        self.audio_recording_offset_query =
+            Some(audio_config::format_recording_offset_ms(offset_us));
+        match audio_config::save(settings) {
+            Ok(()) => {
+                self.audio_settings_feedback = format!(
+                    "Recording placement offset set to {} ms; positive values move items later",
+                    audio_config::format_recording_offset_ms(offset_us)
+                );
+            }
+            Err(error) => {
+                self.audio_settings_feedback = format!(
+                    "Recording placement offset is active for this session but could not be saved: {error}"
+                );
             }
         }
     }

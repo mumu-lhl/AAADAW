@@ -2359,11 +2359,17 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     ));
     let project_path = source.with_extension("aaadaw");
     app.project_path = Some(project_path.clone());
+    let recording_start_sample = super::audio_config::apply_recording_offset(
+        96_000,
+        app.project.settings().sample_rate(),
+        500,
+    )
+    .expect("positive calibration offset should fit the project timeline");
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
         source_paths: vec![source.clone()],
         next_segment_index: 0,
-        next_start_sample: 96_000,
+        next_start_sample: recording_start_sample,
         imported_actions: Vec::new(),
         project_path,
         sample_rate: app.project.settings().sample_rate(),
@@ -2378,14 +2384,14 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
         track_id: first_track,
         media_ref: "asset://recorded-take".to_owned(),
-        start_sample: 96_000,
+        start_sample: recording_start_sample,
         source_offset_samples: 0,
         length_samples: 48_000,
     }));
 
     assert_eq!(app.project.audio_items().len(), 2);
     assert!(app.project.audio_items().iter().all(|item| {
-        item.start_sample() == 96_000 && item.media_ref() == "asset://recorded-take"
+        item.start_sample() == recording_start_sample && item.media_ref() == "asset://recorded-take"
     }));
     let _ = app.update(Message::Undo);
     assert!(app.project.audio_items().is_empty());
@@ -2418,6 +2424,21 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     );
     let _ = app.update(Message::RecordingRecoveryCleaned(Ok(vec![manifest_path])));
     assert!(app.pending_recording_cleanup.is_empty());
+}
+
+#[test]
+fn invalid_recording_offset_edit_keeps_the_last_applied_value() {
+    let mut app = App::default();
+    app.audio_settings.recording_offset_us = -250;
+    app.audio_recording_offset_query = Some("5000.001".to_owned());
+
+    let _ = app.update(Message::ApplyRecordingOffset);
+
+    assert_eq!(app.audio_settings.recording_offset_us, -250);
+    assert!(
+        app.audio_settings_feedback
+            .contains("up to 3 decimal places")
+    );
 }
 
 #[test]

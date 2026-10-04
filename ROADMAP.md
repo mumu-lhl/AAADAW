@@ -78,7 +78,7 @@
 - [x] 保留 JACK 每个捕获周期的帧位置；录音队列溢出或时钟回退时使 take 失败，短暂的周期间隔在 WAV 中写为静音，避免 overdub 时间被压缩（[Issue #38](https://github.com/mumu-lhl/AAADAW/issues/38)）。
 - [x] 为 PipeWire 输入协商 per-buffer `SPA_META_Header` 并按 PTS 保留捕获间隔；缺失/损坏时间戳或无法表示时长的空 buffer 必须让 take 失败（[Issue #42](https://github.com/mumu-lhl/AAADAW/issues/42)）。不要把 `Stream::time().ticks` 当作当前 buffer 起点。
 - [x] 增加 Windows WASAPI 默认立体声输出，让 Windows 工程可播放且记录设备格式协商、默认设备变化和移除行为（[Issue #50](https://github.com/mumu-lhl/AAADAW/issues/50)）。
-- [ ] 增加 Windows WASAPI 输入，让用户可在 armed track 上录制、保留采集时间戳并通过现有 WAV/recovery/import 路径回放（[Issue #52](https://github.com/mumu-lhl/AAADAW/issues/52)）。
+- [x] 增加 Windows WASAPI 输入，让用户可在 armed track 上录制、保留采集时间戳并通过现有 WAV/recovery/import 路径回放（[Issue #52](https://github.com/mumu-lhl/AAADAW/issues/52)）。
 - [ ] 实现播放/停止、设备参数协商、固定块处理、轨道增益/声像/静音/独奏及基础 Master 输出。
 - [ ] 采用静态拓扑分层调度作为 MVP 起点；预分配音频缓冲与 scratch 空间，控制线程和音频线程间通过无锁队列/只读快照交接状态。
 - [x] 实现 MIDI Note On/Off block 调度、停止释放，并在 seek/重启播放时追逐仍在持续的音符（[Issue #22](https://github.com/mumu-lhl/AAADAW/issues/22)）。
@@ -130,6 +130,7 @@
 - [x] 实现 Linux 实时立体声录音：设备回调写入有界预分配 SPSC 队列，后台线程滚动写 decoder 可读的 PCM24 WAV 分段，停止后嵌入素材并在所有 armed 轨道上连续放置为一个 undoable transaction（[`Issue #3`](https://github.com/mumu-lhl/AAADAW/issues/3)、[`Issue #5`](https://github.com/mumu-lhl/AAADAW/issues/5)）。JACK/PipeWire 真机录放验证仍待完成。
 - [x] 实现进程异常退出后的未完成录音恢复：项目旁路 manifest 持久化录音轨道、起点和已完成分段；打开工程后异步扫描，用户可显式恢复/丢弃，校验完整可解码分段并报告缺失帧/截断尾部，工程成功保存前保留恢复源（[Issue #8](https://github.com/mumu-lhl/AAADAW/issues/8)）。录音起点在恢复元数据同步后、启用捕获前重新取样，并由写入线程异步精确更新；崩溃发生在更新完成前时，恢复流程明确提示采用的是估算位置（[Issue #36](https://github.com/mumu-lhl/AAADAW/issues/36)）。
 - [ ] 计算并补偿输入/输出设备报告的延迟；明确设备未提供可靠延迟数据时的行为。
+- [ ] 增加带符号的用户录音放置校准值，并让录音导入和崩溃恢复使用同一修正锚点（[Issue #54](https://github.com/mumu-lhl/AAADAW/issues/54)）。
 - [x] 实现 MIDI Item 插入/移动/删除、音符插入/删除、网格量化等核心 Action，并接入原子历史与撤销/重做。
 - [x] 实现 MIDI 音符 pitch、tick、duration、velocity 编辑 Action，并接入撤销/重做。
 - [x] 实现 MIDI Item 移动/调整长度 Action；收缩 Item 时拒绝裁掉已有音符，并支持撤销/重做。
