@@ -160,6 +160,24 @@ impl RunningAudioInput {
         }
     }
 
+    /// Returns a precise capture-path latency reported by the input backend, if available.
+    pub fn reported_capture_latency_frames(&self) -> Option<u32> {
+        match self {
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(input) => input.reported_capture_latency_frames(),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(_) => None,
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(_) => None,
+            #[cfg(not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(feature = "wasapi-backend", target_os = "windows")
+            )))]
+            _ => None,
+        }
+    }
+
     /// Stops the input callback and releases the device.
     pub fn shutdown(self) {
         match self {

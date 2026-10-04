@@ -69,6 +69,7 @@ impl App {
                         writer,
                         control,
                         recording_offset_us,
+                        capture_latency_frames: None,
                         capture_timeline_anchor: None,
                         recovery_manifest_path,
                     }),
@@ -292,10 +293,11 @@ impl App {
             .map_or(self.playhead_sample, |playback| {
                 playback.stats().playhead_sample
             });
-        let Some(start_sample) = super::audio_config::apply_recording_offset(
+        let Some(start_sample) = super::audio_config::apply_recording_placement_correction(
             transport_sample,
             self.project.settings().sample_rate(),
             recording.recording_offset_us,
+            recording.capture_latency_frames,
         ) else {
             self.recording_starting = false;
             self.recording_tracks.clear();
@@ -339,6 +341,10 @@ impl App {
                 Task::none()
             }
             Some(Ok((recording, _provisional_start_sample))) => {
+                let mut recording = recording;
+                recording.capture_latency_frames =
+                    recording.input.reported_capture_latency_frames();
+                let capture_latency_frames = recording.capture_latency_frames;
                 let playback_stats = self.playback.as_ref().map(|playback| playback.stats());
                 let jack_clock_anchor =
                     playback_stats.and_then(|stats| stats.transport_clock_anchor);
@@ -375,10 +381,11 @@ impl App {
                 };
                 // The provisional sample was persisted before this callback. Refresh the
                 // playhead now so slow recovery-file sync time is not included in the take.
-                let Some(start_sample) = super::audio_config::apply_recording_offset(
+                let Some(start_sample) = super::audio_config::apply_recording_placement_correction(
                     transport_sample,
                     self.project.settings().sample_rate(),
                     recording.recording_offset_us,
+                    capture_latency_frames,
                 ) else {
                     discard_recording(recording);
                     self.recording_starting = false;
@@ -435,7 +442,7 @@ impl App {
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;
-                self.status = "Recording".to_owned();
+                self.status = recording_status(capture_latency_frames);
                 Task::none()
             }
             Some(Err(error)) => {
@@ -470,11 +477,12 @@ impl App {
                 Task::none()
             }
             Some(Ok((recording, start_sample))) => {
+                let capture_latency_frames = recording.capture_latency_frames;
                 recording.control.start();
                 self.recording_start_sample = start_sample;
                 self.recording = Some(recording);
                 self.recording_starting = false;
-                self.status = "Recording".to_owned();
+                self.status = recording_status(capture_latency_frames);
                 Task::none()
             }
             Some(Err(error)) => {
@@ -499,4 +507,12 @@ fn discard_recording(recording: ActiveRecording) {
     recording.control.stop();
     recording.input.shutdown();
     recording.writer.cancel();
+}
+
+#[cfg(feature = "audio-device")]
+fn recording_status(capture_latency_frames: Option<u32>) -> String {
+    match capture_latency_frames {
+        Some(frames) => format!("Recording · capture latency compensated ({frames} frames)"),
+        None => "Recording · automatic capture latency unavailable; user calibration only".into(),
+    }
 }

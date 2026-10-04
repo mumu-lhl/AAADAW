@@ -138,16 +138,29 @@ pub(super) fn format_recording_offset_ms(offset_us: i32) -> String {
     format!("{sign}{}.{:03}", magnitude / 1_000, magnitude % 1_000)
 }
 
-#[cfg(any(feature = "audio-device", test))]
+#[cfg(test)]
 pub(super) fn apply_recording_offset(
     start_sample: u64,
     sample_rate: u32,
     offset_us: i32,
 ) -> Option<u64> {
-    if sample_rate == 0 || offset_us.unsigned_abs() > MAX_RECORDING_OFFSET_US as u32 {
+    apply_recording_placement_correction(start_sample, sample_rate, offset_us, None)
+}
+
+#[cfg(any(feature = "audio-device", test))]
+pub(super) fn apply_recording_placement_correction(
+    start_sample: u64,
+    sample_rate: u32,
+    user_offset_us: i32,
+    capture_latency_frames: Option<u32>,
+) -> Option<u64> {
+    if sample_rate == 0 || user_offset_us.unsigned_abs() > MAX_RECORDING_OFFSET_US as u32 {
         return None;
     }
-    let numerator = i128::from(offset_us).checked_mul(i128::from(sample_rate))?;
+    let user_offset_numerator = i128::from(user_offset_us).checked_mul(i128::from(sample_rate))?;
+    let capture_latency_numerator =
+        i128::from(capture_latency_frames.unwrap_or(0)).checked_mul(1_000_000)?;
+    let numerator = user_offset_numerator.checked_sub(capture_latency_numerator)?;
     let rounded_numerator = if numerator < 0 {
         numerator.checked_sub(500_000)?
     } else {
@@ -231,5 +244,33 @@ mod tests {
         assert_eq!(apply_recording_offset(u64::MAX - 1, 48_000, 1_000), None);
         assert_eq!(apply_recording_offset(1, 0, 1_000), None);
         assert_eq!(apply_recording_offset(1, 48_000, i32::MAX), None);
+    }
+
+    #[test]
+    fn reported_capture_latency_moves_take_earlier_before_user_calibration() {
+        assert_eq!(
+            apply_recording_placement_correction(48_000, 48_000, 0, Some(240)),
+            Some(47_760)
+        );
+        assert_eq!(
+            apply_recording_placement_correction(48_000, 48_000, 5_000, Some(240)),
+            Some(48_000)
+        );
+        assert_eq!(
+            apply_recording_placement_correction(48_000, 48_000, 0, None),
+            Some(48_000)
+        );
+    }
+
+    #[test]
+    fn reported_capture_latency_rejects_timeline_underflow_and_overflow() {
+        assert_eq!(
+            apply_recording_placement_correction(239, 48_000, 0, Some(240)),
+            None
+        );
+        assert_eq!(
+            apply_recording_placement_correction(u64::MAX, 48_000, 5_000, Some(1)),
+            None
+        );
     }
 }

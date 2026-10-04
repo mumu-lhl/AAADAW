@@ -315,6 +315,7 @@ struct ActiveRecording {
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
     recording_offset_us: i32,
+    capture_latency_frames: Option<u32>,
     capture_timeline_anchor: Option<aaadaw_app::CaptureTimelineAnchor>,
     recovery_manifest_path: PathBuf,
 }

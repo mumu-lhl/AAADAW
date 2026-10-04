@@ -1,6 +1,7 @@
 use crate::{AudioCaptureControl, AudioCaptureProducer};
 use jack::{
-    AudioIn, Client, ClientOptions, Control, Port, PortFlags, ProcessHandler, ProcessScope,
+    AudioIn, Client, ClientOptions, Control, LatencyType, NotificationHandler, Port, PortFlags,
+    PortId, ProcessHandler, ProcessScope,
 };
 use std::error::Error as StdError;
 use std::fmt;
@@ -109,10 +110,51 @@ impl From<jack::Error> for JackInputError {
 
 /// A JACK capture client connected to the first two physical audio input ports.
 pub struct JackAudioInput {
-    active: Option<jack::AsyncClient<(), JackCaptureHandler>>,
+    active: Option<jack::AsyncClient<JackCaptureNotifications, JackCaptureHandler>>,
     sample_rate: u32,
+    reported_capture_latency_frames: Arc<AtomicU64>,
     latest_frame: Arc<AtomicU64>,
     has_latest_frame: Arc<AtomicBool>,
+}
+
+struct JackCaptureNotifications {
+    left_port_name: String,
+    right_port_name: String,
+    reported_capture_latency_frames: Arc<AtomicU64>,
+}
+
+impl NotificationHandler for JackCaptureNotifications {
+    fn ports_connected(
+        &mut self,
+        client: &Client,
+        _port_id_a: PortId,
+        _port_id_b: PortId,
+        _are_connected: bool,
+    ) {
+        update_reported_capture_latency(
+            client,
+            &self.left_port_name,
+            &self.right_port_name,
+            &self.reported_capture_latency_frames,
+        );
+    }
+}
+
+fn update_reported_capture_latency(
+    client: &Client,
+    left_port_name: &str,
+    right_port_name: &str,
+    reported_capture_latency_frames: &AtomicU64,
+) {
+    let latency = |name: &str| {
+        client
+            .port_by_name(name)
+            .map(|port| port.get_latency_range(LatencyType::Capture))
+    };
+    let frames = latency(left_port_name)
+        .zip(latency(right_port_name))
+        .and_then(|(left, right)| precise_shared_capture_latency(left, right));
+    reported_capture_latency_frames.store(u64::from(frames.unwrap_or(0)), Ordering::Release);
 }
 
 impl JackAudioInput {
@@ -136,8 +178,13 @@ impl JackAudioInput {
         let right_name = right.name()?;
         let latest_frame = Arc::new(AtomicU64::new(0));
         let has_latest_frame = Arc::new(AtomicBool::new(false));
+        let reported_capture_latency_frames = Arc::new(AtomicU64::new(0));
         let active = client.activate_async(
-            (),
+            JackCaptureNotifications {
+                left_port_name: left_name.clone(),
+                right_port_name: right_name.clone(),
+                reported_capture_latency_frames: Arc::clone(&reported_capture_latency_frames),
+            },
             JackCaptureHandler {
                 left,
                 right,
@@ -165,9 +212,16 @@ impl JackAudioInput {
         active
             .as_client()
             .connect_ports_by_name(&sources[1], &right_name)?;
+        update_reported_capture_latency(
+            active.as_client(),
+            &left_name,
+            &right_name,
+            &reported_capture_latency_frames,
+        );
         Ok(Self {
             active: Some(active),
             sample_rate,
+            reported_capture_latency_frames,
             latest_frame,
             has_latest_frame,
         })
@@ -176,6 +230,16 @@ impl JackAudioInput {
     /// Returns the device sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Returns a precise nonzero capture-path latency shared by both connected input ports.
+    ///
+    /// JACK ranges that are unset, ambiguous, or different between channels are treated as
+    /// unavailable; the caller can still use the user's recording calibration offset.
+    pub fn reported_capture_latency_frames(&self) -> Option<u32> {
+        u32::try_from(self.reported_capture_latency_frames.load(Ordering::Acquire))
+            .ok()
+            .filter(|frames| *frames > 0)
     }
 
     /// Extends a frame position from the shared JACK server clock around the latest input frame.
@@ -196,6 +260,20 @@ impl JackAudioInput {
     }
 }
 
+fn precise_shared_capture_latency(left: (u32, u32), right: (u32, u32)) -> Option<u32> {
+    match (left, right) {
+        ((left_min, left_max), (right_min, right_max))
+            if left_min > 0
+                && left_min == left_max
+                && right_min == right_max
+                && left_min == right_min =>
+        {
+            Some(left_min)
+        }
+        _ => None,
+    }
+}
+
 impl Drop for JackAudioInput {
     fn drop(&mut self) {
         self.shutdown();
@@ -204,7 +282,18 @@ impl Drop for JackAudioInput {
 
 #[cfg(test)]
 mod tests {
-    use super::JackFrameClock;
+    use super::{JackFrameClock, precise_shared_capture_latency};
+
+    #[test]
+    fn jack_capture_latency_requires_matching_precise_nonzero_channel_ranges() {
+        assert_eq!(
+            precise_shared_capture_latency((128, 128), (128, 128)),
+            Some(128)
+        );
+        assert_eq!(precise_shared_capture_latency((0, 0), (0, 0)), None);
+        assert_eq!(precise_shared_capture_latency((128, 256), (128, 256)), None);
+        assert_eq!(precise_shared_capture_latency((128, 128), (256, 256)), None);
+    }
 
     #[test]
     fn jack_frame_clock_extends_counter_wraparound() {
