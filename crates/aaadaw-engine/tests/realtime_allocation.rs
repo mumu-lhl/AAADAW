@@ -1,5 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
-use aaadaw_engine::{AudioItemStream, AudioRenderGraph, MasterOutputCeiling, pcm_stream};
+use aaadaw_engine::{
+    AudioItemStream, AudioRenderGraph, MasterOutputCeiling, audio_monitor_stream, pcm_stream,
+};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -85,6 +87,12 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         .expect("track creation should succeed");
     let track_id = project.tracks()[0].id();
     project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id,
+            armed: true,
+        })
+        .expect("track should arm for live monitoring");
+    project
         .apply(DawAction::InsertAudioItem {
             track_id,
             media_ref: "asset://realtime-allocation-check".to_owned(),
@@ -126,6 +134,14 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         128,
     )
     .expect("stream should match the audio item");
+    let (mut monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(256);
+    graph.install_input_monitor(monitor_consumer, monitor_gate);
+    assert!(
+        graph
+            .input_monitor_controller()
+            .expect("monitor graph should expose its control")
+            .set_track_enabled(track_id, true)
+    );
     let mix = graph.track_mix_controller();
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
@@ -138,6 +154,9 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut last_stats = None;
     let mut midi_events_seen = 0;
     for _ in 0..128 {
+        for _ in 0..128 {
+            assert!(monitor_producer.push_frame([0.01, 0.01]));
+        }
         let stats = graph
             .render_with_midi(&mut midi_output, &mut output)
             .expect("preallocated MIDI and audio callback block should render");

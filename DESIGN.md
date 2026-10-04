@@ -76,7 +76,7 @@ Arrange View 是音频和 MIDI 的共同空间。列表、属性对话框和数�
 | --- | --- | --- |
 | 始终保留 | Track name / index | 名称可直接重命名；轨道身份在窄布局仍可辨认。 |
 | 始终保留 | Mute / Solo | 是状态 toggle，active 状态清楚；组合选择时支持批量操作。 |
-| 录音工作流 | Record arm | 有醒目的 armed 状态；正在录音和仅 armed 使用不同状态。输入/监听细节可在 armed 时展开。 |
+| 录音工作流 | Record arm / Input monitor | Arm 与 recording 状态视觉区分；监听默认关闭，只能在 armed 轨道录音期间显式启用，并进入该轨道的 mix/FX/master 路径。录音前监听仍待实现。 |
 | 常用混音 | Volume | 支持可见数值及连续调节；细调、重置和精确输入可发现。 |
 | 常用混音 | Pan | 支持居中状态和可读的左右数值；双击重置到中心。 |
 | 可访问 | Routing / Sends | 显示是否存在连接，并能打开详细路由；后续可支持从轨道间拖动建立发送。 |
@@ -84,7 +84,7 @@ Arrange View 是音频和 MIDI 的共同空间。列表、属性对话框和数�
 | 可读反馈 | Meter | 播放或监听时显示实时电平，peak/clipping 状态可辨识。 |
 | 轨道组织 | Folder state | 文件夹轨可折叠；子轨层级以缩进或结构线表达，并和 Mixer 同步。 |
 
-宽度不足时依次采用紧凑排布、缩短文字并提供 tooltip、将低频操作折叠进轨道上下文菜单或轨道属性面板。不得隐藏轨道名、Mute/Solo/Arm 状态或当前选择反馈。FX、routing、folder 和输入细节可折叠；Volume/Pan 仍应能快速访问。轨道高度缩小时先隐藏次要文字和辅助 controls，保留轨道身份与核心状态；armed/recording 可临时展开必要输入控件。
+宽度不足时依次采用紧凑排布、缩短文字并提供 tooltip、将低频操作折叠进轨道上下文菜单或轨道属性面板。不得隐藏轨道名、Mute/Solo/Arm 状态或当前选择反馈。FX、routing、folder 和输入细节可折叠；Volume/Pan 仍应能快速访问。轨道高度缩小时先隐藏次要文字和辅助 controls，保留轨道身份与核心状态；recording 可显示必要监听控件。
 
 ## Mixer
 

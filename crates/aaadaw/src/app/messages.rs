@@ -132,6 +132,8 @@ pub(crate) enum Message {
     ToggleMute(TrackId),
     ToggleSolo(TrackId),
     ToggleRecordArm(TrackId),
+    #[cfg(feature = "audio-device")]
+    ToggleInputMonitor(TrackId),
     PreviewTrackVolume(TrackId, f32),
     CommitTrackVolume(TrackId),
     PreviewTrackPan(TrackId, f32),

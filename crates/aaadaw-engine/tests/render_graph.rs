@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
     AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
-    MasterOutputCeiling, PcmStreamError, pcm_stream,
+    MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream,
 };
 
 #[test]
@@ -96,6 +96,135 @@ fn live_mix_controller_updates_a_running_graph_on_the_next_block() {
         assert!((frame[1] - right_gain).abs() < 1.0e-6);
     }
     assert_eq!(graph.transport_mut().position_samples(), 4);
+}
+
+#[test]
+fn live_input_monitor_routes_only_to_explicitly_enabled_armed_tracks() {
+    let mut project = Project::new();
+    for (index, name) in ["Armed", "Also armed", "Unarmed"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track creation should succeed");
+    }
+    let armed_track = project.tracks()[0].id();
+    let second_armed_track = project.tracks()[1].id();
+    let unarmed_track = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id: armed_track,
+            armed: true,
+        })
+        .expect("track should arm");
+    project
+        .apply(DawAction::SetTrackRecordArm {
+            track_id: second_armed_track,
+            armed: true,
+        })
+        .expect("second track should arm");
+    for track_id in [armed_track, second_armed_track] {
+        project
+            .apply(DawAction::SetTrackPan {
+                track_id,
+                pan: -1.0,
+            })
+            .expect("monitor tracks should hard pan left");
+    }
+
+    let (mut monitor_producer, monitor_consumer, gate) = audio_monitor_stream(8);
+    let (_, first_stream) = pcm_stream(8).expect("queue should be created");
+    let (_, second_stream) = pcm_stream(8).expect("queue should be created");
+    let (_, third_stream) = pcm_stream(8).expect("queue should be created");
+    let mut graph =
+        AudioRenderGraph::new(&project, vec![first_stream, second_stream, third_stream], 8)
+            .expect("track streams should match");
+    graph.install_input_monitor(monitor_consumer, gate);
+    let monitor = graph
+        .input_monitor_controller()
+        .expect("prepared graph should expose monitor controls");
+    assert!(!monitor.set_track_enabled(unarmed_track, true));
+    assert!(monitor.set_track_enabled(armed_track, true));
+    graph.transport_mut().start();
+    assert!(monitor_producer.push_frame([0.25, -0.5]));
+    let mut output = [[0.0; 2]; 1];
+    graph
+        .render_into(&mut output)
+        .expect("monitor block should render");
+    assert_eq!(output, [[0.25, 0.0]]);
+
+    assert!(monitor.set_track_enabled(second_armed_track, true));
+    assert!(monitor_producer.push_frame([0.25, -0.5]));
+    graph
+        .render_into(&mut output)
+        .expect("two explicit monitor routes should render");
+    assert_eq!(output, [[0.5, 0.0]]);
+
+    assert!(monitor.set_track_enabled(armed_track, false));
+    assert!(monitor.set_track_enabled(second_armed_track, false));
+    assert!(!monitor_producer.push_frame([0.75, 0.75]));
+    graph
+        .render_into(&mut output)
+        .expect("disabled block should render");
+    assert_eq!(output, [[0.0, 0.0]]);
+}
+
+#[test]
+fn live_input_monitor_obeys_track_mute_and_project_solo_rules() {
+    for (muted, solo_other) in [(true, false), (false, true)] {
+        let mut project = Project::new();
+        for (index, name) in ["Monitor target", "Other"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("track creation should succeed");
+        }
+        let target = project.tracks()[0].id();
+        let other = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackRecordArm {
+                track_id: target,
+                armed: true,
+            })
+            .expect("target should be armed");
+        if muted {
+            project
+                .apply(DawAction::SetTrackMute {
+                    track_id: target,
+                    muted: true,
+                })
+                .expect("target should mute");
+        }
+        if solo_other {
+            project
+                .apply(DawAction::SetTrackSolo {
+                    track_id: other,
+                    solo: true,
+                })
+                .expect("other track should solo");
+        }
+
+        let (mut producer, consumer, gate) = audio_monitor_stream(4);
+        let (_, first) = pcm_stream(4).expect("track queue should be created");
+        let (_, second) = pcm_stream(4).expect("track queue should be created");
+        let mut graph = AudioRenderGraph::new(&project, vec![first, second], 4)
+            .expect("track queues should match");
+        graph.install_input_monitor(consumer, gate);
+        let controller = graph
+            .input_monitor_controller()
+            .expect("monitor graph should expose controls");
+        assert!(controller.set_track_enabled(target, true));
+        graph.transport_mut().start();
+        assert!(producer.push_frame([0.25, -0.25]));
+        let mut output = [[0.0; 2]; 1];
+        graph
+            .render_into(&mut output)
+            .expect("live-input block should render");
+        assert_eq!(output, [[0.0, 0.0]]);
+    }
 }
 
 #[test]

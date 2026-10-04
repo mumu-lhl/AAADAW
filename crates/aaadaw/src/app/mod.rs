@@ -1399,6 +1399,28 @@ impl App {
                     );
                 }
             }
+            #[cfg(feature = "audio-device")]
+            Message::ToggleInputMonitor(track_id) => {
+                let armed = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.id() == track_id && track.is_record_armed());
+                if self.recording.is_some() && self.playback_playing && armed {
+                    if let Some(playback) = self.playback.as_ref() {
+                        let enabled = !playback.input_monitor_enabled(track_id);
+                        if playback.set_track_input_monitor(track_id, enabled) {
+                            self.status = if enabled {
+                                "Input monitoring enabled for armed track".to_owned()
+                            } else {
+                                "Input monitoring disabled for armed track".to_owned()
+                            };
+                        } else {
+                            self.status = "Input monitor route is unavailable".to_owned();
+                        }
+                    }
+                }
+            }
             Message::PreviewTrackVolume(track_id, volume_db) => {
                 self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
             }
@@ -1785,6 +1807,22 @@ impl App {
                 self.finish_playback_preparation(target_sample, start_when_ready, result);
                 if self.pending_recording.is_some() {
                     task = self.begin_pending_recording();
+                } else if self.recording_starting && self.recording.is_none() {
+                    if self.recording_cancel_requested || self.playback.is_none() {
+                        self.recording_starting = false;
+                        self.recording_cancel_requested = false;
+                        self.recording_cancelled_transport_start = false;
+                        if self.playback.is_none() {
+                            self.status =
+                                "Recording could not start because audio output is unavailable"
+                                    .to_owned();
+                        } else {
+                            self.status = "Recording setup cancelled".to_owned();
+                        }
+                    } else {
+                        self.recording_starting = false;
+                        task = self.start_recording();
+                    }
                 }
             }
             #[cfg(any(
@@ -2084,6 +2122,7 @@ impl App {
             self.status = format!("{} output is not open", self.playback_name());
             return;
         };
+        playback.disable_input_monitoring();
         match playback.stop() {
             Ok(()) => {
                 self.playback_playing = false;
@@ -2132,6 +2171,7 @@ impl App {
         let state_error = self.persist_clap_plugin_states().err();
         let mut shutdown_error = None;
         if let Some(playback) = self.playback.take() {
+            playback.disable_input_monitoring();
             match playback.shutdown() {
                 Ok((instruments, effects)) => {
                     self.deactivate_stopped_instruments(instruments);

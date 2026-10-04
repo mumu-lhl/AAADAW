@@ -43,6 +43,30 @@ impl App {
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
+        if self.playback.is_none() {
+            self.recording_starting = true;
+            self.recording_cancel_requested = false;
+            self.status = format!("Starting {} transport for recording…", backend.name());
+            return self.prepare_playback(self.playhead_sample, true);
+        }
+        let monitor_producer = self
+            .playback
+            .as_mut()
+            .and_then(aaadaw_app::RunningAudioPlayback::take_input_monitor_producer);
+        let Some(monitor_producer) = monitor_producer else {
+            let target_sample = self
+                .playback
+                .as_ref()
+                .map_or(self.playhead_sample, |playback| {
+                    playback.stats().playhead_sample
+                });
+            let resume_playback = self.playback_playing;
+            self.close_playback();
+            self.recording_starting = true;
+            self.recording_cancel_requested = false;
+            self.status = "Refreshing the playback input-monitor route…".to_owned();
+            return self.prepare_playback(target_sample, resume_playback);
+        };
         self.recording_tracks = tracks;
         self.recording_starting = true;
         self.recording_cancel_requested = false;
@@ -63,7 +87,13 @@ impl App {
                     .recovery_manifest_path()
                     .expect("recoverable recording has a manifest")
                     .to_path_buf();
-                match open_audio_input(backend, producer, control.clone(), sample_rate) {
+                match open_audio_input(
+                    backend,
+                    producer,
+                    Some(monitor_producer),
+                    control.clone(),
+                    sample_rate,
+                ) {
                     Ok(input) => Ok(ActiveRecording {
                         input,
                         writer,
@@ -158,6 +188,9 @@ impl App {
         self.recording_stopping = true;
         self.recording_cancelled_transport_start = true;
         recording.control.stop();
+        if let Some(playback) = self.playback.as_ref() {
+            playback.disable_input_monitoring();
+        }
         let manifest_path = recording.recovery_manifest_path.clone();
         let fallback_start_sample = self.recording_start_sample;
         self.stop_playback();
