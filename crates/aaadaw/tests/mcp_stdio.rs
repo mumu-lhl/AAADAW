@@ -216,6 +216,12 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_redo", "arguments": {}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 18,
+            "method": "tools/call",
+            "params": {"name": "daw_set_tempo_point", "arguments": {"tick": 960, "bpm": 90}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -291,6 +297,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .as_array()
             .unwrap()
             .iter()
+            .all(|tool| tool["name"] != "daw_set_tempo_point")
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
             .all(|tool| !matches!(tool["name"].as_str(), Some("daw_undo" | "daw_redo")))
     );
     let structure = response_for(4)["result"]["contents"][0]["text"]
@@ -307,6 +320,9 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(structure["tracks"][0]["output_track_id"], bus_id.value());
     assert_eq!(structure["tracks"][1]["type"], "bus");
     assert_eq!(structure["tracks"][1]["output_track_id"], Value::Null);
+    assert_eq!(structure["tempo_points"].as_array().unwrap().len(), 1);
+    assert_eq!(structure["tempo_points"][0]["tick"], 0);
+    assert_eq!(structure["tempo_points"][0]["bpm"], 120.0);
     let midi = response_for(5)["result"]["contents"][0]["text"]
         .as_str()
         .unwrap();
@@ -327,6 +343,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(response_for(15)["result"]["isError"], true);
     assert_eq!(response_for(16)["result"]["isError"], true);
     assert_eq!(response_for(17)["result"]["isError"], true);
+    assert_eq!(response_for(18)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -425,6 +442,157 @@ fn explicitly_authorized_mcp_track_creation_persists_and_validates() {
             .as_u64()
             .unwrap()
     );
+}
+
+#[test]
+fn explicitly_authorized_mcp_sets_project_tempo_undoably_and_persistently() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-tempo-test.aaadaw");
+    let store = ProjectStore::open(&project_path).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "daw_set_tempo_point", "arguments": arguments}
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-tempo-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(3, json!({"tick": 960, "bpm": 90.0})),
+        call(4, json!({"tick": 960, "bpm": 90.0})),
+        call(5, json!({"tick": 960, "bpm": 100.0})),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {"name": "daw_undo", "arguments": {}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "daw_redo", "arguments": {}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "resources/read",
+            "params": {"uri": "daw://project/structure"}
+        }),
+        call(10, json!({"tick": 1920, "bpm": -1.0})),
+        call(11, json!({"tick": 1.5, "bpm": 120.0})),
+        call(12, json!({"tick": 1920, "bpm": 120.0, "extra": true})),
+        call(13, json!({"tick": u64::MAX, "bpm": 120.0})),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["name"] == "daw_set_tempo_point")
+    );
+    assert_eq!(
+        response_for(3)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(4)["result"]["structuredContent"]["changed"],
+        false
+    );
+    assert_eq!(
+        response_for(5)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(6)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["changed"],
+        true
+    );
+
+    let tempo_points = |id| {
+        let structure: Value = serde_json::from_str(
+            response_for(id)["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        structure["tempo_points"].as_array().unwrap().clone()
+    };
+    assert!(
+        tempo_points(7)
+            .iter()
+            .any(|point| point["tick"] == 960 && point["bpm"] == 90.0)
+    );
+    assert!(
+        tempo_points(9)
+            .iter()
+            .any(|point| point["tick"] == 960 && point["bpm"] == 100.0)
+    );
+    for id in [10, 11, 12, 13] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    assert_eq!(reopened.tempo_at_tick(960), 100.0);
 }
 
 #[test]

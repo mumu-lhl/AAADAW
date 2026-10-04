@@ -1,6 +1,6 @@
 # MCP project inspection and editing
 
-AAADAW exposes a saved project to an MCP client over the standard input/output (STDIO) transport. The default server is read-only. Track creation is available only when explicitly enabled.
+AAADAW exposes a saved project to an MCP client over the standard input/output (STDIO) transport. The default server is read-only. Project edits are available only when explicitly enabled.
 
 ## Launching a server
 
@@ -36,7 +36,7 @@ The read-only server reads the committed project state once at startup. Edits ma
 
 ## Explicit write mode
 
-Add `--write` after the project path to expose `daw_create_track`:
+Add `--write` after the project path to expose the project-editing tools:
 
 ```json
 {
@@ -60,6 +60,8 @@ The `daw_create_track` tool accepts one non-empty track name of at most 128 char
 `daw_set_track_record_arm` accepts an existing track ID and explicit `armed` boolean, applies `DawAction::SetTrackRecordArm`, and saves the prepared record-arm state; it does not start recording or access an audio device. Repeating the existing state is a no-op. Invalid requests do not change the project.
 
 `daw_set_track_mix` accepts a track ID and one or more of `volume_db`, `pan`, `muted`, and `solo`. Supplied controls are validated and applied together as one atomic `DawAction::BatchTransaction`; omitted controls remain unchanged. The response returns the full resulting mix state, and an unchanged request does not create history or write the project.
+
+`daw_set_tempo_point` accepts an absolute project `tick` and a finite positive `bpm`. It inserts or replaces that point through `DawAction::SetTempo` and saves the project before returning. Setting a point to its existing BPM is a no-op. Invalid ticks or BPM values do not change the project. The edit participates in the same writer-session undo/redo history.
 
 `daw_undo` and `daw_redo` move one edit through the in-memory project history for the current MCP writer process and save the resulting snapshot before success. Each new writer starts with empty history because project snapshots do not persist undo history; these tools therefore affect only edits made since that writer started. An empty undo/redo stack is a no-op.
 

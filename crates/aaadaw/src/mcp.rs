@@ -39,6 +39,7 @@ const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
 const SET_TRACK_MIX_TOOL: &str = "daw_set_track_mix";
 const UNDO_TOOL: &str = "daw_undo";
 const REDO_TOOL: &str = "daw_redo";
+const SET_TEMPO_TOOL: &str = "daw_set_tempo_point";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TrackMixChanges {
@@ -194,6 +195,7 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(set_volume_automation_point_tool());
             tools.push(set_track_record_arm_tool());
             tools.push(set_track_mix_tool());
+            tools.push(set_tempo_tool());
             tools.push(history_tool(HistoryDirection::Undo));
             tools.push(history_tool(HistoryDirection::Redo));
         }
@@ -211,6 +213,7 @@ impl ServerHandler for ProjectMcpServer {
             }
             SET_TRACK_RECORD_ARM_TOOL if self.writable => Some(set_track_record_arm_tool()),
             SET_TRACK_MIX_TOOL if self.writable => Some(set_track_mix_tool()),
+            SET_TEMPO_TOOL if self.writable => Some(set_tempo_tool()),
             UNDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Undo)),
             REDO_TOOL if self.writable => Some(history_tool(HistoryDirection::Redo)),
             _ => None,
@@ -264,6 +267,10 @@ impl ServerHandler for ProjectMcpServer {
                 parse_track_mix_arguments(request.arguments.as_ref())
                     .and_then(|changes| self.set_track_mix(changes))
             }
+            SET_TEMPO_TOOL if self.writable => {
+                parse_set_tempo_arguments(request.arguments.as_ref())
+                    .and_then(|(start_tick, bpm)| self.set_tempo_point(start_tick, bpm))
+            }
             UNDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
                 .and_then(|()| self.move_history(HistoryDirection::Undo)),
             REDO_TOOL if self.writable => parse_empty_arguments(request.arguments.as_ref())
@@ -279,6 +286,33 @@ impl ServerHandler for ProjectMcpServer {
 }
 
 impl ProjectMcpServer {
+    fn set_tempo_point(&self, start_tick: u64, bpm: f64) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let current_bpm = project
+            .tempo_points()
+            .find(|(tick, _, _)| *tick == start_tick)
+            .map(|(_, bpm, _)| bpm);
+        let changed = current_bpm != Some(bpm);
+        if !changed {
+            return Ok(json!({"tick": start_tick, "bpm": bpm, "changed": false}));
+        }
+        project
+            .apply(DawAction::SetTempo { start_tick, bpm })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "set tempo point")?;
+        Ok(json!({"tick": start_tick, "bpm": bpm, "changed": true}))
+    }
+
     fn create_track(&self, name: String) -> Result<Value, String> {
         let mut project = self
             .project
@@ -759,6 +793,50 @@ fn set_volume_automation_point_tool() -> Tool {
             .idempotent(true)
             .open_world(false),
     )
+}
+
+fn set_tempo_tool() -> Tool {
+    Tool::new(
+        SET_TEMPO_TOOL,
+        "Insert or update one project tempo point at an absolute PPQ tick.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "tick": {"type": "integer", "minimum": 0},
+                "bpm": {"type": "number", "exclusiveMinimum": 0}
+            },
+            "required": ["tick", "bpm"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn parse_set_tempo_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, f64), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "tick" | "bpm"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let tick = arguments
+        .get("tick")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "tick must be a non-negative integer".to_owned())?;
+    let bpm = arguments
+        .get("bpm")
+        .and_then(Value::as_f64)
+        .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
+        .ok_or_else(|| "bpm must be finite and greater than zero".to_owned())?;
+    Ok((tick, bpm))
 }
 
 fn parse_volume_automation_point_arguments(
@@ -1334,8 +1412,8 @@ mod tests {
         MAX_MAP_POINTS, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS,
         MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_track_arguments,
         parse_insert_midi_notes_arguments, parse_note_query_arguments,
-        parse_quantize_midi_item_arguments, parse_track_summary_uri, scoped_query_notes,
-        structure_summary, track_midi_summary,
+        parse_quantize_midi_item_arguments, parse_set_tempo_arguments, parse_track_summary_uri,
+        scoped_query_notes, structure_summary, track_midi_summary,
     };
     use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
     use serde_json::{Value, json};
@@ -1450,6 +1528,31 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn set_tempo_arguments_require_integer_tick_and_finite_positive_bpm() {
+        let arguments = |tick: Value, bpm: Value| {
+            serde_json::Map::from_iter([("tick".to_owned(), tick), ("bpm".to_owned(), bpm)])
+        };
+        assert_eq!(
+            parse_set_tempo_arguments(Some(&arguments(json!(960), json!(98.5)))).unwrap(),
+            (960, 98.5)
+        );
+        for invalid in [
+            arguments(json!(-1), json!(120)),
+            arguments(json!(1.5), json!(120)),
+            arguments(json!(0), json!(0)),
+            arguments(json!(0), json!(-1)),
+            arguments(json!(0), json!("120")),
+            arguments(json!(0), json!(true)),
+        ] {
+            assert!(parse_set_tempo_arguments(Some(&invalid)).is_err());
+        }
+        let mut extra = arguments(json!(0), json!(120));
+        extra.insert("curve".to_owned(), json!("step"));
+        assert!(parse_set_tempo_arguments(Some(&extra)).is_err());
+        assert!(parse_set_tempo_arguments(None).is_err());
     }
 
     #[test]
