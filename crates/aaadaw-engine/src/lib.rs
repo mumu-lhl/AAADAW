@@ -21,6 +21,8 @@ mod pipewire_output;
 mod stream;
 mod transport;
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+mod wasapi_common;
+#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 mod wasapi_input;
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 mod wasapi_output;

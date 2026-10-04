@@ -1,3 +1,4 @@
+use crate::wasapi_common::is_supported_pcm_format;
 use crate::{AudioCaptureControl, AudioCaptureProducer};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
@@ -11,24 +12,6 @@ use std::time::Duration;
 const PREFERRED_CAPTURE_FRAMES: u32 = 512;
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-fn is_supported_pcm(format: SampleFormat) -> bool {
-    matches!(
-        format,
-        SampleFormat::I8
-            | SampleFormat::I16
-            | SampleFormat::I24
-            | SampleFormat::I32
-            | SampleFormat::I64
-            | SampleFormat::U8
-            | SampleFormat::U16
-            | SampleFormat::U24
-            | SampleFormat::U32
-            | SampleFormat::U64
-            | SampleFormat::F32
-            | SampleFormat::F64
-    )
-}
-
 fn supports_project_input_config(
     channels: u16,
     format: SampleFormat,
@@ -37,7 +20,7 @@ fn supports_project_input_config(
     project_rate: u32,
 ) -> bool {
     channels == 2
-        && is_supported_pcm(format)
+        && is_supported_pcm_format(format)
         && minimum_rate <= project_rate
         && project_rate <= maximum_rate
 }
