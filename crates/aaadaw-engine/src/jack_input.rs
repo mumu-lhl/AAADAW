@@ -180,7 +180,7 @@ impl JackAudioInput {
 
     /// Extends a frame position from the shared JACK server clock around the latest input frame.
     pub fn map_shared_frame_time(&self, frame: u32) -> Option<u64> {
-        let active = self.active.as_ref()?;
+        self.active.as_ref()?;
         if self.has_latest_frame.load(Ordering::Acquire) {
             JackFrameClock::extend_near(frame, self.latest_frame.load(Ordering::Relaxed))
         } else {

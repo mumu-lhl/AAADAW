@@ -522,6 +522,7 @@ impl Drop for JackAudioOutput {
 #[cfg(test)]
 mod tests {
     use super::{CallbackCounters, JackNotifications, read_transport_clock_anchor};
+    use crate::TransportClockAnchor;
     use std::sync::Arc;
 
     #[test]
