@@ -2443,13 +2443,8 @@ fn invalid_recording_offset_edit_keeps_the_last_applied_value() {
 
 #[test]
 fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
-    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
-    let directory = std::env::temp_dir().join(format!(
-        "aaadaw-recording-offset-recovery-{}-{file_id}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).expect("test directory should be created");
-    let project_path = directory.join("recording.aaadaw");
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -2457,9 +2452,16 @@ fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
             name: "Calibrated take".to_owned(),
         })
         .expect("track should be created");
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Second armed track".to_owned(),
+        })
+        .expect("second track should be created");
     save_project_file(project_path.clone(), project.snapshot(), false)
         .expect("project should be saved before recording");
     let track_id = project.tracks()[0].id();
+    let second_track_id = project.tracks()[1].id();
     let sample_rate = project.settings().sample_rate();
     let provisional_start = super::audio_config::apply_recording_offset(96_000, sample_rate, 500)
         .expect("calibrated provisional position should fit the project timeline");
@@ -2470,7 +2472,7 @@ fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
     let worker = aaadaw_app::AudioRecordingWorker::start_recoverable(
         &project_path,
         sample_rate,
-        vec![track_id.value()],
+        vec![track_id.value(), second_track_id.value()],
         consumer,
         control.clone(),
     )
@@ -2515,14 +2517,29 @@ fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
             .next_start_sample,
         capture_start
     );
+    let _task = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id,
+        media_ref: "asset://recovered-calibrated-take".to_owned(),
+        start_sample: 0,
+        source_offset_samples: 0,
+        length_samples: 48_000,
+    }));
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert!(app.project.audio_items().iter().all(|item| {
+        item.start_sample() == capture_start
+            && item.media_ref() == "asset://recovered-calibrated-take"
+    }));
+    let _ = app.update(Message::Undo);
+    assert!(app.project.audio_items().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert!(app.project.audio_items().iter().all(|item| {
+        item.start_sample() == capture_start
+            && item.media_ref() == "asset://recovered-calibrated-take"
+    }));
 
     aaadaw_app::discard_recording_recovery(&manifest_path)
         .expect("test recovery sources should be cleaned up");
-    for suffix in ["-wal", "-shm"] {
-        let sidecar = format!("{}{suffix}", project_path.display());
-        let _ = std::fs::remove_file(sidecar);
-    }
-    std::fs::remove_dir_all(directory).expect("test directory should be removed");
 }
 
 #[test]
