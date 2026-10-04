@@ -2437,6 +2437,53 @@ fn completed_audio_import_places_item_through_project_action() {
 }
 
 #[test]
+fn audio_import_targets_the_selected_track_and_edit_cursor_sample() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let first_track = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddTrack);
+    let selected_track = app.project.tracks()[1].id();
+    app.timeline.selected_track = Some(selected_track);
+    app.timeline.edit_cursor_tick = 1_440;
+    let expected_sample = app.project.sample_at_tick(1_440).unwrap();
+
+    let captured = app.audio_import_placement().unwrap();
+    app.timeline.selected_track = Some(first_track);
+    app.timeline.edit_cursor_tick = 0;
+
+    assert_eq!(captured, (selected_track, expected_sample));
+}
+
+#[test]
+fn audio_import_falls_back_to_first_audio_track_and_rejects_bus_only_projects() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddBusTrack);
+    let _ = app.update(Message::AddTrack);
+    let first_audio_track = app.project.tracks()[1].id();
+    app.timeline.selected_track = None;
+    assert_eq!(
+        app.audio_import_placement().unwrap(),
+        (first_audio_track, 0)
+    );
+
+    let mut bus_only = App::default();
+    let _ = bus_only.update(Message::AddBusTrack);
+    assert_eq!(
+        bus_only.audio_import_placement().unwrap_err(),
+        "Select an audio track before importing audio"
+    );
+    bus_only.timeline.selected_track = None;
+    assert_eq!(
+        bus_only.audio_import_placement().unwrap_err(),
+        "Add an audio track before importing audio"
+    );
+    assert_eq!(
+        App::default().audio_import_placement().unwrap_err(),
+        "Add an audio track before importing audio"
+    );
+}
+
+#[test]
 fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_undo_step() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

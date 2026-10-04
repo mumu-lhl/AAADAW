@@ -5,7 +5,7 @@ use iced::{Alignment, Border, Color, Element, Length};
 
 pub(super) fn dock_view(app: &App) -> Element<'_, Message> {
     let import_status = if !app.import_busy {
-        "Import audio into the current project".to_owned()
+        "Import at the edit cursor on the selected track (or first audio track)".to_owned()
     } else if app.import_finalizing {
         "Placing timeline item…".to_owned()
     } else if let Some(total_bytes) = app.import_total_bytes {
