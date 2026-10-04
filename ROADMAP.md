@@ -88,7 +88,7 @@
 - [x] 在传输栏显示音频流欠载样本数，并与后端 callback 错误区分（[Issue #34](https://github.com/mumu-lhl/AAADAW/issues/34)）。
 - [x] 在传输栏显示 JACK 明确报告的设备 XRun 次数，并与 PCM 流欠载和 callback 错误区分（[Issue #40](https://github.com/mumu-lhl/AAADAW/issues/40)）；PipeWire 当前绑定没有对应的 per-stream XRun 通知。
 - [x] 为 Master 输出增加始终启用的可配置 sample-peak ceiling（-12 至 0 dBFS，默认 -1 dBFS），在最终渲染接缝夹限越界样本、将非有限值静音、报告干预计数，并可在活动播放中原子更新（[Issue #46](https://github.com/mumu-lhl/AAADAW/issues/46)）。这不实现响度归一化、look-ahead 或 true-peak limiting，也不承诺声学/听力保护。
-- [ ] 建立可重复的音频基准与回归测试；对音频回调中分配、锁和 I/O 做审计或检测。
+- [x] 为固定渲染图增加 8/64 轨、多块大小的可重复本地基准与音频线程分配回归测试；审计 JACK/PipeWire 输出回调和 render graph 的工作边界，将 CLAP 错误格式化移出回调（[Issue #48](https://github.com/mumu-lhl/AAADAW/issues/48)，[`docs/design/realtime-rendering.md`](docs/design/realtime-rendering.md)）。设备 XRun/长时压力测量仍需真机。
 
 **退出标准**：支持设备上可稳定播放多轨测试工程；回调遵循实时安全约束；设备不可用、XRun、停止和 Seek 均可控，不导致死锁或挂起音符。
 
