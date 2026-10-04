@@ -516,6 +516,7 @@ fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
 
 struct DoubleClickResetState {
     previous_click: Option<mouse::Click>,
+    press_position: Option<iced::Point>,
 }
 
 struct DoubleClickReset<'a> {
@@ -534,6 +535,15 @@ fn record_left_click(previous_click: &mut Option<mouse::Click>, position: iced::
     let click = mouse::Click::new(position, mouse::Button::Left, *previous_click);
     *previous_click = Some(click);
     click.kind() == mouse::click::Kind::Double
+}
+
+fn invalidate_click_after_drag(state: &mut DoubleClickResetState, position: iced::Point) {
+    if state
+        .press_position
+        .is_some_and(|start| start.distance(position) >= 6.0)
+    {
+        state.previous_click = None;
+    }
 }
 
 impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
@@ -584,6 +594,7 @@ impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
     fn state(&self) -> tree::State {
         tree::State::new(DoubleClickResetState {
             previous_click: None,
+            press_position: None,
         })
     }
 
@@ -618,15 +629,32 @@ impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) {
-        if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Left)) = event
-            && let Some(position) = cursor.position_over(layout.bounds())
-        {
-            let state = tree.state.downcast_mut::<DoubleClickResetState>();
-            if record_left_click(&mut state.previous_click, position) {
-                shell.publish(self.message.clone());
-                shell.capture_event();
-                return;
+        match event {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Left))
+                if let Some(position) = cursor.position_over(layout.bounds()) =>
+            {
+                let state = tree.state.downcast_mut::<DoubleClickResetState>();
+                state.press_position = Some(position);
+                if record_left_click(&mut state.previous_click, position) {
+                    shell.publish(self.message.clone());
+                    shell.capture_event();
+                    return;
+                }
             }
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                if let Some(position) = cursor.position() {
+                    invalidate_click_after_drag(
+                        tree.state.downcast_mut::<DoubleClickResetState>(),
+                        position,
+                    );
+                }
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                tree.state
+                    .downcast_mut::<DoubleClickResetState>()
+                    .press_position = None;
+            }
+            _ => {}
         }
         self.content.as_widget_mut().update(
             &mut tree.children[0],
@@ -725,7 +753,7 @@ fn pan_label(pan: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::record_left_click;
+    use super::{DoubleClickResetState, invalidate_click_after_drag, record_left_click};
     use iced::{Point, advanced::mouse};
 
     #[test]
@@ -739,5 +767,18 @@ mod tests {
             previous_click.expect("click should be recorded").kind(),
             mouse::click::Kind::Double
         );
+    }
+
+    #[test]
+    fn dragging_invalidates_the_previous_click_for_double_click_detection() {
+        let start = Point::new(12.0, 8.0);
+        let mut state = DoubleClickResetState {
+            previous_click: Some(mouse::Click::new(start, mouse::Button::Left, None)),
+            press_position: Some(start),
+        };
+
+        invalidate_click_after_drag(&mut state, Point::new(18.0, 8.0));
+
+        assert!(state.previous_click.is_none());
     }
 }
