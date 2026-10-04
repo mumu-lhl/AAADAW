@@ -31,7 +31,17 @@ fn callback_buffer_size(
                 PREFERRED_CALLBACK_FRAMES.clamp(*min, largest_supported),
             ))
         }
-        SupportedBufferSize::Unknown => Ok(BufferSize::Default),
+        SupportedBufferSize::Unknown => Err(WasapiOutputError::UnknownBufferSize),
+    }
+}
+
+fn convert_stereo_output<T>(output: &mut [T], frames: &[[f32; 2]])
+where
+    T: Sample + FromSample<f32>,
+{
+    for (out, frame) in output.chunks_exact_mut(2).zip(frames) {
+        out[0] = T::from_sample(frame[0]);
+        out[1] = T::from_sample(frame[1]);
     }
 }
 
@@ -194,10 +204,7 @@ impl Callback {
         let frames = output.len() / 2;
         match graph.render_into(&mut self.scratch[..frames]) {
             Ok(stats) => {
-                for (out, frame) in output.chunks_exact_mut(2).zip(&self.scratch[..frames]) {
-                    out[0] = T::from_sample(frame[0]);
-                    out[1] = T::from_sample(frame[1]);
-                }
+                convert_stereo_output(output, &self.scratch[..frames]);
                 self.counters
                     .underrun_samples
                     .fetch_add(stats.underrun_samples as u64, Ordering::Relaxed);
@@ -245,6 +252,7 @@ pub enum WasapiOutputError {
     NoStereoConfig { sample_rate: u32 },
     UnsupportedSampleFormat(SampleFormat),
     SampleRateMismatch { project: u32, device: u32 },
+    UnknownBufferSize,
     DeviceBlockTooLarge { device: usize, maximum: usize },
     ControlQueueFull,
     GraphReplacementInFlight,
@@ -268,6 +276,9 @@ impl fmt::Display for WasapiOutputError {
                 f,
                 "project sample rate {project} Hz does not match WASAPI rate {device} Hz"
             ),
+            Self::UnknownBufferSize => {
+                f.write_str("WASAPI did not report a supported output buffer size")
+            }
             Self::DeviceBlockTooLarge { device, maximum } => write!(
                 f,
                 "WASAPI callback block {device} exceeds render capacity {maximum}"
@@ -334,8 +345,9 @@ impl WasapiAudioOutput {
             .default_output_device()
             .ok_or(WasapiOutputError::DeviceUnavailable)?;
         let project_rate = graph.sample_rate();
+        let max_block_frames = graph.max_block_frames();
         let supported = device.supported_output_configs()?;
-        let selected = supported
+        let (selected, buffer_size) = supported
             .filter(|range| {
                 supports_project_output_config(
                     range.channels(),
@@ -345,14 +357,18 @@ impl WasapiAudioOutput {
                     project_rate,
                 )
             })
-            .min_by_key(|range| u8::from(range.sample_format() != SampleFormat::F32))
+            .filter_map(|range| {
+                callback_buffer_size(range.buffer_size(), max_block_frames)
+                    .ok()
+                    .map(|buffer_size| (range, buffer_size))
+            })
+            .min_by_key(|(range, _)| u8::from(range.sample_format() != SampleFormat::F32))
             .ok_or(WasapiOutputError::NoStereoConfig {
                 sample_rate: project_rate,
             })?;
         let sample_format = selected.sample_format();
         let mut config = selected.with_sample_rate(project_rate).config();
-        let max_block_frames = graph.max_block_frames();
-        config.buffer_size = callback_buffer_size(selected.buffer_size(), max_block_frames)?;
+        config.buffer_size = buffer_size;
         let (commands, command_reader) = RingBuffer::new(COMMAND_CAPACITY);
         let (retired_writer, retired) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
         let counters = Arc::new(Counters::default());
@@ -456,9 +472,15 @@ impl WasapiAudioOutput {
         if self.stream.is_none() {
             return Ok(self.take_retired_graphs());
         }
+        if self.counters.device_lost.load(Ordering::Acquire) {
+            return Ok(self.shutdown_after_device_loss());
+        }
         self.enqueue(Command::Shutdown)?;
         let deadline = Instant::now() + Duration::from_secs(2);
         while !self.counters.shutdown.load(Ordering::Acquire) {
+            if self.counters.device_lost.load(Ordering::Acquire) {
+                return Ok(self.shutdown_after_device_loss());
+            }
             if Instant::now() >= deadline {
                 return Err(WasapiOutputError::ShutdownTimedOut);
             }
@@ -476,6 +498,27 @@ impl WasapiAudioOutput {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         Ok(graphs)
+    }
+    fn shutdown_after_device_loss(&mut self) -> Vec<AudioRenderGraph> {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.pause();
+            drop(stream);
+        }
+        let mut graphs = self.take_retired_graphs();
+        graphs.append(
+            &mut self
+                .returned_graphs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for graph in &mut graphs {
+            let _ = graph.release_midi_notes();
+            let _ = graph
+                .stop_instruments()
+                .saturating_add(graph.stop_fx_processors());
+        }
+        self.counters.shutdown.store(true, Ordering::Release);
+        graphs
     }
     pub fn stats(&self) -> WasapiOutputStats {
         WasapiOutputStats {
@@ -513,12 +556,13 @@ impl Drop for WasapiAudioOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aaadaw_core::Project;
+    use aaadaw_core::{DawAction, Project};
     use cpal::FrameCount;
 
     struct CallbackFixture {
         callback: Callback,
         commands: Producer<Command>,
+        retired: Consumer<Box<AudioRenderGraph>>,
         counters: Arc<Counters>,
         returned_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
     }
@@ -527,7 +571,7 @@ mod tests {
         let project = Project::new();
         let graph = AudioRenderGraph::new(&project, Vec::new(), max_block_frames).unwrap();
         let (command_writer, commands) = RingBuffer::new(COMMAND_CAPACITY);
-        let (retired, _retired_reader) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
+        let (retired, retired_reader) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
         let counters = Arc::new(Counters::default());
         let returned_graphs = Arc::new(Mutex::new(Vec::new()));
         let callback = Callback {
@@ -543,6 +587,7 @@ mod tests {
         CallbackFixture {
             callback,
             commands: command_writer,
+            retired: retired_reader,
             counters,
             returned_graphs,
         }
@@ -612,10 +657,57 @@ mod tests {
             callback_buffer_size(&range, 64),
             Err(WasapiOutputError::DeviceBlockTooLarge { .. })
         ));
-        assert_eq!(
-            callback_buffer_size(&SupportedBufferSize::Unknown, 64).unwrap(),
-            BufferSize::Default
-        );
+        assert!(matches!(
+            callback_buffer_size(&SupportedBufferSize::Unknown, 2_048),
+            Err(WasapiOutputError::UnknownBufferSize)
+        ));
+    }
+
+    #[test]
+    fn output_conversion_preserves_interleaved_stereo_channel_order() {
+        let mut output = [0_i16; 4];
+        convert_stereo_output(&mut output, &[[0.5, -0.5], [1.0, -1.0]]);
+        assert_eq!(output, [16_384, -16_384, i16::MAX, i16::MIN]);
+    }
+
+    #[test]
+    fn callback_counts_missing_pcm_as_underrun_samples() {
+        let CallbackFixture {
+            mut callback,
+            counters,
+            ..
+        } = callback_state(4);
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://silence".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        let (_producer, consumer) = crate::pcm_stream(4).unwrap();
+        let mut graph = AudioRenderGraph::new_for_audio_items(
+            &project,
+            vec![crate::AudioItemStream::new(item_id, consumer)],
+            4,
+        )
+        .unwrap();
+        graph.transport_mut().start();
+        callback.graph = Some(Box::new(graph));
+
+        callback.render(&mut [0.0_f32; 8]);
+
+        assert_eq!(counters.underrun_samples.load(Ordering::Relaxed), 8);
     }
 
     #[test]
@@ -648,6 +740,7 @@ mod tests {
             mut commands,
             counters,
             returned_graphs,
+            ..
         } = callback_state(4);
         commands.push(Command::Play).unwrap();
         let mut block = [0.0_f32; 8];
@@ -663,6 +756,49 @@ mod tests {
         assert!(counters.shutdown.load(Ordering::Acquire));
         drop(callback);
         assert_eq!(returned_graphs.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn callback_retires_replaced_graph_for_control_thread_destruction() {
+        let CallbackFixture {
+            mut callback,
+            mut commands,
+            mut retired,
+            ..
+        } = callback_state(4);
+        let replacement = AudioRenderGraph::new(&Project::new(), Vec::new(), 4).unwrap();
+        commands
+            .push(Command::ReplaceGraph {
+                graph: Box::new(replacement),
+                playing: false,
+            })
+            .unwrap();
+        callback.render(&mut [0.0_f32; 8]);
+
+        assert!(retired.pop().is_ok());
+    }
+
+    #[test]
+    fn device_loss_shutdown_reclaims_graphs_without_waiting_for_a_callback() {
+        let graph = AudioRenderGraph::new(&Project::new(), Vec::new(), 4).unwrap();
+        let (_retired_writer, retired) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
+        let counters = Arc::new(Counters::default());
+        counters.device_lost.store(true, Ordering::Release);
+        let returned_graphs = Arc::new(Mutex::new(vec![graph]));
+        let mut output = WasapiAudioOutput {
+            stream: None,
+            commands: RingBuffer::new(COMMAND_CAPACITY).0,
+            retired,
+            counters: Arc::clone(&counters),
+            sample_rate: 48_000,
+            max_block_frames: 4,
+            replacement_pending: false,
+            returned_graphs: Arc::clone(&returned_graphs),
+        };
+
+        let graphs = output.shutdown_after_device_loss();
+        assert_eq!(graphs.len(), 1);
+        assert!(counters.shutdown.load(Ordering::Acquire));
     }
 
     #[test]

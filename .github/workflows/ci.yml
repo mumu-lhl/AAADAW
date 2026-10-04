@@ -18,6 +18,8 @@ jobs:
         run: cargo check --workspace --all-targets
       - name: Check Windows WASAPI backend
         run: cargo check --workspace --all-targets --features aaadaw/wasapi-backend
+      - name: Test Windows WASAPI backend policies
+        run: cargo test -p aaadaw-engine --features wasapi-backend
 
   rust:
     name: Check and test
