@@ -117,3 +117,30 @@ impl Transport {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Transport;
+
+    #[test]
+    fn stop_pauses_at_the_exact_sample_and_start_resumes_there() {
+        let mut transport = Transport::new();
+        transport.seek_sample(12_345);
+        transport.start();
+        let block = transport.advance_block(128).unwrap();
+        assert_eq!(block.start_sample, 12_345);
+        assert_eq!(transport.position_samples(), 12_473);
+
+        transport.stop();
+        let paused_block = transport.advance_block(256).unwrap();
+        assert!(!paused_block.is_playing);
+        assert_eq!(paused_block.start_sample, 12_473);
+        assert_eq!(transport.position_samples(), 12_473);
+
+        transport.start();
+        let resumed_block = transport.advance_block(64).unwrap();
+        assert_eq!(resumed_block.start_sample, 12_473);
+        assert!(resumed_block.is_playing);
+        assert_eq!(transport.position_samples(), 12_537);
+    }
+}

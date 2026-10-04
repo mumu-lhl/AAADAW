@@ -394,6 +394,12 @@ impl App {
                     self.start_playback()
                 } else {
                     if !self.playback_playing {
+                        self.playback_start_sample = self
+                            .playback
+                            .as_ref()
+                            .expect("playback exists")
+                            .stats()
+                            .playhead_sample;
                         if let Err(error) = self.playback.as_mut().expect("playback exists").play()
                         {
                             self.recording_starting = false;
@@ -403,6 +409,7 @@ impl App {
                             return self.discard_recording_async(recording);
                         }
                         self.playback_playing = true;
+                        self.playback_paused = false;
                     }
                     self.begin_recording(recording)
                 }
@@ -444,7 +451,7 @@ impl App {
                 self.recording_cancel_requested = true;
                 self.status = "Cancelling input setup…".to_owned();
             } else {
-                self.stop_playback();
+                self.pause_playback();
             }
             return Task::none();
         };
@@ -456,7 +463,8 @@ impl App {
         }
         let manifest_path = recording.recovery_manifest_path.clone();
         let fallback_start_sample = self.recording_start_sample;
-        self.stop_playback();
+        self.pause_playback();
+        self.playback_paused = false;
         self.status = "Finalizing take…".to_owned();
         Task::perform(
             run_blocking("aaadaw-recording-finish", move || {

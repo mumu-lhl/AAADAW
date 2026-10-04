@@ -254,6 +254,10 @@ struct App {
     #[cfg(feature = "audio-device")]
     playback_playing: bool,
     #[cfg(feature = "audio-device")]
+    playback_paused: bool,
+    #[cfg(feature = "audio-device")]
+    playback_start_sample: u64,
+    #[cfg(feature = "audio-device")]
     playhead_sample: u64,
     #[cfg(feature = "audio-device")]
     seek_sample_query: String,
@@ -1441,7 +1445,7 @@ impl App {
             #[cfg(feature = "audio-device")]
             Message::TogglePlayback => {
                 if self.playback_playing {
-                    self.stop_playback();
+                    self.pause_playback();
                 } else {
                     task = self.start_playback();
                 }
@@ -1935,7 +1939,7 @@ impl App {
                 if self.recording.is_some() {
                     task = self.stop_recording();
                 } else {
-                    self.stop_playback();
+                    task = self.stop_transport_to_start();
                 }
             }
             #[cfg(feature = "audio-device")]
@@ -2288,6 +2292,9 @@ impl App {
     #[cfg(feature = "audio-device")]
     fn start_playback(&mut self) -> Task<Message> {
         self.recording_cancelled_transport_start = false;
+        if self.playback.is_some() && !self.playback_playing && !self.playback_paused {
+            self.playback_start_sample = self.playhead_sample;
+        }
         if self.playback.is_some() && !self.playback_graph_dirty {
             self.clap_plugin_warnings.clear();
             if let Err(error) = self.persist_clap_plugin_states() {
@@ -2303,6 +2310,7 @@ impl App {
             return match playback.play() {
                 Ok(()) => {
                     self.playback_playing = true;
+                    self.playback_paused = false;
                     self.status = "Playback started".to_owned();
                     if !self.clap_plugin_warnings.is_empty() {
                         self.status.push_str("; ");
@@ -2320,7 +2328,7 @@ impl App {
     }
 
     #[cfg(feature = "audio-device")]
-    fn stop_playback(&mut self) {
+    fn pause_playback(&mut self) {
         let Some(playback) = self.playback.as_mut() else {
             self.status = format!("{} output is not open", self.playback_name());
             return;
@@ -2328,7 +2336,9 @@ impl App {
         match playback.stop() {
             Ok(()) => {
                 self.playback_playing = false;
-                self.status = "Playback stopped".to_owned();
+                self.playback_paused = true;
+                self.playhead_sample = playback.stats().playhead_sample;
+                self.status = "Playback paused".to_owned();
             }
             Err(error) => self.status = format!("{} stop failed: {error}", self.playback_name()),
         }
@@ -2352,14 +2362,44 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn restart_playback(&mut self) -> Task<Message> {
-        let start_when_ready = self.playback.is_none() || self.playback_playing;
-        self.prepare_playback(0, start_when_ready)
+        let can_prepare = !self.playback_busy && !self.io_busy && self.project_path.is_some();
+        let task = self.prepare_playback(0, true);
+        if can_prepare {
+            self.playback_start_sample = 0;
+            self.playback_paused = false;
+        }
+        task
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn stop_transport_to_start(&mut self) -> Task<Message> {
+        if self.playback.is_none() {
+            self.status = format!("{} output is not open", self.playback_name());
+            return Task::none();
+        }
+        let was_playing = self.playback_playing;
+        if was_playing {
+            self.pause_playback();
+        }
+        self.playback_paused = false;
+        let start_sample = self.playback_start_sample;
+        if was_playing || self.playhead_sample != start_sample {
+            self.prepare_playback(start_sample, false)
+        } else {
+            self.status = "Playback stopped".to_owned();
+            Task::none()
+        }
     }
 
     #[cfg(feature = "audio-device")]
     fn seek_to_sample(&mut self) -> Task<Message> {
         match self.seek_sample_query.trim().parse::<u64>() {
-            Ok(target_sample) => self.prepare_playback(target_sample, self.playback_playing),
+            Ok(target_sample) => {
+                if !self.playback_playing {
+                    self.playback_start_sample = target_sample;
+                }
+                self.prepare_playback(target_sample, self.playback_playing)
+            }
             Err(error) => {
                 self.status = format!("Invalid seek sample: {error}");
                 Task::none()
@@ -2407,7 +2447,9 @@ impl App {
             }
         }
         self.playback_playing = false;
+        self.playback_paused = false;
         self.playhead_sample = 0;
+        self.playback_start_sample = 0;
         self.seek_sample_query = "0".to_owned();
         self.status = shutdown_error.map_or_else(
             || format!("{} output closed", self.playback_name()),
@@ -2507,12 +2549,18 @@ impl App {
         };
 
         if self.playback.is_some() {
-            let (result, retired_instruments, retired_effects) = {
+            let (result, play_result, retired_instruments, retired_effects) = {
                 let playback = self.playback.as_mut().expect("playback exists");
                 let result = playback.replace_graph(prepared);
+                let play_result = if result.is_ok() && start_when_ready {
+                    playback.play()
+                } else {
+                    Ok(())
+                };
                 playback.collect_retired_graphs();
                 (
                     result,
+                    play_result,
                     playback.take_retired_instrument_processors(),
                     playback.take_retired_fx_processors(),
                 )
@@ -2524,6 +2572,13 @@ impl App {
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
                     self.playback_graph_dirty = false;
+                    if let Err(error) = play_result {
+                        self.playback_playing = false;
+                        self.status = format!("{} play failed: {error}", self.playback_name());
+                        return;
+                    }
+                    self.playback_playing = start_when_ready;
+                    self.playback_paused = !start_when_ready && self.playback_paused;
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
                 Err(error) => {
@@ -2573,6 +2628,10 @@ impl App {
         self.playback = Some(playback);
         self.playback_graph_dirty = false;
         self.playback_playing = start_when_ready && play_error.is_none();
+        self.playback_paused = false;
+        if start_when_ready {
+            self.playback_start_sample = target_sample;
+        }
         self.playhead_sample = target_sample;
         self.seek_sample_query = target_sample.to_string();
         if let Some(error) = play_error {
@@ -2609,6 +2668,7 @@ impl App {
         self.deactivate_stopped_effects(retired_effects);
         if output_device_lost {
             self.playback_playing = false;
+            self.playback_paused = false;
             self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
         }
     }
