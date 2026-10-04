@@ -2442,6 +2442,90 @@ fn invalid_recording_offset_edit_keeps_the_last_applied_value() {
 }
 
 #[test]
+fn recovered_recording_keeps_the_calibrated_anchor_for_import() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "aaadaw-recording-offset-recovery-{}-{file_id}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("test directory should be created");
+    let project_path = directory.join("recording.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Calibrated take".to_owned(),
+        })
+        .expect("track should be created");
+    save_project_file(project_path.clone(), project.snapshot(), false)
+        .expect("project should be saved before recording");
+    let track_id = project.tracks()[0].id();
+    let sample_rate = project.settings().sample_rate();
+    let provisional_start = super::audio_config::apply_recording_offset(96_000, sample_rate, 500)
+        .expect("calibrated provisional position should fit the project timeline");
+    let capture_start = super::audio_config::apply_recording_offset(96_512, sample_rate, 500)
+        .expect("calibrated capture position should fit the project timeline");
+
+    let (mut producer, consumer, control) = aaadaw_app::audio_capture_stream(16);
+    let worker = aaadaw_app::AudioRecordingWorker::start_recoverable(
+        &project_path,
+        sample_rate,
+        vec![track_id.value()],
+        consumer,
+        control.clone(),
+    )
+    .expect("recoverable recording should start");
+    let manifest_path = worker
+        .recovery_manifest_path()
+        .expect("recording should create recovery metadata")
+        .to_path_buf();
+    worker
+        .set_start_sample(provisional_start)
+        .expect("corrected provisional anchor should be durable before capture");
+    control.start();
+    worker
+        .refine_start_sample(capture_start)
+        .expect("corrected capture anchor should be queued for persistence");
+    producer.push_planar(&[0.25, 0.5], &[-0.25, -0.5]);
+    control.fail();
+    assert!(matches!(
+        worker.finish(),
+        Err(aaadaw_app::AudioRecordingError::CaptureFailed { .. })
+    ));
+
+    let candidate = aaadaw_app::scan_recording_recoveries(&project_path)
+        .expect("interrupted take should be discoverable")
+        .pop()
+        .expect("interrupted take should have a recovery candidate");
+    let candidate = aaadaw_app::recover_recording_candidate(candidate)
+        .expect("interrupted audio should be prepared for import");
+    assert_eq!(candidate.manifest.start_sample, Some(capture_start));
+    assert!(!candidate.manifest.start_sample_is_estimate);
+
+    let mut app = App {
+        project,
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _task = app.recording_recovery_prepared(Ok(candidate));
+    assert_eq!(
+        app.record_import_tracks
+            .as_ref()
+            .expect("recovery should start importing the take")
+            .next_start_sample,
+        capture_start
+    );
+
+    aaadaw_app::discard_recording_recovery(&manifest_path)
+        .expect("test recovery sources should be cleaned up");
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+    std::fs::remove_dir_all(directory).expect("test directory should be removed");
+}
+
+#[test]
 fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
