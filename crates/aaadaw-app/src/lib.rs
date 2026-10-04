@@ -55,7 +55,7 @@ use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 #[cfg(feature = "pipewire-backend")]
 use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-use aaadaw_engine::{WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
+use aaadaw_engine::{WasapiAudioInput, WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, MediaError, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
@@ -77,6 +77,8 @@ pub enum RunningAudioInput {
     Jack(aaadaw_engine::JackAudioInput),
     #[cfg(feature = "pipewire-backend")]
     PipeWire(aaadaw_engine::PipeWireAudioInput),
+    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+    Wasapi(WasapiAudioInput),
 }
 
 /// Opens the selected native input backend for a stereo take.
@@ -102,7 +104,9 @@ pub fn open_audio_input(
                 .map_err(|error| error.to_string())
         }
         #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-        PlaybackBackend::Wasapi => Err("WASAPI input capture is not available yet".to_owned()),
+        PlaybackBackend::Wasapi => WasapiAudioInput::open(producer, control, sample_rate)
+            .map(RunningAudioInput::Wasapi)
+            .map_err(|error| error.to_string()),
         #[cfg(all(
             feature = "audio-device",
             not(any(
@@ -124,6 +128,8 @@ impl RunningAudioInput {
             Self::Jack(mut input) => input.shutdown(),
             #[cfg(feature = "pipewire-backend")]
             Self::PipeWire(mut input) => input.shutdown(),
+            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            Self::Wasapi(mut input) => input.shutdown(),
         }
     }
 }

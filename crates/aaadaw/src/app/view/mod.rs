@@ -1,7 +1,6 @@
 use super::{App, Message};
 #[cfg(any(
     all(feature = "jack-backend", feature = "pipewire-backend"),
-    all(feature = "wasapi-backend", target_os = "windows"),
     all(
         feature = "jack-backend",
         feature = "wasapi-backend",
@@ -311,17 +310,6 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
     } else {
         playback_state
     };
-    #[cfg(all(
-        feature = "audio-device",
-        feature = "wasapi-backend",
-        target_os = "windows"
-    ))]
-    let can_record = app.selected_playback_backend() != PlaybackBackend::Wasapi;
-    #[cfg(not(all(
-        feature = "audio-device",
-        feature = "wasapi-backend",
-        target_os = "windows"
-    )))]
     let can_record = playback_available;
     let controls = row![
         button("Play").on_press_maybe(playback_available.then_some(Message::StartPlayback)),

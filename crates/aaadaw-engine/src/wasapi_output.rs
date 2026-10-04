@@ -1,4 +1,5 @@
 use crate::AudioRenderGraph;
+use crate::wasapi_common::is_supported_pcm_format;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -52,22 +53,10 @@ fn supports_project_output_config(
     maximum_rate: u32,
     project_rate: u32,
 ) -> bool {
-    let pcm_format = matches!(
-        format,
-        SampleFormat::I8
-            | SampleFormat::I16
-            | SampleFormat::I24
-            | SampleFormat::I32
-            | SampleFormat::I64
-            | SampleFormat::U8
-            | SampleFormat::U16
-            | SampleFormat::U24
-            | SampleFormat::U32
-            | SampleFormat::U64
-            | SampleFormat::F32
-            | SampleFormat::F64
-    );
-    channels == 2 && pcm_format && minimum_rate <= project_rate && project_rate <= maximum_rate
+    channels == 2
+        && is_supported_pcm_format(format)
+        && minimum_rate <= project_rate
+        && project_rate <= maximum_rate
 }
 
 enum Command {
