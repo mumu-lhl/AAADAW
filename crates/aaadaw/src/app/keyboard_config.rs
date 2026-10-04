@@ -1,5 +1,5 @@
 use super::commands::ShortcutBindings;
-use super::config_paths::config_file_path;
+use super::config_paths::{config_file_path, write_atomic};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -58,22 +58,13 @@ fn parse(contents: &str) -> Result<ShortcutBindings, String> {
 }
 
 fn save_to(path: &Path, bindings: &ShortcutBindings) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension("conf.tmp");
     let mut entries = bindings.iter().collect::<Vec<_>>();
     entries.sort_unstable_by_key(|(key, _)| (*key).clone());
-    let mut file = std::fs::File::create(&temporary)?;
+    let mut contents = Vec::new();
     for (id, binding) in entries {
-        writeln!(file, "{id}\t{binding}")?;
+        writeln!(&mut contents, "{id}\t{binding}")?;
     }
-    file.sync_all()?;
-    drop(file);
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
-    std::fs::rename(temporary, path)
+    write_atomic(path, &contents)
 }
 
 #[cfg(test)]

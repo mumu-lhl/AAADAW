@@ -6,6 +6,7 @@ use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
+    let macros_selected = app.settings_category == SettingsCategory::ActionMacros;
     let plugins_selected = app.settings_category == SettingsCategory::ClapPlugins;
     let audio_selected = app.settings_category == SettingsCategory::Audio;
     let navigation = column![
@@ -19,6 +20,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             })
             .on_press(Message::SelectSettingsCategory(
                 SettingsCategory::KeyboardShortcuts
+            )),
+        button("Actions & Macros")
+            .width(Length::Fill)
+            .style(if macros_selected {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SelectSettingsCategory(
+                SettingsCategory::ActionMacros
             )),
         button("CLAP Plugins")
             .width(Length::Fill)
@@ -43,6 +54,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     let details = match app.settings_category {
         SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app),
+        SettingsCategory::ActionMacros => action_macros(app),
         SettingsCategory::ClapPlugins => clap_plugins(app),
         SettingsCategory::Audio => audio_settings(app),
     };
@@ -62,6 +74,101 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn action_macros(app: &App) -> Element<'_, Message> {
+    let choices = commands::macro_step_choices();
+    let selected = app
+        .action_macro_step
+        .as_ref()
+        .and_then(|id| choices.iter().find(|choice| &choice.id == id).cloned());
+    let mut step_rows = column![].spacing(4);
+    for (index, id) in app.action_macro_steps.iter().enumerate() {
+        step_rows = step_rows.push(
+            row![
+                text(format!("{}. {}", index + 1, commands::macro_step_label(id)))
+                    .width(Length::Fill),
+                button("↑")
+                    .style(button::text)
+                    .on_press_maybe((index > 0).then_some(Message::MoveActionMacroStep(index, -1))),
+                button("↓").style(button::text).on_press_maybe(
+                    (index + 1 < app.action_macro_steps.len())
+                        .then_some(Message::MoveActionMacroStep(index, 1),)
+                ),
+                button("Remove")
+                    .style(button::text)
+                    .on_press(Message::RemoveActionMacroStep(index)),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        );
+    }
+    if app.action_macro_steps.is_empty() {
+        step_rows = step_rows.push(text("Add at least one supported action.").size(11));
+    }
+
+    let mut saved_macros = column![].spacing(4);
+    for action_macro in &app.action_macros {
+        let id = action_macro.id;
+        saved_macros = saved_macros.push(
+            row![
+                column![
+                    text(action_macro.name.clone()).size(13),
+                    text(format!("{} actions", action_macro.steps.len())).size(10),
+                ]
+                .width(Length::Fill)
+                .spacing(2),
+                button("Edit")
+                    .style(button::secondary)
+                    .on_press(Message::EditActionMacro(id)),
+                button("Delete")
+                    .style(button::text)
+                    .on_press(Message::DeleteActionMacro(id)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    if app.action_macros.is_empty() {
+        saved_macros = saved_macros.push(text("No macros saved yet.").size(11));
+    }
+
+    let is_editing = app.action_macro_editing_id.is_some();
+    column![
+        text("Actions & Macros").size(17),
+        text("Build an ordered macro from supported commands. Macros run the same actions shown in the Actions menu and can be assigned shortcuts below.").size(11),
+        rule::horizontal(1),
+        row![
+            text_input("Macro name", &app.action_macro_name)
+                .on_input(Message::ActionMacroNameChanged)
+                .width(Length::Fill),
+            iced::widget::pick_list(choices, selected, |choice| {
+                Message::ActionMacroStepSelected(choice.id)
+            })
+            .placeholder("Choose action")
+            .width(Length::Fixed(220.0)),
+            button("Add step")
+                .on_press_maybe(app.action_macro_step.is_some().then_some(Message::AddActionMacroStep)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        scrollable(step_rows).height(Length::Fixed(112.0)),
+        row![
+            button(if is_editing { "Save changes" } else { "Create macro" })
+                .on_press_maybe((app.action_macro_config_error.is_none() && !app.action_macro_name.trim().is_empty() && !app.action_macro_steps.is_empty()).then_some(Message::SaveActionMacro)),
+            button("New")
+                .style(button::secondary)
+                .on_press(Message::NewActionMacro),
+        ]
+        .spacing(6),
+        text(app.action_macro_feedback.clone()).size(11),
+        rule::horizontal(1),
+        text("Saved macros").size(13),
+        scrollable(saved_macros).height(Length::Fill),
+    ]
+    .spacing(tokens::SECTION_GAP)
+    .width(Length::Fill)
+    .into()
 }
 
 fn audio_settings(app: &App) -> Element<'_, Message> {
@@ -127,14 +234,14 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
     let mut bindings = column![].spacing(5);
     let mut action_category = None;
     for entry in entries {
-        if action_category != Some(entry.category) {
-            action_category = Some(entry.category);
+        if action_category.as_deref() != Some(entry.category.as_str()) {
+            action_category = Some(entry.category.clone());
             bindings = bindings
-                .push(text(entry.category).size(12))
+                .push(text(entry.category.clone()).size(12))
                 .push(rule::horizontal(1));
         }
         let action_id = entry.id.to_owned();
-        let recording = app.shortcut_capture_id.as_deref() == Some(entry.id);
+        let recording = app.shortcut_capture_id.as_deref() == Some(entry.id.as_str());
         let shown_binding = if recording {
             "Press a key…".to_owned()
         } else if entry.binding.is_empty() {
