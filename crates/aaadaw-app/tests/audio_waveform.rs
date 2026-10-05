@@ -48,9 +48,11 @@ fn worker_decodes_embedded_and_linked_audio_off_thread() {
     let linked_ref = store.link_external_audio_file(&external_path).unwrap();
     store.close().unwrap();
 
+    let cache_path = project_path.with_extension("aaapeaks");
+    std::fs::write(&cache_path, b"corrupt waveform cache").unwrap();
     let worker = AudioWaveformWorker::start(
         project_path.clone(),
-        vec!["asset://embedded".to_owned(), linked_ref],
+        vec!["asset://embedded".to_owned(), linked_ref.clone()],
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -73,8 +75,45 @@ fn worker_decodes_embedded_and_linked_audio_off_thread() {
         assert!((waveform.peaks()[0].max - 0.5).abs() < 1.0e-6);
     }
 
+    assert!(cache_path.is_file(), "worker should persist waveform peaks");
+    let worker =
+        AudioWaveformWorker::start(project_path.clone(), vec![linked_ref.clone()]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut results = worker.results();
+    worker.join().unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(results.pop().unwrap().cache_hit);
+
+    let original_modified = std::fs::metadata(&external_path)
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::fs::write(&external_path, mono_wav(&[24_576; 512], 48_000)).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&external_path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(original_modified))
+        .unwrap();
+    let worker = AudioWaveformWorker::start(project_path.clone(), vec![linked_ref]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut results = worker.results();
+    worker.join().unwrap();
+    assert_eq!(results.len(), 1);
+    let result = results.pop().unwrap();
+    assert!(!result.cache_hit);
+    let waveform = result.waveform.unwrap();
+    assert!((waveform.peaks()[0].max - 0.75).abs() < 1.0e-6);
+
     let _ = std::fs::remove_file(&project_path);
     let _ = std::fs::remove_file(&external_path);
+    let _ = std::fs::remove_file(&cache_path);
     for suffix in ["-wal", "-shm"] {
         let sidecar = format!("{}{suffix}", project_path.display());
         let _ = std::fs::remove_file(sidecar);

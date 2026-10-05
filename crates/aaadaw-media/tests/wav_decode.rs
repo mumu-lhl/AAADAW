@@ -100,6 +100,38 @@ fn waveform_peaks_keep_bin_boundaries_across_decoder_packets() {
     assert!((waveform.peaks()[1].max - 0.5).abs() < 1.0e-6);
     assert_eq!(waveform.peaks()[2].min, 0.0);
     assert_eq!(waveform.peaks()[2].max, 0.0);
+    assert_eq!(waveform.levels().len(), 3);
+    assert_eq!(waveform.levels()[1].frames_per_peak(), 8_192);
+    assert_eq!(waveform.levels()[1].peaks().len(), 2);
+    assert!((waveform.levels()[1].peaks()[0].min + 0.5).abs() < 1.0e-6);
+    assert!((waveform.levels()[1].peaks()[0].max - 0.5).abs() < 1.0e-6);
+    assert_eq!(waveform.levels()[2].peaks().len(), 1);
+    assert!((waveform.levels()[2].peaks()[0].min + 0.5).abs() < 1.0e-6);
+    assert!((waveform.levels()[2].peaks()[0].max - 0.5).abs() < 1.0e-6);
+    let (level, range) = waveform.peak_range_for_source_frames(4_096, 8_193, 4_096);
+    assert_eq!(level.frames_per_peak(), 4_096);
+    assert_eq!(range, 1..3);
+    let (level, range) = waveform.peak_range_for_source_frames(4_096, 8_193, 8_192);
+    assert_eq!(level.frames_per_peak(), 8_192);
+    assert_eq!(range, 0..2);
+    let (_, range) = waveform.peak_range_for_source_frames(9_000, 10_000, 4_096);
+    assert!(range.is_empty());
+}
+
+#[test]
+fn waveform_decode_honors_cancellation_before_publishing_peaks() {
+    let bytes = pcm_wav(&[16_384; 4_096], 48_000);
+    let mut decoder = AudioStreamDecoder::from_reader(
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+    )
+    .expect("fixture should open");
+    let result = AudioWaveform::decode_with_cancel(&mut decoder, 256, || true);
+    assert!(matches!(
+        result,
+        Err(aaadaw_media::MediaError::WorkerCancelled)
+    ));
 }
 
 #[test]

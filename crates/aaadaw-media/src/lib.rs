@@ -12,6 +12,7 @@ use std::path::Path;
 
 mod stream;
 mod waveform;
+mod waveform_cache;
 pub use stream::{
     AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
@@ -24,7 +25,8 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
-pub use waveform::{AudioWaveform, WaveformPeak};
+pub use waveform::{AudioWaveform, WaveformLevel, WaveformPeak};
+pub use waveform_cache::{AudioWaveformCacheEntry, decode_waveform_cache, encode_waveform_cache};
 
 /// One decoded, interleaved floating-point PCM packet.
 #[derive(Clone, Debug, PartialEq)]

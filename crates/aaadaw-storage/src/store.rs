@@ -1841,6 +1841,27 @@ impl ProjectStore {
         .transpose()
     }
 
+    /// Returns the SHA-256 fingerprint stored for a complete embedded asset.
+    ///
+    /// Older project files may not have a fingerprint. Linked files are not stored in
+    /// `audio_assets` and return `None`.
+    pub fn audio_asset_content_hash(
+        &self,
+        media_ref: &str,
+    ) -> Result<Option<[u8; 32]>, StorageError> {
+        let hash = self
+            .connection
+            .query_row(
+                "SELECT content_hash FROM audio_assets \
+                 WHERE media_ref = ?1 AND import_state = 1",
+                [media_ref],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(hash.and_then(|bytes| bytes.try_into().ok()))
+    }
+
     /// Re-hashes the recorded original file to determine whether it still matches the import snapshot.
     ///
     /// This reads the entire external file and should run on a background thread.

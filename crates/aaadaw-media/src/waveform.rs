@@ -1,4 +1,5 @@
 use crate::{AudioStreamDecoder, MediaError};
+use std::ops::Range;
 
 /// Peak range for one consecutive group of source sample frames.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,6 +16,13 @@ pub struct AudioWaveform {
     sample_rate: u32,
     frames_per_peak: u32,
     frame_count: u64,
+    levels: Vec<WaveformLevel>,
+}
+
+/// One level in the min/max reduction pyramid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaveformLevel {
+    frames_per_peak: u32,
     peaks: Vec<WaveformPeak>,
 }
 
@@ -83,11 +91,63 @@ impl AudioWaveform {
                 max: bin_max,
             });
         }
-        Ok(Self {
+        Self::from_base(sample_rate, frames_per_peak, frame_count, peaks)
+            .ok_or(MediaError::InvalidDecodedAudioSpec)
+    }
+
+    pub(crate) fn from_base(
+        sample_rate: u32,
+        frames_per_peak: u32,
+        frame_count: u64,
+        peaks: Vec<WaveformPeak>,
+    ) -> Option<Self> {
+        if sample_rate == 0 || frames_per_peak == 0 {
+            return None;
+        }
+        let expected_peaks = frame_count.div_ceil(u64::from(frames_per_peak));
+        if u64::try_from(peaks.len()).ok()? != expected_peaks
+            || peaks.iter().any(|peak| {
+                !peak.min.is_finite()
+                    || !peak.max.is_finite()
+                    || peak.min < -1.0
+                    || peak.max > 1.0
+                    || peak.min > peak.max
+            })
+        {
+            return None;
+        }
+        let mut levels = vec![WaveformLevel {
+            frames_per_peak,
+            peaks,
+        }];
+        while levels.last().is_some_and(|level| level.peaks.len() > 1) {
+            let previous = levels.last().expect("waveform base level exists");
+            let next_frames_per_peak = previous.frames_per_peak.saturating_mul(2);
+            let next_peaks = previous
+                .peaks
+                .chunks(2)
+                .map(|pair| WaveformPeak {
+                    min: pair
+                        .iter()
+                        .map(|peak| peak.min)
+                        .fold(f32::INFINITY, f32::min),
+                    max: pair
+                        .iter()
+                        .map(|peak| peak.max)
+                        .fold(f32::NEG_INFINITY, f32::max),
+                })
+                .collect();
+            levels.push(WaveformLevel {
+                frames_per_peak: next_frames_per_peak,
+                peaks: next_peaks,
+            });
+        }
+
+        Some(Self {
             sample_rate,
             frames_per_peak,
             frame_count,
-            peaks,
+            levels,
         })
     }
 
@@ -107,6 +167,56 @@ impl AudioWaveform {
     }
 
     /// Returns peak bins in source order.
+    pub fn peaks(&self) -> &[WaveformPeak] {
+        &self.levels[0].peaks
+    }
+
+    /// Returns the coarsest level that still provides at least one bin per requested source
+    /// frame span. This lets the Arrangement avoid uploading sub-pixel peak geometry.
+    pub fn level_for_frames_per_peak(&self, requested: u32) -> &WaveformLevel {
+        self.levels
+            .iter()
+            .take_while(|level| level.frames_per_peak <= requested.max(self.frames_per_peak))
+            .last()
+            .unwrap_or(&self.levels[0])
+    }
+
+    /// Returns the peak-bin indexes needed to draw a source-frame interval at the requested
+    /// horizontal resolution. The returned range never extends beyond this waveform's bins.
+    pub fn peak_range_for_source_frames(
+        &self,
+        start_frame: u64,
+        end_frame: u64,
+        requested_frames_per_pixel: u32,
+    ) -> (&WaveformLevel, Range<usize>) {
+        let level = self.level_for_frames_per_peak(requested_frames_per_pixel);
+        let bin_size = u64::from(level.frames_per_peak());
+        let start = start_frame.min(self.frame_count);
+        let end = end_frame.max(start).min(self.frame_count);
+        let first = usize::try_from(start / bin_size).unwrap_or(usize::MAX);
+        let last = if start == end {
+            first
+        } else {
+            usize::try_from(end.div_ceil(bin_size))
+                .unwrap_or(usize::MAX)
+                .min(level.peaks.len())
+        };
+        (level, first.min(last)..last)
+    }
+
+    /// Returns every min/max level, from finest to coarsest.
+    pub fn levels(&self) -> &[WaveformLevel] {
+        &self.levels
+    }
+}
+
+impl WaveformLevel {
+    /// Returns source frames represented by each bin.
+    pub fn frames_per_peak(&self) -> u32 {
+        self.frames_per_peak
+    }
+
+    /// Returns min/max bins in source order.
     pub fn peaks(&self) -> &[WaveformPeak] {
         &self.peaks
     }
