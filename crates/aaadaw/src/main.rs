@@ -34,7 +34,7 @@ fn run_information_command(args: &[std::ffi::OsString]) -> Option<std::process::
         }
         [argument] if argument == "--help" || argument == "-h" => {
             println!(
-                "AAADAW {}\n\nUsage:\n  aaadaw [--help | --version]\n  aaadaw mcp --stdio --project <path.aaadaw> [--write]",
+                "AAADAW {}\n\nUsage:\n  aaadaw                           Start the desktop application\n  aaadaw --help                    Show this help\n  aaadaw --version                 Show the application version\n  aaadaw mcp --stdio --project <path.aaadaw> [--write]",
                 env!("CARGO_PKG_VERSION")
             );
             Some(std::process::ExitCode::SUCCESS)
