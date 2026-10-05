@@ -189,7 +189,7 @@
 - [x] 通过授权 MCP writer 按稳定 Note ID 编辑和删除音符；批量删除全有或全无，修改经 Action、持久化及会话 Undo/Redo（[Issue #153](https://github.com/mumu-lhl/AAADAW/issues/153)）。
 - [x] 通过授权 MCP writer 移动和调整 MIDI clip 长度；拒绝截断现有音符，成功编辑保留稳定 ID 并支持会话 Undo/Redo（[Issue #155](https://github.com/mumu-lhl/AAADAW/issues/155)）。
 - [x] 通过授权 MCP writer 对 MIDI item 的 CC 和 pitch-bend 点做有界 upsert；保留未涉及的事件，写入持久化且可撤销（[Issue #157](https://github.com/mumu-lhl/AAADAW/issues/157)）。
-- [ ] 通过只读 MCP 查询工具按轨道/sample-clock 范围读取音量自动化点；有界排序并报告截断（[Issue #163](https://github.com/mumu-lhl/AAADAW/issues/163)）。
+- [x] 通过只读 MCP 查询工具按轨道/sample-clock 范围读取音量自动化点；有界排序并报告截断（[Issue #163](https://github.com/mumu-lhl/AAADAW/issues/163)）。
 - [ ] 继续评估其他适合 MCP 的无对话框 Action，并为危险操作保留显式授权边界。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
