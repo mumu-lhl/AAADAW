@@ -2625,7 +2625,7 @@ mod tests {
         MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS, MAX_MIDI_ITEM_LENGTH_TICKS,
         MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT, MAX_MIDI_QUERY_TICKS,
         MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS, MAX_VOLUME_AUTOMATION_RESULTS,
-        ProjectMcpServer, REDO_TOOL, SET_TRACK_MIX_TOOL, UNDO_TOOL,
+        ProjectMcpServer, REDO_TOOL, SET_TRACK_MIX_TOOL, STRUCTURE_URI, UNDO_TOOL,
         parse_create_midi_item_arguments, parse_create_track_arguments,
         parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
         parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
@@ -2641,7 +2641,10 @@ mod tests {
         VolumeAutomationPoint,
     };
     use aaadaw_storage::ProjectStore;
-    use rmcp::{ServiceExt, model::CallToolRequestParams};
+    use rmcp::{
+        ServiceExt,
+        model::{CallToolRequestParams, ReadResourceRequestParams},
+    };
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
 
@@ -3572,6 +3575,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(unavailable.is_error, Some(true));
+        let unknown_tool = client
+            .peer()
+            .call_tool(CallToolRequestParams::new("daw_tool_that_does_not_exist"))
+            .await
+            .unwrap();
+        assert_eq!(unknown_tool.is_error, Some(true));
+        assert!(
+            client
+                .peer()
+                .read_resource(ReadResourceRequestParams::new("daw://project/unknown"))
+                .await
+                .is_err()
+        );
         drop(client);
         server.cancel().await.unwrap();
 
@@ -3628,6 +3644,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(invalid_track.is_error, Some(true));
+        let visible_structure = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new(STRUCTURE_URI))
+            .await
+            .unwrap();
+        let visible_structure = serde_json::to_value(visible_structure).unwrap();
+        let visible_project: Value =
+            serde_json::from_str(visible_structure["contents"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(visible_project["tracks"][0]["volume_db"], 0.0);
+        assert_eq!(visible_project["tracks"][0]["pan"], 0.0);
 
         let connection = rusqlite::Connection::open(&project_path).unwrap();
         connection
@@ -3657,6 +3684,18 @@ mod tests {
         assert_eq!(persisted_after_failed_save.tracks()[0].volume_db(), 0.0);
         assert_eq!(persisted_after_failed_save.tracks()[0].pan(), 0.0);
         assert!(!persisted_after_failed_save.tracks()[0].is_muted());
+        let visible_structure = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new(STRUCTURE_URI))
+            .await
+            .unwrap();
+        let visible_structure = serde_json::to_value(visible_structure).unwrap();
+        let visible_project: Value =
+            serde_json::from_str(visible_structure["contents"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(visible_project["tracks"][0]["volume_db"], 0.0);
+        assert_eq!(visible_project["tracks"][0]["pan"], 0.0);
+        assert_eq!(visible_project["tracks"][0]["muted"], false);
 
         let connection = rusqlite::Connection::open(&project_path).unwrap();
         connection
