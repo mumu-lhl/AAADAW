@@ -11,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::thread;
 use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
@@ -25,7 +26,6 @@ pub const CLAP_IPC_MAGIC: u32 = u32::from_le_bytes(*b"AAIP");
 const REGION_INITIALIZING: u32 = 0;
 const REGION_READY: u32 = 1;
 const REGION_FAULTED: u32 = 2;
-const REGION_SHUTDOWN: u32 = 3;
 
 const SLOT_FREE: u32 = 0;
 const SLOT_WRITING: u32 = 1;
@@ -141,17 +141,134 @@ impl ClapIpcMapping {
         unsafe {
             ptr::addr_of_mut!((*region).config).write(config);
             ptr::addr_of_mut!((*region).state).write(AtomicU32::new(REGION_INITIALIZING));
+            ptr::addr_of_mut!((*region).shutdown).write(AtomicBool::new(false));
             ptr::addr_of_mut!((*region).fault_code).write(AtomicU32::new(0));
             ptr::addr_of_mut!((*region).next_slot).write(AtomicU32::new(0));
             ptr::addr_of_mut!((*region).producer_busy).write(AtomicBool::new(false));
             ptr::addr_of_mut!((*region).helper_busy).write(AtomicBool::new(false));
             ptr::addr_of_mut!((*region).active_slot).write(AtomicU32::new(NO_ACTIVE_SLOT));
             ptr::addr_of_mut!((*region).underruns).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region).helper_heartbeat).write(AtomicU64::new(0));
             for index in 0..CLAP_IPC_SLOT_COUNT {
                 let slot = ptr::addr_of_mut!((*region).slots[index]);
                 ptr::addr_of_mut!((*slot).state).write(AtomicU32::new(SLOT_FREE));
             }
         }
+    }
+}
+
+/// Runs the bounded request loop used by an isolated CLAP instrument helper.
+///
+/// Plugin loading and processing happen only in the child process. The caller must invoke this
+/// from AAADAW's private helper command, passing the mapping and plugin reference received from
+/// its parent process.
+///
+/// # Safety
+///
+/// `entry_path` must refer to the trusted plugin selected by the user. Loading a malformed or
+/// malicious native plugin can crash the helper or cause undefined behavior there.
+pub unsafe fn run_clap_ipc_instrument_helper(
+    mapping_path: &Path,
+    entry_path: &Path,
+    plugin_id: &str,
+    expected: ClapIpcConfig,
+) -> Result<(), String> {
+    // SAFETY: the parent creates and owns this fixed-size mapping for the child lifetime.
+    let mapping = unsafe { ClapIpcMapping::open(mapping_path) }
+        .map_err(|error| format!("could not open CLAP helper mapping: {error}"))?;
+    if mapping.region().config() != expected || !expected.validate() {
+        mapping.region().mark_faulted(1);
+        return Err("CLAP helper protocol handshake mismatch".to_owned());
+    }
+
+    // SAFETY: the parent passes only the trusted entry selected for the track instrument.
+    let (owner, mut processor) = unsafe {
+        crate::ClapInstrumentOwner::load(
+            entry_path,
+            plugin_id,
+            expected.sample_rate,
+            expected.max_block_frames as usize,
+            expected.event_capacity as usize,
+        )
+    }
+    .map_err(|error| {
+        mapping.region().mark_faulted(2);
+        format!("could not activate CLAP instrument: {error}")
+    })?;
+    if !mapping.accept_handshake(expected) {
+        owner.deactivate(processor.stop());
+        return Err("CLAP helper protocol handshake mismatch".to_owned());
+    }
+
+    let mut events = Vec::with_capacity(expected.event_capacity as usize);
+    while !mapping.region().is_shutdown() && !mapping.region().is_faulted() {
+        mapping.region().publish_heartbeat();
+        if let Some(request) = mapping.region().try_claim_request() {
+            let _ = request.process(|request| {
+                events.clear();
+                for event in request.events {
+                    let Some(event_kind) = midi_kind_from_wire(event.kind) else {
+                        mapping.region().mark_faulted(4);
+                        return false;
+                    };
+                    let note_id = match event.kind {
+                        kind if kind == ClapIpcMidiKind::NoteOn as u8
+                            || kind == ClapIpcMidiKind::NoteOff as u8 =>
+                        {
+                            // CLAP permits an unknown note ID. Use pitch as a stable local ID so
+                            // matching note-on/off packets retain the instrument's active-note
+                            // bookkeeping in this single-note-port helper.
+                            Some(
+                                aaadaw_core::NoteId::from_value(
+                                    if event.note_id == ClapIpcMidiEvent::NO_NOTE_ID {
+                                        u64::from(event.pitch) + 1
+                                    } else {
+                                        u64::from(event.note_id)
+                                    },
+                                )
+                                .expect("wire note ID validation guarantees nonzero IDs"),
+                            )
+                        }
+                        _ => None,
+                    };
+                    events.push(crate::ScheduledMidiEvent {
+                        sample_offset: event.frame_offset as usize,
+                        track_id: aaadaw_core::TrackId::from_value(1)
+                            .expect("the helper's private synthetic track ID is nonzero"),
+                        note_id,
+                        pitch: event.pitch,
+                        velocity: event.velocity,
+                        controller: (event.kind == ClapIpcMidiKind::ControllerChange as u8)
+                            .then_some(event.controller),
+                        pitch_bend: (event.kind == ClapIpcMidiKind::PitchBend as u8)
+                            .then_some(event.pitch_bend),
+                        kind: event_kind,
+                    });
+                }
+                if processor.process(&events, request.audio).is_err() {
+                    mapping.region().mark_faulted(3);
+                    return false;
+                }
+                true
+            });
+        } else {
+            thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    owner.deactivate(processor.stop());
+    Ok(())
+}
+
+fn midi_kind_from_wire(kind: u8) -> Option<crate::MidiEventKind> {
+    match kind {
+        value if value == ClapIpcMidiKind::NoteOn as u8 => Some(crate::MidiEventKind::NoteOn),
+        value if value == ClapIpcMidiKind::NoteOff as u8 => Some(crate::MidiEventKind::NoteOff),
+        value if value == ClapIpcMidiKind::ControllerChange as u8 => {
+            Some(crate::MidiEventKind::ControllerChange)
+        }
+        value if value == ClapIpcMidiKind::PitchBend as u8 => Some(crate::MidiEventKind::PitchBend),
+        _ => None,
     }
 }
 
@@ -296,12 +413,14 @@ impl ClapIpcSlot {
 pub struct ClapIpcRegion {
     config: ClapIpcConfig,
     state: AtomicU32,
+    shutdown: AtomicBool,
     fault_code: AtomicU32,
     next_slot: AtomicU32,
     producer_busy: AtomicBool,
     helper_busy: AtomicBool,
     active_slot: AtomicU32,
     underruns: AtomicU64,
+    helper_heartbeat: AtomicU64,
     slots: [ClapIpcSlot; CLAP_IPC_SLOT_COUNT],
 }
 
@@ -319,12 +438,14 @@ impl ClapIpcRegion {
             Box::new(Self {
                 config,
                 state: AtomicU32::new(REGION_INITIALIZING),
+                shutdown: AtomicBool::new(false),
                 fault_code: AtomicU32::new(0),
                 next_slot: AtomicU32::new(0),
                 producer_busy: AtomicBool::new(false),
                 helper_busy: AtomicBool::new(false),
                 active_slot: AtomicU32::new(NO_ACTIVE_SLOT),
                 underruns: AtomicU64::new(0),
+                helper_heartbeat: AtomicU64::new(0),
                 slots: std::array::from_fn(|_| ClapIpcSlot::new()),
             })
         })
@@ -341,12 +462,48 @@ impl ClapIpcRegion {
             self.state.store(REGION_FAULTED, Ordering::Release);
             return false;
         }
+        self.fault_code.store(0, Ordering::Relaxed);
         self.state.store(REGION_READY, Ordering::Release);
         true
     }
 
+    pub(crate) fn begin_startup(&self) {
+        self.state.store(REGION_INITIALIZING, Ordering::Release);
+        self.shutdown.store(false, Ordering::Release);
+    }
+
     pub fn is_ready(&self) -> bool {
-        self.state.load(Ordering::Acquire) == REGION_READY
+        self.state.load(Ordering::Acquire) == REGION_READY && !self.shutdown.load(Ordering::Acquire)
+    }
+
+    pub fn is_faulted(&self) -> bool {
+        self.state.load(Ordering::Acquire) == REGION_FAULTED
+    }
+
+    /// Returns the monotonically increasing child heartbeat observed by its parent.
+    pub fn helper_heartbeat(&self) -> u64 {
+        self.helper_heartbeat.load(Ordering::Acquire)
+    }
+
+    fn publish_heartbeat(&self) {
+        self.helper_heartbeat.fetch_add(1, Ordering::Release);
+    }
+
+    /// Reclaims child-owned slots after the supervisor has confirmed that the helper exited.
+    pub(crate) fn recover_after_helper_exit(&self) {
+        for slot in &self.slots {
+            let state = slot.state.load(Ordering::Acquire);
+            if state == SLOT_PROCESSING || state == SLOT_RENDERING {
+                let _ = slot.state.compare_exchange(
+                    state,
+                    SLOT_FREE,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                );
+            }
+        }
+        self.active_slot.store(NO_ACTIVE_SLOT, Ordering::Release);
+        self.helper_busy.store(false, Ordering::Release);
     }
 
     pub fn fault_code(&self) -> u32 {
@@ -359,11 +516,11 @@ impl ClapIpcRegion {
     }
 
     pub fn mark_shutdown(&self) {
-        self.state.store(REGION_SHUTDOWN, Ordering::Release);
+        self.shutdown.store(true, Ordering::Release);
     }
 
     pub fn is_shutdown(&self) -> bool {
-        self.state.load(Ordering::Acquire) == REGION_SHUTDOWN
+        self.shutdown.load(Ordering::Acquire)
     }
 
     /// Submits one bounded MIDI block without waiting or allocating.
@@ -537,7 +694,9 @@ impl ClapIpcRegion {
         transitioned && succeeded
     }
 
-    /// Copies a matching response into preallocated callback output and frees its slot.
+    /// Copies a matching bounded response into callback output and frees its slot.
+    ///
+    /// A request larger than the negotiated block limit returns `false` without touching output.
     pub fn try_read_response(
         &self,
         generation: u64,
@@ -545,6 +704,9 @@ impl ClapIpcRegion {
         start_sample: u64,
         output: &mut [[f32; CLAP_IPC_CHANNELS]],
     ) -> bool {
+        if output.len() > self.config.max_block_frames as usize {
+            return false;
+        }
         output.fill([0.0; CLAP_IPC_CHANNELS]);
         for slot in &self.slots {
             if slot
@@ -673,16 +835,85 @@ mod tests {
     #[test]
     fn versioned_handshake_accepts_matching_limits_and_rejects_mismatch() {
         let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
-        let region = ClapIpcRegion::new(config).unwrap();
-        assert!(region.accept_handshake(config));
-        assert!(region.is_ready());
+        let first_region = ClapIpcRegion::new(config).unwrap();
+        assert!(first_region.accept_handshake(config));
+        assert!(first_region.is_ready());
 
         let other = ClapIpcRegion::new(config).unwrap();
         let mut mismatch = config;
         mismatch.protocol_version += 1;
         assert!(!other.accept_handshake(mismatch));
         assert_eq!(other.fault_code(), 1);
+        assert!(other.is_faulted());
         assert!(!other.is_ready());
+
+        let retry_region = region();
+        retry_region.mark_faulted(5);
+        retry_region.mark_shutdown();
+        assert!(retry_region.is_faulted());
+        assert_eq!(retry_region.fault_code(), 5);
+        assert!(!retry_region.is_ready());
+        retry_region.begin_startup();
+        assert!(!retry_region.is_faulted());
+        assert!(!retry_region.is_shutdown());
+        assert!(retry_region.accept_handshake(config));
+        assert!(retry_region.is_ready());
+        assert_eq!(retry_region.fault_code(), 0);
+    }
+
+    #[test]
+    fn helper_heartbeat_increments_for_parent_side_stall_detection() {
+        let region = region();
+        assert_eq!(region.helper_heartbeat(), 0);
+        region.publish_heartbeat();
+        assert_eq!(region.helper_heartbeat(), 1);
+        region.publish_heartbeat();
+        assert_eq!(region.helper_heartbeat(), 2);
+    }
+
+    #[test]
+    fn helper_rejects_a_mismatched_version_before_loading_a_plugin() {
+        let config = ClapIpcConfig::new(48_000, 16, 8).unwrap();
+        let mapping = ClapIpcMapping::create(config).unwrap();
+        // SAFETY: this test retains the private mapping at its original size for the helper call.
+        let path = unsafe { mapping.path() }.unwrap();
+        let mut mismatched = config;
+        mismatched.protocol_version += 1;
+
+        // SAFETY: the mismatch is rejected before the plugin path can be loaded.
+        let result = unsafe {
+            run_clap_ipc_instrument_helper(
+                &path,
+                Path::new("plugin-must-not-be-loaded.clap"),
+                "test.plugin",
+                mismatched,
+            )
+        };
+        assert!(result.is_err());
+        assert!(mapping.region().is_faulted());
+        assert_eq!(mapping.region().fault_code(), 1);
+    }
+
+    #[test]
+    fn dead_helper_recovery_reclaims_only_child_owned_slots() {
+        let region = region();
+        region.try_submit(1, 7, 512, &[], 4).unwrap();
+        let request = region.try_claim_request().unwrap();
+        std::mem::forget(request);
+
+        // SAFETY: this test models a supervisor that has confirmed the helper process exited.
+        region.recover_after_helper_exit();
+        assert!(region.try_claim_request().is_none());
+        region.try_submit(2, 8, 516, &[], 4).unwrap();
+        assert!(region.try_claim_request().is_some());
+    }
+
+    #[test]
+    fn oversized_response_output_is_rejected_without_unbounded_clear() {
+        let region = region();
+        let mut output = vec![[0.25, -0.25]; CLAP_IPC_MAX_BLOCK_FRAMES + 1];
+        assert!(!region.try_read_response(1, 1, 0, &mut output));
+        assert!(output.iter().all(|frame| *frame == [0.25, -0.25]));
     }
 
     #[test]

@@ -6,6 +6,7 @@
 
 mod capture;
 mod clap_gui;
+mod clap_helper_process;
 mod clap_instrument;
 mod clap_ipc;
 #[cfg(feature = "jack-backend")]
@@ -34,6 +35,7 @@ pub use capture::{
     audio_monitor_stream,
 };
 pub use clap_gui::ClapPluginGuiOwner;
+pub use clap_helper_process::ClapInstrumentHelperProcess;
 pub use clap_instrument::{
     ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
     ClapInstrumentOwner, ClapInstrumentProcessor, ClapParameterAutomationEvent,
@@ -45,7 +47,7 @@ pub use clap_ipc::{
     CLAP_IPC_CHANNELS, CLAP_IPC_MAGIC, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS,
     CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT, ClapIpcConfig, ClapIpcMapping,
     ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcRequestSlot,
-    ClapIpcSubmitError,
+    ClapIpcSubmitError, run_clap_ipc_instrument_helper,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};

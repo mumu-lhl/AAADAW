@@ -1,7 +1,7 @@
 # CLAP instrument helper-process isolation research
 
 Issue: [#200](https://github.com/mumu-lhl/AAADAW/issues/200)  
-Scope: smallest cross-platform process boundary for one CLAP instrument; research only.
+Scope: cross-platform process boundary for one CLAP instrument; research and implementation tracking.
 
 ## Current implementation
 
@@ -10,6 +10,8 @@ Scope: smallest cross-platform process boundary for one CLAP instrument; researc
 - CLAP instances are currently owned by control-thread owner types; activation allocates host buffers before the processor enters the render graph. The graph calls the instrument synchronously from `AudioRenderGraph::render_into`, after collecting that track's scheduled MIDI, and immediately mixes the resulting block into that track's buffer. ([`crates/aaadaw-engine/src/clap_instrument.rs`](../../crates/aaadaw-engine/src/clap_instrument.rs), `ClapInstrumentOwner::load_from_entry`, `ClapInstrumentProcessor::process`; [`crates/aaadaw-engine/src/lib.rs`](../../crates/aaadaw-engine/src/lib.rs), `AudioRenderGraph::render_into`.)
 - Existing realtime policy is to prepare and bound callback buffers/queues, keep graph/plugin setup and teardown off callback, and never wait in callback. The current engine already uses `rtrb` for bounded in-process SPSC handoff. ([`docs/design/realtime-rendering.md`](../design/realtime-rendering.md); [`crates/aaadaw-engine/Cargo.toml`](../../crates/aaadaw-engine/Cargo.toml).)
 - ADR 0005 explicitly says runtime CLAP plugins are currently in-process and that crash isolation is later work; scanner isolation does not sandbox plugins or reduce their privileges. ([`docs/adr/0005-clap-midi-instrument-path.md`](../adr/0005-clap-midi-instrument-path.md).)
+- Current branch work adds a versioned fixed-layout shared-memory mapping, bounded MIDI/stereo slots, an internal helper command, helper startup handshake, control-thread process ownership/restart, heartbeat detection, and recovery of child-owned slots after confirmed exit. Targeted protocol tests exercise mapped transfer, capacity limits, version mismatch, stalled-heartbeat observation, and dead-helper slot recovery.
+- This is an engine foundation only. The desktop app still installs `ClapInstrumentOwner` directly into `AudioRenderGraph`; helper lifecycle is not yet used by playback. Saved plugin state is not passed through the helper, graph latency alignment is not implemented, and helper process/fake failure tests remain required. Keep Issue #200 and this roadmap item open until the real playback path and acceptance tests are complete.
 
 ## CLAP constraints that shape the protocol
 
