@@ -459,7 +459,7 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
 
     column![
         text("Keyboard shortcuts").size(17),
-        text("Select a binding, then press Ctrl/Cmd with a letter, optionally Shift, or Space.")
+        text("Select a binding, then press a letter, Delete, Ctrl/Cmd+letter, Ctrl/Cmd+Shift+letter, or Space.")
             .size(12),
         rule::horizontal(1),
         scrollable(container(bindings).padding(iced::Padding::default().right(12.0)))

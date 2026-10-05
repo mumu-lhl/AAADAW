@@ -802,6 +802,32 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         shortcut_message(Key::Character("o"), Modifiers::COMMAND, &HashMap::new()),
         Some(Message::ExecuteCommand(CommandId::OpenProject))
     ));
+    assert!(matches!(
+        shortcut_message(Key::Character("d"), Modifiers::COMMAND, &HashMap::new()),
+        Some(Message::ExecuteCommand(CommandId::DuplicateSelectedItem))
+    ));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::Delete),
+            Modifiers::NONE,
+            &HashMap::new()
+        ),
+        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
+    ));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::Backspace),
+            Modifiers::NONE,
+            &HashMap::new()
+        ),
+        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
+    ));
+    assert!(matches!(
+        shortcut_message(Key::Character("s"), Modifiers::NONE, &HashMap::new()),
+        Some(Message::ExecuteCommand(
+            CommandId::SplitSelectedItemsAtCursor
+        ))
+    ));
     assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND, &HashMap::new()).is_none());
     let undo_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Character("z".into()),
@@ -945,7 +971,14 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
         commands::capture_binding("Space", Modifiers::NONE).unwrap(),
         "Space"
     );
-    assert!(commands::capture_binding("x", Modifiers::NONE).is_err());
+    assert_eq!(
+        commands::capture_binding("s", Modifiers::NONE).unwrap(),
+        "S"
+    );
+    assert_eq!(
+        commands::capture_binding("Delete", Modifiers::NONE).unwrap(),
+        "Delete/Backspace"
+    );
 
     let main_window_id = iced::window::Id::unique();
     let settings_window_id = iced::window::Id::unique();
@@ -972,22 +1005,35 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
             if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
     ));
-    for key in [
-        Key::Named(iced::keyboard::key::Named::Backspace),
-        Key::Named(iced::keyboard::key::Named::Delete),
-    ] {
-        assert!(matches!(
-            keyboard_shortcut_event(
-                make_key_event(key, Modifiers::NONE),
-                iced::event::Status::Captured,
-                settings_window_id,
-                Some(main_window_id),
-                Some(settings_window_id),
-                Some("edit.undo"),
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Backspace),
+                Modifiers::NONE,
             ),
-            Some(Message::ClearShortcutBinding(action_id)) if action_id == "edit.undo"
-        ));
-    }
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::ClearShortcutBinding(action_id)) if action_id == "edit.undo"
+    ));
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Delete),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
+            if action_id == "edit.undo" && key == "Delete" && modifiers == Modifiers::NONE
+    ));
     assert!(matches!(
         keyboard_shortcut_event(
             make_key_event(
@@ -1012,6 +1058,20 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         )
         .is_some()
+    );
+    assert!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Delete),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Captured,
+            main_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            None,
+        )
+        .is_none()
     );
 }
 
@@ -1089,6 +1149,9 @@ fn documented_first_project_shortcuts_match_action_defaults() {
         ("file.save-project", "Ctrl/Cmd+S"),
         ("edit.undo", "Ctrl/Cmd+Z"),
         ("edit.redo", "Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y"),
+        ("item.duplicate", "Ctrl/Cmd+D"),
+        ("item.delete-selected", "Delete/Backspace"),
+        ("item.split-at-cursor", "S"),
     ] {
         let entry = shortcuts
             .iter()
@@ -3127,8 +3190,11 @@ fn audio_timeline_duplicate_preserves_source_offset_and_is_undoable() {
         })
         .expect("source item should be inserted");
     let source_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(source_id);
+    app.timeline.selected_items.insert(source_id);
 
-    let _ = app.update(Message::DuplicateAudioItem(source_id));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
     let duplicate = &app.project.audio_items()[1];
     assert_eq!(duplicate.start_sample(), 1_200);
     assert_eq!(duplicate.media_ref(), "asset://duplicate-test");
@@ -3167,12 +3233,9 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
     app.timeline.selected_item = Some(source_id);
     app.timeline.selected_items.insert(source_id);
 
-    let command = CommandId::DuplicateSelectedMidiItem;
+    let command = CommandId::DuplicateSelectedItem;
     assert!(commands::is_enabled(&app, command));
-    assert_eq!(
-        commands::find(&app, "duplicate selected midi item"),
-        Some(command)
-    );
+    assert_eq!(commands::find(&app, "duplicate item"), Some(command));
     assert!(
         commands::for_menu(&app, MainMenu::Item)
             .iter()
@@ -3187,6 +3250,97 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
     assert_ne!(app.project.midi_items()[1].notes()[0].id(), source_note_id);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
+fn duplicate_selected_audio_and_midi_items_is_one_undoable_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://multi-duplicate-test".to_owned(),
+            start_sample: 240,
+            source_offset_samples: 120,
+            length_samples: 960,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 240,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    let audio_start_tick = app.project.tick_at_sample(240).unwrap();
+    let audio_end_tick = app.project.tick_at_sample(1_200).unwrap();
+    let midi_start_tick = 240;
+    let midi_end_tick = midi_start_tick + 960;
+    let group_start_tick = audio_start_tick.min(midi_start_tick);
+    let group_end_tick = audio_end_tick.max(midi_end_tick);
+    let group_offset = group_end_tick - group_start_tick;
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(audio_id);
+    app.timeline.selected_items.extend([audio_id, midi_id]);
+    let revision_before_duplicate = app.revision;
+    assert!(commands::is_enabled(&app, CommandId::DuplicateSelectedItem));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
+
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(
+        app.project.midi_items()[1].start_tick(),
+        midi_start_tick + group_offset
+    );
+    assert_eq!(
+        app.project.audio_items()[1].start_sample(),
+        app.project
+            .sample_at_tick(audio_start_tick + group_offset)
+            .unwrap()
+    );
+    assert_eq!(app.revision, revision_before_duplicate + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items().len(), 1);
+    assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
+fn duplicate_selected_audio_group_preserves_sample_spacing() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample, length_samples) in
+        [("asset://first", 241, 10), ("asset://second", 300, 20)]
+    {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples,
+            })
+            .unwrap();
+    }
+    let selected = app
+        .project
+        .audio_items()
+        .iter()
+        .map(|item| item.id())
+        .collect::<Vec<_>>();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = selected.first().copied();
+    app.timeline.selected_items.extend(selected);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
+
+    assert_eq!(app.project.audio_items().len(), 4);
+    assert_eq!(app.project.audio_items()[2].start_sample(), 320);
+    assert_eq!(app.project.audio_items()[3].start_sample(), 379);
 }
 
 #[test]

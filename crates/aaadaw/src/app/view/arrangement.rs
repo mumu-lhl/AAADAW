@@ -999,6 +999,7 @@ fn context_menu_command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Mes
 
 fn context_item_command<'a>(mut entry: CommandEntry) -> iced::widget::Button<'a, Message> {
     entry.label = match entry.id {
+        CommandId::DuplicateSelectedItem => "Duplicate".to_owned(),
         CommandId::DuplicateSelectedAudioItem => "Duplicate".to_owned(),
         CommandId::DuplicateSelectedMidiItem => "Duplicate".to_owned(),
         CommandId::DeleteSelectedItems => "Delete selected items".to_owned(),

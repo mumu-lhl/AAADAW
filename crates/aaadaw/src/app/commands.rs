@@ -24,6 +24,7 @@ pub(crate) enum CommandId {
     ShowMixer,
     AddMidiItem,
     ImportAudio,
+    DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
@@ -69,6 +70,7 @@ enum CommandKind {
     ShowMixer,
     AddMidiItem,
     ImportAudio,
+    DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
@@ -98,6 +100,8 @@ struct CommandDefinition {
 enum Shortcut {
     Command(char),
     CommandShift(char),
+    Unmodified(char),
+    Delete,
     Space,
 }
 
@@ -108,6 +112,8 @@ impl Shortcut {
             Self::CommandShift(key) => {
                 format!("Mod+Shift+{}", key.to_ascii_uppercase())
             }
+            Self::Unmodified(key) => key.to_ascii_uppercase().to_string(),
+            Self::Delete => "Delete/Backspace".to_owned(),
             Self::Space => "Space".to_owned(),
         }
     }
@@ -120,9 +126,22 @@ impl Shortcut {
         if value.eq_ignore_ascii_case("space") {
             return Ok(Some(Self::Space));
         }
+        if value.eq_ignore_ascii_case("delete")
+            || value.eq_ignore_ascii_case("backspace")
+            || value.eq_ignore_ascii_case("delete/backspace")
+        {
+            return Ok(Some(Self::Delete));
+        }
+        let mut unmodified_characters = value.chars();
+        if let Some(character) = unmodified_characters.next()
+            && character.is_ascii_alphabetic()
+            && unmodified_characters.next().is_none()
+        {
+            return Ok(Some(Self::Unmodified(character.to_ascii_lowercase())));
+        }
         let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
         if !(2..=3).contains(&parts.len()) {
-            return Err("Use Mod+key, Mod+Shift+key, or Space".to_owned());
+            return Err("Use a letter, Delete, Mod+letter, Mod+Shift+letter, or Space".to_owned());
         }
         let has_mod = matches!(
             parts[0].to_ascii_lowercase().as_str(),
@@ -156,6 +175,13 @@ impl Shortcut {
                 modifiers == (Modifiers::COMMAND | Modifiers::SHIFT)
                     && key_matches_character(key, character)
             }
+            Self::Unmodified(character) => {
+                modifiers == Modifiers::NONE && key_matches_character(key, character)
+            }
+            Self::Delete => {
+                modifiers == Modifiers::NONE
+                    && matches!(key, Key::Named(Named::Delete | Named::Backspace))
+            }
             Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
         }
     }
@@ -166,6 +192,9 @@ const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::Command('n')];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
 const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
+const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::Command('d')];
+const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Delete];
+const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Unmodified('s')];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
 
@@ -315,8 +344,18 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
-        kind: CommandKind::DuplicateSelectedAudioItem,
+        kind: CommandKind::DuplicateSelectedItem,
         menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Duplicate selected items",
+        aliases: &["duplicate item", "duplicate selected item"],
+        shortcuts: DUPLICATE_ITEM_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DuplicateSelectedAudioItem,
+        menu: None,
         category: "Item",
         label: "Duplicate selected audio item",
         aliases: &[],
@@ -326,7 +365,7 @@ const COMMANDS: &[CommandDefinition] = &[
     },
     CommandDefinition {
         kind: CommandKind::DuplicateSelectedMidiItem,
-        menu: Some(MainMenu::Item),
+        menu: None,
         category: "Item",
         label: "Duplicate selected MIDI item",
         aliases: &["duplicate midi item", "duplicate selected midi item"],
@@ -340,7 +379,7 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Item",
         label: "Delete selected items",
         aliases: &["delete selected item", "delete items"],
-        shortcuts: &[],
+        shortcuts: DELETE_ITEMS_SHORTCUT,
         destructive: true,
         separator_before: false,
     },
@@ -354,7 +393,7 @@ const COMMANDS: &[CommandDefinition] = &[
             "split items at cursor",
             "split selected items at edit cursor",
         ],
-        shortcuts: &[],
+        shortcuts: SPLIT_ITEMS_SHORTCUT,
         destructive: false,
         separator_before: true,
     },
@@ -587,6 +626,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::ShowArrangement
             | CommandKind::ShowMixer
             | CommandKind::AddMidiItem
+            | CommandKind::DuplicateSelectedItem
             | CommandKind::DuplicateSelectedAudioItem
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::SplitSelectedItemsAtCursor
@@ -868,12 +908,21 @@ pub(super) fn from_shortcut(
 pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
     let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
         "Space".to_owned()
+    } else if key.eq_ignore_ascii_case("delete") && modifiers == Modifiers::NONE {
+        "Delete".to_owned()
+    } else if modifiers == Modifiers::NONE
+        && key.len() == 1
+        && key.chars().all(|character| character.is_ascii_alphabetic())
+    {
+        key.to_ascii_uppercase()
     } else if modifiers == Modifiers::COMMAND {
         format!("Mod+{key}")
     } else if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
         format!("Mod+Shift+{key}")
     } else {
-        return Err("Use Ctrl/Cmd with a letter, optionally Shift, or press Space".to_owned());
+        return Err(
+            "Use a letter, Delete, Ctrl/Cmd+letter, Ctrl/Cmd+Shift+letter, or Space".to_owned(),
+        );
     };
     Shortcut::parse(&candidate)?
         .map(Shortcut::config_label)
@@ -932,6 +981,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
+        CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
@@ -996,6 +1046,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
+        CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
                 app.timeline.selected_items.len() == 1
@@ -1193,6 +1244,21 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
+        CommandKind::DuplicateSelectedItem => {
+            !project_edit_busy(app)
+                && !app.timeline.selected_items.is_empty()
+                && app.timeline.selected_items.iter().all(|item_id| {
+                    app.project
+                        .audio_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+                        || app
+                            .project
+                            .midi_items()
+                            .iter()
+                            .any(|item| item.id() == *item_id)
+                })
+        }
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
                 && !app.project.tracks().is_empty()
@@ -1277,6 +1343,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
+        CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,

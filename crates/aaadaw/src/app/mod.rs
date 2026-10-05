@@ -658,6 +658,155 @@ impl std::fmt::Debug for SharedPreparedPlayback {
     }
 }
 
+fn duplicate_item_actions(
+    project: &Project,
+    item_ids: &[ItemId],
+) -> Result<Vec<DawAction>, String> {
+    if item_ids.len() == 1 {
+        let item_id = item_ids[0];
+        if project
+            .audio_items()
+            .iter()
+            .any(|item| item.id() == item_id)
+        {
+            return duplicate_audio_item(project, item_id)
+                .map(|action| vec![action])
+                .map_err(|error| error.to_string());
+        }
+        if project.midi_items().iter().any(|item| item.id() == item_id) {
+            return Ok(vec![DawAction::DuplicateMidiItem { item_id }]);
+        }
+        return Err("selected item no longer exists".to_owned());
+    }
+
+    if item_ids.iter().all(|item_id| {
+        project
+            .audio_items()
+            .iter()
+            .any(|item| item.id() == *item_id)
+    }) {
+        let mut audio_ranges = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            let item = project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .ok_or_else(|| "selected item no longer exists".to_owned())?;
+            let end_sample = item
+                .start_sample()
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "audio item end exceeds the sample timeline".to_owned())?;
+            audio_ranges.push((item, item.start_sample(), end_sample));
+        }
+        let group_start = audio_ranges
+            .iter()
+            .map(|(item, _, _)| item.start_sample())
+            .min()
+            .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+        let group_end = audio_ranges
+            .iter()
+            .map(|(_, _, end_sample)| *end_sample)
+            .max()
+            .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+        let offset = group_end - group_start;
+        return audio_ranges
+            .into_iter()
+            .map(|(item, _, _)| {
+                let duplicate_start = item
+                    .start_sample()
+                    .checked_add(offset)
+                    .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+                duplicate_start
+                    .checked_add(item.length_samples())
+                    .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+                Ok(DawAction::InsertAudioItem {
+                    track_id: item.track_id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample: duplicate_start,
+                    source_offset_samples: item.source_offset_samples(),
+                    length_samples: item.length_samples(),
+                })
+            })
+            .collect();
+    }
+
+    let mut selected_ranges = Vec::with_capacity(item_ids.len());
+    for item_id in item_ids {
+        if let Some(item) = project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == *item_id)
+        {
+            let end_sample = item
+                .start_sample()
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "audio item end exceeds the sample timeline".to_owned())?;
+            let start_tick = project
+                .tick_at_sample(item.start_sample())
+                .map_err(|error| error.to_string())?;
+            let end_tick = project
+                .tick_at_sample(end_sample)
+                .map_err(|error| error.to_string())?;
+            selected_ranges.push((*item_id, start_tick, end_tick));
+        } else if let Some(item) = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == *item_id)
+        {
+            let end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or_else(|| "MIDI item end exceeds the project timeline".to_owned())?;
+            selected_ranges.push((*item_id, item.start_tick(), end_tick));
+        } else {
+            return Err("selected item no longer exists".to_owned());
+        }
+    }
+
+    let group_start = selected_ranges
+        .iter()
+        .map(|(_, start_tick, _)| *start_tick)
+        .min()
+        .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+    let group_end = selected_ranges
+        .iter()
+        .map(|(_, _, end_tick)| *end_tick)
+        .max()
+        .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+    let offset = group_end.saturating_sub(group_start);
+    let mut actions = Vec::with_capacity(selected_ranges.len());
+    for (item_id, start_tick, _) in selected_ranges {
+        let duplicate_start_tick = start_tick
+            .checked_add(offset)
+            .ok_or_else(|| "duplicate exceeds the project timeline".to_owned())?;
+        if let Some(item) = project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        {
+            let start_sample = project
+                .sample_at_tick(duplicate_start_tick)
+                .map_err(|error| error.to_string())?;
+            start_sample
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+            actions.push(DawAction::InsertAudioItem {
+                track_id: item.track_id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample,
+                source_offset_samples: item.source_offset_samples(),
+                length_samples: item.length_samples(),
+            });
+        } else {
+            actions.push(DawAction::DuplicateMidiItemAt {
+                item_id,
+                start_tick: duplicate_start_tick,
+            });
+        }
+    }
+    Ok(actions)
+}
+
 impl App {
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
@@ -1157,6 +1306,7 @@ impl App {
                             | Message::CancelAudioItemStartSampleEdit(_)
                             | Message::DeleteAudioItem(_)
                             | Message::DeleteSelectedItems
+                            | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
@@ -1587,7 +1737,8 @@ impl App {
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
-                self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();
+                self.shortcut_editor_feedback =
+                    "Press a shortcut; Backspace clears it; Escape cancels".to_owned();
             }
             Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
             Message::RestoreShortcutDefault(action_id) => self.restore_shortcut_default(action_id),
@@ -2141,6 +2292,7 @@ impl App {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
+            Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
             Message::DuplicateAudioItem(item_id) => {
@@ -2225,10 +2377,10 @@ impl App {
             Message::SaveActionMacro => self.save_action_macro(),
             Message::DeleteActionMacro(id) => self.delete_action_macro(id),
             Message::ShortcutPressed(key, modifiers) => {
-                let key = if key == " " {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Space)
-                } else {
-                    iced::keyboard::Key::Character(key.as_str())
+                let key = match key.as_str() {
+                    " " => iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
+                    "Delete" => iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
+                    character => iced::keyboard::Key::Character(character),
                 };
                 let shortcut = {
                     let bindings = self
@@ -5196,6 +5348,41 @@ impl App {
         self.apply_action(action, "Selected items deleted");
     }
 
+    fn duplicate_selected_items(&mut self) {
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        if item_ids.is_empty() {
+            self.status = "Select one or more items to duplicate".to_owned();
+            return;
+        }
+
+        let mut actions = match duplicate_item_actions(&self.project, &item_ids) {
+            Ok(actions) => actions,
+            Err(error) => {
+                self.status = format!("Could not duplicate selected items: {error}");
+                return;
+            }
+        };
+        if actions.is_empty() {
+            self.status = "Selected items no longer exist".to_owned();
+            return;
+        }
+        let action = if actions.len() == 1 {
+            actions.pop().expect("single duplicate action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected items duplicated");
+    }
+
     fn save_project_command(&mut self) -> Task<Message> {
         if self.project_path.is_none() {
             self.pick_path(PathPickerTarget::SaveProject)
@@ -5488,9 +5675,16 @@ fn keyboard_shortcut_event(
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
                 Some(Message::CancelShortcutCapture)
             }
-            iced::keyboard::Key::Named(
-                iced::keyboard::key::Named::Backspace | iced::keyboard::key::Named::Delete,
-            ) => Some(Message::ClearShortcutBinding(action_id.to_owned())),
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                Some(Message::ClearShortcutBinding(action_id.to_owned()))
+            }
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                Some(Message::ShortcutCaptureKey {
+                    action_id: action_id.to_owned(),
+                    key: "Delete".to_owned(),
+                    modifiers,
+                })
+            }
             iced::keyboard::Key::Character(character) => Some(Message::ShortcutCaptureKey {
                 action_id: action_id.to_owned(),
                 key: character.to_owned(),
@@ -5545,6 +5739,12 @@ fn keyboard_shortcut_event(
         }
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
             Some(Message::ShortcutPressed(" ".to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
         }
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
         _ => None,
