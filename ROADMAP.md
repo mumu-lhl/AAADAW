@@ -216,7 +216,7 @@
 
 ### 插件隔离与兼容性
 
-- [ ] 实现独立 `aaadaw-scanner`，插件扫描崩溃不影响主进程，并持久化扫描失败/黑名单信息。
+- [x] 通过 AAADAW helper 子进程加载 CLAP entry；版本化请求、输入/输出上限和超时保护隔离扫描崩溃，缓存失败项并由显式重扫重试（[Issue #182](https://github.com/mumu-lhl/AAADAW/issues/182)，[ADR 0005](docs/adr/0005-clap-midi-instrument-path.md)）。
 - [ ] 设计并实现 `aaadaw-plugin-host`、共享内存音频/MIDI 缓冲和控制 IPC；验证插件崩溃、卡死、重启和版本不匹配处理。
 - [ ] 实现隔离插件的独立原生 GUI 窗口；保留高信任插件的可选进程内模式并显式提示风险。
 - [ ] 在许可审查通过后，通过 `cxx` 增加 VST3 桥接；VST3 SDK/分发合规是独立发布门槛。

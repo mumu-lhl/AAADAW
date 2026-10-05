@@ -31,7 +31,7 @@ mod settings;
 mod tempo_map;
 mod tokens;
 
-const CLAP_IN_PROCESS_RISK: &str = "CLAP plugins run inside AAADAW with the app's privileges. A plugin can crash or stall the app; plugins are not sandboxed.";
+const CLAP_PLUGIN_RISK: &str = "CLAP scanning runs in a helper process. Loaded plugins still run inside AAADAW with the app's privileges and can crash or stall it; runtime plugins are not sandboxed.";
 
 #[cfg(any(feature = "audio-device", test))]
 pub(super) fn playback_diagnostic_suffix(
@@ -450,8 +450,8 @@ fn playback_controls(_app: &App) -> Element<'_, Message> {
 mod tests {
     #[test]
     fn clap_risk_notice_clearly_describes_the_process_boundary() {
-        assert!(super::CLAP_IN_PROCESS_RISK.contains("app's privileges"));
-        assert!(super::CLAP_IN_PROCESS_RISK.contains("crash or stall"));
-        assert!(super::CLAP_IN_PROCESS_RISK.contains("not sandboxed"));
+        assert!(super::CLAP_PLUGIN_RISK.contains("app's privileges"));
+        assert!(super::CLAP_PLUGIN_RISK.contains("crash or stall"));
+        assert!(super::CLAP_PLUGIN_RISK.contains("not sandboxed"));
     }
 }

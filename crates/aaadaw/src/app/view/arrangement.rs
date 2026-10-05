@@ -244,7 +244,7 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         ));
     if track.instrument().is_some() {
         actions = actions
-            .push(text(super::CLAP_IN_PROCESS_RISK).size(10))
+            .push(text(super::CLAP_PLUGIN_RISK).size(10))
             .push(action_button(
                 "Clear instrument",
                 Message::ClearTrackInstrument(track_id),

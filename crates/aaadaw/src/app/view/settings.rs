@@ -562,7 +562,7 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
     column![
         text("CLAP plug-ins").size(17),
         text("Search configured folders recursively.").size(11),
-        text(super::CLAP_IN_PROCESS_RISK).size(11),
+        text(super::CLAP_PLUGIN_RISK).size(11),
         row![
             button("Add search path…").on_press_maybe(
                 (!app.clap_plugin_scan_busy)

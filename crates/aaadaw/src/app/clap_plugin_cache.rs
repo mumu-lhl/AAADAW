@@ -216,7 +216,7 @@ mod tests {
             }],
             errors: vec![ClapPluginScanError {
                 path: PathBuf::from("/plugins/broken.clap"),
-                message: "could not load entry".to_owned(),
+                message: "CLAP scanner process: child exited unexpectedly".to_owned(),
             }],
             entries_checked: 2,
         }

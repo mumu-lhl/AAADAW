@@ -34,6 +34,7 @@ pub use audio_import::{
 pub use capture_timeline::CaptureTimelineAnchor;
 pub use clap_plugins::{
     ClapPluginScanError, ClapPluginScanReport, default_clap_search_paths, scan_clap_plugins,
+    scan_clap_plugins_with_inspector,
 };
 pub use live_recording::{
     AudioRecordingError, AudioRecordingWorker, RecordingRecoveryCandidate,
