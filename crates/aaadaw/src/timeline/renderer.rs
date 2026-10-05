@@ -27,6 +27,8 @@ const AUTOMATION_POINT: u32 = 13;
 #[derive(Debug)]
 pub(super) struct AutomationLane {
     pub(super) track_index: u32,
+    pub(super) is_fx: bool,
+    pub(super) value_range: (f32, f32),
     pub(super) selected_point: Option<usize>,
     pub(super) points: Vec<(u64, f32)>,
 }
@@ -301,10 +303,22 @@ impl Primitive for TimelinePrimitive {
                 instances.push(waveform_rect(*bin, self.row_height, has_automation));
             }
             for lane in &self.volume_automation {
-                let y = |db: f32| {
+                let y = |value: f32| {
+                    let (min, max) = if lane.is_fx {
+                        lane.value_range
+                    } else {
+                        (-60.0, 6.0)
+                    };
+                    let top = if lane.is_fx { 82.0 } else { 66.0 };
+                    let bottom = if lane.is_fx {
+                        self.row_height - 3.0
+                    } else {
+                        82.0
+                    };
                     lane.track_index as f32 * self.row_height
-                        + 66.0
-                        + (6.0 - db.clamp(-60.0, 6.0)) * (16.0 / 66.0)
+                        + top
+                        + (max - value.clamp(min, max))
+                            * ((bottom - top) / (max - min).max(f32::EPSILON))
                 };
                 for pair in lane.points.windows(2) {
                     instances.push(GpuRect::new(GpuRectSpec {

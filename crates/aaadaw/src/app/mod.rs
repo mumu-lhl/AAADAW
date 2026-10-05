@@ -1530,6 +1530,32 @@ impl App {
                 #[cfg(not(feature = "audio-device"))]
                 let _ = id;
             }
+            Message::FxAutomationLaneToggled {
+                parameter_id: id,
+                name,
+                min_value,
+                max_value,
+                stepped,
+            } => {
+                if let (Some(track_id), Some(chain_index)) =
+                    (self.fx_chain_track_id, self.fx_chain_selected_index)
+                {
+                    let value_range = if stepped {
+                        (min_value.ceil(), max_value.floor())
+                    } else {
+                        (min_value, max_value)
+                    };
+                    self.timeline
+                        .handle(timeline::TimelineEvent::ToggleFxAutomation {
+                            track_id,
+                            chain_index,
+                            parameter_id: id,
+                            name,
+                            value_range,
+                            stepped,
+                        });
+                }
+            }
             Message::FxParameterEnded(id) => self.end_fx_parameter_gesture(id),
             Message::FxParameterValueTextChanged(id, value) => {
                 self.fx_parameter_value_edits.insert(id, value);
@@ -1787,6 +1813,78 @@ impl App {
                         DawAction::SetTrackVolumeAutomation { track_id, points },
                         "Volume automation edited",
                     );
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::SetFxAutomation {
+                track_id,
+                chain_index,
+                parameter_id,
+                points,
+                selected_point,
+            }) => {
+                if self.project_graph_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before editing FX automation".to_owned();
+                } else {
+                    let revision = self.revision;
+                    self.apply_action(
+                        DawAction::SetTrackFxParameterAutomation {
+                            track_id,
+                            chain_index,
+                            parameter_id,
+                            points,
+                        },
+                        "FX automation edited",
+                    );
+                    if self.revision != revision
+                        && let Some(index) = selected_point
+                    {
+                        self.timeline
+                            .handle(timeline::TimelineEvent::SelectFxAutomationPoint {
+                                track_id,
+                                chain_index,
+                                parameter_id,
+                                index,
+                            });
+                    }
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::ClearSelectedFxAutomationPoint) => {
+                self.timeline
+                    .handle(timeline::TimelineEvent::ClearSelectedFxAutomationPoint);
+            }
+            Message::Timeline(timeline::TimelineEvent::DeleteFxAutomationPoint {
+                track_id,
+                chain_index,
+                parameter_id,
+                index,
+            }) => {
+                self.timeline
+                    .handle(timeline::TimelineEvent::ClearSelectedFxAutomationPoint);
+                if self.project_graph_edit_busy() {
+                    self.status =
+                        "Stop playback or recording before editing FX automation".to_owned();
+                } else if let Some(plugin) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                    .and_then(|track| track.fx_chain().get(chain_index))
+                    && let Some(lane) = plugin.parameter_automation_for(parameter_id)
+                {
+                    let mut points = lane.points().to_vec();
+                    if index < points.len() {
+                        points.remove(index);
+                        self.apply_action(
+                            DawAction::SetTrackFxParameterAutomation {
+                                track_id,
+                                chain_index,
+                                parameter_id,
+                                points,
+                            },
+                            "FX automation point deleted",
+                        );
+                    }
                 }
             }
             Message::Timeline(timeline::TimelineEvent::DeleteVolumeAutomationPoint {

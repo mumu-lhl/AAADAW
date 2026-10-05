@@ -147,6 +147,13 @@ pub(crate) enum Message {
     SelectFxChainPlugin(usize),
     FxParameterChanged(u32, f64),
     FxAutomationWriteToggled(u32),
+    FxAutomationLaneToggled {
+        parameter_id: u32,
+        name: String,
+        min_value: f64,
+        max_value: f64,
+        stepped: bool,
+    },
     FxParameterEnded(u32),
     FxParameterValueTextChanged(u32, String),
     CommitFxParameterValue(u32),
