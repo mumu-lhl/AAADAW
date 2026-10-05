@@ -1,6 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
-    AudioItemStream, AudioRenderGraph, MasterOutputCeiling, audio_monitor_stream, stereo_pcm_stream,
+    AudioItemStream, AudioRenderGraph, AudioStreamPosition, MasterOutputCeiling,
+    audio_monitor_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -139,10 +140,15 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         stereo_pcm_stream(128 * 128).expect("queue capacity should be valid");
     producer.set_stereo_content(true);
     let source = vec![[0.25, -0.125]; 128 * 128];
-    assert_eq!(producer.push_frames(&source), source.len());
+    assert_eq!(producer.push_frames_at(0, &source), source.len());
+    let position = AudioStreamPosition::new(0);
     let mut graph = AudioRenderGraph::new_for_audio_items(
         &project,
-        vec![AudioItemStream::new_stereo(audio_item_id, consumer)],
+        vec![AudioItemStream::new_stereo_with_position(
+            audio_item_id,
+            consumer,
+            position,
+        )],
         128,
     )
     .expect("stream should match the audio item");

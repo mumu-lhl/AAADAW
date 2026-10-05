@@ -1,7 +1,7 @@
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// The lock-free PCM queue could not be created.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,26 +20,69 @@ impl fmt::Display for PcmStreamError {
 
 impl std::error::Error for PcmStreamError {}
 
+const MAX_STALE_TIMELINE_FRAMES_PER_BLOCK: usize = 4_096;
+
+#[derive(Clone, Copy)]
+struct QueuedMonoSample {
+    value: f32,
+    timeline_sample: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct QueuedStereoFrame {
+    value: [f32; 2],
+    timeline_sample: Option<u64>,
+}
+
+/// Memory occupied by one stereo PCM queue slot, including its timeline tag.
+pub const STEREO_PCM_QUEUE_FRAME_BYTES: usize = std::mem::size_of::<QueuedStereoFrame>();
+
 /// The worker-side handle for pushing decoded, output-rate mono PCM samples.
 pub struct PcmStreamProducer {
-    producer: Producer<f32>,
+    producer: Producer<QueuedMonoSample>,
 }
 
 /// The audio-thread handle for consuming PCM without locks or allocation.
 pub struct PcmStreamConsumer {
-    consumer: Consumer<f32>,
+    consumer: Consumer<QueuedMonoSample>,
+    pending: Option<QueuedMonoSample>,
 }
 
 /// The worker-side handle for pushing decoded, output-rate stereo PCM frames.
 pub struct StereoPcmStreamProducer {
-    producer: Producer<[f32; 2]>,
+    producer: Producer<QueuedStereoFrame>,
     stereo_content: Arc<AtomicBool>,
 }
 
 /// The audio-thread handle for consuming stereo PCM without locks or allocation.
 pub struct StereoPcmStreamConsumer {
-    consumer: Consumer<[f32; 2]>,
+    consumer: Consumer<QueuedStereoFrame>,
     stereo_content: Arc<AtomicBool>,
+    pending: Option<QueuedStereoFrame>,
+}
+
+/// Shared sample-clock resume point between the render callback and a feeder worker.
+///
+/// The callback only publishes monotonically increasing samples with an atomic max;
+/// the worker reads the latest value and discards decoded frames that have fallen behind.
+#[derive(Clone, Debug)]
+pub struct AudioStreamPosition(Arc<AtomicU64>);
+
+impl AudioStreamPosition {
+    /// Creates a stream position initialized to the first timeline sample in its queue.
+    pub fn new(sample: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(sample)))
+    }
+
+    /// Publishes a later sample as the earliest useful sample for this stream.
+    pub fn resume_from(&self, sample: u64) {
+        self.0.fetch_max(sample, Ordering::Relaxed);
+    }
+
+    /// Returns the latest sample published by the render callback.
+    pub fn requested_sample(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 /// Creates a fixed-capacity SPSC queue. Create and split it before starting
@@ -53,7 +96,10 @@ pub fn pcm_stream(
     let (producer, consumer) = RingBuffer::new(capacity_samples);
     Ok((
         PcmStreamProducer { producer },
-        PcmStreamConsumer { consumer },
+        PcmStreamConsumer {
+            consumer,
+            pending: None,
+        },
     ))
 }
 
@@ -74,6 +120,7 @@ pub fn stereo_pcm_stream(
         StereoPcmStreamConsumer {
             consumer,
             stereo_content,
+            pending: None,
         },
     ))
 }
@@ -84,7 +131,28 @@ impl PcmStreamProducer {
     pub fn push_samples(&mut self, samples: &[f32]) -> usize {
         let mut pushed = 0;
         for sample in samples.iter().copied() {
-            match self.producer.push(sample) {
+            match self.producer.push(QueuedMonoSample {
+                value: sample,
+                timeline_sample: None,
+            }) {
+                Ok(()) => pushed += 1,
+                Err(PushError::Full(_)) => break,
+            }
+        }
+        pushed
+    }
+
+    /// Pushes mono samples tagged with their project timeline positions.
+    pub fn push_samples_at(&mut self, start_sample: u64, samples: &[f32]) -> usize {
+        let mut pushed = 0;
+        for (offset, sample) in samples.iter().copied().enumerate() {
+            let Some(timeline_sample) = start_sample.checked_add(offset as u64) else {
+                break;
+            };
+            match self.producer.push(QueuedMonoSample {
+                value: sample,
+                timeline_sample: Some(timeline_sample),
+            }) {
                 Ok(()) => pushed += 1,
                 Err(PushError::Full(_)) => break,
             }
@@ -108,7 +176,7 @@ impl PcmStreamConsumer {
         while index < output.len() {
             match self.consumer.pop() {
                 Ok(sample) => {
-                    output[index] = sample;
+                    output[index] = sample.value;
                     index += 1;
                 }
                 Err(PopError::Empty) => {
@@ -131,7 +199,7 @@ impl PcmStreamConsumer {
         while index < output.len() {
             match self.consumer.pop() {
                 Ok(sample) => {
-                    output[index] = [sample, sample];
+                    output[index] = [sample.value, sample.value];
                     index += 1;
                 }
                 Err(PopError::Empty) => {
@@ -141,6 +209,49 @@ impl PcmStreamConsumer {
             }
         }
         0
+    }
+
+    /// Reads timeline-tagged samples, dropping stale PCM and silencing timeline gaps.
+    pub fn read_timeline_stereo_into(
+        &mut self,
+        output: &mut [[f32; 2]],
+        start_sample: u64,
+    ) -> usize {
+        let mut underruns = 0_usize;
+        let mut stale_discarded = 0;
+        for (index, frame) in output.iter_mut().enumerate() {
+            let expected_sample = start_sample.saturating_add(index as u64);
+            loop {
+                let queued = self.pending.take().or_else(|| self.consumer.pop().ok());
+                let Some(sample) = queued else {
+                    output[index..].fill([0.0, 0.0]);
+                    return underruns.saturating_add(output.len() - index);
+                };
+                if sample
+                    .timeline_sample
+                    .is_some_and(|sample_sample| sample_sample < expected_sample)
+                {
+                    stale_discarded += 1;
+                    if stale_discarded >= MAX_STALE_TIMELINE_FRAMES_PER_BLOCK {
+                        output[index..].fill([0.0, 0.0]);
+                        return underruns.saturating_add(output.len() - index);
+                    }
+                    continue;
+                }
+                if sample
+                    .timeline_sample
+                    .is_some_and(|sample_sample| sample_sample > expected_sample)
+                {
+                    self.pending = Some(sample);
+                    *frame = [0.0, 0.0];
+                    underruns += 1;
+                } else {
+                    *frame = [sample.value, sample.value];
+                }
+                break;
+            }
+        }
+        underruns
     }
 }
 
@@ -154,7 +265,28 @@ impl StereoPcmStreamProducer {
     pub fn push_frames(&mut self, frames: &[[f32; 2]]) -> usize {
         let mut pushed = 0;
         for frame in frames.iter().copied() {
-            match self.producer.push(frame) {
+            match self.producer.push(QueuedStereoFrame {
+                value: frame,
+                timeline_sample: None,
+            }) {
+                Ok(()) => pushed += 1,
+                Err(PushError::Full(_)) => break,
+            }
+        }
+        pushed
+    }
+
+    /// Pushes stereo frames tagged with their project timeline positions.
+    pub fn push_frames_at(&mut self, start_sample: u64, frames: &[[f32; 2]]) -> usize {
+        let mut pushed = 0;
+        for (offset, frame) in frames.iter().copied().enumerate() {
+            let Some(timeline_sample) = start_sample.checked_add(offset as u64) else {
+                break;
+            };
+            match self.producer.push(QueuedStereoFrame {
+                value: frame,
+                timeline_sample: Some(timeline_sample),
+            }) {
                 Ok(()) => pushed += 1,
                 Err(PushError::Full(_)) => break,
             }
@@ -180,7 +312,7 @@ impl StereoPcmStreamConsumer {
         while index < output.len() {
             match self.consumer.pop() {
                 Ok(frame) => {
-                    output[index] = frame;
+                    output[index] = frame.value;
                     index += 1;
                 }
                 Err(PopError::Empty) => {
@@ -190,6 +322,57 @@ impl StereoPcmStreamConsumer {
             }
         }
         0
+    }
+
+    /// Reads timeline-tagged frames, dropping stale PCM and silencing timeline gaps.
+    pub fn read_timeline_into(&mut self, output: &mut [[f32; 2]], start_sample: u64) -> usize {
+        let mut underruns = 0_usize;
+        let mut stale_discarded = 0;
+        for (index, frame) in output.iter_mut().enumerate() {
+            let expected_sample = start_sample.saturating_add(index as u64);
+            loop {
+                let queued = self.pending.take().or_else(|| self.consumer.pop().ok());
+                let Some(sample) = queued else {
+                    output[index..].fill([0.0, 0.0]);
+                    return underruns.saturating_add(
+                        (output.len() - index).saturating_mul(if self.is_stereo_content() {
+                            2
+                        } else {
+                            1
+                        }),
+                    );
+                };
+                if sample
+                    .timeline_sample
+                    .is_some_and(|sample_sample| sample_sample < expected_sample)
+                {
+                    stale_discarded += 1;
+                    if stale_discarded >= MAX_STALE_TIMELINE_FRAMES_PER_BLOCK {
+                        output[index..].fill([0.0, 0.0]);
+                        return underruns.saturating_add(
+                            (output.len() - index).saturating_mul(if self.is_stereo_content() {
+                                2
+                            } else {
+                                1
+                            }),
+                        );
+                    }
+                    continue;
+                }
+                if sample
+                    .timeline_sample
+                    .is_some_and(|sample_sample| sample_sample > expected_sample)
+                {
+                    self.pending = Some(sample);
+                    *frame = [0.0, 0.0];
+                    underruns += if self.is_stereo_content() { 2 } else { 1 };
+                } else {
+                    *frame = sample.value;
+                }
+                break;
+            }
+        }
+        underruns
     }
 
     /// Returns the number of frames currently available without waiting.

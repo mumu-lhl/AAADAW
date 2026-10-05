@@ -3,11 +3,14 @@ use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
 use aaadaw_media::{
     AudioStreamDecoder, AudioWaveform, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
+    spawn_stereo_audio_item_stream_from_reader,
 };
 use aaadaw_storage::ProjectStore;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -40,6 +43,136 @@ fn pcm_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     bytes
+}
+
+fn stereo_pcm_wav(frames: &[[i16; 2]], sample_rate: u32) -> Vec<u8> {
+    let data_len = u32::try_from(frames.len() * 4).expect("test fixture should fit in WAV");
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 4).to_le_bytes());
+    bytes.extend_from_slice(&4_u16.to_le_bytes());
+    bytes.extend_from_slice(&16_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    for frame in frames {
+        for sample in frame {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[derive(Default)]
+struct ReadGateState {
+    stall_at: Option<u64>,
+    waiting: bool,
+    blocked_at: Option<u64>,
+    released: bool,
+}
+
+#[derive(Default)]
+struct ReadGate {
+    state: Mutex<ReadGateState>,
+    changed: Condvar,
+}
+
+impl ReadGate {
+    fn arm(&self, byte_position: u64) {
+        let mut state = self.state.lock().expect("read gate should not be poisoned");
+        state.stall_at = Some(byte_position);
+    }
+
+    fn wait_until_blocked(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.state.lock().expect("read gate should not be poisoned");
+        while !state.waiting {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return false;
+            };
+            let (next_state, wait) = self
+                .changed
+                .wait_timeout(state, remaining)
+                .expect("read gate should not be poisoned");
+            state = next_state;
+            if wait.timed_out() && !state.waiting {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn blocked_position(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .expect("read gate should not be poisoned")
+            .blocked_at
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().expect("read gate should not be poisoned");
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+struct ReadGateRelease(Arc<ReadGate>);
+
+impl Drop for ReadGateRelease {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+struct DelayedReader {
+    cursor: Cursor<Vec<u8>>,
+    gate: Arc<ReadGate>,
+    byte_position: Arc<AtomicU64>,
+}
+
+impl Read for DelayedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let position = self.cursor.position();
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .expect("read gate should not be poisoned");
+        while state.stall_at.is_some_and(|stall_at| position >= stall_at) && !state.released {
+            state.waiting = true;
+            state.blocked_at = Some(position);
+            self.gate.changed.notify_all();
+            state = self
+                .gate
+                .changed
+                .wait(state)
+                .expect("read gate should not be poisoned");
+        }
+        let maximum = state
+            .stall_at
+            .filter(|stall_at| position < *stall_at)
+            .map_or(buffer.len(), |stall_at| {
+                buffer.len().min((stall_at - position) as usize)
+            });
+        drop(state);
+        let read = self.cursor.read(&mut buffer[..maximum]);
+        self.byte_position
+            .store(self.cursor.position(), Ordering::Release);
+        read
+    }
+}
+
+impl Seek for DelayedReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        let position = self.cursor.seek(position)?;
+        self.byte_position.store(position, Ordering::Release);
+        Ok(position)
+    }
 }
 
 #[test]
@@ -187,6 +320,141 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
     }
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn delayed_stereo_reader_skips_pcm_that_falls_behind_the_playhead() {
+    let target_offset = 1_000_000_u64;
+    let mut frames = vec![[-16_384, 16_384]; target_offset as usize + 2];
+    frames.extend(vec![[8_192, -8_192]; 8_192]);
+    let bytes = stereo_pcm_wav(&frames, 48_000);
+    let gate = Arc::new(ReadGate::default());
+    let byte_position = Arc::new(AtomicU64::new(0));
+    let reader = DelayedReader {
+        cursor: Cursor::new(bytes.clone()),
+        gate: Arc::clone(&gate),
+        byte_position: Arc::clone(&byte_position),
+    };
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Delayed media".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://delayed-media".to_owned(),
+            start_sample: 100,
+            source_offset_samples: 3,
+            length_samples: target_offset + 40_000,
+        })
+        .expect("audio item should be inserted");
+    let item = &project.audio_items()[0];
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(2).expect("stream queue should have positive capacity");
+    let mut feeder = spawn_stereo_audio_item_stream_from_reader(
+        item,
+        reader,
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("stereo media feeder should start");
+    feeder.wait_ready().expect("WAV reader should initialize");
+
+    let initial_deadline = Instant::now() + Duration::from_secs(5);
+    while consumer.available_frames() < 2 && Instant::now() < initial_deadline {
+        std::thread::yield_now();
+    }
+    if consumer.available_frames() < 2 {
+        gate.release();
+        feeder
+            .cancel()
+            .expect("feeder should stop during test cleanup");
+        panic!(
+            "initial PCM did not prefill; reader byte position was {}",
+            byte_position.load(Ordering::Acquire)
+        );
+    }
+    gate.arm(byte_position.load(Ordering::Acquire));
+    let _read_gate_release = ReadGateRelease(Arc::clone(&gate));
+    let position = feeder.timeline_position();
+    let stream = AudioItemStream::new_stereo_at_sample_with_position(
+        item.id(),
+        item.start_sample() + target_offset,
+        consumer,
+        position.clone(),
+    );
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 2)
+        .expect("delayed item should build a render graph");
+    graph
+        .transport_mut()
+        .seek_sample(item.start_sample() + target_offset);
+    graph.transport_mut().start();
+
+    let mut stale = [[1.0; 2]; 2];
+    let stats = graph
+        .render_into(&mut stale)
+        .expect("callback should render the delayed item");
+    assert_eq!(stats.underrun_samples, 4);
+    assert_eq!(stale, [[0.0; 2]; 2]);
+    assert_eq!(
+        position.requested_sample(),
+        item.start_sample() + target_offset + 2
+    );
+    let reader_blocked = gate.wait_until_blocked(Duration::from_secs(5));
+    if !reader_blocked {
+        gate.release();
+        feeder
+            .cancel()
+            .expect("feeder should stop during test cleanup");
+        panic!(
+            "reader should stall after its prefetched bytes are consumed; byte position was {}",
+            byte_position.load(Ordering::Acquire)
+        );
+    }
+    let blocked_at = gate
+        .blocked_position()
+        .expect("blocked reader should report its source position");
+    let target_source_byte = 44 + (item.source_offset_samples() + target_offset + 2) * 4;
+    assert!(
+        blocked_at < target_source_byte,
+        "reader should block before target samples are read; blocked at {blocked_at}, target starts at {target_source_byte}"
+    );
+    gate.release();
+
+    let refill_deadline = Instant::now() + Duration::from_secs(5);
+    let mut resumed = [[0.0; 2]; 2];
+    let mut resumed_stats = None;
+    while Instant::now() < refill_deadline {
+        std::thread::sleep(Duration::from_millis(1));
+        let stats = graph
+            .render_into(&mut resumed)
+            .expect("callback should continue after the reader resumes");
+        if resumed == [[0.25, -0.25]; 2] {
+            resumed_stats = Some(stats);
+            break;
+        }
+    }
+    assert_eq!(
+        resumed,
+        [[0.25, -0.25]; 2],
+        "feeder should resume at target"
+    );
+    assert_eq!(
+        resumed_stats
+            .expect("resumed samples should have a render block")
+            .underrun_samples,
+        0
+    );
+
+    feeder
+        .cancel()
+        .expect("feeder should cancel after recovery");
 }
 
 #[test]

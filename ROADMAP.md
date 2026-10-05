@@ -234,8 +234,8 @@
 - [x] 将多级 Min/Max 波形峰值持久化到可重建的 `.aaapeaks` 缓存，后台复用未变化的素材（[Issue #190](https://github.com/mumu-lhl/AAADAW/issues/190)）。
 - [x] Arrangement 按当前视口和缩放查询波形层级及素材范围，只为可见峰值构建几何；全局 Item 几何不随平移/缩放重算（[Issue #191](https://github.com/mumu-lhl/AAADAW/issues/191)）。
 - [x] 限制所有活动 AudioItem 的 PCM 队列总内存，保证回调块缓冲并让播放头之前已结束的 Item 使用最小队列（[Issue #194](https://github.com/mumu-lhl/AAADAW/issues/194)）。
-- [ ] 为重复短嵌入素材复用有界解码 PCM，长素材和外部链接回退到流式解码（[Issue #196](https://github.com/mumu-lhl/AAADAW/issues/196)）。
-- [ ] 实现播放头前向预读调度；验证磁盘欠载后的恢复行为。
+- [x] 为重复短嵌入素材复用有界解码 PCM，长素材和外部链接回退到流式解码（[Issue #196](https://github.com/mumu-lhl/AAADAW/issues/196)）。
+- [ ] 验证流式素材欠载后的恢复：让 feeder 在后台丢弃落后于播放头的 PCM，并阻止队列中竞态写入的过期帧延迟播放（[Issue #198](https://github.com/mumu-lhl/AAADAW/issues/198)）。
 - [ ] 实现 Track Freeze、后台离线渲染、导出队列和明确的抖动（Dither）/浮点输出策略。
 - [ ] 只有在基准证明静态调度成为瓶颈后，才实现动态 Work-Stealing DAG；必须保持音频线程无锁/无分配约束。
 - [ ] 在评估许可、延迟和音质后集成 Rubber Band 时伸缩能力。

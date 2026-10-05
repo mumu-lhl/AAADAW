@@ -64,8 +64,8 @@ use aaadaw_engine::TrackMixController;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
-    AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError, audio_monitor_stream,
-    stereo_pcm_stream,
+    AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError,
+    STEREO_PCM_QUEUE_FRAME_BYTES, audio_monitor_stream, stereo_pcm_stream,
 };
 #[cfg(feature = "jack-backend")]
 use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
@@ -1387,7 +1387,7 @@ fn plan_pcm_queue_capacities(
     requested_frames_per_active_item: usize,
     max_block_frames: usize,
 ) -> Result<PcmQueuePlan, PlaybackBuildError> {
-    let bytes_per_frame = std::mem::size_of::<[f32; 2]>();
+    let bytes_per_frame = STEREO_PCM_QUEUE_FRAME_BYTES;
     let budget_frame_slots = PCM_QUEUE_GRAPH_BUDGET_BYTES / bytes_per_frame;
     if active_items > 0 && requested_frames_per_active_item == 0 {
         return Err(PlaybackBuildError::PcmStream(PcmStreamError::ZeroCapacity));
@@ -1562,15 +1562,21 @@ pub fn prepare_audio_playback_at(
                 )
                 .map_err(PlaybackBuildError::Media)?;
                 feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
+                let position = feeder.timeline_position();
                 feeders.push(feeder);
                 if needs_refill {
-                    item_streams.push(AudioItemStream::new_stereo_at_sample(
+                    item_streams.push(AudioItemStream::new_stereo_at_sample_with_position(
                         item.id(),
                         timeline_sample,
                         consumer,
+                        position,
                     ));
                 } else {
-                    item_streams.push(AudioItemStream::new_stereo(item.id(), consumer));
+                    item_streams.push(AudioItemStream::new_stereo_with_position(
+                        item.id(),
+                        consumer,
+                        position,
+                    ));
                 }
                 continue;
             } else if should_decode {
@@ -1640,15 +1646,21 @@ pub fn prepare_audio_playback_at(
             }
             return Err(PlaybackBuildError::Media(error));
         }
+        let position = feeder.timeline_position();
         feeders.push(feeder);
         if needs_refill {
-            item_streams.push(AudioItemStream::new_stereo_at_sample(
+            item_streams.push(AudioItemStream::new_stereo_at_sample_with_position(
                 item.id(),
                 timeline_sample,
                 consumer,
+                position,
             ));
         } else {
-            item_streams.push(AudioItemStream::new_stereo(item.id(), consumer));
+            item_streams.push(AudioItemStream::new_stereo_with_position(
+                item.id(),
+                consumer,
+                position,
+            ));
         }
     }
 
@@ -1668,7 +1680,8 @@ pub fn prepare_audio_playback_at(
 #[cfg(test)]
 mod pcm_queue_budget_tests {
     use super::{
-        PCM_QUEUE_GRAPH_BUDGET_BYTES, PcmQueuePlan, PlaybackBuildError, plan_pcm_queue_capacities,
+        PCM_QUEUE_GRAPH_BUDGET_BYTES, PcmQueuePlan, PlaybackBuildError,
+        STEREO_PCM_QUEUE_FRAME_BYTES, plan_pcm_queue_capacities,
     };
 
     #[test]
@@ -1684,10 +1697,9 @@ mod pcm_queue_budget_tests {
 
     #[test]
     fn many_active_items_share_the_pcm_budget() {
-        let plan = plan_pcm_queue_capacities(400, 0, 16_384, 8_192).unwrap();
+        let plan = plan_pcm_queue_capacities(100, 0, 16_384, 8_192).unwrap();
         assert!(plan.active_item_capacity_frames >= 8_192);
-        let allocated_bytes =
-            400 * plan.active_item_capacity_frames * std::mem::size_of::<[f32; 2]>();
+        let allocated_bytes = 100 * plan.active_item_capacity_frames * STEREO_PCM_QUEUE_FRAME_BYTES;
         assert!(allocated_bytes <= PCM_QUEUE_GRAPH_BUDGET_BYTES);
         assert!(plan.active_item_capacity_frames < 16_384);
     }
@@ -1706,13 +1718,18 @@ mod pcm_queue_budget_tests {
             Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded { .. })
         ));
         assert!(matches!(
-            plan_pcm_queue_capacities(0, PCM_QUEUE_GRAPH_BUDGET_BYTES / 8 + 1, 0, 8_192),
+            plan_pcm_queue_capacities(
+                0,
+                PCM_QUEUE_GRAPH_BUDGET_BYTES / STEREO_PCM_QUEUE_FRAME_BYTES + 1,
+                0,
+                8_192,
+            ),
             Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded {
                 active_items: 0,
                 past_items,
                 minimum_active_frames_per_item: 0,
                 ..
-            }) if past_items == PCM_QUEUE_GRAPH_BUDGET_BYTES / 8 + 1
+            }) if past_items == PCM_QUEUE_GRAPH_BUDGET_BYTES / STEREO_PCM_QUEUE_FRAME_BYTES + 1
         ));
     }
 

@@ -1,7 +1,8 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
     AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
-    MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream, stereo_pcm_stream,
+    AudioStreamPosition, MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream,
+    stereo_pcm_stream,
 };
 
 #[test]
@@ -111,6 +112,94 @@ fn stereo_item_stream_preserves_channels_and_counts_interleaved_underrun_samples
 
     assert_eq!(output, [[0.25, 0.0], [0.0, 0.0]]);
     assert_eq!(stats.underrun_samples, 2);
+}
+
+#[test]
+fn stereo_item_underrun_publishes_the_next_playhead_sample_to_its_feeder() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Recovery".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://recovery".to_owned(),
+            start_sample: 20,
+            source_offset_samples: 0,
+            length_samples: 8,
+        })
+        .expect("audio item should be valid");
+
+    let position = AudioStreamPosition::new(20);
+    let (mut producer, consumer) = stereo_pcm_stream(4).expect("positive queue size is valid");
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames(&[[0.25, -0.5]]), 1);
+    let stream = AudioItemStream::new_stereo_with_position(
+        project.audio_items()[0].id(),
+        consumer,
+        position.clone(),
+    );
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 4)
+        .expect("one item stream should match the project");
+    graph.transport_mut().seek_sample(20);
+    graph.transport_mut().start();
+
+    let mut output = [[0.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("underflowed callback should render");
+
+    assert_eq!(stats.underrun_samples, 6);
+    assert_eq!(output, [[0.25, -0.5], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]);
+    assert_eq!(position.requested_sample(), 24);
+}
+
+#[test]
+fn stereo_item_discards_already_queued_frames_behind_a_refill_position() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Recovery".to_owned(),
+        })
+        .expect("track creation should succeed");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://recovery-stale".to_owned(),
+            start_sample: 20,
+            source_offset_samples: 0,
+            length_samples: 8,
+        })
+        .expect("audio item should be valid");
+
+    let position = AudioStreamPosition::new(24);
+    let (mut producer, consumer) = stereo_pcm_stream(4).expect("positive queue size is valid");
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames_at(20, &[[0.75, -0.75]]), 1);
+    let stream = AudioItemStream::new_stereo_at_sample_with_position(
+        project.audio_items()[0].id(),
+        24,
+        consumer,
+        position.clone(),
+    );
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 4)
+        .expect("one item stream should match the project");
+    graph.transport_mut().seek_sample(24);
+    graph.transport_mut().start();
+
+    let mut output = [[1.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("stale stream frames should be dropped without blocking");
+
+    assert_eq!(stats.underrun_samples, 8);
+    assert_eq!(output, [[0.0, 0.0]; 4]);
+    assert_eq!(position.requested_sample(), 28);
 }
 
 #[test]
