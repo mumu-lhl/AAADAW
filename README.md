@@ -16,6 +16,7 @@ The core project model includes sample-clock `AudioItem`s with undoable edits, A
 - [Desktop development and build notes](docs/platforms.md)
 - [Portable desktop builds and first launch](docs/portable-builds.md)
 - [Native installers](docs/native-installers.md)
+- [Your first project](docs/first-project.md)
 - [Project action-history decision](docs/adr/0001-project-action-history.md)
 - [Desktop runtime and dependency policy](docs/adr/0007-desktop-runtime-and-dependency-policy.md)
 
@@ -24,6 +25,8 @@ The core project model includes sample-clock `AudioItem`s with undoable edits, A
 The shell has **File**, **Edit**, **View**, **Insert**, **Item**, **Track**, and **Actions** menus, with **Arrangement** selected by default. Arrangement shows track-aligned Audio/MIDI items on a meter-aware musical ruler, with horizontal zoom/pan, an edit cursor, track/item selection, snapping, time selection, item movement/splitting, inward edge trimming for audio items, waveforms, compact track volume-automation lanes, and expandable per-track CLAP FX automation lanes. FX automation lanes can be shown together and resized from their lower dividers. Track controls, item labels, scrolling, and pointer hit testing stay aligned as FX lanes are shown or hidden. The transport separates Play/Pause from Stop-to-playback-start and Restart-to-project-start. Double-click a MIDI item or use its context menu/Inspector to open its piano roll for note insertion, selection, movement, resizing, and deletion. The piano roll offers Velocity and selectable Sustain (CC64), Channel Volume (CC7), 14-bit Pitch Bend, Modulation (CC1), and Expression (CC11) lanes; MIDI Channel Volume remains distinct from the DAW track fader. The Inspector also retains precise sample/tick editing.
 
 The Media Browser docks beside Arrangement for audio import, source scanning, external-asset packing, and missing-link repair. CLAP plugins can be scanned, assigned as MIDI instruments, and managed in per-track FX chains. A transport strip stays at the bottom of the main window; JACK and PipeWire builds expose backend selection, playback, and seek controls. Native system file pickers handle project open/save, audio import, and relinking; cancelling a picker leaves the existing path field unchanged.
+
+New users can follow the [first-project walkthrough](docs/first-project.md) with a bundled session and generated melody source.
 
 ## Development
 
