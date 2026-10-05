@@ -33,6 +33,7 @@ const CREATE_TRACK_TOOL: &str = "daw_create_track";
 const MAX_TRACK_NAME_CHARS: usize = 128;
 const CREATE_MIDI_ITEM_TOOL: &str = "daw_create_midi_item";
 const MAX_MIDI_ITEM_LENGTH_TICKS: u64 = 3_840 * 256;
+const EDIT_MIDI_ITEM_TOOL: &str = "daw_edit_midi_item";
 const INSERT_MIDI_NOTES_TOOL: &str = "daw_insert_midi_notes";
 const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 const EDIT_MIDI_NOTE_TOOL: &str = "daw_edit_midi_note";
@@ -197,6 +198,7 @@ impl ServerHandler for ProjectMcpServer {
         if self.writable {
             tools.push(create_track_tool());
             tools.push(create_midi_item_tool());
+            tools.push(edit_midi_item_tool());
             tools.push(insert_midi_notes_tool());
             tools.push(edit_midi_note_tool());
             tools.push(delete_midi_notes_tool());
@@ -217,6 +219,7 @@ impl ServerHandler for ProjectMcpServer {
             MIDI_QUERY_TOOL => Some(midi_query_tool()),
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             CREATE_MIDI_ITEM_TOOL if self.writable => Some(create_midi_item_tool()),
+            EDIT_MIDI_ITEM_TOOL if self.writable => Some(edit_midi_item_tool()),
             INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
             EDIT_MIDI_NOTE_TOOL if self.writable => Some(edit_midi_note_tool()),
             DELETE_MIDI_NOTES_TOOL if self.writable => Some(delete_midi_notes_tool()),
@@ -260,6 +263,12 @@ impl ServerHandler for ProjectMcpServer {
             )
             .and_then(|(track_id, start_tick, length_ticks)| {
                 self.create_midi_item(track_id, start_tick, length_ticks)
+            }),
+            EDIT_MIDI_ITEM_TOOL if self.writable => parse_edit_midi_item_arguments(
+                request.arguments.as_ref(),
+            )
+            .and_then(|(item_id, start_tick, length_ticks)| {
+                self.edit_midi_item(item_id, start_tick, length_ticks)
             }),
             INSERT_MIDI_NOTES_TOOL if self.writable => {
                 parse_insert_midi_notes_arguments(request.arguments.as_ref()).and_then(
@@ -459,6 +468,44 @@ impl ProjectMcpServer {
         Ok(json!({
             "track_id": track_id.value(),
             "item_id": item_id,
+            "start_tick": start_tick,
+            "length_ticks": length_ticks,
+        }))
+    }
+
+    fn edit_midi_item(
+        &self,
+        raw_item_id: u64,
+        start_tick: u64,
+        length_ticks: u64,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let item_id = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == raw_item_id)
+            .map(|item| item.id())
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        project
+            .apply(DawAction::EditMidiItem {
+                item_id,
+                start_tick,
+                length_ticks,
+            })
+            .map_err(|error| error.to_string())?;
+        persist_project_edit(&mut project, store, "edited MIDI item")?;
+        Ok(json!({
+            "item_id": item_id.value(),
             "start_tick": start_tick,
             "length_ticks": length_ticks,
         }))
@@ -939,6 +986,29 @@ fn create_midi_item_tool() -> Tool {
                 "length_ticks": {"type": "integer", "minimum": 1, "maximum": MAX_MIDI_ITEM_LENGTH_TICKS}
             },
             "required": ["track_id", "start_tick", "length_ticks"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn edit_midi_item_tool() -> Tool {
+    Tool::new(
+        EDIT_MIDI_ITEM_TOOL,
+        "Move or resize an existing MIDI item without discarding notes.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "minimum": 0},
+                "start_tick": {"type": "integer", "minimum": 0},
+                "length_ticks": {"type": "integer", "minimum": 1, "maximum": MAX_MIDI_ITEM_LENGTH_TICKS}
+            },
+            "required": ["item_id", "start_tick", "length_ticks"],
             "additionalProperties": false
         })),
     )
@@ -1444,6 +1514,36 @@ fn parse_create_midi_item_arguments(
     Ok((track_id, start_tick, length_ticks))
 }
 
+fn parse_edit_midi_item_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, u64), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "item_id" | "start_tick" | "length_ticks"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let integer = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("{key} must be a non-negative integer"))
+    };
+    let item_id = integer("item_id")?;
+    let start_tick = integer("start_tick")?;
+    let length_ticks = integer("length_ticks")?;
+    if length_ticks == 0 || length_ticks > MAX_MIDI_ITEM_LENGTH_TICKS {
+        return Err(format!(
+            "length_ticks must be in 1..={MAX_MIDI_ITEM_LENGTH_TICKS}"
+        ));
+    }
+    if start_tick.checked_add(length_ticks).is_none() {
+        return Err("start_tick plus length_ticks exceeds the supported range".to_owned());
+    }
+    Ok((item_id, start_tick, length_ticks))
+}
+
 fn parse_insert_midi_notes_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<(u64, u64, Vec<MidiNoteData>), String> {
@@ -1876,9 +1976,9 @@ mod tests {
         MAX_MAP_POINTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE,
         MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS,
         MAX_TRACKS, parse_create_midi_item_arguments, parse_create_track_arguments,
-        parse_delete_midi_notes_arguments, parse_edit_midi_note_arguments,
-        parse_insert_midi_notes_arguments, parse_note_query_arguments,
-        parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
+        parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
+        parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
+        parse_note_query_arguments, parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
         parse_set_time_signature_arguments, parse_track_summary_uri, scoped_query_notes,
         structure_summary, track_midi_summary,
     };
@@ -1938,6 +2038,27 @@ mod tests {
         ] {
             assert!(parse(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn edit_midi_item_arguments_require_a_valid_bounded_range() {
+        let parse = |value: Value| parse_edit_midi_item_arguments(value.as_object());
+        assert_eq!(
+            parse(json!({"item_id": 0, "start_tick": 960, "length_ticks": 3840})).unwrap(),
+            (0, 960, 3840)
+        );
+        for invalid in [
+            json!({"item_id": -1, "start_tick": 0, "length_ticks": 1}),
+            json!({"item_id": 0, "start_tick": -1, "length_ticks": 1}),
+            json!({"item_id": 0, "start_tick": 0, "length_ticks": 0}),
+            json!({"item_id": 0, "start_tick": 0, "length_ticks": MAX_MIDI_ITEM_LENGTH_TICKS + 1}),
+            json!({"item_id": 0, "start_tick": u64::MAX, "length_ticks": 1}),
+            json!({"item_id": 0, "start_tick": 0, "length_ticks": 1, "extra": true}),
+            json!({"item_id": 0, "start_tick": 1.5, "length_ticks": 1}),
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+        assert!(parse_edit_midi_item_arguments(None).is_err());
     }
 
     #[test]

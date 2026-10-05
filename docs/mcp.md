@@ -59,6 +59,8 @@ The `daw_create_track` tool accepts one non-empty track name of at most 128 char
 
 `daw_create_midi_item` accepts an existing track ID, an absolute project start tick, and a clip length from 1 to 983,040 ticks. It creates an empty clip through `DawAction::InsertMidiItem`, persists it, and returns its stable item ID; callers can then add bounded note batches with `daw_insert_midi_notes`. The created clip participates in writer-session undo/redo.
 
+`daw_edit_midi_item` accepts a MIDI item ID, absolute project start tick, and new length from 1 to 983,040 ticks. It moves or resizes the item through `DawAction::EditMidiItem`, preserves its note IDs and relative note data, and rejects a length that would truncate any note. The edit is persisted and participates in writer-session undo/redo.
+
 `daw_edit_midi_note` replaces one note's clip-relative tick, duration, pitch, and velocity using its stable note ID. The Action rejects note ranges outside the item. `daw_delete_midi_notes` removes 1–512 distinct note IDs from one item as a single edit; if any requested note is missing, the entire request fails before mutation. Both tools save before success and participate in writer-session undo/redo.
 
 `daw_set_track_record_arm` accepts an existing track ID and explicit `armed` boolean, applies `DawAction::SetTrackRecordArm`, and saves the prepared record-arm state; it does not start recording or access an audio device. Repeating the existing state is a no-op. Invalid requests do not change the project.
