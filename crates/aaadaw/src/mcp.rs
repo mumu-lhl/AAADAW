@@ -2621,10 +2621,10 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS,
-        MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT,
-        MAX_MIDI_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
-        MAX_VOLUME_AUTOMATION_RESULTS, parse_create_midi_item_arguments,
+        DEFAULT_VOLUME_AUTOMATION_RESULTS, MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT,
+        MAX_MIDI_EXPRESSION_RESULTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE,
+        MAX_MIDI_NOTES_PER_INSERT, MAX_MIDI_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS,
+        MAX_TRACKS, MAX_VOLUME_AUTOMATION_RESULTS, parse_create_midi_item_arguments,
         parse_create_track_arguments, parse_delete_midi_notes_arguments,
         parse_edit_midi_item_arguments, parse_edit_midi_note_arguments,
         parse_insert_midi_notes_arguments, parse_midi_expression_query_arguments,
@@ -3393,6 +3393,15 @@ mod tests {
 
     #[test]
     fn volume_automation_query_parser_rejects_invalid_fields_and_bounds() {
+        let default_limit = json!({
+            "track_id": 7,
+            "start_sample": 100,
+            "end_sample": 200
+        });
+        assert_eq!(
+            parse_volume_automation_query_arguments(default_limit.as_object()).unwrap(),
+            (7, 100, 200, DEFAULT_VOLUME_AUTOMATION_RESULTS)
+        );
         let valid = json!({
             "track_id": 7,
             "start_sample": 100,
