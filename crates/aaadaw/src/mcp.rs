@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, GridFraction, MidiItem, MidiNoteData, Project, TempoCurve, TimeSignature, TrackId,
-    VolumeAutomationPoint,
+    DawAction, GridFraction, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData,
+    Project, TempoCurve, TimeSignature, TrackId, VolumeAutomationPoint,
 };
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
@@ -39,6 +39,9 @@ const MAX_MIDI_NOTES_PER_INSERT: usize = 512;
 const EDIT_MIDI_NOTE_TOOL: &str = "daw_edit_midi_note";
 const DELETE_MIDI_NOTES_TOOL: &str = "daw_delete_midi_notes";
 const MAX_MIDI_NOTES_PER_DELETE: usize = 512;
+const UPSERT_MIDI_CONTROLLERS_TOOL: &str = "daw_upsert_midi_controllers";
+const UPSERT_MIDI_PITCH_BENDS_TOOL: &str = "daw_upsert_midi_pitch_bends";
+const MAX_MIDI_EVENTS_PER_UPSERT: usize = 512;
 const QUANTIZE_MIDI_ITEM_TOOL: &str = "daw_quantize_midi_item";
 const SET_VOLUME_AUTOMATION_POINT_TOOL: &str = "daw_set_volume_automation_point";
 const SET_TRACK_RECORD_ARM_TOOL: &str = "daw_set_track_record_arm";
@@ -202,6 +205,8 @@ impl ServerHandler for ProjectMcpServer {
             tools.push(insert_midi_notes_tool());
             tools.push(edit_midi_note_tool());
             tools.push(delete_midi_notes_tool());
+            tools.push(upsert_midi_controllers_tool());
+            tools.push(upsert_midi_pitch_bends_tool());
             tools.push(quantize_midi_item_tool());
             tools.push(set_volume_automation_point_tool());
             tools.push(set_track_record_arm_tool());
@@ -223,6 +228,8 @@ impl ServerHandler for ProjectMcpServer {
             INSERT_MIDI_NOTES_TOOL if self.writable => Some(insert_midi_notes_tool()),
             EDIT_MIDI_NOTE_TOOL if self.writable => Some(edit_midi_note_tool()),
             DELETE_MIDI_NOTES_TOOL if self.writable => Some(delete_midi_notes_tool()),
+            UPSERT_MIDI_CONTROLLERS_TOOL if self.writable => Some(upsert_midi_controllers_tool()),
+            UPSERT_MIDI_PITCH_BENDS_TOOL if self.writable => Some(upsert_midi_pitch_bends_tool()),
             QUANTIZE_MIDI_ITEM_TOOL if self.writable => Some(quantize_midi_item_tool()),
             SET_VOLUME_AUTOMATION_POINT_TOOL if self.writable => {
                 Some(set_volume_automation_point_tool())
@@ -282,6 +289,16 @@ impl ServerHandler for ProjectMcpServer {
             DELETE_MIDI_NOTES_TOOL if self.writable => {
                 parse_delete_midi_notes_arguments(request.arguments.as_ref())
                     .and_then(|(item_id, note_ids)| self.delete_midi_notes(item_id, note_ids))
+            }
+            UPSERT_MIDI_CONTROLLERS_TOOL if self.writable => {
+                parse_upsert_midi_controllers_arguments(request.arguments.as_ref()).and_then(
+                    |(item_id, controllers)| self.upsert_midi_controllers(item_id, controllers),
+                )
+            }
+            UPSERT_MIDI_PITCH_BENDS_TOOL if self.writable => {
+                parse_upsert_midi_pitch_bends_arguments(request.arguments.as_ref()).and_then(
+                    |(item_id, pitch_bends)| self.upsert_midi_pitch_bends(item_id, pitch_bends),
+                )
             }
             QUANTIZE_MIDI_ITEM_TOOL if self.writable => parse_quantize_midi_item_arguments(
                 request.arguments.as_ref(),
@@ -643,6 +660,120 @@ impl ProjectMcpServer {
         });
         persist_project_edit(&mut project, store, "deleted MIDI notes")?;
         Ok(result)
+    }
+
+    fn upsert_midi_controllers(
+        &self,
+        raw_item_id: u64,
+        updates: Vec<MidiControllerData>,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == raw_item_id)
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        let item_id = item.id();
+        let item_length = item.length_ticks();
+        let mut controllers = item.controllers().to_vec();
+        for update in &updates {
+            if update.tick >= item_length {
+                return Err(format!(
+                    "controller tick {} is outside the MIDI item",
+                    update.tick
+                ));
+            }
+            if let Some(existing) = controllers
+                .iter_mut()
+                .find(|event| event.controller == update.controller && event.tick == update.tick)
+            {
+                *existing = *update;
+            } else {
+                controllers.push(*update);
+            }
+        }
+        project
+            .apply(DawAction::SetMidiControllers {
+                item_id,
+                controllers,
+            })
+            .map_err(|error| error.to_string())?;
+        let points = updates
+            .iter()
+            .map(|point| {
+                json!({
+                    "controller": point.controller,
+                    "tick": point.tick,
+                    "value": point.value,
+                })
+            })
+            .collect::<Vec<_>>();
+        persist_project_edit(&mut project, store, "upserted MIDI controllers")?;
+        Ok(json!({"item_id": item_id.value(), "points": points}))
+    }
+
+    fn upsert_midi_pitch_bends(
+        &self,
+        raw_item_id: u64,
+        updates: Vec<MidiPitchBendData>,
+    ) -> Result<Value, String> {
+        let mut project = self
+            .project
+            .lock()
+            .map_err(|_| "project lock was poisoned".to_owned())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "project store lock was poisoned".to_owned())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "project was opened read-only".to_owned())?;
+        let item = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id().value() == raw_item_id)
+            .ok_or_else(|| "unknown MIDI item id".to_owned())?;
+        let item_id = item.id();
+        let item_length = item.length_ticks();
+        let mut pitch_bends = item.pitch_bends().to_vec();
+        for update in &updates {
+            if update.tick >= item_length {
+                return Err(format!(
+                    "pitch-bend tick {} is outside the MIDI item",
+                    update.tick
+                ));
+            }
+            if let Some(existing) = pitch_bends
+                .iter_mut()
+                .find(|event| event.tick == update.tick)
+            {
+                *existing = *update;
+            } else {
+                pitch_bends.push(*update);
+            }
+        }
+        project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends,
+            })
+            .map_err(|error| error.to_string())?;
+        let points = updates
+            .iter()
+            .map(|point| json!({"tick": point.tick, "value": point.value}))
+            .collect::<Vec<_>>();
+        persist_project_edit(&mut project, store, "upserted MIDI pitch bends")?;
+        Ok(json!({"item_id": item_id.value(), "points": points}))
     }
 
     fn quantize_midi_item(
@@ -1101,6 +1232,77 @@ fn delete_midi_notes_tool() -> Tool {
                 }
             },
             "required": ["item_id", "note_ids"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn upsert_midi_controllers_tool() -> Tool {
+    Tool::new(
+        UPSERT_MIDI_CONTROLLERS_TOOL,
+        "Insert or update a bounded batch of MIDI controller points, preserving other events.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "minimum": 0},
+                "controllers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_MIDI_EVENTS_PER_UPSERT,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "controller": {"type": "integer", "minimum": 0, "maximum": 127},
+                            "tick": {"type": "integer", "minimum": 0},
+                            "value": {"type": "integer", "minimum": 0, "maximum": 127}
+                        },
+                        "required": ["controller", "tick", "value"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["item_id", "controllers"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .idempotent(false)
+            .open_world(false),
+    )
+}
+
+fn upsert_midi_pitch_bends_tool() -> Tool {
+    Tool::new(
+        UPSERT_MIDI_PITCH_BENDS_TOOL,
+        "Insert or update a bounded batch of MIDI pitch-bend points, preserving other ticks.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "minimum": 0},
+                "pitch_bends": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_MIDI_EVENTS_PER_UPSERT,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tick": {"type": "integer", "minimum": 0},
+                            "value": {"type": "integer", "minimum": 0, "maximum": 16383}
+                        },
+                        "required": ["tick", "value"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["item_id", "pitch_bends"],
             "additionalProperties": false
         })),
     )
@@ -1695,6 +1897,134 @@ fn parse_delete_midi_notes_arguments(
     Ok((item_id, note_ids))
 }
 
+fn parse_upsert_midi_controllers_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, Vec<MidiControllerData>), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "item_id" | "controllers"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let item_id = arguments
+        .get("item_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "item_id must be a non-negative integer".to_owned())?;
+    let controllers = arguments
+        .get("controllers")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "controllers must be an array".to_owned())?;
+    if controllers.is_empty() || controllers.len() > MAX_MIDI_EVENTS_PER_UPSERT {
+        return Err(format!(
+            "controllers must contain 1..={MAX_MIDI_EVENTS_PER_UPSERT} points"
+        ));
+    }
+    let mut positions = std::collections::HashSet::with_capacity(controllers.len());
+    let controllers = controllers
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let point = value
+                .as_object()
+                .ok_or_else(|| format!("controllers[{index}] must be an object"))?;
+            if point
+                .keys()
+                .any(|key| !matches!(key.as_str(), "controller" | "tick" | "value"))
+            {
+                return Err(format!("controllers[{index}] contains an unknown field"));
+            }
+            let unsigned = |key: &str| {
+                point.get(key).and_then(Value::as_u64).ok_or_else(|| {
+                    format!("controllers[{index}].{key} must be a non-negative integer")
+                })
+            };
+            let controller = u8::try_from(unsigned("controller")?)
+                .map_err(|_| format!("controllers[{index}].controller must be in 0..=127"))?;
+            if controller > 127 {
+                return Err(format!(
+                    "controllers[{index}].controller must be in 0..=127"
+                ));
+            }
+            let tick = unsigned("tick")?;
+            let value = u8::try_from(unsigned("value")?)
+                .map_err(|_| format!("controllers[{index}].value must be in 0..=127"))?;
+            if value > 127 {
+                return Err(format!("controllers[{index}].value must be in 0..=127"));
+            }
+            if !positions.insert((controller, tick)) {
+                return Err("controllers must not repeat a controller/tick pair".to_owned());
+            }
+            Ok(MidiControllerData {
+                controller,
+                tick,
+                value,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((item_id, controllers))
+}
+
+fn parse_upsert_midi_pitch_bends_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, Vec<MidiPitchBendData>), String> {
+    let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
+    if arguments
+        .keys()
+        .any(|key| !matches!(key.as_str(), "item_id" | "pitch_bends"))
+    {
+        return Err("arguments contain an unknown field".to_owned());
+    }
+    let item_id = arguments
+        .get("item_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "item_id must be a non-negative integer".to_owned())?;
+    let pitch_bends = arguments
+        .get("pitch_bends")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "pitch_bends must be an array".to_owned())?;
+    if pitch_bends.is_empty() || pitch_bends.len() > MAX_MIDI_EVENTS_PER_UPSERT {
+        return Err(format!(
+            "pitch_bends must contain 1..={MAX_MIDI_EVENTS_PER_UPSERT} points"
+        ));
+    }
+    let mut ticks = std::collections::HashSet::with_capacity(pitch_bends.len());
+    let pitch_bends = pitch_bends
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let point = value
+                .as_object()
+                .ok_or_else(|| format!("pitch_bends[{index}] must be an object"))?;
+            if point
+                .keys()
+                .any(|key| !matches!(key.as_str(), "tick" | "value"))
+            {
+                return Err(format!("pitch_bends[{index}] contains an unknown field"));
+            }
+            let tick = point.get("tick").and_then(Value::as_u64).ok_or_else(|| {
+                format!("pitch_bends[{index}].tick must be a non-negative integer")
+            })?;
+            let raw_value = point.get("value").and_then(Value::as_u64).ok_or_else(|| {
+                format!("pitch_bends[{index}].value must be an integer in 0..=16383")
+            })?;
+            let bend_value = u16::try_from(raw_value)
+                .map_err(|_| format!("pitch_bends[{index}].value must be in 0..=16383"))?;
+            if bend_value > 16_383 {
+                return Err(format!("pitch_bends[{index}].value must be in 0..=16383"));
+            }
+            if !ticks.insert(tick) {
+                return Err("pitch_bends must not repeat a tick".to_owned());
+            }
+            Ok(MidiPitchBendData {
+                tick,
+                value: bend_value,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((item_id, pitch_bends))
+}
+
 fn parse_quantize_midi_item_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<(u64, u64, u32, u32, f32), String> {
@@ -1973,16 +2303,20 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE,
-        MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS,
-        MAX_TRACKS, parse_create_midi_item_arguments, parse_create_track_arguments,
-        parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
-        parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
-        parse_note_query_arguments, parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
-        parse_set_time_signature_arguments, parse_track_summary_uri, scoped_query_notes,
-        structure_summary, track_midi_summary,
+        MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_ITEM_LENGTH_TICKS,
+        MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS,
+        MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_midi_item_arguments,
+        parse_create_track_arguments, parse_delete_midi_notes_arguments,
+        parse_edit_midi_item_arguments, parse_edit_midi_note_arguments,
+        parse_insert_midi_notes_arguments, parse_note_query_arguments,
+        parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
+        parse_set_time_signature_arguments, parse_track_summary_uri,
+        parse_upsert_midi_controllers_arguments, parse_upsert_midi_pitch_bends_arguments,
+        scoped_query_notes, structure_summary, track_midi_summary,
     };
-    use aaadaw_core::{DawAction, MidiNoteData, Project, TimeSignature};
+    use aaadaw_core::{
+        DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
+    };
     use serde_json::{Value, json};
 
     #[test]
@@ -2157,6 +2491,102 @@ mod tests {
         let unknown_field = json!({"item_id": 2, "note_ids": [4], "extra": true});
         assert!(parse_delete_midi_notes_arguments(unknown_field.as_object()).is_err());
         assert!(parse_delete_midi_notes_arguments(None).is_err());
+    }
+
+    #[test]
+    fn midi_controller_upsert_arguments_validate_bounded_unique_points() {
+        let parse = |controllers: Value| {
+            let value = json!({"item_id": 2, "controllers": controllers});
+            parse_upsert_midi_controllers_arguments(value.as_object())
+        };
+        let too_many = Value::Array(
+            (0..=MAX_MIDI_EVENTS_PER_UPSERT)
+                .map(|_| json!({"controller": 11, "tick": 0, "value": 1}))
+                .collect(),
+        );
+        assert_eq!(
+            parse(json!([
+                {"controller": 11, "tick": 0, "value": 100},
+                {"controller": 10, "tick": 0, "value": 64}
+            ]))
+            .unwrap(),
+            (
+                2,
+                vec![
+                    MidiControllerData {
+                        controller: 11,
+                        tick: 0,
+                        value: 100,
+                    },
+                    MidiControllerData {
+                        controller: 10,
+                        tick: 0,
+                        value: 64,
+                    }
+                ]
+            )
+        );
+        for invalid in [
+            json!([]),
+            json!([{"controller": 128, "tick": 0, "value": 1}]),
+            json!([{"controller": 11, "tick": 0, "value": 128}]),
+            json!([{"controller": 11, "tick": -1, "value": 1}]),
+            json!([{"controller": 11, "tick": 0, "value": 1, "extra": true}]),
+            json!([
+                {"controller": 11, "tick": 0, "value": 1},
+                {"controller": 11, "tick": 0, "value": 2}
+            ]),
+            too_many,
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+        let unknown_field = json!({"item_id": 2, "controllers": [{"controller": 11, "tick": 0, "value": 1}], "extra": true});
+        assert!(parse_upsert_midi_controllers_arguments(unknown_field.as_object()).is_err());
+        assert!(parse_upsert_midi_controllers_arguments(None).is_err());
+    }
+
+    #[test]
+    fn midi_pitch_bend_upsert_arguments_validate_bounded_unique_points() {
+        let parse = |pitch_bends: Value| {
+            let value = json!({"item_id": 2, "pitch_bends": pitch_bends});
+            parse_upsert_midi_pitch_bends_arguments(value.as_object())
+        };
+        let too_many = Value::Array(
+            (0..=MAX_MIDI_EVENTS_PER_UPSERT)
+                .map(|_| json!({"tick": 0, "value": 8192}))
+                .collect(),
+        );
+        assert_eq!(
+            parse(json!([{"tick": 0, "value": 8192}, {"tick": 480, "value": 16383}])).unwrap(),
+            (
+                2,
+                vec![
+                    MidiPitchBendData {
+                        tick: 0,
+                        value: 8192,
+                    },
+                    MidiPitchBendData {
+                        tick: 480,
+                        value: 16383,
+                    }
+                ]
+            )
+        );
+        for invalid in [
+            json!([]),
+            json!([{"tick": -1, "value": 8192}]),
+            json!([{"tick": 0, "value": 16384}]),
+            json!([{"tick": 0, "value": "8192"}]),
+            json!([{"tick": 0, "value": 8192, "extra": true}]),
+            json!([{"tick": 0, "value": 8192}, {"tick": 0, "value": 9000}]),
+            too_many,
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+        let unknown_field =
+            json!({"item_id": 2, "pitch_bends": [{"tick": 0, "value": 1}], "extra": true});
+        assert!(parse_upsert_midi_pitch_bends_arguments(unknown_field.as_object()).is_err());
+        assert!(parse_upsert_midi_pitch_bends_arguments(None).is_err());
     }
 
     #[test]

@@ -63,6 +63,8 @@ The `daw_create_track` tool accepts one non-empty track name of at most 128 char
 
 `daw_edit_midi_note` replaces one note's clip-relative tick, duration, pitch, and velocity using its stable note ID. The Action rejects note ranges outside the item. `daw_delete_midi_notes` removes 1–512 distinct note IDs from one item as a single edit; if any requested note is missing, the entire request fails before mutation. Both tools save before success and participate in writer-session undo/redo.
 
+`daw_upsert_midi_controllers` accepts 1–512 controller/tick/value points; an existing point with the same controller and tick is replaced, while all other controller points are preserved. `daw_upsert_midi_pitch_bends` accepts 1–512 tick/value points and replaces only existing pitch bends at those ticks. Ticks must be inside the item, CC numbers and values are 7-bit, and pitch-bend values are 14-bit. Both tools preserve unaddressed events, apply through the item Actions, and support writer-session undo/redo.
+
 `daw_set_track_record_arm` accepts an existing track ID and explicit `armed` boolean, applies `DawAction::SetTrackRecordArm`, and saves the prepared record-arm state; it does not start recording or access an audio device. Repeating the existing state is a no-op. Invalid requests do not change the project.
 
 `daw_set_track_mix` accepts a track ID and one or more of `volume_db`, `pan`, `muted`, and `solo`. Supplied controls are validated and applied together as one atomic `DawAction::BatchTransaction`; omitted controls remain unchanged. The response returns the full resulting mix state, and an unchanged request does not create history or write the project.
