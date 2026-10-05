@@ -111,7 +111,13 @@ impl ClapIpcMapping {
         std::mem::size_of::<ClapIpcRegion>()
     }
 
-    pub fn path(&self) -> Option<PathBuf> {
+    /// Returns backing path for launching the trusted helper process.
+    ///
+    /// # Safety
+    ///
+    /// Keep the file at its original size and do not replace it until this mapping drops. Only
+    /// pass the path to the helper process that participates in the IPC protocol.
+    pub unsafe fn path(&self) -> Option<PathBuf> {
         self.path.as_ref().map(|path| path.to_path_buf())
     }
 
@@ -683,9 +689,11 @@ mod tests {
     fn file_mapping_is_shared_between_host_and_helper_views() {
         let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
         let host = ClapIpcMapping::create(config).unwrap();
-        // SAFETY: `host.path()` names the fixed-size mapping initialized above; the host retains
-        // it for the full helper-view lifetime.
-        let helper = unsafe { ClapIpcMapping::open(&host.path().unwrap()) }.unwrap();
+        // SAFETY: the parent created this file, keeps its size fixed, and shares it only with the
+        // helper view below.
+        let path = unsafe { host.path() }.unwrap();
+        // SAFETY: `path` names the fixed-size mapping initialized above; the host retains it.
+        let helper = unsafe { ClapIpcMapping::open(&path) }.unwrap();
         assert!(helper.accept_handshake(config));
         assert!(host.region().is_ready());
 
