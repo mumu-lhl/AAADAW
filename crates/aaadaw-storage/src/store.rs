@@ -1,7 +1,8 @@
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
     MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
-    TempoCurve, TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
 use rusqlite::{
@@ -20,7 +21,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -176,6 +177,23 @@ INSERT INTO tempo_points_v12(start_tick, bpm, curve_to_next)
     SELECT start_tick, bpm, curve_to_next FROM tempo_points;
 DROP TABLE tempo_points;
 ALTER TABLE tempo_points_v12 RENAME TO tempo_points;
+"#;
+
+const MIGRATION_13: &str = r#"
+CREATE TABLE track_fx_parameter_automation_points (
+    track_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    parameter_id INTEGER NOT NULL CHECK (parameter_id BETWEEN 0 AND 4294967295),
+    point_position INTEGER NOT NULL CHECK (point_position >= 0),
+    sample INTEGER NOT NULL CHECK (sample >= 0),
+    value REAL NOT NULL CHECK (value BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308),
+    PRIMARY KEY (track_id, position, parameter_id, point_position),
+    UNIQUE (track_id, position, parameter_id, sample),
+    FOREIGN KEY (track_id, position)
+        REFERENCES track_fx_plugins(track_id, position) ON DELETE CASCADE
+);
+CREATE INDEX track_fx_parameter_automation_by_sample
+    ON track_fx_parameter_automation_points(track_id, position, parameter_id, sample);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -2005,6 +2023,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             10 => transaction.execute_batch(MIGRATION_10)?,
             11 => transaction.execute_batch(MIGRATION_11)?,
             12 => transaction.execute_batch(MIGRATION_12)?,
+            13 => transaction.execute_batch(MIGRATION_13)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2105,6 +2124,28 @@ fn write_snapshot(
                         parameter.value,
                     ],
                 )?;
+            }
+            for lane in &plugin.parameter_automation {
+                for (point_position, point) in lane.points.iter().enumerate() {
+                    if !point.value.is_finite() {
+                        return Err(StorageError::InvalidStoredData(
+                            "track FX parameter automation value",
+                        ));
+                    }
+                    transaction.execute(
+                        "INSERT INTO track_fx_parameter_automation_points(\
+                         track_id, position, parameter_id, point_position, sample, value) \
+                         VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            to_sql_integer(track.id)?,
+                            usize_to_sql(position)?,
+                            i64::from(lane.parameter_id),
+                            usize_to_sql(point_position)?,
+                            to_sql_integer(point.sample)?,
+                            point.value,
+                        ],
+                    )?;
+                }
             }
         }
     }
@@ -2236,6 +2277,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 enabled,
                 state,
                 parameter_values: Vec::new(),
+                parameter_automation: Vec::new(),
             });
     }
 
@@ -2270,6 +2312,67 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     for (track_id, chain) in &mut fx_chains {
         for (position, plugin) in chain.iter_mut().enumerate() {
             plugin.parameter_values = parameter_values
+                .remove(&(*track_id, usize_to_sql(position)?))
+                .unwrap_or_default();
+        }
+    }
+
+    let mut parameter_automation =
+        HashMap::<(i64, i64), Vec<TrackFxParameterAutomationLaneSnapshot>>::new();
+    let mut automation_statement = connection.prepare(
+        "SELECT track_id, position, parameter_id, point_position, sample, value \
+         FROM track_fx_parameter_automation_points \
+         ORDER BY track_id, position, parameter_id, point_position",
+    )?;
+    let automation_rows = automation_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, f64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (track_id, position, parameter_id, point_position, sample, value) in automation_rows {
+        let parameter_id = u32::try_from(parameter_id)
+            .map_err(|_| StorageError::InvalidStoredData("track FX automation parameter ID"))?;
+        let point_position = from_sql_u64(point_position)?;
+        let sample = from_sql_u64(sample)?;
+        if !value.is_finite() {
+            return Err(StorageError::InvalidStoredData(
+                "track FX parameter automation value",
+            ));
+        }
+        let lanes = parameter_automation
+            .entry((track_id, position))
+            .or_default();
+        let lane_index = match lanes.binary_search_by_key(&parameter_id, |lane| lane.parameter_id) {
+            Ok(index) => index,
+            Err(index) => {
+                lanes.insert(
+                    index,
+                    TrackFxParameterAutomationLaneSnapshot {
+                        parameter_id,
+                        points: Vec::new(),
+                    },
+                );
+                index
+            }
+        };
+        let points = &mut lanes[lane_index].points;
+        if usize::try_from(point_position).ok() != Some(points.len()) {
+            return Err(StorageError::InvalidStoredData(
+                "track FX automation point order",
+            ));
+        }
+        points.push(TrackFxParameterAutomationPointSnapshot { sample, value });
+    }
+    for (track_id, chain) in &mut fx_chains {
+        for (position, plugin) in chain.iter_mut().enumerate() {
+            plugin.parameter_automation = parameter_automation
                 .remove(&(*track_id, usize_to_sql(position)?))
                 .unwrap_or_default();
         }

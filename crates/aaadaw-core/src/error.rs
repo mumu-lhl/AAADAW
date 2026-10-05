@@ -28,6 +28,7 @@ pub enum ActionError {
     InvalidTrackInstrument,
     InvalidTrackFxPlugin,
     InvalidTrackFxParameter,
+    InvalidTrackFxParameterAutomation,
     /// A tempo must be finite and greater than zero.
     InvalidTempoBpm,
     /// The resulting tempo map cannot be represented in sample positions.
@@ -129,6 +130,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidTrackFxParameter => formatter
                 .write_str("track FX parameter edit must target a plugin with finite values"),
+            Self::InvalidTrackFxParameterAutomation => formatter.write_str(
+                "track FX automation points must be finite, strictly ordered, and bounded",
+            ),
             Self::InvalidTempoBpm => {
                 formatter.write_str("tempo must be finite and greater than zero")
             }

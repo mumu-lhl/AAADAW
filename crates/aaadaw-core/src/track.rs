@@ -1,3 +1,7 @@
+/// Maximum number of independently automated parameters accepted for one track FX instance.
+/// This keeps per-block playback scheduling bounded even for malformed project files.
+pub const MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES: usize = 256;
+
 /// The identifier of a track in a project.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TrackId(u64);
@@ -35,6 +39,65 @@ impl VolumeAutomationPoint {
     /// Returns the point's gain in decibels.
     pub fn gain_db(self) -> f32 {
         self.gain_db
+    }
+}
+
+/// One sample-clock value in a CLAP effect parameter automation lane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FxParameterAutomationPoint {
+    sample: u64,
+    value_bits: u64,
+}
+
+impl FxParameterAutomationPoint {
+    /// Creates a finite CLAP parameter value at an absolute project sample.
+    pub fn new(sample: u64, value: f64) -> Option<Self> {
+        value.is_finite().then_some(Self {
+            sample,
+            value_bits: value.to_bits(),
+        })
+    }
+
+    /// Returns the absolute project sample at which this value occurs.
+    pub fn sample(self) -> u64 {
+        self.sample
+    }
+
+    /// Returns the plugin parameter value.
+    pub fn value(self) -> f64 {
+        f64::from_bits(self.value_bits)
+    }
+}
+
+/// A sample-ordered automation lane owned by one CLAP FX parameter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FxParameterAutomationLane {
+    parameter_id: u32,
+    points: Vec<FxParameterAutomationPoint>,
+}
+
+impl FxParameterAutomationLane {
+    /// Creates a non-empty lane with strictly increasing sample positions.
+    pub fn new(parameter_id: u32, points: Vec<FxParameterAutomationPoint>) -> Option<Self> {
+        (!points.is_empty()
+            && points.iter().all(|point| point.value().is_finite())
+            && points
+                .windows(2)
+                .all(|pair| pair[0].sample < pair[1].sample))
+        .then_some(Self {
+            parameter_id,
+            points,
+        })
+    }
+
+    /// Returns the CLAP parameter ID controlled by this lane.
+    pub fn parameter_id(&self) -> u32 {
+        self.parameter_id
+    }
+
+    /// Returns points ordered by absolute project sample.
+    pub fn points(&self) -> &[FxParameterAutomationPoint] {
+        &self.points
     }
 }
 
@@ -109,6 +172,7 @@ pub struct TrackFxPlugin {
     enabled: bool,
     state: Option<Vec<u8>>,
     parameter_values: Vec<(u32, u64)>,
+    parameter_automation: Vec<FxParameterAutomationLane>,
 }
 
 impl TrackFxPlugin {
@@ -125,6 +189,7 @@ impl TrackFxPlugin {
             enabled: true,
             state: None,
             parameter_values: Vec::new(),
+            parameter_automation: Vec::new(),
         })
     }
 
@@ -175,6 +240,18 @@ impl TrackFxPlugin {
             .map(|(parameter_id, bits)| (*parameter_id, f64::from_bits(*bits)))
     }
 
+    /// Returns the plugin's sample-clock parameter automation lanes in parameter-ID order.
+    pub fn parameter_automation(&self) -> &[FxParameterAutomationLane] {
+        &self.parameter_automation
+    }
+
+    pub fn parameter_automation_for(&self, id: u32) -> Option<&FxParameterAutomationLane> {
+        self.parameter_automation
+            .binary_search_by_key(&id, FxParameterAutomationLane::parameter_id)
+            .ok()
+            .map(|index| &self.parameter_automation[index])
+    }
+
     pub(crate) fn with_parameter_value(mut self, id: u32, value: f64) -> Self {
         match self
             .parameter_values
@@ -182,6 +259,30 @@ impl TrackFxPlugin {
         {
             Ok(index) => self.parameter_values[index].1 = value.to_bits(),
             Err(index) => self.parameter_values.insert(index, (id, value.to_bits())),
+        }
+        self
+    }
+
+    pub(crate) fn with_parameter_automation(
+        mut self,
+        parameter_id: u32,
+        lane: Option<FxParameterAutomationLane>,
+    ) -> Self {
+        match self
+            .parameter_automation
+            .binary_search_by_key(&parameter_id, FxParameterAutomationLane::parameter_id)
+        {
+            Ok(index) => match lane {
+                Some(lane) => self.parameter_automation[index] = lane,
+                None => {
+                    self.parameter_automation.remove(index);
+                }
+            },
+            Err(index) => {
+                if let Some(lane) = lane {
+                    self.parameter_automation.insert(index, lane);
+                }
+            }
         }
         self
     }

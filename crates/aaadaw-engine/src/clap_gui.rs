@@ -123,6 +123,9 @@ impl ClapPluginGuiOwner {
                 events.push(&ParamGestureEndEvent::new(0, param_id));
                 events
             }
+            crate::ClapParameterCommand::DisarmAutomation { .. } => {
+                return Ok(());
+            }
         };
         let mut handle = self
             .instance

@@ -1,6 +1,6 @@
 use crate::{
-    MidiControllerData, MidiNoteData, MidiPitchBendData, ProjectSettings, TempoCurve,
-    TimebaseError, VolumeAutomationPoint,
+    FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
+    MidiPitchBendData, ProjectSettings, TempoCurve, TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -49,6 +49,52 @@ pub struct TrackFxPluginSnapshot {
     pub state: Option<Vec<u8>>,
     /// Last host parameter values, retained independently of the optional CLAP State extension.
     pub parameter_values: Vec<TrackFxParameterValueSnapshot>,
+    pub parameter_automation: Vec<TrackFxParameterAutomationLaneSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrackFxParameterAutomationLaneSnapshot {
+    pub parameter_id: u32,
+    pub points: Vec<TrackFxParameterAutomationPointSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrackFxParameterAutomationPointSnapshot {
+    pub sample: u64,
+    pub value: f64,
+}
+
+impl From<&FxParameterAutomationLane> for TrackFxParameterAutomationLaneSnapshot {
+    fn from(lane: &FxParameterAutomationLane) -> Self {
+        Self {
+            parameter_id: lane.parameter_id(),
+            points: lane
+                .points()
+                .iter()
+                .map(|point| TrackFxParameterAutomationPointSnapshot {
+                    sample: point.sample(),
+                    value: point.value(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<TrackFxParameterAutomationLaneSnapshot> for FxParameterAutomationLane {
+    type Error = SnapshotError;
+
+    fn try_from(lane: TrackFxParameterAutomationLaneSnapshot) -> Result<Self, Self::Error> {
+        let points = lane
+            .points
+            .into_iter()
+            .map(|point| {
+                FxParameterAutomationPoint::new(point.sample, point.value)
+                    .ok_or(SnapshotError::InvalidProjectData)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        FxParameterAutomationLane::new(lane.parameter_id, points)
+            .ok_or(SnapshotError::InvalidProjectData)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

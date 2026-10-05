@@ -19,14 +19,18 @@ pub use error::ActionError;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };
-pub use project::{FxParameterChange, Project};
+pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot,
 };
 pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,
     ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
-pub use track::{Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint};
+pub use track::{
+    FxParameterAutomationLane, FxParameterAutomationPoint, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES,
+    Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
+};

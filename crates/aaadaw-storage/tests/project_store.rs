@@ -41,6 +41,47 @@ fn readonly_project_load_does_not_modify_saved_database() {
 }
 
 #[test]
+fn project_store_round_trips_track_fx_parameter_automation() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                aaadaw_core::TrackFxPlugin::new("org.example.filter", "/plugins/filter.clap")
+                    .unwrap(),
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackFxParameterAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 23,
+            points: vec![
+                aaadaw_core::FxParameterAutomationPoint::new(0, 0.25).unwrap(),
+                aaadaw_core::FxParameterAutomationPoint::new(48_000, 0.875).unwrap(),
+            ],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap().load().unwrap();
+
+    assert_eq!(reopened.snapshot(), project.snapshot());
+    remove_database(&path);
+}
+
+#[test]
 fn readonly_project_load_rejects_older_schema_without_migrating_it() {
     let path = project_path();
     let mut store = ProjectStore::open(&path).unwrap();
@@ -389,6 +430,7 @@ fn schema_twelve_migrates_v11_tempo_curve_values() {
     connection
         .execute_batch(
             "PRAGMA user_version = 11;
+             DROP TABLE track_fx_parameter_automation_points;
              CREATE TABLE tempo_points_v11 (
                  start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
                  bpm REAL NOT NULL CHECK (bpm > 0),
@@ -404,7 +446,7 @@ fn schema_twelve_migrates_v11_tempo_curve_values() {
     let store = ProjectStore::open(&path).expect("v11 project should migrate");
     assert_eq!(
         store.schema_version().expect("schema should be readable"),
-        12
+        CURRENT_SCHEMA_VERSION
     );
     let restored = store.load().expect("v11 project state should load");
     assert_eq!(restored.snapshot(), project.snapshot());
@@ -435,6 +477,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN record_armed; \
              ALTER TABLE track_fx_plugins DROP COLUMN state; \
              DROP TABLE track_fx_parameter_values; \
+             DROP TABLE track_fx_parameter_automation_points; \
              DROP TABLE midi_controllers; \
              DROP TABLE midi_pitch_bends; \
              DROP TABLE track_volume_automation; \
@@ -1402,7 +1445,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 6;",
+            "DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1449,7 +1492,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1476,7 +1519,7 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
@@ -1502,7 +1545,7 @@ fn schema_nine_projects_migrate_tracks_to_master_by_default() {
     store.close().expect("project should close");
 
     let connection = Connection::open(&path).expect("project should be SQLite");
-    connection.execute_batch("ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 9;").unwrap();
+    connection.execute_batch("DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; DROP TABLE midi_pitch_bends; PRAGMA user_version = 9;").unwrap();
     drop(connection);
     let store = ProjectStore::open(&path).expect("schema nine should migrate");
     let restored = store.load().unwrap();

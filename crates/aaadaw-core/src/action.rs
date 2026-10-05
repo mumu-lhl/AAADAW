@@ -64,6 +64,13 @@ pub enum DawAction {
         before_state: Option<Vec<u8>>,
         after_state: Option<Vec<u8>>,
     },
+    /// Replace the sample-clock automation points for one CLAP FX parameter.
+    SetTrackFxParameterAutomation {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        points: Vec<crate::FxParameterAutomationPoint>,
+    },
     /// Rename a track.
     SetTrackName { track_id: TrackId, name: String },
     /// Move a track to a final position in the ordered track list.

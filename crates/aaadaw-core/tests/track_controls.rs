@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, Project, SnapshotError, TrackFxPlugin, TrackFxPluginSnapshot, TrackInstrument,
-    TrackInstrumentSnapshot,
+    DawAction, FxParameterAutomationPoint, Project, SnapshotError, TrackFxPlugin,
+    TrackFxPluginSnapshot, TrackInstrument, TrackInstrumentSnapshot,
 };
 
 #[test]
@@ -272,6 +272,160 @@ fn track_fx_parameter_gesture_updates_plugin_state_and_undoes_as_one_action() {
 }
 
 #[test]
+fn track_fx_parameter_automation_is_undoable_persisted_and_moves_with_its_plugin() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Guitar".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let reverb = TrackFxPlugin::new("org.example.reverb", "/plugins/reverb.clap").unwrap();
+    let chorus = TrackFxPlugin::new("org.example.chorus", "/plugins/chorus.clap").unwrap();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![reverb, chorus],
+        })
+        .unwrap();
+    let points = vec![
+        FxParameterAutomationPoint::new(100, 0.25).unwrap(),
+        FxParameterAutomationPoint::new(200, 0.75).unwrap(),
+    ];
+    project
+        .apply(DawAction::SetTrackFxParameterAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            points: points.clone(),
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        points
+    );
+
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                project.tracks()[0].fx_chain()[1].clone(),
+                project.tracks()[0].fx_chain()[0].clone(),
+            ],
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].fx_chain()[1]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        points
+    );
+
+    let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(reopened.snapshot(), project.snapshot());
+    assert!(project.undo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        points
+    );
+    assert!(project.undo().unwrap());
+    assert!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .is_none()
+    );
+    assert!(project.redo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        points
+    );
+}
+
+#[test]
+fn track_fx_write_take_commits_parameter_and_automation_as_one_history_entry() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Lead".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("org.example.filter", "/plugins/filter.clap").unwrap(),
+            ],
+        })
+        .unwrap();
+
+    project
+        .apply(DawAction::BatchTransaction {
+            tx_id: 1,
+            actions: vec![
+                DawAction::SetTrackFxParameter {
+                    track_id,
+                    chain_index: 0,
+                    parameter_id: 7,
+                    before: 0.25,
+                    after: 0.75,
+                    before_state: None,
+                    after_state: Some(vec![7]),
+                },
+                DawAction::SetTrackFxParameterAutomation {
+                    track_id,
+                    chain_index: 0,
+                    parameter_id: 7,
+                    points: vec![FxParameterAutomationPoint::new(128, 0.75).unwrap()],
+                },
+            ],
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(0.75)
+    );
+    assert!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .is_some()
+    );
+
+    assert!(project.undo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(0.25)
+    );
+    assert!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .is_none()
+    );
+    assert!(project.redo().unwrap());
+    assert_eq!(
+        project.tracks()[0].fx_chain()[0].parameter_value(7),
+        Some(0.75)
+    );
+    assert!(
+        project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .is_some()
+    );
+}
+
+#[test]
 fn track_fx_parameter_edit_adopts_the_value_reported_by_the_loaded_plugin() {
     let mut project = Project::new();
     project
@@ -342,6 +496,7 @@ fn snapshots_with_malformed_track_fx_references_are_rejected() {
         enabled: true,
         state: None,
         parameter_values: Vec::new(),
+        parameter_automation: Vec::new(),
     });
 
     assert!(matches!(
