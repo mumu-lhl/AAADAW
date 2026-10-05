@@ -83,6 +83,8 @@ use std::fmt;
 use std::io::ErrorKind;
 use std::path::Path;
 
+const PCM_QUEUE_MEMORY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
 pub use aaadaw_engine::{
     AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, audio_capture_stream,
 };
@@ -263,6 +265,11 @@ pub enum PlaybackBuildError {
     Storage(StorageError),
     Media(MediaError),
     PcmStream(PcmStreamError),
+    PcmQueueMemoryBudgetExceeded {
+        active_items: usize,
+        minimum_frames_per_item: usize,
+        budget_bytes: usize,
+    },
     AudioGraph(AudioGraphBuildError),
     #[cfg(all(
         feature = "audio-device",
@@ -290,6 +297,14 @@ impl fmt::Display for PlaybackBuildError {
             Self::Storage(error) => write!(formatter, "project media resolution failed: {error}"),
             Self::Media(error) => write!(formatter, "audio feeder could not start: {error}"),
             Self::PcmStream(error) => write!(formatter, "PCM stream setup failed: {error}"),
+            Self::PcmQueueMemoryBudgetExceeded {
+                active_items,
+                minimum_frames_per_item,
+                budget_bytes,
+            } => write!(
+                formatter,
+                "PCM queue memory budget ({budget_bytes} bytes) cannot provide {minimum_frames_per_item} frames for each of {active_items} active audio items"
+            ),
             Self::AudioGraph(error) => write!(formatter, "render graph setup failed: {error}"),
             #[cfg(all(
                 feature = "audio-device",
@@ -340,6 +355,7 @@ impl StdError for PlaybackBuildError {
                 ))
             ))]
             Self::NoAudioOutputBackend => None,
+            Self::PcmQueueMemoryBudgetExceeded { .. } => None,
             Self::ExternalSourceUnavailable { .. } => None,
         }
     }
@@ -1327,11 +1343,15 @@ impl RunningJackPlayback {
 
 /// Resolves every project AudioItem and prepares a fixed-topology streaming graph.
 ///
-/// Queue capacity and callback block size are specified in project frames. Embedded assets stream
-/// directly from independent SQLite readers; linked files are opened and probed on background
-/// workers. Mono sources are centered and stereo sources retain their left/right channels. This call
-/// waits for each worker's source-open result, so invoke it on a background control thread when the
-/// UI must remain responsive. Partial setup is cancelled if a source fails.
+/// `queue_capacity_frames` is the requested per-item maximum; the active queues share a 64 MiB
+/// PCM budget and retain at least the smaller of that request and one maximum callback block.
+/// Preparation returns an error if the budget cannot meet that floor. Past items receive one-frame
+/// queues because a seek rebuilds them before they can become active again.
+/// Embedded assets stream directly from independent SQLite readers; linked files are opened and
+/// probed on background workers. Mono sources are centered and stereo sources retain their
+/// left/right channels. This call waits for each worker's source-open result, so invoke it on a
+/// background control thread when the UI must remain responsive. Partial setup is cancelled if a
+/// source fails.
 pub fn prepare_audio_playback(
     project: &Project,
     store: &ProjectStore,
@@ -1339,6 +1359,58 @@ pub fn prepare_audio_playback(
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     prepare_audio_playback_at(project, store, 0, queue_capacity_frames, max_block_frames)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PcmQueuePlan {
+    active_item_capacity_frames: usize,
+    past_item_capacity_frames: usize,
+}
+
+fn plan_pcm_queue_capacities(
+    active_items: usize,
+    past_items: usize,
+    requested_frames_per_active_item: usize,
+    max_block_frames: usize,
+) -> Result<PcmQueuePlan, PlaybackBuildError> {
+    let bytes_per_frame = std::mem::size_of::<[f32; 2]>();
+    let budget_frame_slots = PCM_QUEUE_MEMORY_BUDGET_BYTES / bytes_per_frame;
+    if active_items > 0 && requested_frames_per_active_item == 0 {
+        return Err(PlaybackBuildError::PcmStream(PcmStreamError::ZeroCapacity));
+    }
+    if past_items > budget_frame_slots {
+        return Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded {
+            active_items,
+            minimum_frames_per_item: if active_items == 0 {
+                1
+            } else {
+                requested_frames_per_active_item.min(max_block_frames.max(1))
+            },
+            budget_bytes: PCM_QUEUE_MEMORY_BUDGET_BYTES,
+        });
+    }
+    if active_items == 0 {
+        return Ok(PcmQueuePlan {
+            active_item_capacity_frames: 0,
+            past_item_capacity_frames: 1,
+        });
+    }
+    let minimum_frames_per_item = requested_frames_per_active_item.min(max_block_frames.max(1));
+    let available_active_frame_slots = budget_frame_slots.saturating_sub(past_items);
+    let available_frames_per_item = available_active_frame_slots / active_items;
+    if available_frames_per_item < minimum_frames_per_item {
+        return Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded {
+            active_items,
+            minimum_frames_per_item,
+            budget_bytes: PCM_QUEUE_MEMORY_BUDGET_BYTES,
+        });
+    }
+
+    Ok(PcmQueuePlan {
+        active_item_capacity_frames: requested_frames_per_active_item
+            .min(available_frames_per_item),
+        past_item_capacity_frames: 1,
+    })
 }
 
 /// Prepares playback with the graph transport positioned at an arbitrary project sample.
@@ -1352,6 +1424,18 @@ pub fn prepare_audio_playback_at(
     queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    let active_items = project
+        .audio_items()
+        .iter()
+        .filter(|item| timeline_sample < item.end_sample())
+        .count();
+    let past_items = project.audio_items().len().saturating_sub(active_items);
+    let queue_plan = plan_pcm_queue_capacities(
+        active_items,
+        past_items,
+        queue_capacity_frames,
+        max_block_frames,
+    )?;
     let monitor_capacity = max_block_frames.saturating_mul(2).clamp(256, 4_096);
     let (monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(monitor_capacity);
     let output_sample_rate = project.settings().sample_rate();
@@ -1359,8 +1443,13 @@ pub fn prepare_audio_playback_at(
     let mut item_streams = Vec::with_capacity(project.audio_items().len());
 
     for item in project.audio_items() {
+        let item_queue_capacity = if timeline_sample >= item.end_sample() {
+            queue_plan.past_item_capacity_frames
+        } else {
+            queue_plan.active_item_capacity_frames
+        };
         let (producer, consumer) =
-            stereo_pcm_stream(queue_capacity_frames).map_err(PlaybackBuildError::PcmStream)?;
+            stereo_pcm_stream(item_queue_capacity).map_err(PlaybackBuildError::PcmStream)?;
         if timeline_sample >= item.end_sample() {
             drop(producer);
             item_streams.push(AudioItemStream::new_stereo_at_sample(
@@ -1456,4 +1545,73 @@ pub fn prepare_audio_playback_at(
         input_monitor_consumer: monitor_consumer,
         input_monitor_gate: monitor_gate,
     })
+}
+
+#[cfg(test)]
+mod pcm_queue_budget_tests {
+    use super::{
+        PCM_QUEUE_MEMORY_BUDGET_BYTES, PcmQueuePlan, PlaybackBuildError, plan_pcm_queue_capacities,
+    };
+
+    #[test]
+    fn small_projects_keep_the_requested_queue_capacity() {
+        assert_eq!(
+            plan_pcm_queue_capacities(4, 0, 16_384, 8_192).unwrap(),
+            PcmQueuePlan {
+                active_item_capacity_frames: 16_384,
+                past_item_capacity_frames: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn many_active_items_share_the_pcm_budget() {
+        let plan = plan_pcm_queue_capacities(1_000, 0, 16_384, 8_192).unwrap();
+        assert!(plan.active_item_capacity_frames >= 8_192);
+        let allocated_bytes =
+            1_000 * plan.active_item_capacity_frames * std::mem::size_of::<[f32; 2]>();
+        assert!(allocated_bytes <= PCM_QUEUE_MEMORY_BUDGET_BYTES);
+        assert!(plan.active_item_capacity_frames < 16_384);
+    }
+
+    #[test]
+    fn past_items_use_minimal_queues_and_count_toward_the_budget() {
+        assert_eq!(
+            plan_pcm_queue_capacities(1, 10, 16_384, 8_192).unwrap(),
+            PcmQueuePlan {
+                active_item_capacity_frames: 16_384,
+                past_item_capacity_frames: 1,
+            }
+        );
+        assert!(matches!(
+            plan_pcm_queue_capacities(1_100, 1_100, 16_384, 8_192),
+            Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn preparation_fails_before_underprovisioning_active_blocks() {
+        assert!(matches!(
+            plan_pcm_queue_capacities(1_100, 0, 16_384, 8_192),
+            Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded {
+                minimum_frames_per_item: 8_192,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_pcm_queue_capacities(usize::MAX, 0, 16_384, 8_192),
+            Err(PlaybackBuildError::PcmQueueMemoryBudgetExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn tiny_offline_queues_remain_supported() {
+        assert_eq!(
+            plan_pcm_queue_capacities(10_000, 0, 1, 8_192).unwrap(),
+            PcmQueuePlan {
+                active_item_capacity_frames: 1,
+                past_item_capacity_frames: 1,
+            }
+        );
+    }
 }
