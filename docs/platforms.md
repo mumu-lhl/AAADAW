@@ -1,10 +1,11 @@
 # Desktop development and build notes
 
-AAADAW currently verifies Linux and Windows builds in GitHub Actions. These
-steps build development binaries; the project does not yet produce signed
-installers or a self-contained release package. Device-driver behavior and
-audio latency still need validation on real hardware (see Issue #7 for Linux
-capture).
+AAADAW currently verifies Linux and Windows builds in GitHub Actions. It also
+builds unsigned Ubuntu 24.04 x86_64 `.deb` and Windows x86_64 MSI validation
+packages, plus portable archives. These artifacts are not signed public
+releases and do not bundle audio services or drivers. Device-driver behavior
+and audio latency still need validation on real hardware (see Issue #7 for
+Linux capture).
 
 ## Linux
 
@@ -48,8 +49,9 @@ it cannot validate a physical device or its driver.
 
 ## Packaging status
 
-Release builds above are unpackaged executables. There is no installer,
-code-signing, automatic update, or bundle of native audio services. Keep the
+Release builds above are unpackaged executables. CI also creates the validation
+packages described in [native installer notes](native-installers.md). There is
+no code-signing, automatic update, or bundle of native audio services. Keep the
 chosen backend feature and its required system libraries explicit when
-distributing a binary. Installer generation and clean-machine installation
-checks are Phase 1 release-candidate work in [the roadmap](../ROADMAP.md).
+distributing a binary; see [the roadmap](../ROADMAP.md) for remaining release
+gates.

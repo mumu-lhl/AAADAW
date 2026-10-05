@@ -1080,6 +1080,34 @@ fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_
 }
 
 #[test]
+fn documented_first_project_shortcuts_match_action_defaults() {
+    let app = App::default();
+    let shortcuts = commands::shortcut_entries(&app);
+    for (action_id, expected) in [
+        ("file.new-project", "Ctrl/Cmd+N"),
+        ("file.open-project", "Ctrl/Cmd+O"),
+        ("file.save-project", "Ctrl/Cmd+S"),
+        ("edit.undo", "Ctrl/Cmd+Z"),
+        ("edit.redo", "Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y"),
+    ] {
+        let entry = shortcuts
+            .iter()
+            .find(|entry| entry.id == action_id)
+            .unwrap_or_else(|| panic!("documented action {action_id} should exist"));
+        assert_eq!(entry.default_binding, expected, "{action_id}");
+    }
+
+    #[cfg(feature = "audio-device")]
+    {
+        let playback = shortcuts
+            .iter()
+            .find(|entry| entry.id == "transport.toggle-playback")
+            .expect("playback shortcut should exist in audio builds");
+        assert_eq!(playback.default_binding, "Space");
+    }
+}
+
+#[test]
 fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() {
     let mut app = App {
         shortcut_binding_edits: HashMap::from([

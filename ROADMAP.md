@@ -205,7 +205,7 @@
 - [x] 制作 Linux/Windows 原生安装包，完成升级/卸载和干净机器安装验证；CI 生成 unsigned `.deb`/MSI 并验证安装、启动器、升级/卸载和用户数据保留，签名仍属发布门槛（[Issue #186](https://github.com/mumu-lhl/AAADAW/issues/186)，[`docs/native-installers.md`](docs/native-installers.md)）。
 - [x] 增加无设备依赖的项目验收测试：导入 WAV、编辑与混音、撤销/重做、保存/重开、离线渲染并通过 MCP 查询重开状态（[Issue #180](https://github.com/mumu-lhl/AAADAW/issues/180)）。
 - [ ] 完成端到端验收：新建 → 导入/录音 → 编辑音频/MIDI → 播放/混音 → 保存/重开 → Undo/Redo → MCP 查询/修改。
-- [ ] 增加示例工程、用户文档、已知限制、故障诊断和插件兼容说明。
+- [x] 增加示例工程、首项目用户指南、已知限制、故障诊断和插件兼容说明（[Issue #188](https://github.com/mumu-lhl/AAADAW/issues/188)，[首项目指南](docs/first-project.md)）。
 - [ ] 验证干净安装、缺少音频设备、缺少插件、磁盘空间不足、非法工程文件和异常退出路径。
 - [ ] 按真实使用反馈修复阻塞性问题；公开性能基准和当前支持的平台/插件范围。
 
