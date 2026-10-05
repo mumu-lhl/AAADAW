@@ -695,12 +695,7 @@ impl App {
                 return;
             }
             stepped
-                .then(|| {
-                    gui.parameters()
-                        .into_iter()
-                        .find(|parameter| parameter.id == parameter_id)
-                        .map(|parameter| parameter.display_value)
-                })
+                .then(|| gui.parameter_value_to_text(parameter_id, value))
                 .flatten()
         } else {
             None
@@ -899,12 +894,7 @@ impl App {
                 let _ = gui.apply_parameter_command(set);
                 let _ = gui.apply_parameter_command(end);
                 stepped
-                    .then(|| {
-                        gui.parameters()
-                            .into_iter()
-                            .find(|parameter| parameter.id == change.parameter_id)
-                            .map(|parameter| parameter.display_value)
-                    })
+                    .then(|| gui.parameter_value_to_text(change.parameter_id, change.value))
                     .flatten()
             })
         } else {
