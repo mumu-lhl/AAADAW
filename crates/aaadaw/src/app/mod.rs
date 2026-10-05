@@ -1545,15 +1545,14 @@ impl App {
                     } else {
                         (min_value, max_value)
                     };
-                    self.timeline
-                        .handle(timeline::TimelineEvent::ToggleFxAutomation {
-                            track_id,
-                            chain_index,
-                            parameter_id: id,
-                            name,
-                            value_range,
-                            stepped,
-                        });
+                    self.handle_timeline_view_event(timeline::TimelineEvent::ToggleFxAutomation {
+                        track_id,
+                        chain_index,
+                        parameter_id: id,
+                        name,
+                        value_range,
+                        stepped,
+                    });
                 }
             }
             Message::FxParameterEnded(id) => self.end_fx_parameter_gesture(id),
@@ -1912,7 +1911,7 @@ impl App {
                     }
                 }
             }
-            Message::Timeline(event) => self.timeline.handle(event),
+            Message::Timeline(event) => self.handle_timeline_view_event(event),
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
                 let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
@@ -2347,7 +2346,7 @@ impl App {
                 self.io_busy = false;
                 let result = result.lock().ok().and_then(|mut result| result.take());
                 match result {
-                    Some(Ok((project, project_lock))) => {
+                    Some(Ok((project, arrangement_view_state, project_lock))) => {
                         self.project_lock = Some(project_lock);
                         self.project = project;
                         self.refresh_tempo_map_edits();
@@ -2356,7 +2355,8 @@ impl App {
                         self.meter_map_feedback.clear();
                         self.midi_note_clipboard.source_item_id = None;
                         self.midi_note_clipboard.last_paste = None;
-                        self.timeline.rebuild(&self.project);
+                        self.timeline
+                            .replace_project(&self.project, arrangement_view_state.as_ref());
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
                         self.timeline.time_selection = None;
@@ -2664,6 +2664,22 @@ impl App {
         self.revision != self.saved_revision
     }
 
+    fn handle_timeline_view_event(&mut self, event: timeline::TimelineEvent) {
+        let previous_view_state = matches!(
+            &event,
+            timeline::TimelineEvent::ToggleVolumeAutomation(_)
+                | timeline::TimelineEvent::ToggleFxAutomation { .. }
+                | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
+        )
+        .then(|| self.timeline.arrangement_view_state(&self.project));
+        self.timeline.handle(event);
+        if previous_view_state
+            .is_some_and(|previous| previous != self.timeline.arrangement_view_state(&self.project))
+        {
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
     fn new_project(&mut self) {
         if self.io_busy
             || self.import_busy
@@ -2701,7 +2717,7 @@ impl App {
         self.project_path_query.clear();
         self.revision = 0;
         self.saved_revision = 0;
-        self.timeline.rebuild(&self.project);
+        self.timeline.replace_project(&self.project, None);
         self.timeline.selected_track = None;
         self.timeline.selected_item = None;
         self.timeline.selected_items.clear();
