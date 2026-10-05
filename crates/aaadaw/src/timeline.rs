@@ -1,7 +1,7 @@
 mod renderer;
 
 use aaadaw_core::{ItemId, Project, TrackId, VolumeAutomationPoint};
-use aaadaw_media::AudioWaveform;
+use aaadaw_media::{AudioWaveform, WaveformPeak};
 use aaadaw_storage::{
     ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
 };
@@ -401,7 +401,7 @@ impl TimelineCache {
             return Vec::new();
         }
         let project_rate = u128::from(project.settings().sample_rate());
-        let mut bins = Vec::new();
+        let mut bins: Vec<WaveformBinGeometry> = Vec::new();
         for item in self.items.iter().filter(|item| {
             item.kind == ItemKind::Audio
                 && item.start_tick < visible_end_tick
@@ -428,13 +428,17 @@ impl TimelineCache {
             };
             let visible_start_tick = item.start_tick.max(origin_tick);
             let visible_end_tick = item.end_tick.min(visible_end_tick);
-            let (Ok(visible_start_sample), Ok(visible_end_sample)) = (
-                project.sample_at_tick(visible_start_tick),
-                project.sample_at_tick(visible_end_tick),
-            ) else {
+            let Ok(visible_start_sample) = project.sample_at_tick(visible_start_tick) else {
                 continue;
             };
             let item_end_sample = item.start_sample.saturating_add(item.length_samples);
+            let visible_end_sample = if visible_end_tick == item.end_tick {
+                item_end_sample
+            } else if let Ok(sample) = project.sample_at_tick(visible_end_tick) {
+                sample
+            } else {
+                continue;
+            };
             let visible_start_sample = visible_start_sample.max(item.start_sample);
             let visible_end_sample = visible_end_sample.min(item_end_sample);
             if visible_start_sample >= visible_end_sample {
@@ -474,6 +478,64 @@ impl TimelineCache {
             let (level, peak_range) =
                 waveform.peak_range_for_source_frames(source_start, source_end, frames_per_pixel);
             let frames_per_peak = u64::from(level.frames_per_peak());
+            let mut append_peak = |peak: WaveformPeak, overlap_start: u64, overlap_end: u64| {
+                if overlap_start >= overlap_end {
+                    return;
+                }
+                let start_delta = (u128::from(overlap_start - item.source_offset_samples)
+                    * project_rate)
+                    / source_rate;
+                let end_delta = (u128::from(overlap_end - item.source_offset_samples)
+                    * project_rate)
+                    .div_ceil(source_rate);
+                let Some(start_sample) =
+                    u64::try_from(u128::from(item.start_sample) + start_delta).ok()
+                else {
+                    return;
+                };
+                let Some(end_sample) =
+                    u64::try_from(u128::from(item.start_sample) + end_delta).ok()
+                else {
+                    return;
+                };
+                let start_sample = start_sample.min(item_end_sample);
+                let end_sample = end_sample.min(item_end_sample);
+                if start_sample >= end_sample {
+                    return;
+                }
+                let (Ok(start_tick), Ok(end_tick)) = (
+                    project.tick_at_sample(start_sample),
+                    project.tick_at_sample(end_sample),
+                ) else {
+                    return;
+                };
+                let start_tick = start_tick.max(origin_tick);
+                let mut end_tick = end_tick.min(visible_end_tick);
+                if start_tick >= end_tick {
+                    if let Some(previous) = bins.last_mut().filter(|previous| {
+                        previous.item_id == item.id
+                            && previous.track_index == item.track_index
+                            && previous.start_tick <= start_tick
+                            && previous.end_tick >= start_tick
+                    }) {
+                        previous.min = previous.min.min(peak.min);
+                        previous.max = previous.max.max(peak.max);
+                        return;
+                    }
+                    end_tick = start_tick.saturating_add(1).min(visible_end_tick);
+                    if start_tick >= end_tick {
+                        return;
+                    }
+                }
+                bins.push(WaveformBinGeometry {
+                    item_id: item.id,
+                    start_tick,
+                    end_tick,
+                    track_index: item.track_index,
+                    min: peak.min,
+                    max: peak.max,
+                });
+            };
             for peak_index in peak_range {
                 let peak = level.peaks()[peak_index];
                 let peak_start = (peak_index as u64).saturating_mul(frames_per_peak);
@@ -485,46 +547,29 @@ impl TimelineCache {
                 if overlap_start >= overlap_end {
                     continue;
                 }
-                let start_delta = (u128::from(overlap_start - item.source_offset_samples)
-                    * project_rate)
-                    / source_rate;
-                let end_delta = (u128::from(overlap_end - item.source_offset_samples)
-                    * project_rate)
-                    .div_ceil(source_rate);
-                let Some(start_sample) =
-                    u64::try_from(u128::from(item.start_sample) + start_delta).ok()
-                else {
-                    continue;
-                };
-                let Some(end_sample) =
-                    u64::try_from(u128::from(item.start_sample) + end_delta).ok()
-                else {
-                    continue;
-                };
-                let start_sample = start_sample.min(item_end_sample);
-                let end_sample = end_sample.min(item_end_sample);
-                if start_sample >= end_sample {
-                    continue;
+                if frames_per_peak > u64::from(waveform.frames_per_peak())
+                    && (overlap_start > peak_start || overlap_end < peak_end)
+                {
+                    let (base_level, base_range) = waveform.peak_range_for_source_frames(
+                        overlap_start,
+                        overlap_end,
+                        waveform.frames_per_peak(),
+                    );
+                    let base_frames_per_peak = u64::from(base_level.frames_per_peak());
+                    for base_index in base_range {
+                        let base_start = (base_index as u64).saturating_mul(base_frames_per_peak);
+                        let base_end = base_start
+                            .saturating_add(base_frames_per_peak)
+                            .min(waveform.frame_count());
+                        append_peak(
+                            base_level.peaks()[base_index],
+                            base_start.max(overlap_start),
+                            base_end.min(overlap_end),
+                        );
+                    }
+                } else {
+                    append_peak(peak, overlap_start, overlap_end);
                 }
-                let (Ok(start_tick), Ok(end_tick)) = (
-                    project.tick_at_sample(start_sample),
-                    project.tick_at_sample(end_sample),
-                ) else {
-                    continue;
-                };
-                let start_tick = start_tick.max(origin_tick);
-                let end_tick = end_tick.min(visible_end_tick);
-                if start_tick >= end_tick {
-                    continue;
-                }
-                bins.push(WaveformBinGeometry {
-                    item_id: item.id,
-                    start_tick,
-                    end_tick,
-                    track_index: item.track_index,
-                    min: peak.min,
-                    max: peak.max,
-                });
             }
         }
         bins
@@ -3690,13 +3735,17 @@ mod tests {
         cache.rebuild(&project, SnapGrid::Sixteenth);
         let overview = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 0.1, 1_000.0);
         let closeup = cache.waveform_geometry_for_viewport(&project, &waveforms, 40, 1.0, 40.0);
-        assert_eq!(overview.len(), 1);
+        assert!(overview.len() <= 8);
+        assert!(overview.iter().all(|bin| bin.min >= 0.25));
         assert_eq!(closeup.len(), 4);
         assert_eq!(
             overview[0].start_tick,
             project.tick_at_sample(1_000).unwrap()
         );
-        assert_eq!(overview[0].end_tick, project.tick_at_sample(3_048).unwrap());
+        assert_eq!(
+            overview.last().unwrap().end_tick,
+            project.tick_at_sample(3_048).unwrap()
+        );
     }
 
     #[test]
@@ -3738,6 +3787,50 @@ mod tests {
             bins.iter()
                 .all(|bin| bin.start_tick < 5 && bin.end_tick <= 5)
         );
+    }
+
+    #[test]
+    fn waveform_geometry_selects_detail_from_zoom_level() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://zoom-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_096,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTempo {
+                start_tick: 90,
+                bpm: 5.0,
+            })
+            .unwrap();
+        let samples = vec![0; 4_096];
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://zoom-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let overview = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 0.1, 1_000.0);
+        let closeup = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 40.0);
+        assert_eq!(overview.len(), 1);
+        assert_eq!(closeup.len(), 4);
     }
 
     fn waveform_test_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {
