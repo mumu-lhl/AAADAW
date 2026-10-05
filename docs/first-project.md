@@ -29,6 +29,7 @@ The transport stays at the bottom of the main window. Press **Space** or click *
 Adjust track volume and pan in its track controls. The Master output is protected by a configurable sample-peak ceiling; this is not a loudness meter or true-peak limiter.
 
 Press **Ctrl+S** to save. Close and reopen the working copy to confirm the item and mix settings persist.
+AAADAW may create a sibling `.aaapeaks` file for waveform previews. It is a rebuildable cache; deleting it does not affect project audio.
 
 ## Default shortcuts
 

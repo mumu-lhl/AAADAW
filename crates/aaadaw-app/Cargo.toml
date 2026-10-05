@@ -18,3 +18,7 @@ aaadaw-media = { path = "../aaadaw-media" }
 aaadaw-storage = { path = "../aaadaw-storage" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

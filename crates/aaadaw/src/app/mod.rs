@@ -5076,6 +5076,7 @@ impl App {
         for AudioWaveformResult {
             media_ref,
             waveform,
+            cache_hit: _,
         } in results
         {
             match waveform {
