@@ -235,6 +235,7 @@ pub(crate) enum Message {
     CancelAudioItemStartSampleEdit(ItemId),
     DeleteAudioItem(ItemId),
     DeleteSelectedItems,
+    DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
     DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,

@@ -347,7 +347,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::DuplicateSelectedItem,
         menu: Some(MainMenu::Item),
         category: "Item",
-        label: "Duplicate selected item",
+        label: "Duplicate selected items",
         aliases: &["duplicate item", "duplicate selected item"],
         shortcuts: DUPLICATE_ITEM_SHORTCUT,
         destructive: false,
@@ -1046,34 +1046,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
-        CommandId::DuplicateSelectedItem => {
-            if app.timeline.selected_items.len() != 1 {
-                app.status = "Select one audio or MIDI item to duplicate".to_owned();
-                return Task::none();
-            }
-            let Some(item_id) = app.timeline.selected_item else {
-                app.status = "Select one audio or MIDI item to duplicate".to_owned();
-                return Task::none();
-            };
-            if app
-                .project
-                .audio_items()
-                .iter()
-                .any(|item| item.id() == item_id)
-            {
-                return dispatch(app, CommandId::DuplicateSelectedAudioItem);
-            }
-            if app
-                .project
-                .midi_items()
-                .iter()
-                .any(|item| item.id() == item_id)
-            {
-                return dispatch(app, CommandId::DuplicateSelectedMidiItem);
-            }
-            app.status = "Selected item no longer exists".to_owned();
-            return Task::none();
-        }
+        CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
                 app.timeline.selected_items.len() == 1
@@ -1273,17 +1246,17 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::DuplicateSelectedItem => {
             !project_edit_busy(app)
-                && app.timeline.selected_items.len() == 1
-                && app.timeline.selected_item.is_some_and(|item_id| {
+                && !app.timeline.selected_items.is_empty()
+                && app.timeline.selected_items.iter().all(|item_id| {
                     app.project
                         .audio_items()
                         .iter()
-                        .any(|item| item.id() == item_id)
+                        .any(|item| item.id() == *item_id)
                         || app
                             .project
                             .midi_items()
                             .iter()
-                            .any(|item| item.id() == item_id)
+                            .any(|item| item.id() == *item_id)
                 })
         }
         CommandKind::ImportAudio => {

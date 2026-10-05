@@ -1042,11 +1042,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 )
             )
         {
-            if self.region == RollRegion::Pitch && !self.selected.is_empty() {
-                return Some(canvas::Action::publish(Message::DeleteMidiNotes(
-                    self.item_id,
-                    self.selected.iter().copied().collect(),
-                )));
+            if let Some(message) = delete_key_message(self.region, self.item_id, self.selected) {
+                return Some(canvas::Action::publish(message));
             }
             return Some(canvas::Action::capture());
         }
@@ -1465,6 +1462,15 @@ impl canvas::Program<Message> for PianoRoll<'_> {
     }
 }
 
+fn delete_key_message(
+    region: RollRegion,
+    item_id: ItemId,
+    selected: &HashSet<NoteId>,
+) -> Option<Message> {
+    (region == RollRegion::Pitch && !selected.is_empty())
+        .then(|| Message::DeleteMidiNotes(item_id, selected.iter().copied().collect()))
+}
+
 impl PianoRoll<'_> {
     fn draw_velocity(
         &self,
@@ -1654,6 +1660,48 @@ fn pitch_name(pitch: u8) -> String {
 mod tests {
     use super::*;
     use iced::widget::canvas::Program;
+
+    #[test]
+    fn delete_key_targets_selected_pitch_notes_and_has_no_arrangement_fallback() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 240,
+                    velocity: 96,
+                }],
+            })
+            .unwrap();
+        let selected = [project.midi_items()[0].notes()[0].id()]
+            .into_iter()
+            .collect();
+
+        assert!(matches!(
+            delete_key_message(RollRegion::Pitch, item_id, &selected),
+            Some(Message::DeleteMidiNotes(target, note_ids))
+                if target == item_id && note_ids == selected.iter().copied().collect::<Vec<_>>()
+        ));
+        assert!(delete_key_message(RollRegion::Velocity, item_id, &selected).is_none());
+        assert!(delete_key_message(RollRegion::Pitch, item_id, &HashSet::new()).is_none());
+    }
 
     #[test]
     fn controller_lane_selection_switches_the_visible_edit_lane() {

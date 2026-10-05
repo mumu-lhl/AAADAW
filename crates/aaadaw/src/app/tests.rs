@@ -3253,6 +3253,45 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
 }
 
 #[test]
+fn duplicate_selected_audio_and_midi_items_is_one_undoable_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://multi-duplicate-test".to_owned(),
+            start_sample: 240,
+            source_offset_samples: 120,
+            length_samples: 960,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 240,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(audio_id);
+    app.timeline.selected_items.extend([audio_id, midi_id]);
+    let revision_before_duplicate = app.revision;
+    assert!(commands::is_enabled(&app, CommandId::DuplicateSelectedItem));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
+
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.revision, revision_before_duplicate + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items().len(), 1);
+    assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
 fn audio_timeline_delete_is_undoable() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

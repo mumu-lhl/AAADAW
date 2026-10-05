@@ -2142,6 +2142,7 @@ impl App {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
+            Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
             Message::DuplicateAudioItem(item_id) => {
@@ -5195,6 +5196,61 @@ impl App {
             }
         };
         self.apply_action(action, "Selected items deleted");
+    }
+
+    fn duplicate_selected_items(&mut self) {
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        if item_ids.is_empty() {
+            self.status = "Select one or more items to duplicate".to_owned();
+            return;
+        }
+
+        let mut actions = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            if self
+                .project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                match duplicate_audio_item(&self.project, item_id) {
+                    Ok(action) => actions.push(action),
+                    Err(error) => {
+                        self.status = format!("Could not duplicate selected items: {error}");
+                        return;
+                    }
+                }
+            } else if self
+                .project
+                .midi_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                actions.push(DawAction::DuplicateMidiItem { item_id });
+            } else {
+                self.status = "Selected items no longer exist".to_owned();
+                return;
+            }
+        }
+        if actions.is_empty() {
+            self.status = "Selected items no longer exist".to_owned();
+            return;
+        }
+        let action = if actions.len() == 1 {
+            actions.pop().expect("single duplicate action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected items duplicated");
     }
 
     fn save_project_command(&mut self) -> Task<Message> {
