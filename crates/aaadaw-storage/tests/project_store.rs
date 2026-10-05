@@ -439,6 +439,50 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
 }
 
 #[test]
+fn checkpoint_reports_busy_while_a_reader_pins_the_wal_and_recovers_afterward() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).expect("project should open");
+    store
+        .save(&Project::new())
+        .expect("initial state should save");
+
+    let mut reader = Connection::open(&path).expect("reader should open the project");
+    reader
+        .busy_timeout(Duration::from_millis(25))
+        .expect("reader busy timeout should be configured");
+    let read_transaction = reader.transaction().expect("read transaction should begin");
+    read_transaction
+        .query_row("SELECT COUNT(*) FROM tracks", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("reader should pin its WAL snapshot");
+
+    let mut changed_project = Project::new();
+    changed_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "WAL checkpoint".to_owned(),
+        })
+        .expect("track should be created");
+    store
+        .save(&changed_project)
+        .expect("writer should commit while a reader is active");
+
+    assert!(matches!(
+        store.checkpoint(),
+        Err(StorageError::CheckpointBusy)
+    ));
+    drop(read_transaction);
+    drop(reader);
+
+    store
+        .checkpoint()
+        .expect("checkpoint should succeed after the reader closes");
+    store.close().expect("project should close cleanly");
+    remove_database(&path);
+}
+
+#[test]
 fn schema_twelve_migrates_v11_tempo_curve_values() {
     let path = project_path();
     let mut project = Project::new();
