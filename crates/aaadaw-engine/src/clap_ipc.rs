@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
@@ -32,6 +32,9 @@ const SLOT_WRITING: u32 = 1;
 const SLOT_REQUEST_READY: u32 = 2;
 const SLOT_PROCESSING: u32 = 3;
 const SLOT_RESPONSE_READY: u32 = 4;
+const SLOT_RENDERING: u32 = 5;
+const SLOT_READING: u32 = 6;
+const NO_ACTIVE_SLOT: u32 = u32::MAX;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,6 +131,9 @@ impl ClapIpcMapping {
             ptr::addr_of_mut!((*region).state).write(AtomicU32::new(REGION_INITIALIZING));
             ptr::addr_of_mut!((*region).fault_code).write(AtomicU32::new(0));
             ptr::addr_of_mut!((*region).next_slot).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region).producer_busy).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region).helper_busy).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region).active_slot).write(AtomicU32::new(NO_ACTIVE_SLOT));
             ptr::addr_of_mut!((*region).underruns).write(AtomicU64::new(0));
             for index in 0..CLAP_IPC_SLOT_COUNT {
                 let slot = ptr::addr_of_mut!((*region).slots[index]);
@@ -168,8 +174,7 @@ impl ClapIpcMidiEvent {
             kind if kind == ClapIpcMidiKind::NoteOn as u8
                 || kind == ClapIpcMidiKind::NoteOff as u8 =>
             {
-                self.note_id != Self::NO_NOTE_ID
-                    && self.note_id <= i32::MAX as u32
+                (self.note_id == Self::NO_NOTE_ID || self.note_id <= i32::MAX as u32)
                     && self.controller == Self::NO_CONTROLLER
                     && self.pitch_bend == Self::NO_PITCH_BEND
             }
@@ -281,15 +286,19 @@ pub struct ClapIpcRegion {
     state: AtomicU32,
     fault_code: AtomicU32,
     next_slot: AtomicU32,
+    producer_busy: AtomicBool,
+    helper_busy: AtomicBool,
+    active_slot: AtomicU32,
     underruns: AtomicU64,
     slots: [ClapIpcSlot; CLAP_IPC_SLOT_COUNT],
 }
 
-// SAFETY: non-atomic slot fields are read or written only by the process holding the slot's
-// corresponding state. The owner publishes each completed payload with Release and its peer
-// acquires that state before touching the payload. Configuration fields are immutable after the
-// initial map has been published. Atomics used here are process-shared lock-free integer atomics
-// on the supported Linux and Windows x86_64 targets.
+// SAFETY: producer, helper, and response-reader entry points acquire process-shared ownership
+// atomics before touching payloads. One active producer and one active helper are enforced by
+// `producer_busy` and `helper_busy`; each response reader must claim SLOT_READING. The owner
+// publishes payloads with Release and peers acquire them before access. Configuration stays
+// immutable after mapping initialization. Supported Linux/Windows x86_64 targets provide lock-free
+// integer atomics for these fields.
 unsafe impl Sync for ClapIpcRegion {}
 
 impl ClapIpcRegion {
@@ -300,6 +309,9 @@ impl ClapIpcRegion {
                 state: AtomicU32::new(REGION_INITIALIZING),
                 fault_code: AtomicU32::new(0),
                 next_slot: AtomicU32::new(0),
+                producer_busy: AtomicBool::new(false),
+                helper_busy: AtomicBool::new(false),
+                active_slot: AtomicU32::new(NO_ACTIVE_SLOT),
                 underruns: AtomicU64::new(0),
                 slots: std::array::from_fn(|_| ClapIpcSlot::new()),
             })
@@ -363,40 +375,59 @@ impl ClapIpcRegion {
         if events.iter().any(|event| !event.is_valid(frame_count)) {
             return Err(ClapIpcSubmitError::InvalidEvent);
         }
-
-        let start = self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % CLAP_IPC_SLOT_COUNT;
-        for offset in 0..CLAP_IPC_SLOT_COUNT {
-            let slot = &self.slots[(start + offset) % CLAP_IPC_SLOT_COUNT];
-            if slot
-                .state
-                .compare_exchange(
-                    SLOT_FREE,
-                    SLOT_WRITING,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_err()
-            {
-                continue;
-            }
-            // SAFETY: successful FREE -> WRITING transition grants this process exclusive slot
-            // ownership until it publishes REQUEST_READY below.
-            let payload = unsafe { &mut *slot.payload.get() };
-            payload.frame_count = frame_count as u32;
-            payload.event_count = events.len() as u32;
-            payload.generation = generation;
-            payload.sequence = sequence;
-            payload.start_sample = start_sample;
-            payload.events[..events.len()].copy_from_slice(events);
-            payload.audio[..frame_count].fill([0.0; CLAP_IPC_CHANNELS]);
-            slot.state.store(SLOT_REQUEST_READY, Ordering::Release);
-            return Ok(());
+        if self
+            .producer_busy
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Err(ClapIpcSubmitError::ProducerBusy);
         }
-        Err(ClapIpcSubmitError::SlotsFull)
+
+        let result = (|| {
+            let start =
+                self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % CLAP_IPC_SLOT_COUNT;
+            for offset in 0..CLAP_IPC_SLOT_COUNT {
+                let slot = &self.slots[(start + offset) % CLAP_IPC_SLOT_COUNT];
+                if slot
+                    .state
+                    .compare_exchange(
+                        SLOT_FREE,
+                        SLOT_WRITING,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                // SAFETY: successful FREE -> WRITING transition grants this process exclusive slot
+                // ownership until it publishes REQUEST_READY below.
+                let payload = unsafe { &mut *slot.payload.get() };
+                payload.frame_count = frame_count as u32;
+                payload.event_count = events.len() as u32;
+                payload.generation = generation;
+                payload.sequence = sequence;
+                payload.start_sample = start_sample;
+                payload.events[..events.len()].copy_from_slice(events);
+                payload.audio[..frame_count].fill([0.0; CLAP_IPC_CHANNELS]);
+                slot.state.store(SLOT_REQUEST_READY, Ordering::Release);
+                return Ok(());
+            }
+            Err(ClapIpcSubmitError::SlotsFull)
+        })();
+        self.producer_busy.store(false, Ordering::Release);
+        result
     }
 
     /// Claims the oldest pending slot. Returns immediately when no request is ready.
     pub fn try_claim_request(&self) -> Option<usize> {
+        if self
+            .helper_busy
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return None;
+        }
         let mut candidate = None;
         let mut oldest = u64::MAX;
         for (index, slot) in self.slots.iter().enumerate() {
@@ -410,8 +441,11 @@ impl ClapIpcRegion {
                 candidate = Some(index);
             }
         }
-        let index = candidate?;
-        self.slots[index]
+        let Some(index) = candidate else {
+            self.helper_busy.store(false, Ordering::Release);
+            return None;
+        };
+        if self.slots[index]
             .state
             .compare_exchange(
                 SLOT_REQUEST_READY,
@@ -419,8 +453,13 @@ impl ClapIpcRegion {
                 Ordering::Acquire,
                 Ordering::Relaxed,
             )
-            .ok()
-            .map(|_| index)
+            .is_err()
+        {
+            self.helper_busy.store(false, Ordering::Release);
+            return None;
+        }
+        self.active_slot.store(index as u32, Ordering::Release);
+        Some(index)
     }
 
     /// Processes one claimed request and publishes its response after the closure returns.
@@ -432,7 +471,17 @@ impl ClapIpcRegion {
         let Some(slot) = self.slots.get(index) else {
             return false;
         };
-        if slot.state.load(Ordering::Acquire) != SLOT_PROCESSING {
+        if self.active_slot.load(Ordering::Acquire) != index as u32
+            || slot
+                .state
+                .compare_exchange(
+                    SLOT_PROCESSING,
+                    SLOT_RENDERING,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+        {
             return false;
         }
         let succeeded = {
@@ -461,15 +510,18 @@ impl ClapIpcRegion {
         } else {
             SLOT_FREE
         };
-        slot.state
+        let transitioned = slot
+            .state
             .compare_exchange(
-                SLOT_PROCESSING,
+                SLOT_RENDERING,
                 next_state,
                 Ordering::Release,
                 Ordering::Relaxed,
             )
-            .is_ok()
-            && succeeded
+            .is_ok();
+        self.active_slot.store(NO_ACTIVE_SLOT, Ordering::Release);
+        self.helper_busy.store(false, Ordering::Release);
+        transitioned && succeeded
     }
 
     /// Copies a matching response into preallocated callback output and frees its slot.
@@ -482,7 +534,16 @@ impl ClapIpcRegion {
     ) -> bool {
         output.fill([0.0; CLAP_IPC_CHANNELS]);
         for slot in &self.slots {
-            if slot.state.load(Ordering::Acquire) != SLOT_RESPONSE_READY {
+            if slot
+                .state
+                .compare_exchange(
+                    SLOT_RESPONSE_READY,
+                    SLOT_READING,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
                 continue;
             }
             // SAFETY: RESPONSE_READY makes payload immutable until this reader frees the slot.
@@ -497,39 +558,17 @@ impl ClapIpcRegion {
                 if response_generation < generation
                     || (response_generation == generation && response_sequence < sequence)
                 {
-                    let _ = slot.state.compare_exchange(
-                        SLOT_RESPONSE_READY,
-                        SLOT_FREE,
-                        Ordering::Release,
-                        Ordering::Relaxed,
-                    );
+                    slot.state.store(SLOT_FREE, Ordering::Release);
                 }
                 continue;
             }
             if payload.frame_count as usize != output.len() {
-                let _ = slot.state.compare_exchange(
-                    SLOT_RESPONSE_READY,
-                    SLOT_FREE,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                );
+                slot.state.store(SLOT_FREE, Ordering::Release);
                 return false;
             }
             output.copy_from_slice(&payload.audio[..output.len()]);
-            if slot
-                .state
-                .compare_exchange(
-                    SLOT_RESPONSE_READY,
-                    SLOT_FREE,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                return true;
-            }
-            output.fill([0.0; CLAP_IPC_CHANNELS]);
-            return false;
+            slot.state.store(SLOT_FREE, Ordering::Release);
+            return true;
         }
         self.underruns.fetch_add(1, Ordering::Relaxed);
         false
@@ -555,6 +594,7 @@ pub enum ClapIpcSubmitError {
     InvalidFrameCount,
     EventCapacityExceeded,
     InvalidEvent,
+    ProducerBusy,
     SlotsFull,
 }
 
@@ -601,6 +641,61 @@ mod tests {
         let mut output = [[0.0; CLAP_IPC_CHANNELS]; 4];
         assert!(host.region().try_read_response(1, 7, 512, &mut output));
         assert_eq!(output, [[0.25, -0.25]; 4]);
+    }
+
+    #[test]
+    fn concurrent_consumers_cannot_claim_or_read_the_same_slot() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let config = ClapIpcConfig::new(48_000, 8, 8).unwrap();
+        let region = ClapIpcRegion::new(config).unwrap();
+        region.accept_handshake(config);
+        region.try_submit(3, 11, 64, &[], 8).unwrap();
+        let region = Arc::<ClapIpcRegion>::from(region);
+        let claim_barrier = Arc::new(Barrier::new(3));
+        let claimers = (0..2)
+            .map(|_| {
+                let region = Arc::clone(&region);
+                let barrier = Arc::clone(&claim_barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    region.try_claim_request()
+                })
+            })
+            .collect::<Vec<_>>();
+        claim_barrier.wait();
+        let claims = claimers
+            .into_iter()
+            .filter_map(|join| join.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(claims.len(), 1);
+        let slot = claims[0];
+        assert!(region.process_request(slot, |request| {
+            request.audio.fill([0.5, -0.5]);
+            true
+        }));
+
+        let read_barrier = Arc::new(Barrier::new(3));
+        let readers = (0..2)
+            .map(|_| {
+                let region = Arc::clone(&region);
+                let barrier = Arc::clone(&read_barrier);
+                thread::spawn(move || {
+                    let mut output = [[0.0; CLAP_IPC_CHANNELS]; 8];
+                    barrier.wait();
+                    (region.try_read_response(3, 11, 64, &mut output), output)
+                })
+            })
+            .collect::<Vec<_>>();
+        read_barrier.wait();
+        let responses = readers
+            .into_iter()
+            .map(|join| join.join().unwrap())
+            .filter(|(read, _)| *read)
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].1, [[0.5, -0.5]; 8]);
     }
 
     #[test]
@@ -661,5 +756,22 @@ mod tests {
             region.try_submit(1, 5, 10, &[], 1),
             Err(ClapIpcSubmitError::SlotsFull)
         );
+    }
+
+    #[test]
+    fn midi_events_accept_unknown_clap_note_id_but_reject_invalid_offsets() {
+        let mut event = ClapIpcMidiEvent {
+            frame_offset: 3,
+            note_id: ClapIpcMidiEvent::NO_NOTE_ID,
+            pitch_bend: ClapIpcMidiEvent::NO_PITCH_BEND,
+            kind: ClapIpcMidiKind::NoteOn as u8,
+            pitch: 64,
+            velocity: 110,
+            controller: ClapIpcMidiEvent::NO_CONTROLLER,
+            reserved: [0; 2],
+        };
+        assert!(event.is_valid(4));
+        event.frame_offset = 4;
+        assert!(!event.is_valid(4));
     }
 }
