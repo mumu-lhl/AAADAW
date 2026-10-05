@@ -74,7 +74,7 @@ jobs:
           features=wasapi-backend
           source_commit=$env:GITHUB_SHA
           "@ | Set-Content -Encoding utf8NoBOM "$stage/BUILD.txt"
-          Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip"
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "$stage.zip").Hash.ToLowerInvariant()
           "$hash  $stage.zip" | Set-Content "$stage.zip.sha256"
       - uses: actions/upload-artifact@v4

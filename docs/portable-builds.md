@@ -18,7 +18,7 @@ The host must provide a compatible display server and graphics driver, `libjack`
 
 ## Windows x86_64
 
-The archive targets Windows x86_64 and enables WASAPI. Extract the ZIP and run `aaadaw.exe`. On first launch, open **Settings → Audio** to select the WASAPI output and input devices available on the machine. Recording requires an armed track and an available input device.
+The archive targets Windows x86_64 and enables WASAPI. Extract the ZIP, open the `aaadaw-windows-x86_64` folder, and run `aaadaw.exe`. On first launch, open **Settings → Audio** to select the WASAPI output and input devices available on the machine. Recording requires an armed track and an available input device.
 
 ## Projects, settings, and logs
 
