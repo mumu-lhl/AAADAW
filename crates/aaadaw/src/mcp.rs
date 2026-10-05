@@ -28,7 +28,10 @@ const MAX_TRACKS: usize = 512;
 const MIDI_QUERY_TOOL: &str = "daw_scoped_query_notes";
 const MAX_NOTE_RESULTS: usize = 512;
 const DEFAULT_NOTE_RESULTS: usize = 256;
-const MAX_NOTE_QUERY_TICKS: u64 = 245_760;
+const MAX_MIDI_QUERY_TICKS: u64 = 245_760;
+const MIDI_EXPRESSION_QUERY_TOOL: &str = "daw_scoped_query_midi_expression";
+const MAX_MIDI_EXPRESSION_RESULTS: usize = 512;
+const DEFAULT_MIDI_EXPRESSION_RESULTS: usize = 256;
 const CREATE_TRACK_TOOL: &str = "daw_create_track";
 const MAX_TRACK_NAME_CHARS: usize = 128;
 const CREATE_MIDI_ITEM_TOOL: &str = "daw_create_midi_item";
@@ -197,7 +200,7 @@ impl ServerHandler for ProjectMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        let mut tools = vec![midi_query_tool()];
+        let mut tools = vec![midi_query_tool(), midi_expression_query_tool()];
         if self.writable {
             tools.push(create_track_tool());
             tools.push(create_midi_item_tool());
@@ -222,6 +225,7 @@ impl ServerHandler for ProjectMcpServer {
     fn get_tool(&self, name: &str) -> Option<Tool> {
         match name {
             MIDI_QUERY_TOOL => Some(midi_query_tool()),
+            MIDI_EXPRESSION_QUERY_TOOL => Some(midi_expression_query_tool()),
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             CREATE_MIDI_ITEM_TOOL if self.writable => Some(create_midi_item_tool()),
             EDIT_MIDI_ITEM_TOOL if self.writable => Some(edit_midi_item_tool()),
@@ -258,6 +262,19 @@ impl ServerHandler for ProjectMcpServer {
                     parse_note_query_arguments(request.arguments.as_ref()).and_then(
                         |(track_id, start_tick, end_tick, limit)| {
                             scoped_query_notes(&project, track_id, start_tick, end_tick, limit)
+                        },
+                    )
+                }),
+            MIDI_EXPRESSION_QUERY_TOOL => self
+                .project
+                .lock()
+                .map_err(|_| "project lock was poisoned".to_owned())
+                .and_then(|project| {
+                    parse_midi_expression_query_arguments(request.arguments.as_ref()).and_then(
+                        |(track_id, start_tick, end_tick, limit)| {
+                            scoped_query_midi_expression(
+                                &project, track_id, start_tick, end_tick, limit,
+                            )
                         },
                     )
                 }),
@@ -1071,6 +1088,30 @@ fn midi_query_tool() -> Tool {
                 "start_tick": {"type": "integer", "minimum": 0},
                 "end_tick": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": MAX_NOTE_RESULTS}
+            },
+            "required": ["track_id", "start_tick", "end_tick"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn midi_expression_query_tool() -> Tool {
+    Tool::new(
+        MIDI_EXPRESSION_QUERY_TOOL,
+        "Read MIDI controller and pitch-bend events in a bounded project tick range.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "start_tick": {"type": "integer", "minimum": 0},
+                "end_tick": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_MIDI_EXPRESSION_RESULTS}
             },
             "required": ["track_id", "start_tick", "end_tick"],
             "additionalProperties": false
@@ -2076,6 +2117,24 @@ fn parse_quantize_midi_item_arguments(
 fn parse_note_query_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<(u64, u64, u64, usize), String> {
+    parse_midi_range_query_arguments(arguments, DEFAULT_NOTE_RESULTS, MAX_NOTE_RESULTS)
+}
+
+fn parse_midi_expression_query_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, u64, usize), String> {
+    parse_midi_range_query_arguments(
+        arguments,
+        DEFAULT_MIDI_EXPRESSION_RESULTS,
+        MAX_MIDI_EXPRESSION_RESULTS,
+    )
+}
+
+fn parse_midi_range_query_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+    default_limit: usize,
+    maximum_limit: usize,
+) -> Result<(u64, u64, u64, usize), String> {
     let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
     let read_integer = |name: &str| {
         arguments
@@ -2093,17 +2152,144 @@ fn parse_note_query_arguments(
         .map(usize::try_from)
         .transpose()
         .map_err(|_| "limit is too large".to_owned())?
-        .unwrap_or(DEFAULT_NOTE_RESULTS);
+        .unwrap_or(default_limit);
     if arguments
         .keys()
         .any(|key| !["track_id", "start_tick", "end_tick", "limit"].contains(&key.as_str()))
     {
         return Err("arguments contain an unknown field".to_owned());
     }
-    if !(1..=MAX_NOTE_RESULTS).contains(&limit) {
-        return Err(format!("limit must be between 1 and {MAX_NOTE_RESULTS}"));
+    if !(1..=maximum_limit).contains(&limit) {
+        return Err(format!("limit must be between 1 and {maximum_limit}"));
     }
     Ok((track_id, start_tick, end_tick, limit))
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct MidiExpressionCandidate {
+    absolute_tick: u64,
+    item_id: u64,
+    kind: MidiExpressionKind,
+    item_start_tick: u64,
+    item_tick: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum MidiExpressionKind {
+    Controller { controller: u8, value: u8 },
+    PitchBend { value: u16 },
+}
+
+fn scoped_query_midi_expression(
+    project: &Project,
+    track_id: u64,
+    start_tick: u64,
+    end_tick: u64,
+    limit: usize,
+) -> Result<Value, String> {
+    if !(1..=MAX_MIDI_EXPRESSION_RESULTS).contains(&limit) {
+        return Err(format!(
+            "limit must be between 1 and {MAX_MIDI_EXPRESSION_RESULTS}"
+        ));
+    }
+    if end_tick <= start_tick {
+        return Err("end_tick must be greater than start_tick".to_owned());
+    }
+    if end_tick - start_tick > MAX_MIDI_QUERY_TICKS {
+        return Err(format!(
+            "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
+        ));
+    }
+    let track_id = project
+        .tracks()
+        .iter()
+        .find(|track| track.id().value() == track_id)
+        .map(|track| track.id())
+        .ok_or_else(|| "unknown track id".to_owned())?;
+    let mut events = std::collections::BinaryHeap::with_capacity(limit);
+    let mut truncated = false;
+    for item in project
+        .midi_items()
+        .iter()
+        .filter(|item| item.track_id() == track_id)
+    {
+        for event in item.controllers() {
+            let absolute_tick = item.start_tick().saturating_add(event.tick);
+            if !(start_tick..end_tick).contains(&absolute_tick) {
+                continue;
+            }
+            let candidate = MidiExpressionCandidate {
+                absolute_tick,
+                item_id: item.id().value(),
+                kind: MidiExpressionKind::Controller {
+                    controller: event.controller,
+                    value: event.value,
+                },
+                item_start_tick: item.start_tick(),
+                item_tick: event.tick,
+            };
+            insert_bounded_expression_candidate(&mut events, candidate, limit, &mut truncated);
+        }
+        for event in item.pitch_bends() {
+            let absolute_tick = item.start_tick().saturating_add(event.tick);
+            if !(start_tick..end_tick).contains(&absolute_tick) {
+                continue;
+            }
+            let candidate = MidiExpressionCandidate {
+                absolute_tick,
+                item_id: item.id().value(),
+                kind: MidiExpressionKind::PitchBend { value: event.value },
+                item_start_tick: item.start_tick(),
+                item_tick: event.tick,
+            };
+            insert_bounded_expression_candidate(&mut events, candidate, limit, &mut truncated);
+        }
+    }
+    let events = events
+        .into_sorted_vec()
+        .into_iter()
+        .map(|event| {
+            let kind = match event.kind {
+                MidiExpressionKind::Controller { controller, value } => {
+                    json!({"type": "controller", "controller": controller, "value": value})
+                }
+                MidiExpressionKind::PitchBend { value } => {
+                    json!({"type": "pitch_bend", "value": value})
+                }
+            };
+            json!({
+                "item_id": event.item_id,
+                "item_start_tick": event.item_start_tick,
+                "item_tick": event.item_tick,
+                "tick": event.absolute_tick,
+                "event": kind,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "track_id": track_id.value(),
+        "start_tick": start_tick,
+        "end_tick": end_tick,
+        "events": events,
+        "truncated": truncated,
+    }))
+}
+
+fn insert_bounded_expression_candidate(
+    events: &mut std::collections::BinaryHeap<MidiExpressionCandidate>,
+    candidate: MidiExpressionCandidate,
+    limit: usize,
+    truncated: &mut bool,
+) {
+    if events.len() < limit {
+        events.push(candidate);
+    } else {
+        *truncated = true;
+        if events.peek().is_some_and(|latest| candidate < *latest) {
+            events.pop();
+            events.push(candidate);
+        }
+    }
 }
 
 fn scoped_query_notes(
@@ -2119,9 +2305,9 @@ fn scoped_query_notes(
     if end_tick <= start_tick {
         return Err("end_tick must be greater than start_tick".to_owned());
     }
-    if end_tick - start_tick > MAX_NOTE_QUERY_TICKS {
+    if end_tick - start_tick > MAX_MIDI_QUERY_TICKS {
         return Err(format!(
-            "requested range exceeds {MAX_NOTE_QUERY_TICKS} ticks"
+            "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
         ));
     }
     let track_id = project
@@ -2303,16 +2489,17 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_ITEM_LENGTH_TICKS,
-        MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT, MAX_NOTE_QUERY_TICKS,
-        MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS, parse_create_midi_item_arguments,
-        parse_create_track_arguments, parse_delete_midi_notes_arguments,
-        parse_edit_midi_item_arguments, parse_edit_midi_note_arguments,
-        parse_insert_midi_notes_arguments, parse_note_query_arguments,
+        MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS,
+        MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT,
+        MAX_MIDI_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
+        parse_create_midi_item_arguments, parse_create_track_arguments,
+        parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
+        parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
+        parse_midi_expression_query_arguments, parse_note_query_arguments,
         parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
         parse_set_time_signature_arguments, parse_track_summary_uri,
         parse_upsert_midi_controllers_arguments, parse_upsert_midi_pitch_bends_arguments,
-        scoped_query_notes, structure_summary, track_midi_summary,
+        scoped_query_midi_expression, scoped_query_notes, structure_summary, track_midi_summary,
     };
     use aaadaw_core::{
         DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
@@ -2872,6 +3059,148 @@ mod tests {
     }
 
     #[test]
+    fn midi_expression_query_orders_events_bounds_results_and_validates_ranges() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Expression".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        for start_tick in [100, 110] {
+            project
+                .apply(DawAction::InsertMidiItem {
+                    track_id,
+                    start_tick,
+                    length_ticks: 1_000,
+                })
+                .unwrap();
+        }
+        let first_item_id = project.midi_items()[0].id();
+        let second_item_id = project.midi_items()[1].id();
+        project
+            .apply(DawAction::SetMidiControllers {
+                item_id: first_item_id,
+                controllers: vec![
+                    MidiControllerData {
+                        controller: 9,
+                        tick: 19,
+                        value: 10,
+                    },
+                    MidiControllerData {
+                        controller: 11,
+                        tick: 20,
+                        value: 70,
+                    },
+                    MidiControllerData {
+                        controller: 1,
+                        tick: 20,
+                        value: 50,
+                    },
+                    MidiControllerData {
+                        controller: 7,
+                        tick: 30,
+                        value: 90,
+                    },
+                ],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id: first_item_id,
+                pitch_bends: vec![MidiPitchBendData {
+                    tick: 20,
+                    value: 10_000,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiControllers {
+                item_id: second_item_id,
+                controllers: vec![MidiControllerData {
+                    controller: 11,
+                    tick: 10,
+                    value: 80,
+                }],
+            })
+            .unwrap();
+
+        let result =
+            scoped_query_midi_expression(&project, track_id.value(), 120, 130, 10).unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 4);
+        assert!(
+            events
+                .iter()
+                .all(|event| (120..130).contains(&event["tick"].as_u64().unwrap()))
+        );
+        assert_eq!(result["truncated"], false);
+        assert_eq!(events[0]["item_id"], first_item_id.value());
+        assert_eq!(events[0]["item_start_tick"], 100);
+        assert_eq!(events[0]["item_tick"], 20);
+        assert_eq!(events[0]["tick"], 120);
+        assert_eq!(events[0]["event"]["type"], "controller");
+        assert_eq!(events[0]["event"]["controller"], 1);
+        assert_eq!(events[0]["event"]["value"], 50);
+        assert_eq!(events[1]["event"]["controller"], 11);
+        assert_eq!(events[2]["event"]["type"], "pitch_bend");
+        assert_eq!(events[2]["event"]["value"], 10_000);
+        assert_eq!(events[3]["item_id"], second_item_id.value());
+        assert_eq!(events[3]["item_tick"], 10);
+
+        let truncated =
+            scoped_query_midi_expression(&project, track_id.value(), 120, 130, 3).unwrap();
+        assert_eq!(truncated["events"].as_array().unwrap().len(), 3);
+        assert_eq!(truncated["truncated"], true);
+        assert!(scoped_query_midi_expression(&project, track_id.value(), 120, 120, 10).is_err());
+        assert!(
+            scoped_query_midi_expression(
+                &project,
+                track_id.value(),
+                0,
+                MAX_MIDI_QUERY_TICKS + 1,
+                10
+            )
+            .is_err()
+        );
+        assert!(scoped_query_midi_expression(&project, track_id.value() + 1, 0, 100, 10).is_err());
+        assert!(scoped_query_midi_expression(&project, track_id.value(), 0, 100, 0).is_err());
+        assert!(
+            scoped_query_midi_expression(
+                &project,
+                track_id.value(),
+                0,
+                100,
+                MAX_MIDI_EXPRESSION_RESULTS + 1,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn midi_expression_query_parser_rejects_unknown_fields_and_non_integer_values() {
+        let arguments = json!({
+            "track_id": 1,
+            "start_tick": 0,
+            "end_tick": 100,
+            "limit": 12
+        });
+        assert_eq!(
+            parse_midi_expression_query_arguments(arguments.as_object()).unwrap(),
+            (1, 0, 100, 12)
+        );
+        for arguments in [
+            json!({"track_id": 1, "start_tick": 0, "end_tick": 100, "other": true}),
+            json!({"track_id": 1, "start_tick": -1, "end_tick": 100}),
+            json!({"track_id": 1, "start_tick": 0, "end_tick": 100, "limit": 0}),
+            json!({"track_id": 1, "start_tick": 0, "end_tick": 100, "limit": MAX_MIDI_EXPRESSION_RESULTS + 1}),
+        ] {
+            assert!(parse_midi_expression_query_arguments(arguments.as_object()).is_err());
+        }
+    }
+
+    #[test]
     fn scoped_query_breaks_equal_tick_ties_by_item_then_note_id() {
         let (mut project, track_id) = project_with_notes(vec![
             MidiNoteData {
@@ -2941,7 +3270,7 @@ mod tests {
     #[test]
     fn scoped_query_rejects_bad_ids_ranges_and_limits() {
         let (project, track_id) = project_with_notes(Vec::new());
-        for (start, end) in [(100, 100), (200, 100), (0, MAX_NOTE_QUERY_TICKS + 1)] {
+        for (start, end) in [(100, 100), (200, 100), (0, MAX_MIDI_QUERY_TICKS + 1)] {
             assert!(scoped_query_notes(&project, track_id.value(), start, end, 10).is_err());
         }
         assert!(scoped_query_notes(&project, track_id.value() + 1, 0, 100, 10).is_err());

@@ -1,4 +1,6 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project, VolumeAutomationPoint};
+use aaadaw_core::{
+    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, VolumeAutomationPoint,
+};
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
@@ -114,6 +116,25 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
                 tick: 960,
                 duration: 480,
                 velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 11,
+                tick: 120,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 240,
+                value: 10_000,
             }],
         })
         .unwrap();
@@ -327,6 +348,12 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_upsert_midi_pitch_bends", "arguments": {"item_id": item_id.value(), "pitch_bends": [{"tick": 0, "value": 8192}]}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {"name": "daw_scoped_query_midi_expression", "arguments": {"track_id": track_id.value(), "start_tick": 100, "end_tick": 400}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -374,7 +401,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     );
     assert_eq!(
         response_for(7)["result"]["tools"].as_array().unwrap().len(),
-        1
+        2
     );
     assert!(
         response_for(7)["result"]["tools"]
@@ -382,6 +409,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .unwrap()
             .iter()
             .all(|tool| tool["name"] != "daw_set_volume_automation_point")
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "daw_scoped_query_midi_expression")
     );
     assert!(
         response_for(7)["result"]["tools"]
@@ -521,6 +555,19 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     );
     assert_eq!(response_for(28)["result"]["isError"], true);
     assert_eq!(response_for(29)["result"]["isError"], true);
+    assert_eq!(response_for(30)["result"]["isError"], false);
+    let expression = &response_for(30)["result"]["structuredContent"];
+    let events = expression["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["item_id"], item_id.value());
+    assert_eq!(events[0]["item_start_tick"], 0);
+    assert_eq!(events[0]["item_tick"], 120);
+    assert_eq!(events[0]["tick"], 120);
+    assert_eq!(events[0]["event"]["type"], "controller");
+    assert_eq!(events[0]["event"]["controller"], 11);
+    assert_eq!(events[0]["event"]["value"], 80);
+    assert_eq!(events[1]["event"]["type"], "pitch_bend");
+    assert_eq!(events[1]["event"]["value"], 10_000);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
