@@ -3199,6 +3199,12 @@ mod tests {
             parameter_id: 17,
             index: 0,
         });
+        timeline.handle(TimelineEvent::ResizeFxAutomationLane {
+            track_id,
+            chain_index: 0,
+            parameter_id: 17,
+            height: 48.0,
+        });
 
         let chain = project.tracks()[0].fx_chain();
         project
@@ -3212,6 +3218,7 @@ mod tests {
         assert!(timeline.fx_automation_lanes.contains(&(track_id, 1, 17)));
         assert!(timeline.fx_automation_lanes.contains(&(track_id, 1, 18)));
         assert_eq!(timeline.row_layout(0).unwrap().fx_lane_count, 2);
+        assert_eq!(timeline.fx_automation_lane_height((track_id, 1, 17)), 48.0);
         assert_eq!(
             timeline.selected_fx_automation_point,
             Some((track_id, 1, 17, 0))
