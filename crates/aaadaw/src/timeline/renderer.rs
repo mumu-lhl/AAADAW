@@ -23,12 +23,14 @@ const TIME_SELECTION_EDGE: u32 = 10;
 const AUDIO_WAVEFORM: u32 = 11;
 const AUTOMATION_SEGMENT: u32 = 12;
 const AUTOMATION_POINT: u32 = 13;
+const FX_LANE_DIVIDER: u32 = 14;
 
 #[derive(Debug)]
 pub(super) struct AutomationLane {
     pub(super) track_index: u32,
     pub(super) is_fx: bool,
-    pub(super) lane_index: usize,
+    pub(super) lane_top: f32,
+    pub(super) lane_height: f32,
     pub(super) value_range: (f32, f32),
     pub(super) selected_point: Option<usize>,
     pub(super) points: Vec<(u64, f32)>,
@@ -53,7 +55,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) width: f32,
     pub(super) height: f32,
     pub(super) grid_lines: Vec<(u64, bool)>,
-    pub(super) volume_automation: Vec<AutomationLane>,
+    pub(super) automation_lanes: Vec<AutomationLane>,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -233,7 +235,7 @@ impl Pipeline for TimelinePipeline {
 
 impl TimelinePrimitive {
     fn has_volume_automation(&self, track_index: u32) -> bool {
-        self.volume_automation
+        self.automation_lanes
             .iter()
             .any(|lane| lane.track_index == track_index && !lane.is_fx)
     }
@@ -258,9 +260,9 @@ impl Primitive for TimelinePrimitive {
                     + self.items.len()
                     + self.waveform_bins.len()
                     + self
-                        .volume_automation
+                        .automation_lanes
                         .iter()
-                        .map(|lane| lane.points.len() * 2 + 1)
+                        .map(|lane| lane.points.len() * 2 + 1 + usize::from(lane.is_fx))
                         .sum::<usize>(),
             );
             for track_index in 0..self.track_count {
@@ -288,7 +290,7 @@ impl Primitive for TimelinePrimitive {
                     continue;
                 };
                 let has_automation = self
-                    .volume_automation
+                    .automation_lanes
                     .iter()
                     .any(|lane| lane.track_index == item.track_index as u32 && !lane.is_fx);
                 let (color, kind) = match item.kind {
@@ -315,12 +317,12 @@ impl Primitive for TimelinePrimitive {
                     continue;
                 };
                 let has_automation = self
-                    .volume_automation
+                    .automation_lanes
                     .iter()
                     .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx);
                 instances.push(waveform_rect(*bin, *row, has_automation));
             }
-            for lane in &self.volume_automation {
+            for lane in &self.automation_lanes {
                 let Some(row) = self.row_layout.get(lane.track_index as usize) else {
                     continue;
                 };
@@ -331,14 +333,12 @@ impl Primitive for TimelinePrimitive {
                         (-60.0, 6.0)
                     };
                     let top = if lane.is_fx {
-                        row.base_height
-                            + lane.lane_index as f32 * super::FX_AUTOMATION_LANE_HEIGHT
-                            + 2.0
+                        lane.lane_top + 2.0
                     } else {
                         66.0
                     };
                     let bottom = if lane.is_fx {
-                        top + super::FX_AUTOMATION_LANE_HEIGHT - 4.0
+                        top + lane.lane_height - 4.0
                     } else {
                         82.0
                     };
@@ -401,6 +401,18 @@ impl Primitive for TimelinePrimitive {
                         item_id: 0,
                         track_index: lane.track_index,
                         kind: AUTOMATION_POINT,
+                    }));
+                }
+                if lane.is_fx {
+                    instances.push(GpuRect::new(GpuRectSpec {
+                        start_tick: 0,
+                        end_tick: 0,
+                        y: row.top + lane.lane_top + lane.lane_height - 1.0,
+                        height: 1.0,
+                        color: [68, 75, 80, 255],
+                        item_id: 0,
+                        track_index: lane.track_index,
+                        kind: FX_LANE_DIVIDER,
                     }));
                 }
             }
@@ -518,7 +530,7 @@ impl Primitive for TimelinePrimitive {
                     &waveform_rect(
                         *bin,
                         self.row_layout[bin.track_index],
-                        self.volume_automation
+                        self.automation_lanes
                             .iter()
                             .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
                     ),
@@ -551,7 +563,7 @@ impl Primitive for TimelinePrimitive {
                     &waveform_rect(
                         clipped,
                         self.row_layout[bin.track_index],
-                        self.volume_automation
+                        self.automation_lanes
                             .iter()
                             .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
                     ),
