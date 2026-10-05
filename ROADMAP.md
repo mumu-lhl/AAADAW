@@ -30,7 +30,7 @@
 - [ ] 编写 ADR，明确首个音频后端、Iced 与 wgpu 版本策略、实时线程模型及第三方依赖许可审核流程。
 - [x] 编写 ADR，确定 `DawAction` 的校验、原子提交、事务回滚、撤销/重做及单调分配轨道 ID 的语义。
 - [ ] 明确事件历史与持久化快照的关系，以及双时基的内部表示。
-- [ ] 设计 `.aaadaw` 的 WAL 打开、关闭、检查点、复制/导出和崩溃恢复流程。SQLite WAL 工作期间可能产生旁路文件；必须明确何时及如何得到可迁移的单文件工程。
+- [x] 记录 `.aaadaw` 的 WAL 打开、关闭、检查点、单文件复制和崩溃恢复约定（[ADR 0006](docs/adr/0006-sqlite-wal-project-lifecycle.md)，[Issue #174](https://github.com/mumu-lhl/AAADAW/issues/174)）。
 - [x] 决定 MVP 的 MIDI 发声路径：采用 CLAP 乐器宿主，最小宿主能力前置到 Phase 4，完整插件管理留在 Phase 5（[`docs/adr/0005-clap-midi-instrument-path.md`](docs/adr/0005-clap-midi-instrument-path.md)）。
 - [ ] 核对 Apache-2.0/MIT 与计划使用的音频、UI、插件、时伸缩依赖的许可和分发条件；VST3 另设法律/许可检查门槛。
 
