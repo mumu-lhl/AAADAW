@@ -2187,25 +2187,14 @@ fn scoped_query_midi_expression(
     end_tick: u64,
     limit: usize,
 ) -> Result<Value, String> {
-    if !(1..=MAX_MIDI_EXPRESSION_RESULTS).contains(&limit) {
-        return Err(format!(
-            "limit must be between 1 and {MAX_MIDI_EXPRESSION_RESULTS}"
-        ));
-    }
-    if end_tick <= start_tick {
-        return Err("end_tick must be greater than start_tick".to_owned());
-    }
-    if end_tick - start_tick > MAX_MIDI_QUERY_TICKS {
-        return Err(format!(
-            "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
-        ));
-    }
-    let track_id = project
-        .tracks()
-        .iter()
-        .find(|track| track.id().value() == track_id)
-        .map(|track| track.id())
-        .ok_or_else(|| "unknown track id".to_owned())?;
+    let track_id = validate_midi_query_scope(
+        project,
+        track_id,
+        start_tick,
+        end_tick,
+        limit,
+        MAX_MIDI_EXPRESSION_RESULTS,
+    )?;
     let mut events = std::collections::BinaryHeap::with_capacity(limit);
     let mut truncated = false;
     for item in project
@@ -2299,23 +2288,14 @@ fn scoped_query_notes(
     end_tick: u64,
     limit: usize,
 ) -> Result<Value, String> {
-    if !(1..=MAX_NOTE_RESULTS).contains(&limit) {
-        return Err(format!("limit must be between 1 and {MAX_NOTE_RESULTS}"));
-    }
-    if end_tick <= start_tick {
-        return Err("end_tick must be greater than start_tick".to_owned());
-    }
-    if end_tick - start_tick > MAX_MIDI_QUERY_TICKS {
-        return Err(format!(
-            "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
-        ));
-    }
-    let track_id = project
-        .tracks()
-        .iter()
-        .find(|track| track.id().value() == track_id)
-        .map(|track| track.id())
-        .ok_or_else(|| "unknown track id".to_owned())?;
+    let track_id = validate_midi_query_scope(
+        project,
+        track_id,
+        start_tick,
+        end_tick,
+        limit,
+        MAX_NOTE_RESULTS,
+    )?;
     let mut notes = std::collections::BinaryHeap::with_capacity(limit);
     let mut truncated = false;
     for item in project
@@ -2369,6 +2349,33 @@ fn scoped_query_notes(
         "truncated": truncated,
         "notes": notes,
     }))
+}
+
+fn validate_midi_query_scope(
+    project: &Project,
+    track_id: u64,
+    start_tick: u64,
+    end_tick: u64,
+    limit: usize,
+    maximum_results: usize,
+) -> Result<TrackId, String> {
+    if !(1..=maximum_results).contains(&limit) {
+        return Err(format!("limit must be between 1 and {maximum_results}"));
+    }
+    if end_tick <= start_tick {
+        return Err("end_tick must be greater than start_tick".to_owned());
+    }
+    if end_tick - start_tick > MAX_MIDI_QUERY_TICKS {
+        return Err(format!(
+            "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
+        ));
+    }
+    project
+        .tracks()
+        .iter()
+        .find(|track| track.id().value() == track_id)
+        .map(|track| track.id())
+        .ok_or_else(|| "unknown track id".to_owned())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3135,6 +3142,7 @@ mod tests {
                 .iter()
                 .all(|event| (120..130).contains(&event["tick"].as_u64().unwrap()))
         );
+        assert!(events.iter().all(|event| event["event"]["controller"] != 7));
         assert_eq!(result["truncated"], false);
         assert_eq!(events[0]["item_id"], first_item_id.value());
         assert_eq!(events[0]["item_start_tick"], 100);

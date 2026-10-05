@@ -3061,6 +3061,11 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
             "daw_upsert_midi_pitch_bends",
             json!({"item_id": 999_999, "pitch_bends": [{"tick": 0, "value": 8192}]}),
         ),
+        call(
+            18,
+            "daw_scoped_query_midi_expression",
+            json!({"track_id": track_id.value(), "start_tick": 0, "end_tick": 3840}),
+        ),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -3112,6 +3117,17 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
     }
     assert_eq!(response_for(16)["result"]["isError"], true);
     assert_eq!(response_for(17)["result"]["isError"], true);
+    assert_eq!(response_for(18)["result"]["isError"], false);
+    assert_eq!(
+        response_for(18)["result"]["structuredContent"]["track_id"],
+        track_id.value()
+    );
+    assert!(
+        !response_for(18)["result"]["structuredContent"]["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     let saved_item = reopened
