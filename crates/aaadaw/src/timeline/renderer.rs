@@ -1,6 +1,6 @@
 use super::{
     ItemDragPreview, ItemKind, ItemTrimPreview, SelectedItemGeometry, TimeSelection, TimelineItem,
-    WaveformBinGeometry,
+    TrackRowLayout, WaveformBinGeometry,
 };
 use bytemuck::{Pod, Zeroable, cast_slice};
 use iced::Rectangle;
@@ -28,6 +28,7 @@ const AUTOMATION_POINT: u32 = 13;
 pub(super) struct AutomationLane {
     pub(super) track_index: u32,
     pub(super) is_fx: bool,
+    pub(super) lane_index: usize,
     pub(super) value_range: (f32, f32),
     pub(super) selected_point: Option<usize>,
     pub(super) points: Vec<(u64, f32)>,
@@ -38,7 +39,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) generation: u64,
     pub(super) items: Arc<[TimelineItem]>,
     pub(super) track_count: u32,
-    pub(super) row_height: f32,
+    pub(super) row_layout: Vec<TrackRowLayout>,
     pub(super) origin_tick: u64,
     pub(super) pixels_per_tick: f32,
     pub(super) edit_cursor_tick: u64,
@@ -230,6 +231,14 @@ impl Pipeline for TimelinePipeline {
     }
 }
 
+impl TimelinePrimitive {
+    fn has_volume_automation(&self, track_index: u32) -> bool {
+        self.volume_automation
+            .iter()
+            .any(|lane| lane.track_index == track_index && !lane.is_fx)
+    }
+}
+
 impl Primitive for TimelinePrimitive {
     type Pipeline = TimelinePipeline;
 
@@ -255,6 +264,9 @@ impl Primitive for TimelinePrimitive {
                         .sum::<usize>(),
             );
             for track_index in 0..self.track_count {
+                let Some(row) = self.row_layout.get(track_index as usize) else {
+                    continue;
+                };
                 let color = if track_index % 2 == 0 {
                     [34, 39, 43, 255]
                 } else {
@@ -263,8 +275,8 @@ impl Primitive for TimelinePrimitive {
                 instances.push(GpuRect::new(GpuRectSpec {
                     start_tick: 0,
                     end_tick: 0,
-                    y: track_index as f32 * self.row_height,
-                    height: self.row_height,
+                    y: row.top,
+                    height: row.height,
                     color,
                     item_id: 0,
                     track_index,
@@ -272,10 +284,13 @@ impl Primitive for TimelinePrimitive {
                 }));
             }
             for item in self.items.iter() {
+                let Some(row) = self.row_layout.get(item.track_index) else {
+                    continue;
+                };
                 let has_automation = self
                     .volume_automation
                     .iter()
-                    .any(|lane| lane.track_index == item.track_index as u32);
+                    .any(|lane| lane.track_index == item.track_index as u32 && !lane.is_fx);
                 let (color, kind) = match item.kind {
                     ItemKind::Audio => ([74, 99, 122, 255], AUDIO_ITEM),
                     ItemKind::Midi => ([89, 112, 74, 255], MIDI_ITEM),
@@ -283,11 +298,11 @@ impl Primitive for TimelinePrimitive {
                 instances.push(GpuRect::new(GpuRectSpec {
                     start_tick: item.start_tick,
                     end_tick: item.end_tick,
-                    y: item.track_index as f32 * self.row_height + 7.0,
+                    y: row.top + 7.0,
                     height: if has_automation {
-                        self.row_height - 42.0
+                        row.base_height - 42.0
                     } else {
-                        self.row_height - 14.0
+                        row.base_height - 14.0
                     },
                     color,
                     item_id: item.id.value(),
@@ -296,26 +311,38 @@ impl Primitive for TimelinePrimitive {
                 }));
             }
             for bin in self.waveform_bins.iter() {
+                let Some(row) = self.row_layout.get(bin.track_index) else {
+                    continue;
+                };
                 let has_automation = self
                     .volume_automation
                     .iter()
-                    .any(|lane| lane.track_index == bin.track_index as u32);
-                instances.push(waveform_rect(*bin, self.row_height, has_automation));
+                    .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx);
+                instances.push(waveform_rect(*bin, *row, has_automation));
             }
             for lane in &self.volume_automation {
+                let Some(row) = self.row_layout.get(lane.track_index as usize) else {
+                    continue;
+                };
                 let y = |value: f32| {
                     let (min, max) = if lane.is_fx {
                         lane.value_range
                     } else {
                         (-60.0, 6.0)
                     };
-                    let top = if lane.is_fx { 82.0 } else { 66.0 };
+                    let top = if lane.is_fx {
+                        row.base_height
+                            + lane.lane_index as f32 * super::FX_AUTOMATION_LANE_HEIGHT
+                            + 2.0
+                    } else {
+                        66.0
+                    };
                     let bottom = if lane.is_fx {
-                        self.row_height - 3.0
+                        top + super::FX_AUTOMATION_LANE_HEIGHT - 4.0
                     } else {
                         82.0
                     };
-                    lane.track_index as f32 * self.row_height
+                    row.top
                         + top
                         + (max - value.clamp(min, max))
                             * ((bottom - top) / (max - min).max(f32::EPSILON))
@@ -416,7 +443,11 @@ impl Primitive for TimelinePrimitive {
                 continue;
             }
             if let Some(item) = self.items.get(cache_index) {
-                let rect = item_rect(item, self.row_height);
+                let rect = item_rect(
+                    item,
+                    &self.row_layout,
+                    self.has_volume_automation(item.track_index as u32),
+                );
                 write_item_rect(
                     queue,
                     &pipeline.static_buffer,
@@ -441,7 +472,8 @@ impl Primitive for TimelinePrimitive {
                     track_index,
                     selected.item_id.value(),
                     selected.kind,
-                    self.row_height,
+                    &self.row_layout,
+                    self.has_volume_automation(track_index),
                 );
                 write_item_rect(
                     queue,
@@ -465,7 +497,8 @@ impl Primitive for TimelinePrimitive {
                 item.track_index as u32,
                 item.id.value(),
                 item.kind,
-                self.row_height,
+                &self.row_layout,
+                self.has_volume_automation(item.track_index as u32),
             );
             write_item_rect(
                 queue,
@@ -484,10 +517,10 @@ impl Primitive for TimelinePrimitive {
                     waveform_instance_start + index,
                     &waveform_rect(
                         *bin,
-                        self.row_height,
+                        self.row_layout[bin.track_index],
                         self.volume_automation
                             .iter()
-                            .any(|lane| lane.track_index == bin.track_index as u32),
+                            .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
                     ),
                 );
             }
@@ -517,10 +550,10 @@ impl Primitive for TimelinePrimitive {
                     waveform_instance_start + index,
                     &waveform_rect(
                         clipped,
-                        self.row_height,
+                        self.row_layout[bin.track_index],
                         self.volume_automation
                             .iter()
-                            .any(|lane| lane.track_index == bin.track_index as u32),
+                            .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
                     ),
                 );
                 previewed_waveform_indices.push(index);
@@ -566,8 +599,14 @@ impl Primitive for TimelinePrimitive {
             dynamic.push(GpuRect::new(GpuRectSpec {
                 start_tick: 0,
                 end_tick: 0,
-                y: target_track_index as f32 * self.row_height,
-                height: self.row_height,
+                y: self
+                    .row_layout
+                    .get(target_track_index)
+                    .map_or(0.0, |row| row.top),
+                height: self
+                    .row_layout
+                    .get(target_track_index)
+                    .map_or(0.0, |row| row.height),
                 color: if preview.valid {
                     [79, 111, 87, 110]
                 } else {
@@ -605,8 +644,21 @@ impl Primitive for TimelinePrimitive {
             dynamic.push(GpuRect::new(GpuRectSpec {
                 start_tick,
                 end_tick,
-                y: track_index as f32 * self.row_height + 7.0,
-                height: self.row_height - 14.0,
+                y: self
+                    .row_layout
+                    .get(track_index as usize)
+                    .map_or(0.0, |row| row.top + 7.0),
+                height: self
+                    .row_layout
+                    .get(track_index as usize)
+                    .map_or(0.0, |row| {
+                        row.base_height
+                            - if self.has_volume_automation(track_index) {
+                                42.0
+                            } else {
+                                14.0
+                            }
+                    }),
                 color: if trim.is_some_and(|trim| !trim.valid) {
                     [218, 80, 71, 255]
                 } else {
@@ -717,13 +769,20 @@ fn item_appearance(kind: ItemKind) -> ([u8; 4], u32) {
     }
 }
 
-fn item_rect(item: &TimelineItem, row_height: f32) -> GpuRect {
+fn item_rect(
+    item: &TimelineItem,
+    row_layout: &[TrackRowLayout],
+    has_volume_automation: bool,
+) -> GpuRect {
     let (color, kind) = item_appearance(item.kind);
+    let Some(row) = row_layout.get(item.track_index) else {
+        return GpuRect::zeroed();
+    };
     GpuRect::new(GpuRectSpec {
         start_tick: item.start_tick,
         end_tick: item.end_tick,
-        y: item.track_index as f32 * row_height + 7.0,
-        height: row_height - 14.0,
+        y: row.top + 7.0,
+        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
         color,
         item_id: item.id.value(),
         track_index: item.track_index as u32,
@@ -737,14 +796,24 @@ fn selected_item_rect(
     track_index: u32,
     item_id: u64,
     kind: ItemKind,
-    row_height: f32,
+    row_layout: &[TrackRowLayout],
+    has_volume_automation: bool,
 ) -> GpuRect {
     let (color, item_kind) = item_appearance(kind);
+    let row = row_layout
+        .get(track_index as usize)
+        .copied()
+        .unwrap_or(TrackRowLayout {
+            top: 0.0,
+            height: 0.0,
+            base_height: 0.0,
+            fx_lane_count: 0,
+        });
     GpuRect::new(GpuRectSpec {
         start_tick,
         end_tick,
-        y: track_index as f32 * row_height + 7.0,
-        height: row_height - 14.0,
+        y: row.top + 7.0,
+        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
         color,
         item_id,
         track_index,
@@ -752,10 +821,9 @@ fn selected_item_rect(
     })
 }
 
-fn waveform_rect(bin: WaveformBinGeometry, row_height: f32, has_automation: bool) -> GpuRect {
-    let height = (row_height * if has_automation { 0.35 } else { 0.56 }).max(1.0);
-    let center =
-        bin.track_index as f32 * row_height + row_height * if has_automation { 0.38 } else { 0.62 };
+fn waveform_rect(bin: WaveformBinGeometry, row: TrackRowLayout, has_automation: bool) -> GpuRect {
+    let height = (row.base_height * if has_automation { 0.35 } else { 0.56 }).max(1.0);
+    let center = row.top + row.base_height * if has_automation { 0.38 } else { 0.62 };
     let top = center - bin.max.clamp(-1.0, 1.0) * height / 2.0;
     let bottom = center - bin.min.clamp(-1.0, 1.0) * height / 2.0;
     GpuRect::new(GpuRectSpec {

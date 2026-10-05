@@ -222,6 +222,16 @@ fn arrangement_fx_automation_edits_points_undoes_and_redoes() {
             value_range: (20.0, 20_000.0),
             stepped: false,
         });
+    app.timeline
+        .handle(super::super::timeline::TimelineEvent::ToggleFxAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 8,
+            name: "Q".to_owned(),
+            value_range: (0.1, 10.0),
+            stepped: false,
+        });
+    assert_eq!(app.timeline.fx_automation_lanes.len(), 2);
 
     let first = aaadaw_core::FxParameterAutomationPoint::new(
         app.project.sample_at_tick(960).unwrap(),
@@ -281,6 +291,7 @@ fn arrangement_fx_automation_edits_points_undoes_and_redoes() {
             .points(),
         &[first, moved]
     );
+    assert!(app.timeline.fx_automation_lanes.contains(&(track_id, 0, 8)));
 
     let _ = app.update(Message::Timeline(
         super::super::timeline::TimelineEvent::DeleteFxAutomationPoint {

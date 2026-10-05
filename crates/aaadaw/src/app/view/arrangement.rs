@@ -144,7 +144,12 @@ fn track_controls(app: &App) -> Element<'_, Message> {
     else {
         return controls.into();
     };
-    let row_y = 32.0 + track_index as f32 * TIMELINE_ROW_HEIGHT - app.timeline.vertical_scroll;
+    let row_y = 32.0
+        + app
+            .timeline
+            .row_layout(track_index)
+            .map_or(track_index as f32 * TIMELINE_ROW_HEIGHT, |row| row.top)
+        - app.timeline.vertical_scroll;
     let popup = float(track_context_menu(app, track)).translate(move |bounds, viewport| {
         let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
         let target_y = (bounds.y + row_y).clamp(viewport.y, max_y);
@@ -401,10 +406,23 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
 const COMPACT_TCP_WIDTH: f32 = 340.0;
 
 fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
-    responsive(move |size| track_row_layout(app, track, size.width < COMPACT_TCP_WIDTH)).into()
+    let height = app
+        .project
+        .tracks()
+        .iter()
+        .position(|candidate| candidate.id() == track.id())
+        .and_then(|index| app.timeline.row_layout(index))
+        .map_or(TIMELINE_ROW_HEIGHT, |row| row.height);
+    responsive(move |size| track_row_layout(app, track, size.width < COMPACT_TCP_WIDTH, height))
+        .into()
 }
 
-fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Element<'a, Message> {
+fn track_row_layout<'a>(
+    app: &'a App,
+    track: &'a Track,
+    compact: bool,
+    height: f32,
+) -> Element<'a, Message> {
     let track_id = track.id();
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let output_label = track
@@ -473,7 +491,7 @@ fn track_row_layout<'a>(app: &'a App, track: &'a Track, compact: bool) -> Elemen
     let meter = track_peak_meter(app, track);
     let row = container(column![heading, volume_controls, meter, pan_controls].spacing(2))
         .padding([5, 4])
-        .height(TIMELINE_ROW_HEIGHT)
+        .height(height)
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(track_selection_background(selected).into()),
