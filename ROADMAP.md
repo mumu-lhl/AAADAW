@@ -25,14 +25,14 @@
 - [x] 建立 Cargo workspace、基础 crate 边界，并为 `aaadaw-core` 建立统一 Action 错误类型；模块边界保持精简。
 - [x] 统一日志约定：桌面与 MCP 共用结构化启动/退出日志，使用按平台定位、每日轮转且最多保留七份的用户日志文件，并提供 `RUST_LOG`/`AAADAW_LOG_DIR` 配置；日志初始化失败退回 stderr，realtime 路径禁止日志（[Issue #149](https://github.com/mumu-lhl/AAADAW/issues/149)）。
 - [x] 配置格式化、Clippy、nextest 单元测试和 Linux CI；添加本地开发命令与 nextest 约定。
-- [ ] 增加 Windows 构建检查，并记录各平台本地开发与打包步骤。
+- [x] 增加 Windows 构建检查，并记录 Linux/Windows 本地构建与当前打包限制（[CI](.github/workflows/ci.yml)，[平台说明](docs/platforms.md)）。
 - [x] 固定 Rust edition/MSRV 声明（Rust 2024 / 1.88）并配置 stable 工具链。
-- [ ] 编写 ADR，明确首个音频后端、Iced 与 wgpu 版本策略、实时线程模型及第三方依赖许可审核流程。
+- [x] 编写 ADR，明确首个音频后端、Iced 与 wgpu 版本策略、实时线程模型及第三方依赖许可审核流程（[ADR 0007](docs/adr/0007-desktop-runtime-and-dependency-policy.md)）。
 - [x] 编写 ADR，确定 `DawAction` 的校验、原子提交、事务回滚、撤销/重做及单调分配轨道 ID 的语义。
-- [ ] 明确事件历史与持久化快照的关系，以及双时基的内部表示。
+- [x] 明确事件历史与持久化快照的关系，以及 sample-clock/PPQ 双时基表示（[ADR 0001](docs/adr/0001-project-action-history.md)、[ADR 0002](docs/adr/0002-timebase-defaults.md)、[ADR 0007](docs/adr/0007-desktop-runtime-and-dependency-policy.md)）。
 - [x] 记录 `.aaadaw` 的 WAL 打开、关闭、检查点、单文件复制和崩溃恢复约定（[ADR 0006](docs/adr/0006-sqlite-wal-project-lifecycle.md)，[Issue #174](https://github.com/mumu-lhl/AAADAW/issues/174)）。
 - [x] 决定 MVP 的 MIDI 发声路径：采用 CLAP 乐器宿主，最小宿主能力前置到 Phase 4，完整插件管理留在 Phase 5（[`docs/adr/0005-clap-midi-instrument-path.md`](docs/adr/0005-clap-midi-instrument-path.md)）。
-- [ ] 核对 Apache-2.0/MIT 与计划使用的音频、UI、插件、时伸缩依赖的许可和分发条件；VST3 另设法律/许可检查门槛。
+- [x] 核对当前解析到的 Apache-2.0/MIT 与音频、UI、插件依赖许可，并将 Rust 锁文件审查自动化到 CI（[deny.toml](deny.toml)，覆盖 Linux/Windows/macOS/Android target 与全部 feature）；新依赖持续复核，VST3 另设法律/许可检查门槛（[ADR 0007](docs/adr/0007-desktop-runtime-and-dependency-policy.md)）。
 
 ### 退出标准
 
