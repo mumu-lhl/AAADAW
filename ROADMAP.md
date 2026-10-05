@@ -161,7 +161,7 @@
 - [x] 将可撤销的 CLAP 乐器指派接入轨道 MIDI 播放与 FX chain，并在替换渲染图和关闭输出时安全回收（[`docs/tickets/2026-10-02-clap-instrument-playback.md`](docs/tickets/2026-10-02-clap-instrument-playback.md)）。
 - [x] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧嵌入所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
 - [x] 将连续 CLAP 效果器参数接入 Action；提供 begin/perform/end 手势语义、撤销/重做和参数状态保存恢复（[Issue #18](https://github.com/mumu-lhl/AAADAW/issues/18)）。
-- [ ] 在轨道 FX 编辑器中以整数步进控件编辑 CLAP stepped 参数，保持有界验证、重置和 undo/redo（[Issue #159](https://github.com/mumu-lhl/AAADAW/issues/159)）。
+- [x] 在轨道 FX 编辑器中以整数步进控件编辑 CLAP stepped 参数，保持有界验证、重置和 undo/redo（[Issue #159](https://github.com/mumu-lhl/AAADAW/issues/159)）。
 - [ ] 录制 CLAP 参数自动化并回放。
 - [x] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）。
 - [x] 在插件选择、FX 编辑器和轨道乐器入口提示进程内执行风险；MVP 不承诺插件崩溃隔离（[Issue #16](https://github.com/mumu-lhl/AAADAW/issues/16)）。
@@ -187,7 +187,7 @@
 - [x] 通过授权 MCP writer 创建有界 MIDI clip（track、绝对起点、时长），经 `InsertMidiItem` Action 持久化并加入会话 Undo/Redo（[Issue #151](https://github.com/mumu-lhl/AAADAW/issues/151)）。
 - [x] 通过授权 MCP writer 按稳定 Note ID 编辑和删除音符；批量删除全有或全无，修改经 Action、持久化及会话 Undo/Redo（[Issue #153](https://github.com/mumu-lhl/AAADAW/issues/153)）。
 - [x] 通过授权 MCP writer 移动和调整 MIDI clip 长度；拒绝截断现有音符，成功编辑保留稳定 ID 并支持会话 Undo/Redo（[Issue #155](https://github.com/mumu-lhl/AAADAW/issues/155)）。
-- [ ] 通过授权 MCP writer 对 MIDI item 的 CC 和 pitch-bend 点做有界 upsert；保留未涉及的事件，写入持久化且可撤销（[Issue #157](https://github.com/mumu-lhl/AAADAW/issues/157)）。
+- [x] 通过授权 MCP writer 对 MIDI item 的 CC 和 pitch-bend 点做有界 upsert；保留未涉及的事件，写入持久化且可撤销（[Issue #157](https://github.com/mumu-lhl/AAADAW/issues/157)）。
 - [ ] 继续评估其他适合 MCP 的无对话框 Action，并为危险操作保留显式授权边界。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
 - [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
