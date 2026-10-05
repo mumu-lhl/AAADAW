@@ -1978,12 +1978,28 @@ fn project_session_round_trip_restores_arrangement_view_state() {
         })
         .unwrap();
     let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap()],
+        })
+        .unwrap();
     let view_state = ArrangementViewState {
         volume_lanes: vec![aaadaw_storage::VolumeAutomationLaneViewState {
             track_id: track_id.value(),
             visible: false,
         }],
-        fx_lanes: Vec::new(),
+        fx_lanes: vec![aaadaw_storage::FxAutomationLaneViewState {
+            track_id: track_id.value(),
+            chain_index: 0,
+            plugin_id: "vendor.eq".to_owned(),
+            bundle_path: "/plugins/eq.clap".to_owned(),
+            parameter_id: 7,
+            name: "Mix".to_owned(),
+            value_range: (0.0, 1.0),
+            stepped: false,
+            height: 48.0,
+        }],
     };
     let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
     save_project_session_file(
@@ -1999,6 +2015,12 @@ fn project_session_round_trip_restores_arrangement_view_state() {
     let (loaded_project, loaded_view_state, _session_lock) = load_project_session(path).unwrap();
     assert_eq!(loaded_project.tracks()[0].id(), track_id);
     assert_eq!(loaded_view_state, Some(view_state));
+
+    let mut timeline = crate::timeline::TimelineState::default();
+    timeline.replace_project(&loaded_project, loaded_view_state.as_ref());
+    let row = timeline.row_layout(0).unwrap();
+    assert_eq!(row.fx_lane_count, 1);
+    assert_eq!(row.height, crate::timeline::TIMELINE_ROW_HEIGHT + 48.0);
 }
 
 #[cfg(feature = "audio-device")]
