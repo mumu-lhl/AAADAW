@@ -939,7 +939,11 @@ fn update_parameter_display(
     parameter.value = value;
     if let Some(formatted_value) = formatted_value {
         parameter.display_value = formatted_value;
-    } else if !parameter.stepped {
-        parameter.display_value = format!("{value:.3}");
+    } else {
+        parameter.display_value = if parameter.stepped {
+            value.to_string()
+        } else {
+            format!("{value:.3}")
+        };
     }
 }
