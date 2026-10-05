@@ -43,7 +43,7 @@ assets = [
     ["../../LICENSE-MIT", "usr/share/doc/aaadaw/LICENSE-MIT", "644"],
     ["../../LICENSE-APACHE", "usr/share/doc/aaadaw/LICENSE-APACHE", "644"],
 ]
-depends = ["$auto", "libjack-jackd2-0", "libpipewire-0.3-0t64"]
+depends = ["$auto", "libjack-jackd2-0"]
 section = "sound"
 priority = "optional"
 extended-description = "AAADAW is a desktop digital audio workstation for recording, editing, and mixing audio and MIDI."
