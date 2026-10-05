@@ -162,7 +162,7 @@
 - [x] 为轨道增加 FX 控件和 chain 编辑窗口；左侧管理插件、右侧嵌入所选插件界面。Add 打开列出已扫描插件的独立选择窗口，Add 与 Remove 使用独立命令（[`docs/tickets/2026-10-02-track-fx-chain-window.md`](docs/tickets/2026-10-02-track-fx-chain-window.md)）。
 - [x] 将连续 CLAP 效果器参数接入 Action；提供 begin/perform/end 手势语义、撤销/重做和参数状态保存恢复（[Issue #18](https://github.com/mumu-lhl/AAADAW/issues/18)）。
 - [x] 在轨道 FX 编辑器中以整数步进控件编辑 CLAP stepped 参数，保持有界验证、重置和 undo/redo（[Issue #159](https://github.com/mumu-lhl/AAADAW/issues/159)）。
-- [ ] 录制 CLAP 参数自动化并回放。
+- [ ] 录制 CLAP 轨道 FX 参数自动化并回放（[Issue #165](https://github.com/mumu-lhl/AAADAW/issues/165)）。
 - [x] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）。
 - [x] 在插件选择、FX 编辑器和轨道乐器入口提示进程内执行风险；MVP 不承诺插件崩溃隔离（[Issue #16](https://github.com/mumu-lhl/AAADAW/issues/16)）。
 
