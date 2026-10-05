@@ -3638,15 +3638,15 @@ mod tests {
                 track_id,
                 media_ref: "asset://waveform".to_owned(),
                 start_sample: 1_000,
-                source_offset_samples: 256,
-                length_samples: 512,
+                source_offset_samples: 1_024,
+                length_samples: 2_048,
             })
             .unwrap();
         let samples = [
-            vec![-16_384; 256],
-            vec![8_192; 256],
-            vec![16_384; 256],
-            vec![0; 256],
+            vec![-16_384; 1_024],
+            vec![8_192; 1_024],
+            vec![16_384; 1_024],
+            vec![0; 1_024],
         ]
         .concat();
         let bytes = waveform_test_wav(&samples, 48_000);
@@ -3662,18 +3662,19 @@ mod tests {
         let mut cache = TimelineCache::default();
         cache.rebuild(&project, SnapGrid::Sixteenth);
 
-        let waveform = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 100.0);
-        assert_eq!(waveform.len(), 2);
+        let waveform = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 200.0);
+        assert_eq!(waveform.len(), 8);
         assert_eq!(waveform[0].track_index, 0);
         assert!((waveform[0].min - 0.25).abs() < 1.0e-6);
         assert!((waveform[0].max - 0.25).abs() < 1.0e-6);
-        assert!((waveform[1].min - 0.5).abs() < 1.0e-6);
-        assert!((waveform[1].max - 0.5).abs() < 1.0e-6);
+        assert!((waveform[3].min - 0.25).abs() < 1.0e-6);
+        assert!((waveform[4].min - 0.5).abs() < 1.0e-6);
+        assert!((waveform[7].max - 0.5).abs() < 1.0e-6);
         assert_eq!(
             waveform[0].start_tick,
             project.tick_at_sample(1_000).unwrap()
         );
-        assert_eq!(waveform[1].end_tick, project.tick_at_sample(1_512).unwrap());
+        assert_eq!(waveform[7].end_tick, project.tick_at_sample(3_048).unwrap());
 
         assert!(
             cache
@@ -3682,20 +3683,20 @@ mod tests {
         );
         project
             .apply(DawAction::SetTempo {
-                start_tick: 0,
-                bpm: 10.0,
+                start_tick: 90,
+                bpm: 5.0,
             })
             .unwrap();
         cache.rebuild(&project, SnapGrid::Sixteenth);
         let overview = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 0.1, 1_000.0);
-        let closeup = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 20.0, 100.0);
+        let closeup = cache.waveform_geometry_for_viewport(&project, &waveforms, 40, 1.0, 40.0);
         assert_eq!(overview.len(), 1);
-        assert_eq!(closeup.len(), 2);
+        assert_eq!(closeup.len(), 4);
         assert_eq!(
             overview[0].start_tick,
             project.tick_at_sample(1_000).unwrap()
         );
-        assert_eq!(overview[0].end_tick, project.tick_at_sample(1_512).unwrap());
+        assert_eq!(overview[0].end_tick, project.tick_at_sample(3_048).unwrap());
     }
 
     #[test]
