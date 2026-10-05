@@ -3014,6 +3014,18 @@ mod tests {
             timeline.fx_automation_lane_info[&(track_id, 1, 17)].name,
             "Mix"
         );
+
+        let remaining_plugin = project.tracks()[0].fx_chain()[0].clone();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![remaining_plugin],
+            })
+            .unwrap();
+        timeline.rebuild(&project);
+        assert!(timeline.fx_automation_lanes.is_empty());
+        assert_eq!(timeline.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
+        assert_eq!(timeline.selected_fx_automation_point, None);
     }
 
     #[test]
