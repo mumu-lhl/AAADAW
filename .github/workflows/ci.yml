@@ -36,8 +36,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit@0.22.2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
       - name: Audit Rust dependencies
         run: cargo audit
+      - name: Audit dependency licenses for supported targets
+        run: cargo deny check licenses
       - uses: taiki-e/install-action@nextest
       - name: Install native audio development headers
         run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
