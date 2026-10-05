@@ -1215,7 +1215,7 @@ fn cached_clap_scan_results_remain_usable_when_refresh_fails() {
     assert_eq!(app.clap_plugin_scan_paths, cached_paths);
     assert_eq!(app.clap_plugin_scan, previous);
 
-    let _task = app.start_clap_plugin_scan();
+    let _task = app.start_clap_plugin_scan(false);
     assert!(app.clap_plugin_scan_busy);
     let _ = app.update(Message::ClapPluginsScanned(Err("worker failed".to_owned())));
 

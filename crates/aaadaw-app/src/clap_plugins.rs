@@ -59,20 +59,41 @@ pub fn default_clap_search_paths() -> Vec<PathBuf> {
 /// Recursively scans `.clap` files and bundles. Call on a worker because plugin entry loading
 /// runs native code and can take an arbitrary amount of time.
 pub fn scan_clap_plugins(search_paths: &[PathBuf]) -> ClapPluginScanReport {
+    scan_clap_plugins_with_inspector(search_paths, &[], |entry_path| {
+        // SAFETY: these entries came from the user's configured CLAP search paths. This matches
+        // the in-process plugin trust model documented in ADR 0005; scanning is always off-thread.
+        unsafe { inspect_clap_plugin_entry(entry_path) }.map_err(|error| error.to_string())
+    })
+}
+
+/// Scans configured paths using a caller-supplied entry inspector.
+///
+/// Cached scanner-process errors can be supplied in `skipped_errors`; matching entries are not
+/// loaded again, and their previous error remains visible until the caller retries the scan.
+pub fn scan_clap_plugins_with_inspector(
+    search_paths: &[PathBuf],
+    skipped_errors: &[ClapPluginScanError],
+    mut inspect: impl FnMut(&Path) -> Result<Vec<ClapPluginDescriptor>, String>,
+) -> ClapPluginScanReport {
     let mut report = ClapPluginScanReport::default();
     let entries = collect_entry_paths(search_paths, &mut report.errors);
     let mut plugin_ids = HashSet::new();
 
     for entry_path in entries {
+        if let Some(error) = skipped_errors
+            .iter()
+            .find(|error| paths_match(&error.path, &entry_path))
+        {
+            report.errors.push(error.clone());
+            continue;
+        }
         report.entries_checked += 1;
-        // SAFETY: these entries came from the user's configured CLAP search paths. This matches
-        // the in-process plugin trust model documented in ADR 0005; scanning is always off-thread.
-        let plugins = match unsafe { inspect_clap_plugin_entry(&entry_path) } {
+        let plugins = match inspect(&entry_path) {
             Ok(plugins) => plugins,
-            Err(error) => {
+            Err(message) => {
                 report.errors.push(ClapPluginScanError {
                     path: entry_path,
-                    message: error.to_string(),
+                    message,
                 });
                 continue;
             }
@@ -105,6 +126,12 @@ pub fn scan_clap_plugins(search_paths: &[PathBuf]) -> ClapPluginScanReport {
             .then_with(|| left.message.cmp(&right.message))
     });
     report
+}
+
+fn paths_match(left: &Path, right: &Path) -> bool {
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_owned());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_owned());
+    left == right
 }
 
 fn collect_entry_paths(
@@ -273,5 +300,66 @@ mod tests {
             deduplicate_paths(vec![temp.0.clone(), temp.0.clone()]),
             vec![temp.0.clone()]
         );
+    }
+
+    #[test]
+    fn cached_scanner_process_failures_are_skipped_until_retry() {
+        let temp = TempDirectory::new();
+        let entry = temp.0.join("unstable.clap");
+        fs::write(&entry, b"test entry").unwrap();
+        let cached_error = ClapPluginScanError {
+            path: entry.clone(),
+            message: "CLAP scanner process: child exited unexpectedly".to_owned(),
+        };
+
+        let cached = scan_clap_plugins_with_inspector(
+            std::slice::from_ref(&temp.0),
+            std::slice::from_ref(&cached_error),
+            |_| panic!("cached failure should not be loaded again"),
+        );
+        assert_eq!(cached.entries_checked, 0);
+        assert_eq!(cached.errors, vec![cached_error]);
+
+        let retried = scan_clap_plugins_with_inspector(std::slice::from_ref(&temp.0), &[], |_| {
+            Ok(vec![ClapPluginDescriptor {
+                entry_path: entry.clone(),
+                plugin_id: "org.example.retry".to_owned(),
+                name: "Retry".to_owned(),
+                vendor: None,
+                features: vec!["audio-effect".to_owned()],
+            }])
+        });
+        assert_eq!(retried.entries_checked, 1);
+        assert_eq!(retried.plugins[0].plugin_id, "org.example.retry");
+        assert!(retried.errors.is_empty());
+    }
+
+    #[test]
+    fn one_entry_failure_does_not_hide_later_plugins() {
+        let temp = TempDirectory::new();
+        let broken = temp.0.join("broken.clap");
+        let working = temp.0.join("working.clap");
+        fs::write(&broken, b"broken").unwrap();
+        fs::write(&working, b"working").unwrap();
+
+        let report =
+            scan_clap_plugins_with_inspector(std::slice::from_ref(&temp.0), &[], |entry| {
+                if entry.ends_with("broken.clap") {
+                    return Err("scanner child exited".to_owned());
+                }
+                Ok(vec![ClapPluginDescriptor {
+                    entry_path: entry.to_owned(),
+                    plugin_id: "org.example.working".to_owned(),
+                    name: "Working".to_owned(),
+                    vendor: None,
+                    features: vec!["audio-effect".to_owned()],
+                }])
+            });
+
+        assert_eq!(report.entries_checked, 2);
+        assert_eq!(report.plugins.len(), 1);
+        assert_eq!(report.plugins[0].plugin_id, "org.example.working");
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].path, broken);
     }
 }

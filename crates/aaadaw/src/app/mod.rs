@@ -1701,7 +1701,7 @@ impl App {
             Message::RemoveClapPluginPath(path) => {
                 task = self.remove_clap_plugin_path(path);
             }
-            Message::RescanClapPlugins => task = self.start_clap_plugin_scan(),
+            Message::RescanClapPlugins => task = self.start_clap_plugin_scan(true),
             Message::ClapPluginsScanned(result) => self.finish_clap_plugin_scan(result),
             Message::CancelShortcutCapture => {
                 self.shortcut_capture_id = None;

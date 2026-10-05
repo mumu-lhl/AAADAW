@@ -1,5 +1,6 @@
 use super::{App, Message, run_blocking};
-use aaadaw_app::{ClapPluginScanReport, scan_clap_plugins};
+use crate::clap_scanner::{self, PROCESS_ERROR_PREFIX};
+use aaadaw_app::{ClapPluginScanError, ClapPluginScanReport};
 use iced::Task;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ impl App {
         if let Some(error) = self.restore_cached_clap_plugin_scan() {
             warnings.push(format!("CLAP scan cache was ignored: {error}"));
         }
-        let task = self.start_clap_plugin_scan();
+        let task = self.start_clap_plugin_scan(false);
         if !warnings.is_empty() {
             self.clap_plugin_settings_feedback = format!(
                 "{}; {}",
@@ -59,7 +60,7 @@ impl App {
             Ok(()) => {
                 self.clap_plugin_paths = paths;
                 self.clap_plugin_settings_feedback = "Search path added".to_owned();
-                self.start_clap_plugin_scan()
+                self.start_clap_plugin_scan(false)
             }
             Err(error) => {
                 self.clap_plugin_settings_feedback =
@@ -99,7 +100,7 @@ impl App {
             Ok(()) => {
                 self.clap_plugin_paths = paths;
                 self.clap_plugin_settings_feedback = "Search path removed".to_owned();
-                self.start_clap_plugin_scan()
+                self.start_clap_plugin_scan(false)
             }
             Err(error) => {
                 self.clap_plugin_settings_feedback =
@@ -109,7 +110,7 @@ impl App {
         }
     }
 
-    pub(super) fn start_clap_plugin_scan(&mut self) -> Task<Message> {
+    pub(super) fn start_clap_plugin_scan(&mut self, retry_failed_entries: bool) -> Task<Message> {
         if self.clap_plugin_scan_busy {
             return Task::none();
         }
@@ -131,6 +132,16 @@ impl App {
             return Task::none();
         }
         let paths = self.clap_plugin_paths.clone();
+        let skipped_errors = if retry_failed_entries {
+            Vec::new()
+        } else {
+            self.clap_plugin_scan
+                .errors
+                .iter()
+                .filter(|error| error.message.starts_with(PROCESS_ERROR_PREFIX))
+                .cloned()
+                .collect::<Vec<ClapPluginScanError>>()
+        };
         self.clap_plugin_scan_busy = true;
         self.clap_plugin_settings_feedback = if self.clap_plugin_scan_is_cached {
             format!(
@@ -142,7 +153,7 @@ impl App {
         };
         Task::perform(
             run_blocking("aaadaw-clap-plugin-scan", move || {
-                Ok(scan_clap_plugins(&paths))
+                Ok(clap_scanner::scan_plugins(&paths, &skipped_errors))
             }),
             Message::ClapPluginsScanned,
         )
