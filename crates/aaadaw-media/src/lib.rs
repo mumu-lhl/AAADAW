@@ -10,14 +10,20 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
+mod decoded_cache;
 mod stream;
 mod waveform;
 mod waveform_cache;
+pub use decoded_cache::{
+    DECODED_AUDIO_CACHE_BYTES, DECODED_AUDIO_CACHE_ENTRIES, DecodedAudioCache,
+    DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
+};
 pub use stream::{
     AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
-    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
-    spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
-    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
+    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
+    spawn_cached_stereo_audio_item_stream, spawn_mono_stream, spawn_stereo_audio_item_stream,
+    spawn_stereo_audio_item_stream_at, spawn_stereo_audio_item_stream_from_reader,
+    spawn_stereo_audio_item_stream_from_reader_at,
 };
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
@@ -34,6 +40,64 @@ pub struct DecodedAudioChunk {
     sample_rate: u32,
     channels: usize,
     samples: Vec<f32>,
+}
+
+/// Fully decoded source PCM retained only for short embedded sources.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedAudioSource {
+    sample_rate: u32,
+    channels: usize,
+    samples: Vec<f32>,
+}
+
+impl DecodedAudioSource {
+    /// Returns the original source sample rate.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Returns the source channel count.
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    /// Returns interleaved source samples.
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    /// Returns decoded PCM storage in bytes.
+    pub fn byte_len(&self) -> usize {
+        self.samples
+            .len()
+            .saturating_mul(std::mem::size_of::<f32>())
+    }
+
+    pub(crate) fn chunk_at(&self, cursor: &mut usize) -> Option<DecodedAudioChunk> {
+        const CHUNK_FRAMES: usize = 4_096;
+        let total_frames = self.samples.len() / self.channels;
+        if *cursor >= total_frames {
+            return None;
+        }
+        let end = cursor.saturating_add(CHUNK_FRAMES).min(total_frames);
+        let start_sample = *cursor * self.channels;
+        let end_sample = end * self.channels;
+        *cursor = end;
+        Some(DecodedAudioChunk {
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            samples: self.samples[start_sample..end_sample].to_vec(),
+        })
+    }
+
+    #[cfg(test)]
+    fn from_test_data(byte_len: usize) -> Self {
+        Self {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![0.0; byte_len.div_ceil(std::mem::size_of::<f32>())],
+        }
+    }
 }
 
 impl DecodedAudioChunk {
@@ -310,6 +374,65 @@ pub fn probe_audio_metadata(path: impl AsRef<Path>) -> Result<AudioMetadata, Med
     Ok(AudioStreamDecoder::open(path)?.metadata().clone())
 }
 
+/// Decodes a complete source when its raw PCM stays under `max_bytes`.
+///
+/// Returns `Ok(None)` as soon as the source is too large to cache. Callers must reopen that source
+/// and use the streaming path in that case.
+pub fn decode_audio_source_for_cache<R>(
+    reader: R,
+    byte_len: Option<u64>,
+    extension: Option<&str>,
+    max_bytes: usize,
+) -> Result<Option<DecodedAudioSource>, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    let mut decoder = AudioStreamDecoder::from_reader(reader, byte_len, extension)?;
+    let metadata = decoder.metadata();
+    if let (Some(frame_count), Some(channels)) = (metadata.frame_count, metadata.channel_count) {
+        let estimated_bytes = frame_count
+            .checked_mul(u64::from(channels))
+            .and_then(|samples| samples.checked_mul(std::mem::size_of::<f32>() as u64));
+        if estimated_bytes.is_some_and(|bytes| bytes > max_bytes as u64) {
+            return Ok(None);
+        }
+    }
+
+    let mut decoded_sample_rate = None;
+    let mut decoded_channels = None;
+    let mut samples = Vec::new();
+    while let Some(chunk) = decoder.next_chunk()? {
+        if decoded_sample_rate.is_some_and(|rate| rate != chunk.sample_rate())
+            || decoded_channels.is_some_and(|channels| channels != chunk.channels())
+        {
+            return Err(MediaError::InvalidDecodedAudioSpec);
+        }
+        decoded_sample_rate = Some(chunk.sample_rate());
+        decoded_channels = Some(chunk.channels());
+        let Some(next_len) = samples.len().checked_add(chunk.samples().len()) else {
+            return Ok(None);
+        };
+        let Some(next_bytes) = next_len.checked_mul(std::mem::size_of::<f32>()) else {
+            return Ok(None);
+        };
+        if next_bytes > max_bytes {
+            return Ok(None);
+        }
+        samples.extend_from_slice(chunk.samples());
+    }
+    let Some(sample_rate) = decoded_sample_rate else {
+        return Ok(None);
+    };
+    let Some(channels) = decoded_channels else {
+        return Ok(None);
+    };
+    Ok(Some(DecodedAudioSource {
+        sample_rate,
+        channels,
+        samples,
+    }))
+}
+
 struct SeekableMediaSource<R> {
     reader: R,
     byte_len: Option<u64>,
@@ -334,5 +457,65 @@ impl<R: Read + Seek + Send + Sync> MediaSource for SeekableMediaSource<R> {
 
     fn byte_len(&self) -> Option<u64> {
         self.byte_len
+    }
+}
+
+#[cfg(test)]
+mod decoded_source_tests {
+    use super::decode_audio_source_for_cache;
+    use std::io::Cursor;
+
+    fn pcm_wav() -> Vec<u8> {
+        let samples = [0_i16, 8192, -8192, 16_384];
+        let data_len = (samples.len() * 2) as u32;
+        let mut bytes = Vec::with_capacity(44 + data_len as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&48_000_u32.to_le_bytes());
+        bytes.extend_from_slice(&96_000_u32.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn short_source_decodes_with_source_metadata() {
+        let bytes = pcm_wav();
+        let source = decode_audio_source_for_cache(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+            64,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(source.sample_rate(), 48_000);
+        assert_eq!(source.channels(), 1);
+        assert_eq!(source.samples().len(), 4);
+        assert_eq!(source.byte_len(), 16);
+    }
+
+    #[test]
+    fn oversized_source_is_rejected_without_full_decode() {
+        let bytes = pcm_wav();
+        assert!(
+            decode_audio_source_for_cache(
+                Cursor::new(bytes.clone()),
+                Some(bytes.len() as u64),
+                Some("wav"),
+                8,
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }

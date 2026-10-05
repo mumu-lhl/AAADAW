@@ -74,16 +74,25 @@ use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStat
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 use aaadaw_engine::{WasapiAudioInput, WasapiAudioOutput, WasapiOutputError, WasapiOutputStats};
 use aaadaw_media::{
-    AudioFeedWorker, MediaError, spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
+    AudioFeedWorker, DecodedAudioCache, DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
+    MediaError, decode_audio_source_for_cache, spawn_cached_stereo_audio_item_stream,
+    spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
     spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
+use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::OnceLock;
 
 const PCM_QUEUE_GRAPH_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+fn decoded_audio_cache() -> &'static DecodedAudioCache {
+    static CACHE: OnceLock<DecodedAudioCache> = OnceLock::new();
+    CACHE.get_or_init(DecodedAudioCache::default)
+}
 
 pub use aaadaw_engine::{
     AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, audio_capture_stream,
@@ -1352,10 +1361,11 @@ impl RunningJackPlayback {
 /// floor. Past items receive one-frame queues because a seek rebuilds them before they can become
 /// active again.
 /// Embedded assets stream directly from independent SQLite readers; linked files are opened and
-/// probed on background workers. Mono sources are centered and stereo sources retain their
-/// left/right channels. This call waits for each worker's source-open result, so invoke it on a
-/// background control thread when the UI must remain responsive. Partial setup is cancelled if a
-/// source fails.
+/// probed on background workers. Repeated embedded sources may use the process-wide decoded PCM
+/// cache, which retains at most 64 MiB and 4,096 entries, with no single source larger than 8 MiB.
+/// Mono sources are centered and stereo sources retain their left/right channels. This call waits
+/// for each worker's source-open result, so invoke it on a background control thread when the UI
+/// must remain responsive. Partial setup is cancelled if a source fails.
 pub fn prepare_audio_playback(
     project: &Project,
     store: &ProjectStore,
@@ -1420,6 +1430,44 @@ fn plan_pcm_queue_capacities(
     })
 }
 
+fn cached_embedded_source(
+    store: &ProjectStore,
+    media_ref: &str,
+    key: DecodedAudioCacheKey,
+    should_decode: bool,
+) -> Result<Option<std::sync::Arc<aaadaw_media::DecodedAudioSource>>, PlaybackBuildError> {
+    let cache = decoded_audio_cache();
+    if let Some(source) = cache.get(key) {
+        return Ok(Some(source));
+    }
+    if !should_decode {
+        return Ok(None);
+    }
+    let ResolvedAudioAsset::Embedded(reader) = store
+        .resolve_audio_asset(media_ref)
+        .map_err(PlaybackBuildError::Storage)?
+    else {
+        return Ok(None);
+    };
+    let byte_len = reader.byte_len();
+    let extension = Path::new(reader.original_name())
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_owned);
+    let decoded_source = decode_audio_source_for_cache(
+        reader,
+        Some(byte_len),
+        extension.as_deref(),
+        MAX_CACHED_AUDIO_SOURCE_BYTES,
+    )
+    .ok()
+    .flatten();
+    let Some(source) = decoded_source else {
+        return Ok(None);
+    };
+    Ok(cache.insert(key, std::sync::Arc::new(source)))
+}
+
 /// Prepares playback with the graph transport positioned at an arbitrary project sample.
 ///
 /// Items containing the seek sample are re-decoded off-thread and their earlier output is discarded;
@@ -1436,6 +1484,27 @@ pub fn prepare_audio_playback_at(
         .iter()
         .filter(|item| timeline_sample < item.end_sample())
         .count();
+    let mut source_hashes_by_media_ref = HashMap::new();
+    let mut source_use_counts = HashMap::new();
+    for item in project
+        .audio_items()
+        .iter()
+        .filter(|item| timeline_sample < item.end_sample())
+    {
+        if !source_hashes_by_media_ref.contains_key(item.media_ref()) {
+            let source_hash = store
+                .audio_asset_content_hash(item.media_ref())
+                .map_err(PlaybackBuildError::Storage)?;
+            source_hashes_by_media_ref.insert(item.media_ref(), source_hash);
+        }
+        let source_hash = source_hashes_by_media_ref
+            .get(item.media_ref())
+            .copied()
+            .flatten();
+        if let Some(source_hash) = source_hash {
+            *source_use_counts.entry(source_hash).or_insert(0_usize) += 1;
+        }
+    }
     let past_items = project.audio_items().len().saturating_sub(active_items);
     let queue_plan = plan_pcm_queue_capacities(
         active_items,
@@ -1448,6 +1517,7 @@ pub fn prepare_audio_playback_at(
     let output_sample_rate = project.settings().sample_rate();
     let mut feeders = Vec::with_capacity(project.audio_items().len());
     let mut item_streams = Vec::with_capacity(project.audio_items().len());
+    let mut uncacheable_sources = HashSet::new();
 
     for item in project.audio_items() {
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
@@ -1465,6 +1535,47 @@ pub fn prepare_audio_playback_at(
                 consumer,
             ));
             continue;
+        }
+        let cache_key = source_hashes_by_media_ref
+            .get(item.media_ref())
+            .copied()
+            .flatten()
+            .map(|source_hash| DecodedAudioCacheKey {
+                source_hash,
+                output_sample_rate,
+            });
+        if let Some(cache_key) = cache_key {
+            let should_decode = source_use_counts
+                .get(&cache_key.source_hash)
+                .is_some_and(|count| *count > 1)
+                && !uncacheable_sources.contains(&cache_key);
+            if let Some(source) =
+                cached_embedded_source(store, item.media_ref(), cache_key, should_decode)?
+            {
+                let needs_refill = timeline_sample > item.start_sample();
+                let mut feeder = spawn_cached_stereo_audio_item_stream(
+                    item,
+                    timeline_sample,
+                    source,
+                    output_sample_rate,
+                    producer,
+                )
+                .map_err(PlaybackBuildError::Media)?;
+                feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
+                feeders.push(feeder);
+                if needs_refill {
+                    item_streams.push(AudioItemStream::new_stereo_at_sample(
+                        item.id(),
+                        timeline_sample,
+                        consumer,
+                    ));
+                } else {
+                    item_streams.push(AudioItemStream::new_stereo(item.id(), consumer));
+                }
+                continue;
+            } else if should_decode {
+                uncacheable_sources.insert(cache_key);
+            }
         }
         let needs_refill = timeline_sample > item.start_sample();
         let resolved = store

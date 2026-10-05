@@ -1,4 +1,4 @@
-use crate::{AudioStreamDecoder, DecodedAudioChunk, MediaError};
+use crate::{AudioStreamDecoder, DecodedAudioChunk, DecodedAudioSource, MediaError};
 use aaadaw_core::AudioItem;
 use aaadaw_engine::{PcmStreamProducer, StereoPcmStreamProducer};
 use std::io::{self, Read, Seek};
@@ -111,6 +111,32 @@ pub fn spawn_stereo_audio_item_stream_at(
     let samples_to_skip = checked_item_seek(item, timeline_sample)?;
     spawn_stereo_stream(
         DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        Some(item.length_samples() - samples_to_skip),
+        samples_to_skip,
+        producer,
+    )
+}
+
+/// Feeds a cached immutable source while applying the item's trim and seek.
+pub fn spawn_cached_stereo_audio_item_stream(
+    item: &AudioItem,
+    timeline_sample: u64,
+    source: Arc<DecodedAudioSource>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    if item.length_samples() == 0 {
+        return Err(MediaError::InvalidAudioItemLength);
+    }
+    let samples_to_skip = if timeline_sample > item.start_sample() {
+        checked_item_seek(item, timeline_sample)?
+    } else {
+        0
+    };
+    spawn_stereo_stream(
+        DecoderInput::Cached(source),
         output_sample_rate,
         item.source_offset_samples(),
         Some(item.length_samples() - samples_to_skip),
@@ -379,6 +405,57 @@ enum DecoderInput {
         byte_len: Option<u64>,
         extension: Option<String>,
     },
+    Cached(Arc<DecodedAudioSource>),
+}
+
+enum WorkerDecoder {
+    Streaming(AudioStreamDecoder),
+    Cached {
+        source: Arc<DecodedAudioSource>,
+        cursor_frames: usize,
+    },
+}
+
+impl WorkerDecoder {
+    fn open(input: DecoderInput) -> Result<(Self, usize), MediaError> {
+        match input {
+            DecoderInput::Path(path) => {
+                let decoder = AudioStreamDecoder::open(path)?;
+                let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
+                Ok((Self::Streaming(decoder), channels))
+            }
+            DecoderInput::Reader {
+                reader,
+                byte_len,
+                extension,
+            } => {
+                let decoder =
+                    AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?;
+                let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
+                Ok((Self::Streaming(decoder), channels))
+            }
+            DecoderInput::Cached(source) => {
+                let channels = source.channels();
+                Ok((
+                    Self::Cached {
+                        source,
+                        cursor_frames: 0,
+                    },
+                    channels,
+                ))
+            }
+        }
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<DecodedAudioChunk>, MediaError> {
+        match self {
+            Self::Streaming(decoder) => decoder.next_chunk(),
+            Self::Cached {
+                source,
+                cursor_frames,
+            } => Ok(source.chunk_at(cursor_frames)),
+        }
+    }
 }
 
 struct WorkerConfig {
@@ -458,17 +535,10 @@ fn run_worker<P: FeedProducer>(
         mut output_samples_remaining,
         mut output_samples_to_skip,
     } = config;
-    let decoder_result = match input {
-        DecoderInput::Path(path) => AudioStreamDecoder::open(path),
-        DecoderInput::Reader {
-            reader,
-            byte_len,
-            extension,
-        } => AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref()),
-    };
+    let decoder_result = WorkerDecoder::open(input);
     let mut decoder = match decoder_result {
-        Ok(decoder) => {
-            producer.set_source_channels(decoder.metadata().channel_count.unwrap_or(0) as usize);
+        Ok((decoder, channels)) => {
+            producer.set_source_channels(channels);
             let _ = startup.send(Ok(()));
             decoder
         }
