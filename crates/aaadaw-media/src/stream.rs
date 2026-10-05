@@ -1,6 +1,6 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, DecodedAudioSource, MediaError};
 use aaadaw_core::AudioItem;
-use aaadaw_engine::{PcmStreamProducer, StereoPcmStreamProducer};
+use aaadaw_engine::{AudioStreamPosition, PcmStreamProducer, StereoPcmStreamProducer};
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,6 +15,7 @@ type WorkerStartupResult = Result<(), (Option<io::ErrorKind>, String)>;
 /// A cancellable decoder/resampler worker feeding one mono engine stream.
 pub struct AudioFeedWorker {
     cancelled: Arc<AtomicBool>,
+    position: AudioStreamPosition,
     startup: Option<Receiver<WorkerStartupResult>>,
     thread: Option<JoinHandle<Result<(), MediaError>>>,
 }
@@ -36,6 +37,7 @@ pub fn spawn_mono_stream(
         0,
         None,
         0,
+        AudioStreamPosition::new(0),
         producer,
     )
 }
@@ -57,6 +59,7 @@ pub fn spawn_audio_item_stream(
         item.source_offset_samples(),
         Some(item.length_samples()),
         0,
+        AudioStreamPosition::new(item.start_sample()),
         producer,
     )
 }
@@ -77,6 +80,7 @@ pub fn spawn_stereo_audio_item_stream(
         item.source_offset_samples(),
         Some(item.length_samples()),
         0,
+        AudioStreamPosition::new(item.start_sample()),
         producer,
     )
 }
@@ -96,6 +100,7 @@ pub fn spawn_audio_item_stream_at(
         item.source_offset_samples(),
         Some(item.length_samples() - samples_to_skip),
         samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
         producer,
     )
 }
@@ -115,6 +120,7 @@ pub fn spawn_stereo_audio_item_stream_at(
         item.source_offset_samples(),
         Some(item.length_samples() - samples_to_skip),
         samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
         producer,
     )
 }
@@ -141,6 +147,7 @@ pub fn spawn_cached_stereo_audio_item_stream(
         item.source_offset_samples(),
         Some(item.length_samples() - samples_to_skip),
         samples_to_skip,
+        AudioStreamPosition::new(item.start_sample() + samples_to_skip),
         producer,
     )
 }
@@ -173,6 +180,7 @@ where
         item.source_offset_samples(),
         Some(item.length_samples()),
         0,
+        AudioStreamPosition::new(item.start_sample()),
         producer,
     )
 }
@@ -202,6 +210,7 @@ where
         item.source_offset_samples(),
         Some(item.length_samples()),
         0,
+        AudioStreamPosition::new(item.start_sample()),
         producer,
     )
 }
@@ -231,6 +240,7 @@ where
         item.source_offset_samples(),
         Some(remaining_samples),
         samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
         producer,
     )
 }
@@ -259,6 +269,7 @@ where
         item.source_offset_samples(),
         Some(item.length_samples() - samples_to_skip),
         samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
         producer,
     )
 }
@@ -269,6 +280,7 @@ fn spawn_stream(
     source_offset_samples: u64,
     output_length_samples: Option<u64>,
     output_samples_to_skip: u64,
+    position: AudioStreamPosition,
     producer: PcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
@@ -283,13 +295,24 @@ fn spawn_stream(
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
     };
+    let worker_position = position.clone();
     let thread = thread::Builder::new()
         .name("aaadaw-media-decode".to_owned())
-        .spawn(move || run_worker(input, config, producer, worker_cancelled, startup_sender))
+        .spawn(move || {
+            run_worker(
+                input,
+                config,
+                producer,
+                worker_cancelled,
+                startup_sender,
+                worker_position,
+            )
+        })
         .map_err(MediaError::ThreadSpawn)?;
 
     Ok(AudioFeedWorker {
         cancelled,
+        position,
         startup: Some(startup),
         thread: Some(thread),
     })
@@ -301,6 +324,7 @@ fn spawn_stereo_stream(
     source_offset_samples: u64,
     output_length_samples: Option<u64>,
     output_samples_to_skip: u64,
+    position: AudioStreamPosition,
     producer: StereoPcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
@@ -315,18 +339,34 @@ fn spawn_stereo_stream(
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
     };
+    let worker_position = position.clone();
     let thread = thread::Builder::new()
         .name("aaadaw-stereo-media-decode".to_owned())
-        .spawn(move || run_worker(input, config, producer, worker_cancelled, startup_sender))
+        .spawn(move || {
+            run_worker(
+                input,
+                config,
+                producer,
+                worker_cancelled,
+                startup_sender,
+                worker_position,
+            )
+        })
         .map_err(MediaError::ThreadSpawn)?;
     Ok(AudioFeedWorker {
         cancelled,
+        position,
         startup: Some(startup),
         thread: Some(thread),
     })
 }
 
 impl AudioFeedWorker {
+    /// Returns the callback/worker sample position shared by this audio item stream.
+    pub fn timeline_position(&self) -> AudioStreamPosition {
+        self.position.clone()
+    }
+
     /// Waits until the worker opens and probes its source successfully.
     ///
     /// The source I/O remains on the worker thread; this caller only waits for its result.
@@ -497,7 +537,7 @@ trait FeedProducer: Send + 'static {
     type Frame: FeedFrame;
 
     fn set_source_channels(&self, channels: usize);
-    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize;
+    fn push_frames_at(&mut self, start_sample: u64, frames: &[Self::Frame]) -> usize;
 }
 
 impl FeedProducer for PcmStreamProducer {
@@ -505,8 +545,8 @@ impl FeedProducer for PcmStreamProducer {
 
     fn set_source_channels(&self, _channels: usize) {}
 
-    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize {
-        self.push_samples(frames)
+    fn push_frames_at(&mut self, start_sample: u64, frames: &[Self::Frame]) -> usize {
+        PcmStreamProducer::push_samples_at(self, start_sample, frames)
     }
 }
 
@@ -517,8 +557,8 @@ impl FeedProducer for StereoPcmStreamProducer {
         self.set_stereo_content(channels == 2);
     }
 
-    fn push_frames(&mut self, frames: &[Self::Frame]) -> usize {
-        StereoPcmStreamProducer::push_frames(self, frames)
+    fn push_frames_at(&mut self, start_sample: u64, frames: &[Self::Frame]) -> usize {
+        StereoPcmStreamProducer::push_frames_at(self, start_sample, frames)
     }
 }
 
@@ -528,6 +568,7 @@ fn run_worker<P: FeedProducer>(
     mut producer: P,
     cancelled: Arc<AtomicBool>,
     startup: SyncSender<WorkerStartupResult>,
+    position: AudioStreamPosition,
 ) -> Result<(), MediaError> {
     let WorkerConfig {
         output_sample_rate,
@@ -535,6 +576,7 @@ fn run_worker<P: FeedProducer>(
         mut output_samples_remaining,
         mut output_samples_to_skip,
     } = config;
+    let mut output_timeline_sample = position.requested_sample();
     let decoder_result = WorkerDecoder::open(input);
     let mut decoder = match decoder_result {
         Ok((decoder, channels)) => {
@@ -585,7 +627,13 @@ fn run_worker<P: FeedProducer>(
                 let mut output = current.push(&decoded_frames[skipped..])?;
                 skip_output(&mut output, &mut output_samples_to_skip);
                 limit_output(&mut output, &mut output_samples_remaining);
-                push_with_backpressure(&mut producer, &output, &cancelled);
+                push_with_backpressure(
+                    &mut producer,
+                    &output,
+                    &cancelled,
+                    &position,
+                    &mut output_timeline_sample,
+                );
                 if output_samples_remaining == Some(0) {
                     return Ok(());
                 }
@@ -595,7 +643,13 @@ fn run_worker<P: FeedProducer>(
                     let mut output = resampler.finish();
                     skip_output(&mut output, &mut output_samples_to_skip);
                     limit_output(&mut output, &mut output_samples_remaining);
-                    push_with_backpressure(&mut producer, &output, &cancelled);
+                    push_with_backpressure(
+                        &mut producer,
+                        &output,
+                        &cancelled,
+                        &position,
+                        &mut output_timeline_sample,
+                    );
                 }
                 return Ok(());
             }
@@ -629,10 +683,24 @@ fn push_with_backpressure<P: FeedProducer>(
     producer: &mut P,
     samples: &[P::Frame],
     cancelled: &AtomicBool,
+    position: &AudioStreamPosition,
+    timeline_sample: &mut u64,
 ) {
     let mut offset = 0;
     while offset < samples.len() && !cancelled.load(Ordering::Acquire) {
-        offset += producer.push_frames(&samples[offset..]);
+        let requested_sample = position.requested_sample();
+        let behind = requested_sample.saturating_sub(*timeline_sample);
+        let skip = usize::try_from(behind)
+            .unwrap_or(usize::MAX)
+            .min(samples.len() - offset);
+        offset += skip;
+        *timeline_sample = timeline_sample.saturating_add(skip as u64);
+        if offset == samples.len() {
+            break;
+        }
+        let pushed = producer.push_frames_at(*timeline_sample, &samples[offset..]);
+        offset += pushed;
+        *timeline_sample = timeline_sample.saturating_add(pushed as u64);
         if offset < samples.len() {
             thread::sleep(Duration::from_millis(1));
         }

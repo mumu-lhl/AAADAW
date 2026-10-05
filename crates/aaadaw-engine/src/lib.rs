@@ -55,8 +55,9 @@ pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_output::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 pub use stream::{
-    PcmStreamConsumer, PcmStreamError, PcmStreamProducer, StereoPcmStreamConsumer,
-    StereoPcmStreamProducer, pcm_stream, stereo_pcm_stream,
+    AudioStreamPosition, PcmStreamConsumer, PcmStreamError, PcmStreamProducer,
+    STEREO_PCM_QUEUE_FRAME_BYTES, StereoPcmStreamConsumer, StereoPcmStreamProducer, pcm_stream,
+    stereo_pcm_stream,
 };
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
@@ -1094,6 +1095,7 @@ pub struct AudioItemStream {
     item_id: ItemId,
     consumer: AudioItemPcmConsumer,
     source_start_sample: Option<u64>,
+    position: Option<AudioStreamPosition>,
 }
 
 enum AudioItemPcmConsumer {
@@ -1122,6 +1124,13 @@ impl AudioItemPcmConsumer {
             Self::Stereo(consumer) => consumer
                 .read_into(output)
                 .saturating_mul(if consumer.is_stereo_content() { 2 } else { 1 }),
+        }
+    }
+
+    fn read_timeline_into_stereo(&mut self, output: &mut [[f32; 2]], start_sample: u64) -> usize {
+        match self {
+            Self::Mono(consumer) => consumer.read_timeline_stereo_into(output, start_sample),
+            Self::Stereo(consumer) => consumer.read_timeline_into(output, start_sample),
         }
     }
 }
@@ -1337,6 +1346,7 @@ fn mix_track_buffer_to_bus(
 
 struct RenderGraphSources {
     streams: Vec<AudioItemPcmConsumer>,
+    positions: Vec<Option<AudioStreamPosition>>,
     track_indices: Vec<usize>,
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
@@ -1448,6 +1458,7 @@ impl AudioItemStream {
             item_id,
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: None,
+            position: None,
         }
     }
 
@@ -1457,6 +1468,7 @@ impl AudioItemStream {
             item_id,
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
+            position: None,
         }
     }
 
@@ -1471,6 +1483,7 @@ impl AudioItemStream {
             item_id,
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: Some(source_start_sample),
+            position: None,
         }
     }
 
@@ -1484,6 +1497,36 @@ impl AudioItemStream {
             item_id,
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
+            position: None,
+        }
+    }
+
+    /// Associates a stereo worker stream with its sample-clock recovery target.
+    pub fn new_stereo_with_position(
+        item_id: ItemId,
+        consumer: StereoPcmStreamConsumer,
+        position: AudioStreamPosition,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: None,
+            position: Some(position),
+        }
+    }
+
+    /// Associates a refilled stereo worker stream with its sample-clock recovery target.
+    pub fn new_stereo_at_sample_with_position(
+        item_id: ItemId,
+        source_start_sample: u64,
+        consumer: StereoPcmStreamConsumer,
+        position: AudioStreamPosition,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: Some(source_start_sample),
+            position: Some(position),
         }
     }
 }
@@ -1509,6 +1552,7 @@ pub struct AudioRenderGraph {
     last_midi_sample_end: Option<u64>,
     last_midi_chase_generation: Option<u64>,
     streams: Vec<AudioItemPcmConsumer>,
+    stream_positions: Vec<Option<AudioStreamPosition>>,
     stream_track_indices: Vec<usize>,
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
@@ -1535,6 +1579,7 @@ impl AudioRenderGraph {
         }
         let sources = RenderGraphSources {
             track_indices: (0..streams.len()).collect(),
+            positions: vec![None; streams.len()],
             ranges: vec![None; streams.len()],
             cursors: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
@@ -1610,6 +1655,7 @@ impl AudioRenderGraph {
 
         let mut sources = RenderGraphSources {
             streams: Vec::with_capacity(item_streams.len()),
+            positions: Vec::with_capacity(item_streams.len()),
             track_indices: Vec::with_capacity(item_streams.len()),
             ranges: Vec::with_capacity(item_streams.len()),
             cursors: Vec::with_capacity(item_streams.len()),
@@ -1637,6 +1683,7 @@ impl AudioRenderGraph {
                 .position(|track| track.id() == item.track_id())
                 .expect("Project guarantees every AudioItem has an existing track");
             sources.streams.push(stream.consumer);
+            sources.positions.push(stream.position);
             sources.track_indices.push(track_index);
             sources
                 .ranges
@@ -1753,6 +1800,7 @@ impl AudioRenderGraph {
             last_midi_sample_end: None,
             last_midi_chase_generation: None,
             streams: sources.streams,
+            stream_positions: sources.positions,
             stream_track_indices: sources.track_indices,
             source_ranges: sources.ranges,
             source_cursors: sources.cursors,
@@ -2292,9 +2340,16 @@ impl AudioRenderGraph {
                 if overlap_start < overlap_end {
                     let offset = (overlap_start - block.start_sample) as usize;
                     let length = (overlap_end - overlap_start) as usize;
-                    let underruns = self.streams[stream_index]
-                        .read_into_stereo(&mut input[offset..offset + length]);
+                    let underruns = self.streams[stream_index].read_timeline_into_stereo(
+                        &mut input[offset..offset + length],
+                        overlap_start,
+                    );
                     underrun_samples = underrun_samples.saturating_add(underruns);
+                    if underruns > 0
+                        && let Some(position) = &self.stream_positions[stream_index]
+                    {
+                        position.resume_from(overlap_end);
+                    }
                     self.source_cursors[stream_index] = Some(overlap_end);
                 }
             } else {
