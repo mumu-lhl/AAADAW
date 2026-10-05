@@ -1155,17 +1155,30 @@ fn fx_parameter_slider_commits_one_undoable_gesture() {
         .unwrap();
     app.fx_chain_track_id = Some(track_id);
     app.fx_chain_selected_index = Some(0);
-    app.fx_chain_parameters = vec![aaadaw_engine::ClapParameterInfo {
-        id: 12,
-        name: "Gain".to_owned(),
-        min_value: -24.0,
-        max_value: 24.0,
-        default_value: 0.0,
-        value: 0.0,
-        display_value: "0 dB".to_owned(),
-        stepped: false,
-        read_only: false,
-    }];
+    app.fx_chain_parameters = vec![
+        aaadaw_engine::ClapParameterInfo {
+            id: 12,
+            name: "Gain".to_owned(),
+            min_value: -24.0,
+            max_value: 24.0,
+            default_value: 0.0,
+            value: 0.0,
+            display_value: "0 dB".to_owned(),
+            stepped: false,
+            read_only: false,
+        },
+        aaadaw_engine::ClapParameterInfo {
+            id: 13,
+            name: "Oscillator mode".to_owned(),
+            min_value: 0.0,
+            max_value: 3.0,
+            default_value: 1.0,
+            value: 0.0,
+            display_value: "Sine".to_owned(),
+            stepped: true,
+            read_only: false,
+        },
+    ];
 
     let _ = app.update(Message::FxParameterChanged(12, 6.0));
     let _ = app.update(Message::FxParameterChanged(12, 12.0));
@@ -1231,6 +1244,68 @@ fn fx_parameter_slider_commits_one_undoable_gesture() {
     assert_eq!(
         app.project.tracks()[0].fx_chain()[0].parameter_value(12),
         Some(2.5)
+    );
+
+    let _ = app.update(Message::FxParameterChanged(13, 2.0));
+    let _ = app.update(Message::FxParameterEnded(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(2.0)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(0.0)
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(2.0)
+    );
+
+    let _ = app.update(Message::FxParameterValueTextChanged(13, "1.5".to_owned()));
+    let _ = app.update(Message::CommitFxParameterValue(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(2.0)
+    );
+    assert_eq!(
+        app.status,
+        "Stepped parameters require a whole-number value"
+    );
+    let _ = app.update(Message::FxParameterValueTextChanged(13, "4".to_owned()));
+    let _ = app.update(Message::CommitFxParameterValue(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(2.0)
+    );
+    let _ = app.update(Message::FxParameterChanged(13, 4.0));
+    let _ = app.update(Message::FxParameterEnded(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(2.0)
+    );
+
+    let _ = app.update(Message::FxParameterValueTextChanged(13, "3".to_owned()));
+    let _ = app.update(Message::CommitFxParameterValue(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(3.0)
+    );
+    let _ = app.update(Message::ResetFxParameterValue(13));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(1.0)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(3.0)
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(13),
+        Some(1.0)
     );
 }
 

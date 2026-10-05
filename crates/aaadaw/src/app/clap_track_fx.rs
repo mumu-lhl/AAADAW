@@ -637,11 +637,11 @@ impl App {
         else {
             return;
         };
-        if parameter.stepped
-            || parameter.read_only
+        if parameter.read_only
             || !value.is_finite()
             || value < parameter.min_value
             || value > parameter.max_value
+            || (parameter.stepped && value.fract() != 0.0)
         {
             return;
         }
@@ -732,6 +732,10 @@ impl App {
                 "Value must be between {} and {}",
                 parameter.min_value, parameter.max_value
             );
+            return;
+        }
+        if parameter.stepped && value.fract() != 0.0 {
+            self.status = "Stepped parameters require a whole-number value".to_owned();
             return;
         }
         self.change_fx_parameter(parameter_id, value);
