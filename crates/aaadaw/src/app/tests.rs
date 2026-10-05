@@ -3275,6 +3275,13 @@ fn duplicate_selected_audio_and_midi_items_is_one_undoable_action() {
         .unwrap();
     let audio_id = app.project.audio_items()[0].id();
     let midi_id = app.project.midi_items()[0].id();
+    let audio_start_tick = app.project.tick_at_sample(240).unwrap();
+    let audio_end_tick = app.project.tick_at_sample(1_200).unwrap();
+    let midi_start_tick = 240;
+    let midi_end_tick = midi_start_tick + 960;
+    let group_start_tick = audio_start_tick.min(midi_start_tick);
+    let group_end_tick = audio_end_tick.max(midi_end_tick);
+    let group_offset = group_end_tick - group_start_tick;
     app.timeline.rebuild(&app.project);
     app.timeline.selected_item = Some(audio_id);
     app.timeline.selected_items.extend([audio_id, midi_id]);
@@ -3285,10 +3292,55 @@ fn duplicate_selected_audio_and_midi_items_is_one_undoable_action() {
 
     assert_eq!(app.project.audio_items().len(), 2);
     assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(
+        app.project.midi_items()[1].start_tick(),
+        midi_start_tick + group_offset
+    );
+    assert_eq!(
+        app.project.audio_items()[1].start_sample(),
+        app.project
+            .sample_at_tick(audio_start_tick + group_offset)
+            .unwrap()
+    );
     assert_eq!(app.revision, revision_before_duplicate + 1);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items().len(), 1);
     assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
+fn duplicate_selected_audio_group_preserves_sample_spacing() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample, length_samples) in
+        [("asset://first", 241, 10), ("asset://second", 300, 20)]
+    {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples,
+            })
+            .unwrap();
+    }
+    let selected = app
+        .project
+        .audio_items()
+        .iter()
+        .map(|item| item.id())
+        .collect::<Vec<_>>();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = selected.first().copied();
+    app.timeline.selected_items.extend(selected);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
+
+    assert_eq!(app.project.audio_items().len(), 4);
+    assert_eq!(app.project.audio_items()[2].start_sample(), 320);
+    assert_eq!(app.project.audio_items()[3].start_sample(), 379);
 }
 
 #[test]

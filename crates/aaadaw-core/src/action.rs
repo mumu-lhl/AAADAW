@@ -109,6 +109,8 @@ pub enum DawAction {
     },
     /// Duplicate a MIDI item immediately after its source, assigning fresh item and note IDs.
     DuplicateMidiItem { item_id: ItemId },
+    /// Duplicate a MIDI item at a specific project tick, assigning fresh item and note IDs.
+    DuplicateMidiItemAt { item_id: ItemId, start_tick: u64 },
     /// Split a MIDI item at one or more absolute project ticks while preserving its notes.
     /// Notes crossing a split are continued at the start of the following segment.
     SplitMidiItem {

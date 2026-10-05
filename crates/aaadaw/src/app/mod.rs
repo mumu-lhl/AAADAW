@@ -658,6 +658,155 @@ impl std::fmt::Debug for SharedPreparedPlayback {
     }
 }
 
+fn duplicate_item_actions(
+    project: &Project,
+    item_ids: &[ItemId],
+) -> Result<Vec<DawAction>, String> {
+    if item_ids.len() == 1 {
+        let item_id = item_ids[0];
+        if project
+            .audio_items()
+            .iter()
+            .any(|item| item.id() == item_id)
+        {
+            return duplicate_audio_item(project, item_id)
+                .map(|action| vec![action])
+                .map_err(|error| error.to_string());
+        }
+        if project.midi_items().iter().any(|item| item.id() == item_id) {
+            return Ok(vec![DawAction::DuplicateMidiItem { item_id }]);
+        }
+        return Err("selected item no longer exists".to_owned());
+    }
+
+    if item_ids.iter().all(|item_id| {
+        project
+            .audio_items()
+            .iter()
+            .any(|item| item.id() == *item_id)
+    }) {
+        let mut audio_ranges = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            let item = project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .ok_or_else(|| "selected item no longer exists".to_owned())?;
+            let end_sample = item
+                .start_sample()
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "audio item end exceeds the sample timeline".to_owned())?;
+            audio_ranges.push((item, item.start_sample(), end_sample));
+        }
+        let group_start = audio_ranges
+            .iter()
+            .map(|(item, _, _)| item.start_sample())
+            .min()
+            .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+        let group_end = audio_ranges
+            .iter()
+            .map(|(_, _, end_sample)| *end_sample)
+            .max()
+            .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+        let offset = group_end - group_start;
+        return audio_ranges
+            .into_iter()
+            .map(|(item, _, _)| {
+                let duplicate_start = item
+                    .start_sample()
+                    .checked_add(offset)
+                    .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+                duplicate_start
+                    .checked_add(item.length_samples())
+                    .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+                Ok(DawAction::InsertAudioItem {
+                    track_id: item.track_id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample: duplicate_start,
+                    source_offset_samples: item.source_offset_samples(),
+                    length_samples: item.length_samples(),
+                })
+            })
+            .collect();
+    }
+
+    let mut selected_ranges = Vec::with_capacity(item_ids.len());
+    for item_id in item_ids {
+        if let Some(item) = project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == *item_id)
+        {
+            let end_sample = item
+                .start_sample()
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "audio item end exceeds the sample timeline".to_owned())?;
+            let start_tick = project
+                .tick_at_sample(item.start_sample())
+                .map_err(|error| error.to_string())?;
+            let end_tick = project
+                .tick_at_sample(end_sample)
+                .map_err(|error| error.to_string())?;
+            selected_ranges.push((*item_id, start_tick, end_tick));
+        } else if let Some(item) = project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == *item_id)
+        {
+            let end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or_else(|| "MIDI item end exceeds the project timeline".to_owned())?;
+            selected_ranges.push((*item_id, item.start_tick(), end_tick));
+        } else {
+            return Err("selected item no longer exists".to_owned());
+        }
+    }
+
+    let group_start = selected_ranges
+        .iter()
+        .map(|(_, start_tick, _)| *start_tick)
+        .min()
+        .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+    let group_end = selected_ranges
+        .iter()
+        .map(|(_, _, end_tick)| *end_tick)
+        .max()
+        .ok_or_else(|| "select one or more items to duplicate".to_owned())?;
+    let offset = group_end.saturating_sub(group_start);
+    let mut actions = Vec::with_capacity(selected_ranges.len());
+    for (item_id, start_tick, _) in selected_ranges {
+        let duplicate_start_tick = start_tick
+            .checked_add(offset)
+            .ok_or_else(|| "duplicate exceeds the project timeline".to_owned())?;
+        if let Some(item) = project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        {
+            let start_sample = project
+                .sample_at_tick(duplicate_start_tick)
+                .map_err(|error| error.to_string())?;
+            start_sample
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "duplicate exceeds the sample timeline".to_owned())?;
+            actions.push(DawAction::InsertAudioItem {
+                track_id: item.track_id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample,
+                source_offset_samples: item.source_offset_samples(),
+                length_samples: item.length_samples(),
+            });
+        } else {
+            actions.push(DawAction::DuplicateMidiItemAt {
+                item_id,
+                start_tick: duplicate_start_tick,
+            });
+        }
+    }
+    Ok(actions)
+}
+
 impl App {
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
@@ -5211,33 +5360,13 @@ impl App {
             return;
         }
 
-        let mut actions = Vec::with_capacity(item_ids.len());
-        for item_id in item_ids {
-            if self
-                .project
-                .audio_items()
-                .iter()
-                .any(|item| item.id() == item_id)
-            {
-                match duplicate_audio_item(&self.project, item_id) {
-                    Ok(action) => actions.push(action),
-                    Err(error) => {
-                        self.status = format!("Could not duplicate selected items: {error}");
-                        return;
-                    }
-                }
-            } else if self
-                .project
-                .midi_items()
-                .iter()
-                .any(|item| item.id() == item_id)
-            {
-                actions.push(DawAction::DuplicateMidiItem { item_id });
-            } else {
-                self.status = "Selected items no longer exist".to_owned();
+        let mut actions = match duplicate_item_actions(&self.project, &item_ids) {
+            Ok(actions) => actions,
+            Err(error) => {
+                self.status = format!("Could not duplicate selected items: {error}");
                 return;
             }
-        }
+        };
         if actions.is_empty() {
             self.status = "Selected items no longer exist".to_owned();
             return;
