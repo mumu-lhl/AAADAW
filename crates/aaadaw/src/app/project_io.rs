@@ -1,7 +1,7 @@
 use super::messages::SharedProjectSessionLock;
 use super::{App, Message, project_path_from_query, run_blocking};
 use aaadaw_core::{Project, ProjectSnapshot};
-use aaadaw_storage::{ProjectSessionLock, ProjectStore};
+use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::Task;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -59,6 +59,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
+    let arrangement_view_state = app.timeline.arrangement_view_state(&app.project);
     let reuse_session_lock =
         app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some();
     app.io_busy = true;
@@ -71,7 +72,13 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
             } else {
                 Some(ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?)
             };
-            save_project_session_file(path, snapshot, can_overwrite, new_lock.as_mut())?;
+            save_project_session_file(
+                path,
+                snapshot,
+                arrangement_view_state,
+                can_overwrite,
+                new_lock.as_mut(),
+            )?;
             Ok(new_lock)
         }),
         move |result| {
@@ -105,6 +112,7 @@ pub(super) fn resolve_save_target(
     project_path_from_query(query).map(|path| (path, false))
 }
 
+#[cfg(test)]
 pub(super) fn load_project_file(path: PathBuf) -> Result<Project, String> {
     if !path.is_file() {
         return Err(format!("project file {} does not exist", path.display()));
@@ -117,12 +125,20 @@ pub(super) fn load_project_file(path: PathBuf) -> Result<Project, String> {
     Ok(project)
 }
 
-pub(super) fn load_project_session(path: PathBuf) -> Result<(Project, ProjectSessionLock), String> {
+pub(super) fn load_project_session(
+    path: PathBuf,
+) -> Result<(Project, Option<ArrangementViewState>, ProjectSessionLock), String> {
     let lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
-    let project = load_project_file(path)?;
-    Ok((project, lock))
+    let store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
+    let project = store.load().map_err(|error| error.to_string())?;
+    let arrangement_view_state = store
+        .load_arrangement_view_state()
+        .map_err(|error| error.to_string())?;
+    store.close().map_err(|error| error.to_string())?;
+    Ok((project, arrangement_view_state, lock))
 }
 
+#[cfg(test)]
 pub(super) fn save_project_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
@@ -146,6 +162,7 @@ pub(super) fn save_project_file(
 pub(super) fn save_project_session_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
     can_overwrite: bool,
     new_session_lock: Option<&mut ProjectSessionLock>,
 ) -> Result<(), String> {
@@ -160,14 +177,30 @@ pub(super) fn save_project_session_file(
         if can_overwrite {
             return Err("cannot replace a project without its session lock".to_owned());
         }
-        return save_new_project_session_file(path, &project, new_session_lock);
+        return save_new_project_session_file(
+            path,
+            &project,
+            &arrangement_view_state,
+            new_session_lock,
+        );
     }
-    save_project_file(path, project.snapshot(), can_overwrite)
+    if !can_overwrite && path.exists() {
+        return Err("file exists; open it before saving to that path".to_owned());
+    }
+    let mut store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
+    let save = store
+        .save_with_arrangement_view_state(&project, &arrangement_view_state)
+        .map_err(|error| error.to_string());
+    let close = store.close().map_err(|error| error.to_string());
+    save?;
+    close?;
+    Ok(())
 }
 
 fn save_new_project_session_file(
     path: PathBuf,
     project: &Project,
+    arrangement_view_state: &ArrangementViewState,
     new_session_lock: &mut ProjectSessionLock,
 ) -> Result<(), String> {
     let parent = path
@@ -184,7 +217,9 @@ fn save_new_project_session_file(
         let _ = store.close();
         return Err(error.to_string());
     }
-    let save = store.save(project).map_err(|error| error.to_string());
+    let save = store
+        .save_with_arrangement_view_state(project, arrangement_view_state)
+        .map_err(|error| error.to_string());
     let close = store.close().map_err(|error| error.to_string());
     save?;
     close?;

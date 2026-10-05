@@ -12,7 +12,7 @@ use super::{
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
-use aaadaw_storage::{ProjectSessionLock, ProjectStore};
+use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -599,10 +599,58 @@ fn loading_a_project_clears_the_previous_time_selection() {
 
     let _ = app.update(Message::ProjectLoaded(
         path,
-        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok((Project::new(), lock))))),
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok((
+            Project::new(),
+            None,
+            lock,
+        ))))),
     ));
 
     assert_eq!(app.timeline.time_selection, None);
+}
+
+#[test]
+fn automation_lane_view_changes_mark_the_project_dirty_for_saving() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "FX".to_owned(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap()],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(0);
+    let _ = app.update(Message::FxAutomationLaneToggled {
+        parameter_id: 7,
+        name: "Mix".to_owned(),
+        min_value: 0.0,
+        max_value: 1.0,
+        stepped: false,
+    });
+    assert!(app.is_dirty());
+
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::ResizeFxAutomationLane {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            height: 48.0,
+        },
+    ));
+    assert_eq!(
+        app.timeline.arrangement_view_state(&app.project).fx_lanes[0].height,
+        48.0
+    );
+    assert_eq!(app.revision, 2);
 }
 
 #[test]
@@ -1867,7 +1915,7 @@ fn an_open_desktop_project_excludes_an_mcp_writer_until_released() {
     let store = ProjectStore::open(&path).unwrap();
     store.close().unwrap();
 
-    let (_, session_lock) = load_project_session(path.clone()).unwrap();
+    let (_, _, session_lock) = load_project_session(path.clone()).unwrap();
     let error = ProjectSessionLock::acquire(&path).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
 
@@ -1892,6 +1940,7 @@ fn saving_a_new_project_publishes_it_with_the_session_identity_lock_held() {
     save_project_session_file(
         path.clone(),
         project.snapshot(),
+        ArrangementViewState::default(),
         false,
         Some(&mut session_lock),
     )
@@ -1914,6 +1963,64 @@ fn saving_a_new_project_publishes_it_with_the_session_identity_lock_held() {
             .count(),
         0
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn project_session_round_trip_restores_arrangement_view_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("automation-view.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Automated".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap()],
+        })
+        .unwrap();
+    let view_state = ArrangementViewState {
+        volume_lanes: vec![aaadaw_storage::VolumeAutomationLaneViewState {
+            track_id: track_id.value(),
+            visible: false,
+        }],
+        fx_lanes: vec![aaadaw_storage::FxAutomationLaneViewState {
+            track_id: track_id.value(),
+            chain_index: 0,
+            plugin_id: "vendor.eq".to_owned(),
+            bundle_path: "/plugins/eq.clap".to_owned(),
+            parameter_id: 7,
+            name: "Mix".to_owned(),
+            value_range: (0.0, 1.0),
+            stepped: false,
+            height: 48.0,
+        }],
+    };
+    let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
+    save_project_session_file(
+        path.clone(),
+        project.snapshot(),
+        view_state.clone(),
+        false,
+        Some(&mut session_lock),
+    )
+    .unwrap();
+    drop(session_lock);
+
+    let (loaded_project, loaded_view_state, _session_lock) = load_project_session(path).unwrap();
+    assert_eq!(loaded_project.tracks()[0].id(), track_id);
+    assert_eq!(loaded_view_state, Some(view_state));
+
+    let mut timeline = crate::timeline::TimelineState::default();
+    timeline.replace_project(&loaded_project, loaded_view_state.as_ref());
+    let row = timeline.row_layout(0).unwrap();
+    assert_eq!(row.fx_lane_count, 1);
+    assert_eq!(row.height, crate::timeline::TIMELINE_ROW_HEIGHT + 48.0);
 }
 
 #[cfg(feature = "audio-device")]

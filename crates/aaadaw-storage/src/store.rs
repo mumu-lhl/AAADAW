@@ -1,3 +1,4 @@
+use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
     MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
@@ -21,7 +22,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 13;
+pub const CURRENT_SCHEMA_VERSION: u32 = 14;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -194,6 +195,32 @@ CREATE TABLE track_fx_parameter_automation_points (
 );
 CREATE INDEX track_fx_parameter_automation_by_sample
     ON track_fx_parameter_automation_points(track_id, position, parameter_id, sample);
+"#;
+
+const MIGRATION_14: &str = r#"
+CREATE TABLE arrangement_view_meta (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    state_version INTEGER NOT NULL CHECK (state_version = 1)
+);
+
+CREATE TABLE arrangement_volume_lanes (
+    track_id INTEGER PRIMARY KEY CHECK (track_id >= 0),
+    visible INTEGER NOT NULL CHECK (visible IN (0, 1))
+);
+
+CREATE TABLE arrangement_fx_lanes (
+    track_id INTEGER NOT NULL CHECK (track_id >= 0),
+    chain_index INTEGER NOT NULL CHECK (chain_index >= 0),
+    plugin_id TEXT NOT NULL,
+    bundle_path TEXT NOT NULL,
+    parameter_id INTEGER NOT NULL CHECK (parameter_id >= 0),
+    name TEXT NOT NULL,
+    value_min REAL NOT NULL,
+    value_max REAL NOT NULL,
+    stepped INTEGER NOT NULL CHECK (stepped IN (0, 1)),
+    height REAL NOT NULL CHECK (height > 0),
+    PRIMARY KEY (track_id, chain_index, parameter_id)
+);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -374,6 +401,112 @@ impl std::error::Error for StorageError {
             Self::Io(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod arrangement_view_state_tests {
+    use super::{ProjectStore, StorageError};
+    use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
+    use aaadaw_core::{DawAction, Project, TrackFxPlugin};
+
+    #[test]
+    fn arrangement_view_state_round_trips_and_survives_project_only_saves() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "FX".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap()],
+            })
+            .unwrap();
+        let view_state = ArrangementViewState {
+            volume_lanes: vec![VolumeAutomationLaneViewState {
+                track_id: track_id.value(),
+                visible: false,
+            }],
+            fx_lanes: vec![FxAutomationLaneViewState {
+                track_id: track_id.value(),
+                chain_index: 0,
+                plugin_id: "vendor.eq".to_owned(),
+                bundle_path: "/plugins/eq.clap".to_owned(),
+                parameter_id: 7,
+                name: "Mix".to_owned(),
+                value_range: (-1.0, 1.0),
+                stepped: false,
+                height: 48.0,
+            }],
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("view-state.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        store
+            .save_with_arrangement_view_state(&project, &view_state)
+            .unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(view_state.clone())
+        );
+
+        store.save(&project).unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(view_state)
+        );
+        assert_eq!(store.load().unwrap().tracks()[0].id(), track_id);
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn projects_without_saved_arrangement_view_state_use_compatible_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("old-project.aaadaw");
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load_arrangement_view_state().unwrap(), None);
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn invalid_view_state_does_not_partially_replace_the_saved_project() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Original".to_owned(),
+            })
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("atomic-view-state.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+
+        let invalid_view_state = ArrangementViewState {
+            volume_lanes: Vec::new(),
+            fx_lanes: vec![FxAutomationLaneViewState {
+                track_id: 1,
+                chain_index: 0,
+                plugin_id: "vendor.eq".to_owned(),
+                bundle_path: "/plugins/eq.clap".to_owned(),
+                parameter_id: 7,
+                name: "Mix".to_owned(),
+                value_range: (1.0, 1.0),
+                stepped: false,
+                height: 48.0,
+            }],
+        };
+        assert!(matches!(
+            store.save_with_arrangement_view_state(&Project::new(), &invalid_view_state),
+            Err(StorageError::InvalidStoredData(_))
+        ));
+        assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
+        store.close().unwrap();
     }
 }
 
@@ -1829,6 +1962,100 @@ impl ProjectStore {
         Ok(())
     }
 
+    /// Atomically saves project data and its Arrangement automation-lane view state.
+    pub fn save_with_arrangement_view_state(
+        &mut self,
+        project: &Project,
+        view_state: &ArrangementViewState,
+    ) -> Result<(), StorageError> {
+        let snapshot = project.snapshot();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        write_snapshot(&transaction, &snapshot)?;
+        write_arrangement_view_state(&transaction, view_state)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Returns the saved Arrangement view state, or `None` for older projects.
+    pub fn load_arrangement_view_state(
+        &self,
+    ) -> Result<Option<ArrangementViewState>, StorageError> {
+        let state_version = self
+            .connection
+            .query_row(
+                "SELECT state_version FROM arrangement_view_meta WHERE singleton = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let Some(state_version) = state_version else {
+            return Ok(None);
+        };
+        if state_version != 1 {
+            return Err(StorageError::InvalidStoredData(
+                "unsupported Arrangement view state version",
+            ));
+        }
+
+        let mut view_state = ArrangementViewState::default();
+        let mut volume_statement = self
+            .connection
+            .prepare("SELECT track_id, visible FROM arrangement_volume_lanes ORDER BY track_id")?;
+        let mut volume_rows = volume_statement.query([])?;
+        while let Some(row) = volume_rows.next()? {
+            let track_id = from_sql_u64(row.get(0)?)?;
+            let visible = match row.get::<_, i64>(1)? {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid lane visibility")),
+            };
+            view_state
+                .volume_lanes
+                .push(VolumeAutomationLaneViewState { track_id, visible });
+        }
+
+        let mut fx_statement = self.connection.prepare(
+            "SELECT track_id, chain_index, plugin_id, bundle_path, parameter_id, name, \
+             value_min, value_max, stepped, height FROM arrangement_fx_lanes \
+             ORDER BY track_id, chain_index, parameter_id",
+        )?;
+        let mut fx_rows = fx_statement.query([])?;
+        while let Some(row) = fx_rows.next()? {
+            let value_range = (row.get::<_, f64>(6)?, row.get::<_, f64>(7)?);
+            let height = row.get::<_, f64>(9)? as f32;
+            if !value_range.0.is_finite()
+                || !value_range.1.is_finite()
+                || value_range.0 >= value_range.1
+                || !height.is_finite()
+                || height <= 0.0
+            {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid FX automation lane view state",
+                ));
+            }
+            let stepped = match row.get::<_, i64>(8)? {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid stepped flag")),
+            };
+            view_state.fx_lanes.push(FxAutomationLaneViewState {
+                track_id: from_sql_u64(row.get(0)?)?,
+                chain_index: usize::try_from(row.get::<_, i64>(1)?)
+                    .map_err(|_| StorageError::InvalidStoredData("negative chain index"))?,
+                plugin_id: row.get(2)?,
+                bundle_path: row.get(3)?,
+                parameter_id: from_sql_u32(row.get(4)?)?,
+                name: row.get(5)?,
+                value_range,
+                stepped,
+                height,
+            });
+        }
+        Ok(Some(view_state))
+    }
+
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
         let metadata = self
@@ -2024,6 +2251,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             11 => transaction.execute_batch(MIGRATION_11)?,
             12 => transaction.execute_batch(MIGRATION_12)?,
             13 => transaction.execute_batch(MIGRATION_13)?,
+            14 => transaction.execute_batch(MIGRATION_14)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2237,6 +2465,58 @@ fn write_snapshot(
                 to_sql_integer(point.start_tick)?,
                 i64::from(point.numerator),
                 i64::from(point.denominator)
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn write_arrangement_view_state(
+    transaction: &Transaction<'_>,
+    view_state: &ArrangementViewState,
+) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
+    transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
+    transaction.execute(
+        "INSERT INTO arrangement_view_meta(singleton, state_version) VALUES(1, 1) \
+         ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version",
+        [],
+    )?;
+    for lane in &view_state.volume_lanes {
+        transaction.execute(
+            "INSERT INTO arrangement_volume_lanes(track_id, visible) VALUES(?1, ?2)",
+            params![
+                to_sql_integer(lane.track_id)?,
+                if lane.visible { 1_i64 } else { 0_i64 },
+            ],
+        )?;
+    }
+    for lane in &view_state.fx_lanes {
+        if !lane.value_range.0.is_finite()
+            || !lane.value_range.1.is_finite()
+            || lane.value_range.0 >= lane.value_range.1
+            || !lane.height.is_finite()
+            || lane.height <= 0.0
+        {
+            return Err(StorageError::InvalidStoredData(
+                "invalid FX automation lane view state",
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO arrangement_fx_lanes(\
+             track_id, chain_index, plugin_id, bundle_path, parameter_id, name, \
+             value_min, value_max, stepped, height) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                to_sql_integer(lane.track_id)?,
+                usize_to_sql(lane.chain_index)?,
+                lane.plugin_id,
+                lane.bundle_path,
+                i64::from(lane.parameter_id),
+                lane.name,
+                lane.value_range.0,
+                lane.value_range.1,
+                if lane.stepped { 1_i64 } else { 0_i64 },
+                f64::from(lane.height),
             ],
         )?;
     }

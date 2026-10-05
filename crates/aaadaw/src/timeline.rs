@@ -2,6 +2,9 @@ mod renderer;
 
 use aaadaw_core::{ItemId, Project, TrackId, VolumeAutomationPoint};
 use aaadaw_media::AudioWaveform;
+use aaadaw_storage::{
+    ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+};
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas;
 use iced::widget::canvas::Text;
@@ -665,6 +668,144 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
+    pub(crate) fn replace_project(
+        &mut self,
+        project: &Project,
+        view_state: Option<&ArrangementViewState>,
+    ) {
+        self.volume_automation_tracks.clear();
+        self.hidden_volume_automation_tracks.clear();
+        self.selected_volume_automation_point = None;
+        self.fx_automation_lanes.clear();
+        self.fx_automation_lane_info.clear();
+        self.fx_automation_lane_heights.clear();
+        self.selected_fx_automation_point = None;
+        self.fx_chain_snapshot.clear();
+        self.fx_lane_snapshot.clear();
+        self.rebuild(project);
+
+        if let Some(view_state) = view_state {
+            let saved_volume_visibility = view_state
+                .volume_lanes
+                .iter()
+                .map(|lane| (lane.track_id, lane.visible))
+                .collect::<HashMap<_, _>>();
+            self.volume_automation_tracks.clear();
+            self.hidden_volume_automation_tracks.clear();
+            for track in project.tracks() {
+                match saved_volume_visibility.get(&track.id().value()) {
+                    Some(true) => {
+                        self.volume_automation_tracks.insert(track.id());
+                    }
+                    Some(false) => {
+                        self.hidden_volume_automation_tracks.insert(track.id());
+                    }
+                    None if !track.volume_automation().is_empty() => {
+                        self.volume_automation_tracks.insert(track.id());
+                    }
+                    None => {}
+                }
+            }
+
+            for lane in &view_state.fx_lanes {
+                let Some(track) = project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id().value() == lane.track_id)
+                else {
+                    continue;
+                };
+                let Some(plugin) = track.fx_chain().get(lane.chain_index) else {
+                    continue;
+                };
+                if plugin.plugin_id() != lane.plugin_id || plugin.bundle_path() != lane.bundle_path
+                {
+                    continue;
+                }
+                let target = (track.id(), lane.chain_index, lane.parameter_id);
+                self.fx_automation_lanes.insert(target);
+                self.fx_automation_lane_info.insert(
+                    target,
+                    FxAutomationLaneInfo {
+                        name: lane.name.clone(),
+                        value_range: lane.value_range,
+                        stepped: lane.stepped,
+                    },
+                );
+                if lane.height.is_finite() {
+                    self.fx_automation_lane_heights.insert(
+                        target,
+                        lane.height
+                            .clamp(MIN_FX_AUTOMATION_LANE_HEIGHT, MAX_FX_AUTOMATION_LANE_HEIGHT),
+                    );
+                }
+            }
+        }
+        self.rebuild_row_layout();
+        self.cache.generation = self.cache.generation.wrapping_add(1);
+    }
+
+    pub(crate) fn arrangement_view_state(&self, project: &Project) -> ArrangementViewState {
+        let volume_lanes = project
+            .tracks()
+            .iter()
+            .map(|track| VolumeAutomationLaneViewState {
+                track_id: track.id().value(),
+                visible: self.volume_automation_tracks.contains(&track.id())
+                    || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                        && !track.volume_automation().is_empty()),
+            })
+            .collect();
+
+        let mut fx_lanes = self
+            .fx_automation_lanes
+            .iter()
+            .filter_map(|(track_id, chain_index, parameter_id)| {
+                let track = project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == *track_id)?;
+                let plugin = track.fx_chain().get(*chain_index)?;
+                let info =
+                    self.fx_automation_lane_info
+                        .get(&(*track_id, *chain_index, *parameter_id));
+                Some(FxAutomationLaneViewState {
+                    track_id: track_id.value(),
+                    chain_index: *chain_index,
+                    plugin_id: plugin.plugin_id().to_owned(),
+                    bundle_path: plugin.bundle_path().to_owned(),
+                    parameter_id: *parameter_id,
+                    name: info.map_or_else(
+                        || format!("Parameter {parameter_id}"),
+                        |info| info.name.clone(),
+                    ),
+                    value_range: info.map_or((0.0, 1.0), |info| info.value_range),
+                    stepped: info.is_some_and(|info| info.stepped),
+                    height: self.fx_automation_lane_height((
+                        *track_id,
+                        *chain_index,
+                        *parameter_id,
+                    )),
+                })
+            })
+            .collect::<Vec<_>>();
+        fx_lanes.sort_by_key(|lane| {
+            (
+                project
+                    .tracks()
+                    .iter()
+                    .position(|track| track.id().value() == lane.track_id)
+                    .unwrap_or(usize::MAX),
+                lane.chain_index,
+                lane.parameter_id,
+            )
+        });
+        ArrangementViewState {
+            volume_lanes,
+            fx_lanes,
+        }
+    }
+
     pub(crate) fn rebuild(&mut self, project: &Project) {
         self.reconcile_fx_automation_lanes(project);
         self.volume_automation_tracks.extend(
@@ -3105,6 +3246,85 @@ mod tests {
         assert!(timeline.fx_automation_lanes.contains(&(tracks[0], 0, 5)));
         assert!(timeline.fx_automation_lanes.contains(&(tracks[0], 1, 90)));
         assert!(!timeline.fx_automation_lanes.contains(&(tracks[0], 0, 17)));
+    }
+
+    #[test]
+    fn arrangement_view_state_restores_lane_layout_and_isolated_between_projects() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Persisted".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id,
+                points: vec![aaadaw_core::VolumeAutomationPoint::new(0, -6.0).unwrap()],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![
+                    aaadaw_core::TrackFxPlugin::new("vendor.persisted", "/persisted.clap").unwrap(),
+                ],
+            })
+            .unwrap();
+
+        let mut source = TimelineState::default();
+        source.rebuild(&project);
+        source.handle(TimelineEvent::ToggleVolumeAutomation(track_id));
+        source.handle(TimelineEvent::ToggleFxAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            name: "Mix".to_owned(),
+            value_range: (0.0, 1.0),
+            stepped: true,
+        });
+        source.handle(TimelineEvent::ResizeFxAutomationLane {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            height: 48.0,
+        });
+        let saved_view = source.arrangement_view_state(&project);
+
+        let mut reopened = TimelineState::default();
+        reopened.replace_project(&project, Some(&saved_view));
+        assert!(reopened.hidden_volume_automation_tracks.contains(&track_id));
+        assert!(!reopened.volume_automation_tracks.contains(&track_id));
+        assert!(reopened.fx_automation_lanes.contains(&(track_id, 0, 7)));
+        assert_eq!(reopened.fx_automation_lane_height((track_id, 0, 7)), 48.0);
+        assert!(reopened.fx_automation_lane_info[&(track_id, 0, 7)].stepped);
+        assert_eq!(
+            reopened.row_layout(0).unwrap().height,
+            TIMELINE_ROW_HEIGHT + 48.0
+        );
+
+        let mut other_project = Project::new();
+        other_project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Other".to_owned(),
+            })
+            .unwrap();
+        let other_track_id = other_project.tracks()[0].id();
+        assert_eq!(other_track_id, track_id);
+        other_project
+            .apply(DawAction::SetTrackFxChain {
+                track_id: other_track_id,
+                plugins: vec![
+                    aaadaw_core::TrackFxPlugin::new("vendor.other", "/other.clap").unwrap(),
+                ],
+            })
+            .unwrap();
+        reopened.replace_project(&other_project, None);
+        assert!(reopened.fx_automation_lanes.is_empty());
+        assert!(reopened.hidden_volume_automation_tracks.is_empty());
+        assert_eq!(reopened.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
     }
 
     #[test]

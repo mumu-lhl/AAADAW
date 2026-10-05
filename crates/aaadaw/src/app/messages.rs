@@ -9,7 +9,7 @@ use aaadaw_core::{
     TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
-use aaadaw_storage::ProjectSessionLock;
+use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct SharedProjectSessionLock(Arc<Mutex<Option<ProjectSessionLock>>>);
 
 pub(crate) type SharedProjectLoadResult =
-    Arc<Mutex<Option<Result<(Project, ProjectSessionLock), String>>>>;
+    Arc<Mutex<Option<Result<(Project, Option<ArrangementViewState>, ProjectSessionLock), String>>>>;
 
 impl SharedProjectSessionLock {
     pub(crate) fn new(lock: Option<ProjectSessionLock>) -> Self {
