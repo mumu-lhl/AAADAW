@@ -7,6 +7,7 @@
 mod capture;
 mod clap_gui;
 mod clap_instrument;
+mod clap_ipc;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
 #[cfg(feature = "jack-backend")]
@@ -39,6 +40,11 @@ pub use clap_instrument::{
     ClapParameterAutomationReceiver, ClapParameterCommand, ClapParameterInfo, ClapParameterSender,
     ClapPluginDescriptor, StoppedClapEffectProcessor, StoppedClapInstrumentProcessor,
     inspect_clap_instrument_entry, inspect_clap_plugin_entry,
+};
+pub use clap_ipc::{
+    CLAP_IPC_CHANNELS, CLAP_IPC_MAGIC, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS,
+    CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT, ClapIpcConfig, ClapIpcMapping,
+    ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcSubmitError,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};

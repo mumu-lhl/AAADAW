@@ -56,8 +56,10 @@ dependencies = [
  "clack-plugin",
  "cpal",
  "jack",
+ "memmap2",
  "pipewire",
  "rtrb",
+ "tempfile",
 ]
 
 [[package]]
