@@ -1587,7 +1587,8 @@ impl App {
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
-                self.shortcut_editor_feedback = "Press a shortcut, or Escape to cancel".to_owned();
+                self.shortcut_editor_feedback =
+                    "Press a shortcut; Backspace clears it; Escape cancels".to_owned();
             }
             Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
             Message::RestoreShortcutDefault(action_id) => self.restore_shortcut_default(action_id),
@@ -2225,10 +2226,10 @@ impl App {
             Message::SaveActionMacro => self.save_action_macro(),
             Message::DeleteActionMacro(id) => self.delete_action_macro(id),
             Message::ShortcutPressed(key, modifiers) => {
-                let key = if key == " " {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Space)
-                } else {
-                    iced::keyboard::Key::Character(key.as_str())
+                let key = match key.as_str() {
+                    " " => iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
+                    "Delete" => iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
+                    character => iced::keyboard::Key::Character(character),
                 };
                 let shortcut = {
                     let bindings = self
@@ -5488,9 +5489,16 @@ fn keyboard_shortcut_event(
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
                 Some(Message::CancelShortcutCapture)
             }
-            iced::keyboard::Key::Named(
-                iced::keyboard::key::Named::Backspace | iced::keyboard::key::Named::Delete,
-            ) => Some(Message::ClearShortcutBinding(action_id.to_owned())),
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                Some(Message::ClearShortcutBinding(action_id.to_owned()))
+            }
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                Some(Message::ShortcutCaptureKey {
+                    action_id: action_id.to_owned(),
+                    key: "Delete".to_owned(),
+                    modifiers,
+                })
+            }
             iced::keyboard::Key::Character(character) => Some(Message::ShortcutCaptureKey {
                 action_id: action_id.to_owned(),
                 key: character.to_owned(),
@@ -5545,6 +5553,12 @@ fn keyboard_shortcut_event(
         }
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
             Some(Message::ShortcutPressed(" ".to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
         }
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
         _ => None,

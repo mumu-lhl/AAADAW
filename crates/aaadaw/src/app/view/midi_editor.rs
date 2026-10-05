@@ -1032,22 +1032,23 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 self.item_id,
             )));
         }
-        if self.region == RollRegion::Pitch
-            && let Event::Keyboard(keyboard::Event::KeyPressed {
-                key, repeat: false, ..
-            }) = event
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key, repeat: false, ..
+        }) = event
             && matches!(
                 key.as_ref(),
                 keyboard::Key::Named(
                     keyboard::key::Named::Delete | keyboard::key::Named::Backspace
                 )
             )
-            && !self.selected.is_empty()
         {
-            return Some(canvas::Action::publish(Message::DeleteMidiNotes(
-                self.item_id,
-                self.selected.iter().copied().collect(),
-            )));
+            if self.region == RollRegion::Pitch && !self.selected.is_empty() {
+                return Some(canvas::Action::publish(Message::DeleteMidiNotes(
+                    self.item_id,
+                    self.selected.iter().copied().collect(),
+                )));
+            }
+            return Some(canvas::Action::capture());
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {

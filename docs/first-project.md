@@ -19,7 +19,7 @@ The Arrangement opens with one audio track and one four-second item. The melody 
 2. Click **+ Track** in the Arrangement toolbar. Select the new track by clicking its track header.
 3. Choose **Insert → Import Audio…**, select `melody.wav`, and confirm. The file is copied into the project; the new item is placed on the selected track at the edit cursor.
 4. Drag the item body to move it. The Arrangement toolbar's **Snap On/Off** button enables grid snapping; the **Grid** menu selects the grid size.
-5. Drag either item edge inward to trim it. To split, click the timeline ruler to place the edit cursor, select the item, then choose **Item → Split items at edit cursor**.
+5. Drag either item edge inward to trim it. To split, click the timeline ruler to place the edit cursor, select the item, then press **S** or choose **Item → Split items at edit cursor**.
 6. Use **Edit → Undo** or **Edit → Redo** to check and restore an edit.
 
 ## Play and mix
@@ -40,6 +40,9 @@ AAADAW may create a sibling `.aaapeaks` file for waveform previews. It is a rebu
 | Save project | Ctrl+S | Ctrl+S |
 | Undo | Ctrl+Z | Ctrl+Z |
 | Redo | Ctrl+Shift+Z or Ctrl+Y | Ctrl+Shift+Z or Ctrl+Y |
+| Duplicate selected item | Ctrl+D | Ctrl+D |
+| Delete selected items | Delete or Backspace | Delete or Backspace |
+| Split selected items at edit cursor | S | S |
 | Play/pause | Space | Space |
 
 Change or restore bindings in **File → Settings… → Keyboard Shortcuts**. The app uses platform command modifiers; the table shows their current Linux and Windows labels. Keyboard shortcuts only run when a text field or another control has not consumed the key.

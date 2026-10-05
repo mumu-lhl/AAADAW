@@ -802,6 +802,32 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         shortcut_message(Key::Character("o"), Modifiers::COMMAND, &HashMap::new()),
         Some(Message::ExecuteCommand(CommandId::OpenProject))
     ));
+    assert!(matches!(
+        shortcut_message(Key::Character("d"), Modifiers::COMMAND, &HashMap::new()),
+        Some(Message::ExecuteCommand(CommandId::DuplicateSelectedItem))
+    ));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::Delete),
+            Modifiers::NONE,
+            &HashMap::new()
+        ),
+        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
+    ));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::Backspace),
+            Modifiers::NONE,
+            &HashMap::new()
+        ),
+        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
+    ));
+    assert!(matches!(
+        shortcut_message(Key::Character("s"), Modifiers::NONE, &HashMap::new()),
+        Some(Message::ExecuteCommand(
+            CommandId::SplitSelectedItemsAtCursor
+        ))
+    ));
     assert!(shortcut_message(Key::Character("x"), Modifiers::COMMAND, &HashMap::new()).is_none());
     let undo_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Character("z".into()),
@@ -945,7 +971,14 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
         commands::capture_binding("Space", Modifiers::NONE).unwrap(),
         "Space"
     );
-    assert!(commands::capture_binding("x", Modifiers::NONE).is_err());
+    assert_eq!(
+        commands::capture_binding("s", Modifiers::NONE).unwrap(),
+        "S"
+    );
+    assert_eq!(
+        commands::capture_binding("Delete", Modifiers::NONE).unwrap(),
+        "Delete/Backspace"
+    );
 
     let main_window_id = iced::window::Id::unique();
     let settings_window_id = iced::window::Id::unique();
@@ -972,22 +1005,35 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
             if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
     ));
-    for key in [
-        Key::Named(iced::keyboard::key::Named::Backspace),
-        Key::Named(iced::keyboard::key::Named::Delete),
-    ] {
-        assert!(matches!(
-            keyboard_shortcut_event(
-                make_key_event(key, Modifiers::NONE),
-                iced::event::Status::Captured,
-                settings_window_id,
-                Some(main_window_id),
-                Some(settings_window_id),
-                Some("edit.undo"),
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Backspace),
+                Modifiers::NONE,
             ),
-            Some(Message::ClearShortcutBinding(action_id)) if action_id == "edit.undo"
-        ));
-    }
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::ClearShortcutBinding(action_id)) if action_id == "edit.undo"
+    ));
+    assert!(matches!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Delete),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Captured,
+            settings_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            Some("edit.undo"),
+        ),
+        Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
+            if action_id == "edit.undo" && key == "Delete" && modifiers == Modifiers::NONE
+    ));
     assert!(matches!(
         keyboard_shortcut_event(
             make_key_event(
@@ -1012,6 +1058,20 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         )
         .is_some()
+    );
+    assert!(
+        keyboard_shortcut_event(
+            make_key_event(
+                Key::Named(iced::keyboard::key::Named::Delete),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Captured,
+            main_window_id,
+            Some(main_window_id),
+            Some(settings_window_id),
+            None,
+        )
+        .is_none()
     );
 }
 
@@ -1089,6 +1149,9 @@ fn documented_first_project_shortcuts_match_action_defaults() {
         ("file.save-project", "Ctrl/Cmd+S"),
         ("edit.undo", "Ctrl/Cmd+Z"),
         ("edit.redo", "Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y"),
+        ("item.duplicate", "Ctrl/Cmd+D"),
+        ("item.delete-selected", "Delete/Backspace"),
+        ("item.split-at-cursor", "S"),
     ] {
         let entry = shortcuts
             .iter()
@@ -3127,8 +3190,11 @@ fn audio_timeline_duplicate_preserves_source_offset_and_is_undoable() {
         })
         .expect("source item should be inserted");
     let source_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(source_id);
+    app.timeline.selected_items.insert(source_id);
 
-    let _ = app.update(Message::DuplicateAudioItem(source_id));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateSelectedItem));
     let duplicate = &app.project.audio_items()[1];
     assert_eq!(duplicate.start_sample(), 1_200);
     assert_eq!(duplicate.media_ref(), "asset://duplicate-test");
@@ -3167,12 +3233,9 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
     app.timeline.selected_item = Some(source_id);
     app.timeline.selected_items.insert(source_id);
 
-    let command = CommandId::DuplicateSelectedMidiItem;
+    let command = CommandId::DuplicateSelectedItem;
     assert!(commands::is_enabled(&app, command));
-    assert_eq!(
-        commands::find(&app, "duplicate selected midi item"),
-        Some(command)
-    );
+    assert_eq!(commands::find(&app, "duplicate item"), Some(command));
     assert!(
         commands::for_menu(&app, MainMenu::Item)
             .iter()
