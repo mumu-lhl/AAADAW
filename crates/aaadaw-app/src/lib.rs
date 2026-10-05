@@ -80,7 +80,7 @@ use aaadaw_media::{
     spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::ErrorKind;
@@ -1484,16 +1484,24 @@ pub fn prepare_audio_playback_at(
         .iter()
         .filter(|item| timeline_sample < item.end_sample())
         .count();
+    let mut source_hashes_by_media_ref = HashMap::new();
     let mut source_use_counts = HashMap::new();
     for item in project
         .audio_items()
         .iter()
         .filter(|item| timeline_sample < item.end_sample())
     {
-        if let Some(source_hash) = store
-            .audio_asset_content_hash(item.media_ref())
-            .map_err(PlaybackBuildError::Storage)?
-        {
+        if !source_hashes_by_media_ref.contains_key(item.media_ref()) {
+            let source_hash = store
+                .audio_asset_content_hash(item.media_ref())
+                .map_err(PlaybackBuildError::Storage)?;
+            source_hashes_by_media_ref.insert(item.media_ref(), source_hash);
+        }
+        let source_hash = source_hashes_by_media_ref
+            .get(item.media_ref())
+            .copied()
+            .flatten();
+        if let Some(source_hash) = source_hash {
             *source_use_counts.entry(source_hash).or_insert(0_usize) += 1;
         }
     }
@@ -1509,6 +1517,7 @@ pub fn prepare_audio_playback_at(
     let output_sample_rate = project.settings().sample_rate();
     let mut feeders = Vec::with_capacity(project.audio_items().len());
     let mut item_streams = Vec::with_capacity(project.audio_items().len());
+    let mut uncacheable_sources = HashSet::new();
 
     for item in project.audio_items() {
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
@@ -1527,9 +1536,10 @@ pub fn prepare_audio_playback_at(
             ));
             continue;
         }
-        let cache_key = store
-            .audio_asset_content_hash(item.media_ref())
-            .map_err(PlaybackBuildError::Storage)?
+        let cache_key = source_hashes_by_media_ref
+            .get(item.media_ref())
+            .copied()
+            .flatten()
             .map(|source_hash| DecodedAudioCacheKey {
                 source_hash,
                 output_sample_rate,
@@ -1537,7 +1547,8 @@ pub fn prepare_audio_playback_at(
         if let Some(cache_key) = cache_key {
             let should_decode = source_use_counts
                 .get(&cache_key.source_hash)
-                .is_some_and(|count| *count > 1);
+                .is_some_and(|count| *count > 1)
+                && !uncacheable_sources.contains(&cache_key);
             if let Some(source) =
                 cached_embedded_source(store, item.media_ref(), cache_key, should_decode)?
             {
@@ -1562,6 +1573,8 @@ pub fn prepare_audio_playback_at(
                     item_streams.push(AudioItemStream::new_stereo(item.id(), consumer));
                 }
                 continue;
+            } else if should_decode {
+                uncacheable_sources.insert(cache_key);
             }
         }
         let needs_refill = timeline_sample > item.start_sample();
