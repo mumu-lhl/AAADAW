@@ -2,9 +2,9 @@ use super::{App, Message};
 #[cfg(feature = "audio-device")]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackFxPlugin, TrackId};
-use aaadaw_engine::ClapParameterCommand;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackFxProcessor;
+use aaadaw_engine::{ClapParameterCommand, ClapParameterInfo};
 use iced::Task;
 use iced::window::raw_window_handle::RawWindowHandle;
 #[cfg(feature = "audio-device")]
@@ -645,6 +645,7 @@ impl App {
         {
             return;
         }
+        let stepped = parameter.stepped;
         let Some(plugin) = self
             .project
             .tracks()
@@ -688,19 +689,28 @@ impl App {
             self.status = "CLAP parameter queue is full; the latest change was skipped".to_owned();
             return;
         }
-        if let Some(gui) = self.fx_chain_plugin_gui.as_mut()
-            && let Err(error) = gui.apply_parameter_command(command)
-        {
-            self.status = format!("Could not update CLAP parameter: {error}");
-            return;
-        }
+        let formatted_value = if let Some(gui) = self.fx_chain_plugin_gui.as_mut() {
+            if let Err(error) = gui.apply_parameter_command(command) {
+                self.status = format!("Could not update CLAP parameter: {error}");
+                return;
+            }
+            stepped
+                .then(|| {
+                    gui.parameters()
+                        .into_iter()
+                        .find(|parameter| parameter.id == parameter_id)
+                        .map(|parameter| parameter.display_value)
+                })
+                .flatten()
+        } else {
+            None
+        };
         if let Some(parameter) = self
             .fx_chain_parameters
             .iter_mut()
             .find(|parameter| parameter.id == parameter_id)
         {
-            parameter.value = value;
-            parameter.display_value = format!("{value:.3}");
+            update_parameter_display(parameter, value, formatted_value);
         }
         if !self.fx_parameter_value_edit_pending.contains(&parameter_id) {
             self.fx_parameter_value_edits
@@ -850,6 +860,11 @@ impl App {
     }
 
     pub(super) fn sync_fx_parameter_change(&mut self, change: aaadaw_core::FxParameterChange) {
+        let stepped = self
+            .fx_chain_parameters
+            .iter()
+            .find(|parameter| parameter.id == change.parameter_id)
+            .is_some_and(|parameter| parameter.stepped);
         let begin = ClapParameterCommand::Begin {
             id: change.parameter_id,
         };
@@ -878,11 +893,23 @@ impl App {
         } else {
             (false, false)
         };
-        if gui_matches_target && let Some(gui) = self.fx_chain_plugin_gui.as_mut() {
-            let _ = gui.apply_parameter_command(begin);
-            let _ = gui.apply_parameter_command(set);
-            let _ = gui.apply_parameter_command(end);
-        }
+        let formatted_value = if gui_matches_target {
+            self.fx_chain_plugin_gui.as_mut().and_then(|gui| {
+                let _ = gui.apply_parameter_command(begin);
+                let _ = gui.apply_parameter_command(set);
+                let _ = gui.apply_parameter_command(end);
+                stepped
+                    .then(|| {
+                        gui.parameters()
+                            .into_iter()
+                            .find(|parameter| parameter.id == change.parameter_id)
+                            .map(|parameter| parameter.display_value)
+                    })
+                    .flatten()
+            })
+        } else {
+            None
+        };
         if !begin_queued || !set_queued || !end_queued {
             self.pending_fx_parameter_sync = Some(change);
             self.status = "CLAP parameter queue is full; undo/redo sync will retry".to_owned();
@@ -897,8 +924,7 @@ impl App {
                 .iter_mut()
                 .find(|parameter| parameter.id == change.parameter_id)
             {
-                parameter.value = change.value;
-                parameter.display_value = format!("{:.3}", change.value);
+                update_parameter_display(parameter, change.value, formatted_value);
             }
             self.fx_parameter_value_edits
                 .insert(change.parameter_id, change.value.to_string());
@@ -912,5 +938,18 @@ impl App {
         self.fx_chain_editor_host = None;
         self.fx_chain_native_parent = None;
         self.fx_chain_editor_status.clear();
+    }
+}
+
+fn update_parameter_display(
+    parameter: &mut ClapParameterInfo,
+    value: f64,
+    formatted_value: Option<String>,
+) {
+    parameter.value = value;
+    if let Some(formatted_value) = formatted_value {
+        parameter.display_value = formatted_value;
+    } else if !parameter.stepped {
+        parameter.display_value = format!("{value:.3}");
     }
 }

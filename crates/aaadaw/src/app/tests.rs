@@ -1252,11 +1252,13 @@ fn fx_parameter_slider_commits_one_undoable_gesture() {
         app.project.tracks()[0].fx_chain()[0].parameter_value(13),
         Some(2.0)
     );
+    assert_eq!(app.fx_chain_parameters[1].display_value, "Sine");
     let _ = app.update(Message::Undo);
     assert_eq!(
         app.project.tracks()[0].fx_chain()[0].parameter_value(13),
         Some(0.0)
     );
+    assert_eq!(app.fx_chain_parameters[1].display_value, "Sine");
     let _ = app.update(Message::Redo);
     assert_eq!(
         app.project.tracks()[0].fx_chain()[0].parameter_value(13),
