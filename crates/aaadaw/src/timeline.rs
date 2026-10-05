@@ -139,6 +139,14 @@ pub(crate) enum TimelineEvent {
     },
     CloseItemContextMenu,
     ToggleVolumeAutomation(TrackId),
+    ToggleFxAutomation {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        name: String,
+        value_range: (f64, f64),
+        stepped: bool,
+    },
     SetVolumeAutomation(TrackId, Vec<VolumeAutomationPoint>),
     InsertVolumeAutomationAt {
         track_index: usize,
@@ -154,6 +162,26 @@ pub(crate) enum TimelineEvent {
         index: usize,
     },
     ClearSelectedVolumeAutomationPoint,
+    SetFxAutomation {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        points: Vec<aaadaw_core::FxParameterAutomationPoint>,
+        selected_point: Option<usize>,
+    },
+    DeleteFxAutomationPoint {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        index: usize,
+    },
+    SelectFxAutomationPoint {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        index: usize,
+    },
+    ClearSelectedFxAutomationPoint,
     SelectEmpty(u64),
     SetTimeSelection {
         start_tick: u64,
@@ -451,6 +479,25 @@ pub(crate) struct TimelineState {
     pub(crate) volume_automation_tracks: HashSet<TrackId>,
     pub(crate) hidden_volume_automation_tracks: HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
+    pub(crate) fx_automation_lanes: HashSet<(TrackId, usize, u32)>,
+    fx_automation_lane_info: HashMap<(TrackId, usize, u32), FxAutomationLaneInfo>,
+    selected_fx_automation_point: Option<(TrackId, usize, u32, usize)>,
+    fx_chain_snapshot: HashMap<TrackId, Vec<FxAutomationChainEntry>>,
+    fx_lane_snapshot:
+        HashMap<(TrackId, usize, u32), Option<Vec<aaadaw_core::FxParameterAutomationPoint>>>,
+}
+
+#[derive(Clone)]
+struct FxAutomationChainEntry {
+    plugin_id: String,
+    bundle_path: String,
+}
+
+#[derive(Clone)]
+struct FxAutomationLaneInfo {
+    name: String,
+    value_range: (f64, f64),
+    stepped: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,12 +570,18 @@ impl Default for TimelineState {
             volume_automation_tracks: HashSet::new(),
             hidden_volume_automation_tracks: HashSet::new(),
             selected_volume_automation_point: None,
+            fx_automation_lanes: HashSet::new(),
+            fx_automation_lane_info: HashMap::new(),
+            selected_fx_automation_point: None,
+            fx_chain_snapshot: HashMap::new(),
+            fx_lane_snapshot: HashMap::new(),
         }
     }
 }
 
 impl TimelineState {
     pub(crate) fn rebuild(&mut self, project: &Project) {
+        self.reconcile_fx_automation_lanes(project);
         self.volume_automation_tracks.extend(
             project
                 .tracks()
@@ -595,6 +648,120 @@ impl TimelineState {
         }
     }
 
+    fn reconcile_fx_automation_lanes(&mut self, project: &Project) {
+        let mut remapped = HashSet::new();
+        let mut target_remap = HashMap::new();
+        let mut info_remap = HashMap::new();
+        for (track_id, old_index, parameter_id) in self.fx_automation_lanes.iter().copied() {
+            let Some(track) = project.tracks().iter().find(|track| track.id() == track_id) else {
+                continue;
+            };
+            let Some(old_chain) = self.fx_chain_snapshot.get(&track_id) else {
+                continue;
+            };
+            let Some(old_plugin) = old_chain.get(old_index) else {
+                continue;
+            };
+            let occurrence = old_chain[..old_index]
+                .iter()
+                .filter(|plugin| {
+                    plugin.plugin_id == old_plugin.plugin_id
+                        && plugin.bundle_path == old_plugin.bundle_path
+                })
+                .count();
+            let matches = track
+                .fx_chain()
+                .iter()
+                .enumerate()
+                .filter(|(_, plugin)| {
+                    plugin.plugin_id() == old_plugin.plugin_id
+                        && plugin.bundle_path() == old_plugin.bundle_path
+                })
+                .collect::<Vec<_>>();
+            let old_lane = self
+                .fx_lane_snapshot
+                .get(&(track_id, old_index, parameter_id))
+                .and_then(Option::as_ref);
+            let new_index = old_lane
+                .and_then(|old_lane| {
+                    matches
+                        .iter()
+                        .find(|(_, plugin)| {
+                            plugin
+                                .parameter_automation_for(parameter_id)
+                                .map(|lane| lane.points())
+                                == Some(old_lane.as_slice())
+                        })
+                        .map(|(index, _)| *index)
+                })
+                .or_else(|| matches.get(occurrence).map(|(index, _)| *index));
+            if let Some(index) = new_index {
+                remapped.insert((track_id, index, parameter_id));
+                target_remap.insert((track_id, old_index, parameter_id), index);
+                if let Some(info) =
+                    self.fx_automation_lane_info
+                        .get(&(track_id, old_index, parameter_id))
+                {
+                    info_remap.insert((track_id, index, parameter_id), info.clone());
+                }
+            }
+        }
+        self.fx_automation_lanes = remapped;
+        self.fx_automation_lane_info = info_remap;
+        if let Some((track_id, old_index, parameter_id, point_index)) =
+            self.selected_fx_automation_point
+        {
+            self.selected_fx_automation_point = target_remap
+                .get(&(track_id, old_index, parameter_id))
+                .copied()
+                .map(|index| (track_id, index, parameter_id, point_index));
+        }
+        if self.selected_fx_automation_point.is_some_and(
+            |(track_id, chain_index, parameter_id, point_index)| {
+                project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                    .and_then(|track| track.fx_chain().get(chain_index))
+                    .and_then(|plugin| plugin.parameter_automation_for(parameter_id))
+                    .is_some_and(|lane| point_index >= lane.points().len())
+            },
+        ) {
+            self.selected_fx_automation_point = None;
+        }
+        self.fx_chain_snapshot = project
+            .tracks()
+            .iter()
+            .map(|track| {
+                (
+                    track.id(),
+                    track
+                        .fx_chain()
+                        .iter()
+                        .map(|plugin| FxAutomationChainEntry {
+                            plugin_id: plugin.plugin_id().to_owned(),
+                            bundle_path: plugin.bundle_path().to_owned(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        self.fx_lane_snapshot = self
+            .fx_automation_lanes
+            .iter()
+            .map(|(track_id, chain_index, parameter_id)| {
+                let points = project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == *track_id)
+                    .and_then(|track| track.fx_chain().get(*chain_index))
+                    .and_then(|plugin| plugin.parameter_automation_for(*parameter_id))
+                    .map(|lane| lane.points().to_vec());
+                ((*track_id, *chain_index, *parameter_id), points)
+            })
+            .collect();
+    }
+
     pub(crate) fn set_audio_waveforms(
         &mut self,
         project: &Project,
@@ -633,7 +800,11 @@ impl TimelineState {
                 item_id,
                 additive,
                 range,
-            } => self.select_item(item_id, additive, range, false),
+            } => {
+                self.selected_volume_automation_point = None;
+                self.selected_fx_automation_point = None;
+                self.select_item(item_id, additive, range, false);
+            }
             TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
                 if self.cache.item_indices.contains_key(&item_id) {
                     if !self.selected_items.contains(&item_id) {
@@ -656,18 +827,75 @@ impl TimelineState {
                 }
                 self.cache.generation = self.cache.generation.wrapping_add(1);
             }
+            TimelineEvent::ToggleFxAutomation {
+                track_id,
+                chain_index,
+                parameter_id,
+                name,
+                value_range,
+                stepped,
+            } => {
+                let key = (track_id, chain_index, parameter_id);
+                if self.fx_automation_lanes.remove(&key) {
+                    self.fx_automation_lane_info.remove(&key);
+                    self.selected_fx_automation_point = None;
+                } else {
+                    self.fx_automation_lanes
+                        .retain(|(id, _, _)| *id != track_id);
+                    self.fx_automation_lane_info
+                        .retain(|(id, _, _), _| *id != track_id);
+                    self.fx_automation_lanes.insert(key);
+                    if name.len() < 128
+                        && value_range.0.is_finite()
+                        && value_range.1.is_finite()
+                        && value_range.1 > value_range.0
+                    {
+                        self.fx_automation_lane_info.insert(
+                            key,
+                            FxAutomationLaneInfo {
+                                name,
+                                value_range,
+                                stepped,
+                            },
+                        );
+                    }
+                }
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::SelectFxAutomationPoint {
+                track_id,
+                chain_index,
+                parameter_id,
+                index,
+            } => {
+                self.selected_volume_automation_point = None;
+                self.selected_fx_automation_point =
+                    Some((track_id, chain_index, parameter_id, index));
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::ClearSelectedFxAutomationPoint => {
+                self.selected_volume_automation_point = None;
+                self.selected_fx_automation_point = None;
+                self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
             TimelineEvent::SelectVolumeAutomationPoint { track_id, index } => {
+                self.selected_fx_automation_point = None;
                 self.selected_volume_automation_point = Some((track_id, index));
                 self.cache.generation = self.cache.generation.wrapping_add(1);
             }
             TimelineEvent::ClearSelectedVolumeAutomationPoint => {
+                self.selected_fx_automation_point = None;
                 self.selected_volume_automation_point = None;
                 self.cache.generation = self.cache.generation.wrapping_add(1);
             }
             TimelineEvent::SetVolumeAutomation(_, _)
+            | TimelineEvent::SetFxAutomation { .. }
+            | TimelineEvent::DeleteFxAutomationPoint { .. }
             | TimelineEvent::InsertVolumeAutomationAt { .. }
             | TimelineEvent::DeleteVolumeAutomationPoint { .. } => {}
             TimelineEvent::SelectEmpty(tick) => {
+                self.selected_volume_automation_point = None;
+                self.selected_fx_automation_point = None;
                 self.edit_cursor_tick = tick;
                 self.select_item(None, false, false, false);
             }
@@ -981,6 +1209,9 @@ impl TimelineState {
             volume_automation_tracks: &self.volume_automation_tracks,
             hidden_volume_automation_tracks: &self.hidden_volume_automation_tracks,
             selected_volume_automation_point: self.selected_volume_automation_point,
+            fx_automation_lanes: &self.fx_automation_lanes,
+            fx_automation_lane_info: &self.fx_automation_lane_info,
+            selected_fx_automation_point: self.selected_fx_automation_point,
         }
     }
 
@@ -1014,6 +1245,9 @@ struct TimelineProgram<'a> {
     volume_automation_tracks: &'a HashSet<TrackId>,
     hidden_volume_automation_tracks: &'a HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
+    fx_automation_lanes: &'a HashSet<(TrackId, usize, u32)>,
+    fx_automation_lane_info: &'a HashMap<(TrackId, usize, u32), FxAutomationLaneInfo>,
+    selected_fx_automation_point: Option<(TrackId, usize, u32, usize)>,
 }
 
 #[derive(Default)]
@@ -1031,8 +1265,16 @@ struct TimelineInteractionState {
 struct PendingAutomationPoint {
     track_index: usize,
     point_index: usize,
+    fx_target: Option<(TrackId, usize, u32)>,
     start_x: f32,
     start_y: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FxAutomationTarget {
+    track_index: usize,
+    chain_index: usize,
+    parameter_id: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1087,6 +1329,14 @@ impl PendingTimeSelectionDrag {
     }
 }
 
+impl TimelineProgram<'_> {
+    fn fx_lane_for_track(&self, track_id: TrackId) -> Option<(usize, u32)> {
+        self.fx_automation_lanes
+            .iter()
+            .find_map(|(id, index, parameter)| (*id == track_id).then_some((*index, *parameter)))
+    }
+}
+
 impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
     type State = TimelineInteractionState;
     type Primitive = renderer::TimelinePrimitive;
@@ -1109,8 +1359,25 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     keyboard::key::Named::Delete | keyboard::key::Named::Backspace
                 )
             )
-            && let Some((track_id, index)) = self.selected_volume_automation_point
+            && (self.selected_volume_automation_point.is_some()
+                || self.selected_fx_automation_point.is_some())
         {
+            if let Some((track_id, chain_index, parameter_id, index)) =
+                self.selected_fx_automation_point
+            {
+                return Some(
+                    shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::DeleteFxAutomationPoint {
+                            track_id,
+                            chain_index,
+                            parameter_id,
+                            index,
+                        },
+                    ))
+                    .and_capture(),
+                );
+            }
+            let (track_id, index) = self.selected_volume_automation_point?;
             return Some(
                 shader::Action::publish(crate::app::Message::Timeline(
                     TimelineEvent::DeleteVolumeAutomationPoint { track_id, index },
@@ -1195,6 +1462,36 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 let position = cursor.position_in(bounds)?;
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let track_index = (position.y / TIMELINE_ROW_HEIGHT).floor() as usize;
+                if let Some(track) = self.project.tracks().get(track_index)
+                    && position.y.rem_euclid(TIMELINE_ROW_HEIGHT) >= 82.0
+                    && let Some((chain_index, parameter_id)) = self.fx_lane_for_track(track.id())
+                    && let Some(index) = fx_automation_point_at(
+                        self.project,
+                        self.pixels_per_tick,
+                        FxAutomationTarget {
+                            track_index,
+                            chain_index,
+                            parameter_id,
+                        },
+                        tick,
+                        position.y.rem_euclid(TIMELINE_ROW_HEIGHT),
+                        self.fx_automation_lane_info
+                            .get(&(track.id(), chain_index, parameter_id))
+                            .map(|info| info.value_range),
+                    )
+                {
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::DeleteFxAutomationPoint {
+                                track_id: track.id(),
+                                chain_index,
+                                parameter_id,
+                                index,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 if position.y.rem_euclid(TIMELINE_ROW_HEIGHT) >= 62.0
                     && let Some(track) = self.project.tracks().get(track_index)
                     && (self.volume_automation_tracks.contains(&track.id())
@@ -1369,6 +1666,97 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     self.snap_enabled,
                     state.modifiers.shift(),
                 );
+                if let Some(track) = self.project.tracks().get(track_index)
+                    && row_y >= 82.0
+                    && let Some((chain_index, parameter_id)) = self.fx_lane_for_track(track.id())
+                {
+                    let target = (track.id(), chain_index, parameter_id);
+                    if let Some(point_index) = fx_automation_point_at(
+                        self.project,
+                        self.pixels_per_tick,
+                        FxAutomationTarget {
+                            track_index,
+                            chain_index,
+                            parameter_id,
+                        },
+                        raw_tick,
+                        row_y,
+                        self.fx_automation_lane_info
+                            .get(&target)
+                            .map(|info| info.value_range),
+                    ) {
+                        state.pending_automation_point = Some(PendingAutomationPoint {
+                            track_index,
+                            point_index,
+                            fx_target: Some(target),
+                            start_x: position.x,
+                            start_y: position.y,
+                        });
+                        return Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SelectFxAutomationPoint {
+                                    track_id: track.id(),
+                                    chain_index,
+                                    parameter_id,
+                                    index: point_index,
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    let snapped_tick = fx_automation_tick_at(
+                        raw_tick,
+                        self.cache.snap_grid_ticks,
+                        self.snap_enabled,
+                        state.modifiers.shift(),
+                    );
+                    let Ok(sample) = self.project.sample_at_tick(snapped_tick) else {
+                        return None;
+                    };
+                    let plugin = track.fx_chain().get(chain_index)?;
+                    let lane = plugin.parameter_automation_for(parameter_id);
+                    let range = self
+                        .fx_automation_lane_info
+                        .get(&target)
+                        .map(|info| info.value_range)
+                        .unwrap_or_else(|| {
+                            fx_value_range(
+                                lane.into_iter()
+                                    .flat_map(|lane| lane.points())
+                                    .map(|point| point.value())
+                                    .chain(plugin.parameter_value(parameter_id)),
+                            )
+                        });
+                    let stepped = self
+                        .fx_automation_lane_info
+                        .get(&target)
+                        .is_some_and(|info| info.stepped);
+                    let value = fx_value_at_y(range, row_y, stepped);
+                    let mut points = lane.map_or_else(Vec::new, |lane| lane.points().to_vec());
+                    let point = aaadaw_core::FxParameterAutomationPoint::new(sample, value)?;
+                    let index = match points.binary_search_by_key(&sample, |point| point.sample()) {
+                        Ok(index) => {
+                            points[index] = point;
+                            index
+                        }
+                        Err(index) => {
+                            points.insert(index, point);
+                            index
+                        }
+                    };
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SetFxAutomation {
+                                track_id: track.id(),
+                                chain_index,
+                                parameter_id,
+                                points,
+                                selected_point: Some(index),
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 if row_y >= 62.0
                     && let Some(track) = self.project.tracks().get(track_index)
                     && (self.volume_automation_tracks.contains(&track.id())
@@ -1385,6 +1773,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         state.pending_automation_point = Some(PendingAutomationPoint {
                             track_index,
                             point_index,
+                            fx_target: None,
                             start_x: position.x,
                             start_y: position.y,
                         });
@@ -1499,6 +1888,57 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         state.modifiers.shift(),
                     );
                     let sample = self.project.sample_at_tick(tick).ok()?;
+                    if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
+                        let Some(plugin) = track.fx_chain().get(chain_index) else {
+                            return Some(shader::Action::capture());
+                        };
+                        let Some(lane) = plugin.parameter_automation_for(parameter_id) else {
+                            return Some(shader::Action::capture());
+                        };
+                        let mut points = lane.points().to_vec();
+                        if drag.point_index < points.len() {
+                            let min_sample = drag
+                                .point_index
+                                .checked_sub(1)
+                                .map_or(0, |index| points[index].sample().saturating_add(1));
+                            let max_sample = points
+                                .get(drag.point_index + 1)
+                                .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
+                            let range = self
+                                .fx_automation_lane_info
+                                .get(&(track_id, chain_index, parameter_id))
+                                .map(|info| info.value_range)
+                                .unwrap_or_else(|| {
+                                    fx_value_range(points.iter().map(|point| point.value()))
+                                });
+                            let y = (position.y - drag.track_index as f32 * TIMELINE_ROW_HEIGHT)
+                                .clamp(82.0, TIMELINE_ROW_HEIGHT - 3.0);
+                            if let Some(point) = aaadaw_core::FxParameterAutomationPoint::new(
+                                sample.clamp(min_sample, max_sample),
+                                fx_value_at_y(
+                                    range,
+                                    y,
+                                    self.fx_automation_lane_info
+                                        .get(&(track_id, chain_index, parameter_id))
+                                        .is_some_and(|info| info.stepped),
+                                ),
+                            ) {
+                                points[drag.point_index] = point;
+                            }
+                        }
+                        return Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetFxAutomation {
+                                    track_id,
+                                    chain_index,
+                                    parameter_id,
+                                    points,
+                                    selected_point: Some(drag.point_index),
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
                     let y = (position.y - drag.track_index as f32 * TIMELINE_ROW_HEIGHT)
                         .clamp(62.0, TIMELINE_ROW_HEIGHT - 1.0);
                     let gain_db = (6.0 - ((y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
@@ -1645,6 +2085,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 })
                 .map(|(track_index, track)| renderer::AutomationLane {
                     track_index: track_index as u32,
+                    is_fx: false,
+                    value_range: (-60.0, 6.0),
                     selected_point: self
                         .selected_volume_automation_point
                         .filter(|(id, _)| *id == track.id())
@@ -1660,6 +2102,56 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         })
                         .collect(),
                 })
+                .chain(self.fx_automation_lanes.iter().filter_map(
+                    |(track_id, chain_index, parameter_id)| {
+                        let track_index = self
+                            .project
+                            .tracks()
+                            .iter()
+                            .position(|track| track.id() == *track_id)?;
+                        let plugin = self.project.tracks()[track_index]
+                            .fx_chain()
+                            .get(*chain_index)?;
+                        let lane = plugin.parameter_automation_for(*parameter_id);
+                        let points = lane
+                            .into_iter()
+                            .flat_map(|lane| lane.points())
+                            .filter_map(|point| {
+                                self.project
+                                    .tick_at_sample(point.sample())
+                                    .ok()
+                                    .map(|tick| (tick, point.value() as f32))
+                            })
+                            .collect::<Vec<_>>();
+                        let value_range = self
+                            .fx_automation_lane_info
+                            .get(&(*track_id, *chain_index, *parameter_id))
+                            .map(|info| info.value_range)
+                            .unwrap_or_else(|| {
+                                fx_value_range(
+                                    lane.into_iter()
+                                        .flat_map(|lane| lane.points())
+                                        .map(|point| point.value())
+                                        .chain(plugin.parameter_value(*parameter_id)),
+                                )
+                            });
+                        let range = (value_range.0 as f32, value_range.1 as f32);
+                        Some(renderer::AutomationLane {
+                            track_index: track_index as u32,
+                            is_fx: true,
+                            value_range: range,
+                            selected_point: self
+                                .selected_fx_automation_point
+                                .filter(|(id, index, parameter, _)| {
+                                    *id == *track_id
+                                        && *index == *chain_index
+                                        && *parameter == *parameter_id
+                                })
+                                .map(|(_, _, _, point)| point),
+                            points,
+                        })
+                    },
+                ))
                 .collect(),
             selected_track_index: track_index,
             width: bounds.width,
@@ -1929,6 +2421,31 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         for (track_index, track_id) in self.state.cache.track_ids.iter().enumerate() {
+            if let Some((_, chain_index, parameter_id)) = self
+                .state
+                .fx_automation_lanes
+                .iter()
+                .find(|(id, _, _)| id == track_id)
+            {
+                let key = (*track_id, *chain_index, *parameter_id);
+                let parameter_name = self
+                    .state
+                    .fx_automation_lane_info
+                    .get(&key)
+                    .map_or_else(|| format!("P{parameter_id}"), |info| info.name.clone());
+                frame.fill_text(Text {
+                    content: format!("FX {} · {}", chain_index + 1, parameter_name),
+                    position: Point::new(4.0, track_index as f32 * TIMELINE_ROW_HEIGHT + 90.0),
+                    max_width: 90.0,
+                    color: Color::from_rgb8(177, 205, 236),
+                    size: Pixels(8.0),
+                    line_height: LineHeight::Relative(1.0),
+                    font: Font::default(),
+                    align_x: TextAlignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: Shaping::Basic,
+                });
+            }
             if !self.state.volume_automation_tracks.contains(track_id)
                 || self
                     .state
@@ -2053,12 +2570,78 @@ fn automation_point_at(
         .map(|(index, _)| index)
 }
 
+fn fx_value_range(values: impl Iterator<Item = f64>) -> (f64, f64) {
+    let (min, max) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), value| {
+        (min.min(value), max.max(value))
+    });
+    if !min.is_finite() || !max.is_finite() {
+        return (-1.0, 1.0);
+    }
+    if max > min {
+        let margin = (max - min) * 0.1;
+        (min - margin, max + margin)
+    } else {
+        (min - 1.0, max + 1.0)
+    }
+}
+
+fn fx_value_at_y(range: (f64, f64), y: f32, stepped: bool) -> f64 {
+    let top = 82.0_f64;
+    let bottom = f64::from(TIMELINE_ROW_HEIGHT - 3.0);
+    let value =
+        range.1 - (f64::from(y).clamp(top, bottom) - top) / (bottom - top) * (range.1 - range.0);
+    if stepped { value.round() } else { value }
+}
+
+fn fx_automation_point_at(
+    project: &Project,
+    pixels_per_tick: f32,
+    target: FxAutomationTarget,
+    tick: u64,
+    y: f32,
+    configured_range: Option<(f64, f64)>,
+) -> Option<usize> {
+    let plugin = project
+        .tracks()
+        .get(target.track_index)?
+        .fx_chain()
+        .get(target.chain_index)?;
+    let lane = plugin.parameter_automation_for(target.parameter_id)?;
+    let range = configured_range.unwrap_or_else(|| {
+        fx_value_range(
+            lane.points()
+                .iter()
+                .map(|point| point.value())
+                .chain(plugin.parameter_value(target.parameter_id)),
+        )
+    });
+    lane.points()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, point)| {
+            let point_tick = project.tick_at_sample(point.sample()).ok()?;
+            let x_distance = i128::from(point_tick).abs_diff(i128::from(tick)) as f64
+                * f64::from(pixels_per_tick);
+            let point_y = 82.0
+                + ((range.1 - point.value()) / (range.1 - range.0)
+                    * f64::from(TIMELINE_ROW_HEIGHT - 85.0)) as f32;
+            ((x_distance <= 7.0) && (point_y - y).abs() <= 7.0)
+                .then_some((index, x_distance + f64::from((point_y - y).abs())))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(index, _)| index)
+}
+
 fn snap_tick_to_grid(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
     let Some(grid) = grid.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
         return tick;
     };
     let grid = u128::from(grid);
     (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64
+}
+
+fn fx_automation_tick_at(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+    snap_tick_to_grid(tick, grid, enabled, ignore_snap)
 }
 
 fn time_selection_edge_at_tick(
@@ -2093,8 +2676,8 @@ fn media_label(media_ref: &str) -> String {
 mod tests {
     use super::{
         ItemKind, PendingTimeSelectionDrag, SnapGrid, TimeSelection, TimeSelectionDragMode,
-        TimelineCache, TimelineEvent, TimelineState, snap_tick_to_grid, tick_at_x,
-        time_selection_edge_at_tick,
+        TimelineCache, TimelineEvent, TimelineState, fx_automation_tick_at, snap_tick_to_grid,
+        tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TimeSignature};
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
@@ -2163,6 +2746,77 @@ mod tests {
         timeline.handle(TimelineEvent::ToggleVolumeAutomation(track_id));
         assert!(timeline.volume_automation_tracks.contains(&track_id));
         assert!(!timeline.hidden_volume_automation_tracks.contains(&track_id));
+    }
+
+    #[test]
+    fn fx_automation_placement_uses_arrangement_snap_and_shift_bypass() {
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, false), 480);
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, true), 361);
+        assert_eq!(fx_automation_tick_at(361, Some(240), false, false), 361);
+    }
+
+    #[test]
+    fn visible_fx_automation_lane_tracks_its_plugin_when_the_chain_is_reordered() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "FX".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        let first = aaadaw_core::TrackFxPlugin::new("vendor.first", "/first.clap").unwrap();
+        let second = aaadaw_core::TrackFxPlugin::new("vendor.second", "/second.clap").unwrap();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![first, second],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackFxParameterAutomation {
+                track_id,
+                chain_index: 0,
+                parameter_id: 17,
+                points: vec![aaadaw_core::FxParameterAutomationPoint::new(0, 0.25).unwrap()],
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::ToggleFxAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 17,
+            name: "Mix".to_owned(),
+            value_range: (0.0, 1.0),
+            stepped: false,
+        });
+        timeline.handle(TimelineEvent::SelectFxAutomationPoint {
+            track_id,
+            chain_index: 0,
+            parameter_id: 17,
+            index: 0,
+        });
+
+        let chain = project.tracks()[0].fx_chain();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![chain[1].clone(), chain[0].clone()],
+            })
+            .unwrap();
+        timeline.rebuild(&project);
+
+        assert!(timeline.fx_automation_lanes.contains(&(track_id, 1, 17)));
+        assert_eq!(
+            timeline.selected_fx_automation_point,
+            Some((track_id, 1, 17, 0))
+        );
+        assert_eq!(
+            timeline.fx_automation_lane_info[&(track_id, 1, 17)].name,
+            "Mix"
+        );
     }
 
     #[test]

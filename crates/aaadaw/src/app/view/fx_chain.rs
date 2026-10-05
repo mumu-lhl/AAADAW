@@ -221,6 +221,14 @@ fn selected_plugin_details<'a>(
             });
         #[cfg(not(feature = "audio-device"))]
         let write_armed = false;
+        let lane_visible = app
+            .fx_chain_track_id
+            .zip(app.fx_chain_selected_index)
+            .is_some_and(|(track_id, chain_index)| {
+                app.timeline
+                    .fx_automation_lanes
+                    .contains(&(track_id, chain_index, id))
+            });
         let parameter_label = if parameter.stepped {
             column![
                 text(parameter.name.as_str()).size(11),
@@ -253,6 +261,15 @@ fn selected_plugin_details<'a>(
                     .padding([3, 5]),
                 button(if write_armed { "Write*" } else { "Write" })
                     .on_press(Message::FxAutomationWriteToggled(id))
+                    .padding([3, 5]),
+                button(if lane_visible { "Hide" } else { "Show" })
+                    .on_press(Message::FxAutomationLaneToggled {
+                        parameter_id: id,
+                        name: parameter.name.clone(),
+                        min_value: parameter.min_value,
+                        max_value: parameter.max_value,
+                        stepped: parameter.stepped,
+                    })
                     .padding([3, 5]),
             ]
             .spacing(6)

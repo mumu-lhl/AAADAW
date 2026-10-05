@@ -202,6 +202,120 @@ fn arrangement_automation_add_move_delete_selection_and_undo() {
 }
 
 #[test]
+fn arrangement_fx_automation_edits_points_undoes_and_redoes() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![TrackFxPlugin::new("org.example.eq", "/plugins/eq.clap").unwrap()],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(super::super::timeline::TimelineEvent::ToggleFxAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            name: "Frequency".to_owned(),
+            value_range: (20.0, 20_000.0),
+            stepped: false,
+        });
+
+    let first = aaadaw_core::FxParameterAutomationPoint::new(
+        app.project.sample_at_tick(960).unwrap(),
+        440.0,
+    )
+    .unwrap();
+    let second = aaadaw_core::FxParameterAutomationPoint::new(
+        app.project.sample_at_tick(1920).unwrap(),
+        880.0,
+    )
+    .unwrap();
+    let update = |points, selected_point| {
+        Message::Timeline(super::super::timeline::TimelineEvent::SetFxAutomation {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            points,
+            selected_point,
+        })
+    };
+    let _ = app.update(update(vec![first], Some(0)));
+    let _ = app.update(update(vec![first, second], Some(1)));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[first, second]
+    );
+
+    let moved = aaadaw_core::FxParameterAutomationPoint::new(
+        app.project.sample_at_tick(2880).unwrap(),
+        1_200.0,
+    )
+    .unwrap();
+    let _ = app.update(update(vec![first, moved], Some(1)));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[first, moved]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[first, second]
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[first, moved]
+    );
+
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::DeleteFxAutomationPoint {
+            track_id,
+            chain_index: 0,
+            parameter_id: 7,
+            index: 0,
+        },
+    ));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[moved]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[first, moved]
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0]
+            .parameter_automation_for(7)
+            .unwrap()
+            .points(),
+        &[moved]
+    );
+}
+
+#[test]
 fn tempo_map_editor_adds_edits_curves_deletes_and_undoes_as_one_action() {
     let mut app = App::default();
     app.timeline.edit_cursor_tick = 960;
