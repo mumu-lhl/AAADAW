@@ -15,7 +15,7 @@ use iced::{
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 100.0;
@@ -292,16 +292,25 @@ struct TimelineCache {
     track_ids: Arc<[TrackId]>,
     ppq: u32,
     snap_grid_ticks: Option<u64>,
-    waveform_bins: Arc<[WaveformBinGeometry]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WaveformGeometryKey {
+    project_generation: u64,
+    origin_tick: u64,
+    pixels_per_tick: u32,
+    width: u32,
+}
+
+#[derive(Debug, Default)]
+struct CachedWaveformGeometry {
+    key: Option<WaveformGeometryKey>,
+    generation: u64,
+    bins: Arc<[WaveformBinGeometry]>,
 }
 
 impl TimelineCache {
-    fn rebuild(
-        &mut self,
-        project: &Project,
-        waveforms: &HashMap<String, Arc<AudioWaveform>>,
-        snap_grid: SnapGrid,
-    ) {
+    fn rebuild(&mut self, project: &Project, snap_grid: SnapGrid) {
         let track_ids = project
             .tracks()
             .iter()
@@ -370,21 +379,34 @@ impl TimelineCache {
         self.track_ids = track_ids.into();
         self.ppq = project.settings().ppq();
         self.snap_grid_ticks = snap_grid.tick_interval(self.ppq);
-        self.rebuild_waveform_geometry(project, waveforms);
     }
 
-    fn rebuild_waveform_geometry(
-        &mut self,
+    fn waveform_geometry_for_viewport(
+        &self,
         project: &Project,
         waveforms: &HashMap<String, Arc<AudioWaveform>>,
-    ) {
+        origin_tick: u64,
+        pixels_per_tick: f32,
+        width: f32,
+    ) -> Vec<WaveformBinGeometry> {
+        if !pixels_per_tick.is_finite() || pixels_per_tick <= 0.0 || !width.is_finite() {
+            return Vec::new();
+        }
+        let visible_end_tick = origin_tick.saturating_add(
+            (f64::from(width.max(0.0)) / f64::from(pixels_per_tick))
+                .ceil()
+                .clamp(0.0, u64::MAX as f64) as u64,
+        );
+        if visible_end_tick <= origin_tick {
+            return Vec::new();
+        }
         let project_rate = u128::from(project.settings().sample_rate());
         let mut bins = Vec::new();
-        for item in self
-            .items
-            .iter()
-            .filter(|item| item.kind == ItemKind::Audio)
-        {
+        for item in self.items.iter().filter(|item| {
+            item.kind == ItemKind::Audio
+                && item.start_tick < visible_end_tick
+                && item.end_tick > origin_tick
+        }) {
             let Some(waveform) = item
                 .media_ref
                 .as_ref()
@@ -399,21 +421,67 @@ impl TimelineCache {
             }
             let source_length =
                 (u128::from(item.length_samples) * source_rate + project_rate / 2) / project_rate;
-            let Some(source_end) =
+            let Some(item_source_end) =
                 u64::try_from(u128::from(item.source_offset_samples) + source_length).ok()
             else {
                 continue;
             };
-            let first_peak = item.source_offset_samples / frames_per_peak;
-            let last_peak = source_end.div_ceil(frames_per_peak);
-            for peak_index in first_peak..last_peak.min(waveform.peaks().len() as u64) {
-                let peak = waveform.peaks()[peak_index as usize];
-                let peak_start = peak_index.saturating_mul(frames_per_peak);
+            let visible_start_tick = item.start_tick.max(origin_tick);
+            let visible_end_tick = item.end_tick.min(visible_end_tick);
+            let (Ok(visible_start_sample), Ok(visible_end_sample)) = (
+                project.sample_at_tick(visible_start_tick),
+                project.sample_at_tick(visible_end_tick),
+            ) else {
+                continue;
+            };
+            let item_end_sample = item.start_sample.saturating_add(item.length_samples);
+            let visible_start_sample = visible_start_sample.max(item.start_sample);
+            let visible_end_sample = visible_end_sample.min(item_end_sample);
+            if visible_start_sample >= visible_end_sample {
+                continue;
+            }
+            let source_start = u64::try_from(
+                u128::from(item.source_offset_samples)
+                    + (u128::from(visible_start_sample - item.start_sample) * source_rate)
+                        / project_rate,
+            )
+            .unwrap_or(item_source_end)
+            .min(item_source_end)
+            .min(waveform.frame_count());
+            let source_end = u64::try_from(
+                u128::from(item.source_offset_samples)
+                    + (u128::from(visible_end_sample - item.start_sample) * source_rate)
+                        .div_ceil(project_rate),
+            )
+            .unwrap_or(item_source_end)
+            .min(item_source_end)
+            .min(waveform.frame_count());
+            if source_start >= source_end {
+                continue;
+            }
+            let mut slowest_tempo = project.tempo_at_tick(visible_start_tick);
+            for (tempo_tick, bpm, _) in project.tempo_points() {
+                if tempo_tick > visible_start_tick && tempo_tick < visible_end_tick {
+                    slowest_tempo = slowest_tempo.min(bpm);
+                }
+            }
+            let frames_per_pixel = (f64::from(waveform.sample_rate()) * 60.0
+                / (slowest_tempo
+                    * f64::from(project.settings().ppq())
+                    * f64::from(pixels_per_tick)))
+            .ceil()
+            .clamp(1.0, f64::from(u32::MAX)) as u32;
+            let (level, peak_range) =
+                waveform.peak_range_for_source_frames(source_start, source_end, frames_per_pixel);
+            let frames_per_peak = u64::from(level.frames_per_peak());
+            for peak_index in peak_range {
+                let peak = level.peaks()[peak_index];
+                let peak_start = (peak_index as u64).saturating_mul(frames_per_peak);
                 let peak_end = peak_start
                     .saturating_add(frames_per_peak)
                     .min(waveform.frame_count());
-                let overlap_start = peak_start.max(item.source_offset_samples);
-                let overlap_end = peak_end.min(source_end);
+                let overlap_start = peak_start.max(source_start).max(item.source_offset_samples);
+                let overlap_end = peak_end.min(source_end).min(item_source_end);
                 if overlap_start >= overlap_end {
                     continue;
                 }
@@ -433,8 +501,8 @@ impl TimelineCache {
                 else {
                     continue;
                 };
-                let start_sample = start_sample.min(item.start_sample + item.length_samples);
-                let end_sample = end_sample.min(item.start_sample + item.length_samples);
+                let start_sample = start_sample.min(item_end_sample);
+                let end_sample = end_sample.min(item_end_sample);
                 if start_sample >= end_sample {
                     continue;
                 }
@@ -444,6 +512,11 @@ impl TimelineCache {
                 ) else {
                     continue;
                 };
+                let start_tick = start_tick.max(origin_tick);
+                let end_tick = end_tick.min(visible_end_tick);
+                if start_tick >= end_tick {
+                    continue;
+                }
                 bins.push(WaveformBinGeometry {
                     item_id: item.id,
                     start_tick,
@@ -454,7 +527,7 @@ impl TimelineCache {
                 });
             }
         }
-        self.waveform_bins = bins.into();
+        bins
     }
 
     fn item_at(&self, track_index: usize, tick: u64) -> Option<&TimelineItem> {
@@ -484,6 +557,8 @@ pub(crate) struct TimelineState {
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
     cache: TimelineCache,
+    waveform_source_generation: u64,
+    waveform_geometry_cache: Arc<Mutex<CachedWaveformGeometry>>,
     pan_fractional_tick: f64,
     selection_anchor: Option<ItemId>,
     drag_preview: Option<ItemDragPreview>,
@@ -624,7 +699,7 @@ impl Default for TimelineState {
     fn default() -> Self {
         let project = Project::new();
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, &HashMap::new(), SnapGrid::Sixteenth);
+        cache.rebuild(&project, SnapGrid::Sixteenth);
         let (mut panes, track_pane) = pane_grid::State::new(ArrangementPane::TrackControls);
         let (_timeline_pane, split) = panes
             .split(Axis::Vertical, track_pane, ArrangementPane::Timeline)
@@ -649,6 +724,8 @@ impl Default for TimelineState {
             origin_tick: 0,
             pixels_per_tick: 0.065,
             cache,
+            waveform_source_generation: 0,
+            waveform_geometry_cache: Arc::default(),
             pan_fractional_tick: 0.0,
             selection_anchor: None,
             drag_preview: None,
@@ -822,8 +899,8 @@ impl TimelineState {
             .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
         self.hidden_volume_automation_tracks
             .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
-        self.cache
-            .rebuild(project, &self.audio_waveforms, self.snap_grid);
+        self.cache.rebuild(project, self.snap_grid);
+        self.waveform_source_generation = self.waveform_source_generation.wrapping_add(1);
         self.rebuild_row_layout();
         if self.cache.snap_grid_ticks.is_none() {
             self.snap_enabled = false;
@@ -1057,12 +1134,11 @@ impl TimelineState {
 
     pub(crate) fn set_audio_waveforms(
         &mut self,
-        project: &Project,
+        _project: &Project,
         waveforms: HashMap<String, Arc<AudioWaveform>>,
     ) {
         self.audio_waveforms = waveforms;
-        self.cache
-            .rebuild_waveform_geometry(project, &self.audio_waveforms);
+        self.waveform_source_generation = self.waveform_source_generation.wrapping_add(1);
         self.cache.generation = self.cache.generation.wrapping_add(1);
     }
 
@@ -1507,6 +1583,9 @@ impl TimelineState {
         TimelineProgram {
             project,
             cache: &self.cache,
+            waveforms: &self.audio_waveforms,
+            waveform_source_generation: self.waveform_source_generation,
+            waveform_geometry_cache: Arc::clone(&self.waveform_geometry_cache),
             origin_tick: self.origin_tick,
             pixels_per_tick: self.pixels_per_tick,
             edit_cursor_tick: self.edit_cursor_tick,
@@ -1545,6 +1624,9 @@ pub(crate) struct RulerLine {
 struct TimelineProgram<'a> {
     project: &'a Project,
     cache: &'a TimelineCache,
+    waveforms: &'a HashMap<String, Arc<AudioWaveform>>,
+    waveform_source_generation: u64,
+    waveform_geometry_cache: Arc<Mutex<CachedWaveformGeometry>>,
     origin_tick: u64,
     pixels_per_tick: f32,
     edit_cursor_tick: u64,
@@ -2550,8 +2632,37 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 points,
             });
         }
+        let waveform_key = WaveformGeometryKey {
+            project_generation: self.waveform_source_generation,
+            origin_tick: self.origin_tick,
+            pixels_per_tick: self.pixels_per_tick.to_bits(),
+            width: bounds.width.to_bits(),
+        };
+        let (waveform_generation, waveform_bins) = {
+            let mut cached = self
+                .waveform_geometry_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cached.key != Some(waveform_key) {
+                cached.bins = self
+                    .cache
+                    .waveform_geometry_for_viewport(
+                        self.project,
+                        self.waveforms,
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                        bounds.width,
+                    )
+                    .into();
+                cached.key = Some(waveform_key);
+                cached.generation = cached.generation.wrapping_add(1);
+            }
+            (cached.generation, Arc::clone(&cached.bins))
+        };
         renderer::TimelinePrimitive {
             generation: self.cache.generation,
+            waveform_generation,
+            waveform_render_generation: self.cache.generation,
             items: Arc::clone(&self.cache.items),
             track_count: self.cache.track_ids.len() as u32,
             row_layout: self.row_layout.to_vec(),
@@ -2560,7 +2671,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
-            waveform_bins: Arc::clone(&self.cache.waveform_bins),
+            waveform_bins,
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,
             item_trim_preview: self.item_trim_preview,
@@ -3499,11 +3610,7 @@ mod tests {
             .unwrap();
 
         let mut cache = TimelineCache::default();
-        cache.rebuild(
-            &project,
-            &std::collections::HashMap::new(),
-            SnapGrid::Sixteenth,
-        );
+        cache.rebuild(&project, SnapGrid::Sixteenth);
         assert_eq!(cache.items.len(), 2);
         assert_eq!(cache.items[0].track_index, 0);
         assert_eq!(cache.items[0].start_tick, 960);
@@ -3553,10 +3660,10 @@ mod tests {
         let waveforms = HashMap::from([("asset://waveform".to_owned(), waveform)]);
 
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, &waveforms, SnapGrid::Sixteenth);
+        cache.rebuild(&project, SnapGrid::Sixteenth);
 
-        assert_eq!(cache.waveform_bins.len(), 2);
-        let waveform = &cache.waveform_bins;
+        let waveform = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 100.0);
+        assert_eq!(waveform.len(), 2);
         assert_eq!(waveform[0].track_index, 0);
         assert!((waveform[0].min - 0.25).abs() < 1.0e-6);
         assert!((waveform[0].max - 0.25).abs() < 1.0e-6);
@@ -3567,6 +3674,69 @@ mod tests {
             project.tick_at_sample(1_000).unwrap()
         );
         assert_eq!(waveform[1].end_tick, project.tick_at_sample(1_512).unwrap());
+
+        assert!(
+            cache
+                .waveform_geometry_for_viewport(&project, &waveforms, 1_000, 1.0, 100.0)
+                .is_empty()
+        );
+        project
+            .apply(DawAction::SetTempo {
+                start_tick: 0,
+                bpm: 10.0,
+            })
+            .unwrap();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+        let overview = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 0.1, 1_000.0);
+        let closeup = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 20.0, 100.0);
+        assert_eq!(overview.len(), 1);
+        assert_eq!(closeup.len(), 2);
+        assert_eq!(
+            overview[0].start_tick,
+            project.tick_at_sample(1_000).unwrap()
+        );
+        assert_eq!(overview[0].end_tick, project.tick_at_sample(1_512).unwrap());
+    }
+
+    #[test]
+    fn waveform_geometry_bounds_large_items_to_visible_peak_bins() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://long-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let samples = vec![0; 48_000];
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://long-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let bins = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 20.0, 100.0);
+        assert!(!bins.is_empty());
+        assert!(bins.len() <= 10);
+        assert!(
+            bins.iter()
+                .all(|bin| bin.start_tick < 5 && bin.end_tick <= 5)
+        );
     }
 
     fn waveform_test_wav(samples: &[i16], sample_rate: u32) -> Vec<u8> {

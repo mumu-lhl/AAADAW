@@ -39,6 +39,8 @@ pub(super) struct AutomationLane {
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
     pub(super) generation: u64,
+    pub(super) waveform_generation: u64,
+    pub(super) waveform_render_generation: u64,
     pub(super) items: Arc<[TimelineItem]>,
     pub(super) track_count: u32,
     pub(super) row_layout: Vec<TrackRowLayout>,
@@ -123,7 +125,12 @@ pub(super) struct TimelinePipeline {
     static_count: u32,
     static_generation: Option<u64>,
     previewed_indices: Vec<usize>,
-    previewed_waveform_indices: Vec<usize>,
+    waveform_buffer: wgpu::Buffer,
+    waveform_capacity: usize,
+    waveform_count: u32,
+    waveform_generation: Option<u64>,
+    waveform_render_generation: Option<u64>,
+    waveform_preview: Option<ItemTrimPreview>,
     dynamic_buffer: wgpu::Buffer,
     dynamic_capacity: usize,
     dynamic_count: u32,
@@ -225,7 +232,12 @@ impl Pipeline for TimelinePipeline {
             static_count: 0,
             static_generation: None,
             previewed_indices: Vec::new(),
-            previewed_waveform_indices: Vec::new(),
+            waveform_buffer: empty_buffer(),
+            waveform_capacity: 1,
+            waveform_count: 0,
+            waveform_generation: None,
+            waveform_render_generation: None,
+            waveform_preview: None,
             dynamic_buffer: empty_buffer(),
             dynamic_capacity: 1,
             dynamic_count: 0,
@@ -254,11 +266,9 @@ impl Primitive for TimelinePrimitive {
     ) {
         if pipeline.static_generation != Some(self.generation) {
             pipeline.previewed_indices.clear();
-            pipeline.previewed_waveform_indices.clear();
             let mut instances = Vec::with_capacity(
                 self.track_count as usize
                     + self.items.len()
-                    + self.waveform_bins.len()
                     + self
                         .automation_lanes
                         .iter()
@@ -311,16 +321,6 @@ impl Primitive for TimelinePrimitive {
                     track_index: item.track_index as u32,
                     kind,
                 }));
-            }
-            for bin in self.waveform_bins.iter() {
-                let Some(row) = self.row_layout.get(bin.track_index) else {
-                    continue;
-                };
-                let has_automation = self
-                    .automation_lanes
-                    .iter()
-                    .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx);
-                instances.push(waveform_rect(*bin, *row, has_automation));
             }
             for lane in &self.automation_lanes {
                 let Some(row) = self.row_layout.get(lane.track_index as usize) else {
@@ -520,59 +520,53 @@ impl Primitive for TimelinePrimitive {
                 &rect,
             );
         }
-        let waveform_instance_start = self.track_count as usize + self.items.len();
-        for index in pipeline.previewed_waveform_indices.iter().copied() {
-            if let Some(bin) = self.waveform_bins.get(index) {
-                write_static_instance(
-                    queue,
-                    &pipeline.static_buffer,
-                    waveform_instance_start + index,
-                    &waveform_rect(
-                        *bin,
-                        self.row_layout[bin.track_index],
-                        self.automation_lanes
-                            .iter()
-                            .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
-                    ),
-                );
-            }
-        }
-        let mut previewed_waveform_indices = Vec::new();
-        if let Some(preview) = self.item_trim_preview {
-            for (index, bin) in self.waveform_bins.iter().enumerate() {
-                if bin.item_id != preview.item_id {
-                    continue;
-                }
-                let (start_tick, end_tick) = if preview.valid {
-                    (
-                        bin.start_tick.max(preview.start_tick),
-                        bin.end_tick.min(preview.end_tick),
-                    )
-                } else {
-                    (preview.start_tick, preview.start_tick)
-                };
-                let clipped = WaveformBinGeometry {
-                    start_tick,
-                    end_tick,
-                    ..*bin
-                };
-                write_static_instance(
-                    queue,
-                    &pipeline.static_buffer,
-                    waveform_instance_start + index,
-                    &waveform_rect(
-                        clipped,
-                        self.row_layout[bin.track_index],
-                        self.automation_lanes
-                            .iter()
-                            .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
-                    ),
-                );
-                previewed_waveform_indices.push(index);
-            }
-        }
-        pipeline.previewed_waveform_indices = previewed_waveform_indices;
         pipeline.previewed_indices = previewed_indices;
+
+        if pipeline.waveform_generation != Some(self.waveform_generation)
+            || pipeline.waveform_render_generation != Some(self.waveform_render_generation)
+            || pipeline.waveform_preview != self.item_trim_preview
+        {
+            let mut waveforms = Vec::with_capacity(self.waveform_bins.len());
+            for bin in self.waveform_bins.iter().copied() {
+                let Some(row) = self.row_layout.get(bin.track_index).copied() else {
+                    continue;
+                };
+                let clipped = match self.item_trim_preview.filter(|p| p.item_id == bin.item_id) {
+                    Some(preview) if preview.valid => WaveformBinGeometry {
+                        start_tick: bin.start_tick.max(preview.start_tick),
+                        end_tick: bin.end_tick.min(preview.end_tick),
+                        ..bin
+                    },
+                    Some(preview) => WaveformBinGeometry {
+                        start_tick: preview.start_tick,
+                        end_tick: preview.start_tick,
+                        ..bin
+                    },
+                    None => bin,
+                };
+                waveforms.push(waveform_rect(
+                    clipped,
+                    row,
+                    self.automation_lanes
+                        .iter()
+                        .any(|lane| lane.track_index == bin.track_index as u32 && !lane.is_fx),
+                ));
+            }
+            ensure_capacity(
+                device,
+                &mut pipeline.waveform_buffer,
+                &mut pipeline.waveform_capacity,
+                waveforms.len(),
+                "AAADAW viewport waveform instances",
+            );
+            if !waveforms.is_empty() {
+                queue.write_buffer(&pipeline.waveform_buffer, 0, cast_slice(&waveforms));
+            }
+            pipeline.waveform_count = waveforms.len() as u32;
+            pipeline.waveform_generation = Some(self.waveform_generation);
+            pipeline.waveform_render_generation = Some(self.waveform_render_generation);
+            pipeline.waveform_preview = self.item_trim_preview;
+        }
 
         let mut dynamic = Vec::with_capacity(
             self.grid_lines.len()
@@ -757,6 +751,10 @@ impl Primitive for TimelinePrimitive {
         if pipeline.static_count > 0 {
             render_pass.set_vertex_buffer(0, pipeline.static_buffer.slice(..));
             render_pass.draw(0..6, 0..pipeline.static_count);
+        }
+        if pipeline.waveform_count > 0 {
+            render_pass.set_vertex_buffer(0, pipeline.waveform_buffer.slice(..));
+            render_pass.draw(0..6, 0..pipeline.waveform_count);
         }
         if pipeline.dynamic_count > 0 {
             render_pass.set_vertex_buffer(0, pipeline.dynamic_buffer.slice(..));
