@@ -22,9 +22,19 @@ The archive targets Windows x86_64 and enables WASAPI. Extract the ZIP and run `
 
 ## Projects, settings, and logs
 
-Use **File → New Project** or **File → Open Project**. Save projects as `.aaadaw` files in a location included in your backup plan.
+Use **File → New Project** or **File → Open Project**. Save projects as `.aaadaw` files in a location included in your backup plan. The project stays at the path you choose.
 
-AAADAW stores configuration, plug-in scan cache, and logs in the current user's platform directories. Set `AAADAW_LOG_DIR` to override the log directory. See [logging and diagnostics](logging.md) for exact locations and `RUST_LOG` filtering.
+AAADAW stores configuration and plug-in scan cache in the current user's configuration directory:
+
+- Linux: `$XDG_CONFIG_HOME/aaadaw`, or `~/.config/aaadaw` when `XDG_CONFIG_HOME` is not set.
+- Windows: `%APPDATA%\aaadaw`.
+
+Logs use a separate local data directory:
+
+- Linux: `$XDG_DATA_HOME/aaadaw/logs`, or `~/.local/share/aaadaw/logs` when `XDG_DATA_HOME` is not set.
+- Windows: `%LOCALAPPDATA%\AAADAW\AAADAW\data\logs`.
+
+Set `AAADAW_LOG_DIR` to override the log directory. See [logging and diagnostics](logging.md) for `RUST_LOG` filtering and more detail.
 
 ## Plug-ins and current limits
 
