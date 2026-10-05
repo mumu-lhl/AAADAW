@@ -297,6 +297,36 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_scoped_query_notes", "arguments": {"track_id": track_id.value(), "start_tick": 0, "end_tick": 3840}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 25,
+            "method": "tools/call",
+            "params": {"name": "daw_upsert_midi_controllers", "arguments": {"item_id": item_id.value(), "controllers": [{"controller": 11, "tick": 0, "value": 100}]}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 26,
+            "method": "tools/call",
+            "params": {"name": "daw_upsert_midi_pitch_bends", "arguments": {"item_id": item_id.value(), "pitch_bends": [{"tick": 0, "value": 8192}]}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 27,
+            "method": "tools/call",
+            "params": {"name": "daw_scoped_query_notes", "arguments": {"track_id": track_id.value(), "start_tick": 0, "end_tick": 3840}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 28,
+            "method": "tools/call",
+            "params": {"name": "daw_upsert_midi_controllers", "arguments": {"item_id": item_id.value(), "controllers": [{"controller": 11, "tick": 0, "value": 100}]}}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 29,
+            "method": "tools/call",
+            "params": {"name": "daw_upsert_midi_pitch_bends", "arguments": {"item_id": item_id.value(), "pitch_bends": [{"tick": 0, "value": 8192}]}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -410,6 +440,16 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .as_array()
             .unwrap()
             .iter()
+            .all(|tool| !matches!(
+                tool["name"].as_str(),
+                Some("daw_upsert_midi_controllers" | "daw_upsert_midi_pitch_bends")
+            ))
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
             .all(|tool| !matches!(tool["name"].as_str(), Some("daw_undo" | "daw_redo")))
     );
     let structure = response_for(4)["result"]["contents"][0]["text"]
@@ -473,6 +513,14 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         response_for(24)["result"]["structuredContent"]["notes"][0]["tick"],
         960
     );
+    assert_eq!(response_for(25)["result"]["isError"], true);
+    assert_eq!(response_for(26)["result"]["isError"], true);
+    assert_eq!(
+        response_for(27)["result"]["structuredContent"]["notes"][0]["tick"],
+        960
+    );
+    assert_eq!(response_for(28)["result"]["isError"], true);
+    assert_eq!(response_for(29)["result"]["isError"], true);
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -2787,4 +2835,286 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
     assert_eq!(saved_item.notes()[1].pitch(), 64);
     assert_eq!(saved_item.notes()[1].duration(), 960);
     assert_eq!(saved_item.notes()[1].velocity(), 90);
+}
+
+#[test]
+fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("mcp-midi-expression.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Expressive Keys".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 960,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                aaadaw_core::MidiControllerData {
+                    controller: 11,
+                    tick: 0,
+                    value: 80,
+                },
+                aaadaw_core::MidiControllerData {
+                    controller: 10,
+                    tick: 120,
+                    value: 60,
+                },
+                aaadaw_core::MidiControllerData {
+                    controller: 11,
+                    tick: 240,
+                    value: 70,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                aaadaw_core::MidiPitchBendData {
+                    tick: 0,
+                    value: 8192,
+                },
+                aaadaw_core::MidiPitchBendData {
+                    tick: 240,
+                    value: 10_000,
+                },
+            ],
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aaadaw"))
+        .args([
+            "mcp",
+            "--stdio",
+            "--project",
+            project_path.to_str().unwrap(),
+            "--write",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = |id, name: &str, arguments| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        })
+    };
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "aaadaw-midi-expression-test", "version": "0.1"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        call(
+            3,
+            "daw_upsert_midi_controllers",
+            json!({"item_id": item_id.value(), "controllers": [
+                {"controller": 11, "tick": 0, "value": 100},
+                {"controller": 74, "tick": 120, "value": 64}
+            ]}),
+        ),
+        call(
+            4,
+            "daw_upsert_midi_controllers",
+            json!({"item_id": item_id.value(), "controllers": [
+                {"controller": 74, "tick": 360, "value": 90},
+                {"controller": 10, "tick": 3840, "value": 90}
+            ]}),
+        ),
+        call(
+            5,
+            "daw_upsert_midi_controllers",
+            json!({"item_id": item_id.value(), "controllers": [
+                {"controller": 74, "tick": 480, "value": 80},
+                {"controller": 74, "tick": 480, "value": 90}
+            ]}),
+        ),
+        call(
+            6,
+            "daw_upsert_midi_controllers",
+            json!({"item_id": item_id.value(), "controllers": [
+                {"controller": 74, "tick": 480, "value": 128}
+            ]}),
+        ),
+        call(
+            7,
+            "daw_upsert_midi_pitch_bends",
+            json!({"item_id": item_id.value(), "pitch_bends": [
+                {"tick": 240, "value": 12000},
+                {"tick": 480, "value": 8192}
+            ]}),
+        ),
+        call(
+            8,
+            "daw_upsert_midi_pitch_bends",
+            json!({"item_id": item_id.value(), "pitch_bends": [
+                {"tick": 720, "value": 9000},
+                {"tick": 3840, "value": 9000}
+            ]}),
+        ),
+        call(
+            9,
+            "daw_upsert_midi_pitch_bends",
+            json!({"item_id": item_id.value(), "pitch_bends": [
+                {"tick": 720, "value": 9000},
+                {"tick": 720, "value": 10000}
+            ]}),
+        ),
+        call(10, "daw_undo", json!({})),
+        call(11, "daw_redo", json!({})),
+        call(12, "daw_undo", json!({})),
+        call(13, "daw_undo", json!({})),
+        call(14, "daw_redo", json!({})),
+        call(15, "daw_redo", json!({})),
+        call(
+            16,
+            "daw_upsert_midi_controllers",
+            json!({"item_id": 999_999, "controllers": [{"controller": 11, "tick": 0, "value": 100}]}),
+        ),
+        call(
+            17,
+            "daw_upsert_midi_pitch_bends",
+            json!({"item_id": 999_999, "pitch_bends": [{"tick": 0, "value": 8192}]}),
+        ),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "MCP writer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let response_for = |id| {
+        responses
+            .iter()
+            .find(|response| response["id"] == id)
+            .unwrap()
+    };
+    let tools = response_for(2)["result"]["tools"].as_array().unwrap();
+    for name in ["daw_upsert_midi_controllers", "daw_upsert_midi_pitch_bends"] {
+        assert!(tools.iter().any(|tool| tool["name"] == name));
+    }
+    assert_eq!(
+        response_for(3)["result"]["structuredContent"]["points"],
+        json!([
+            {"controller": 11, "tick": 0, "value": 100},
+            {"controller": 74, "tick": 120, "value": 64}
+        ])
+    );
+    assert_eq!(
+        response_for(7)["result"]["structuredContent"]["points"],
+        json!([{"tick": 240, "value": 12000}, {"tick": 480, "value": 8192}])
+    );
+    for id in [4, 5, 6, 8, 9] {
+        assert_eq!(response_for(id)["result"]["isError"], true);
+    }
+    for id in 10..=15 {
+        assert_eq!(
+            response_for(id)["result"]["structuredContent"]["changed"],
+            true
+        );
+    }
+    assert_eq!(response_for(16)["result"]["isError"], true);
+    assert_eq!(response_for(17)["result"]["isError"], true);
+
+    let reopened = ProjectStore::load_read_only(&project_path).unwrap();
+    let saved_item = reopened
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .unwrap();
+    assert_eq!(saved_item.notes().len(), 1);
+    assert_eq!(saved_item.notes()[0].tick(), 960);
+    assert_eq!(saved_item.notes()[0].pitch(), 60);
+    assert_eq!(
+        saved_item.controllers(),
+        [
+            aaadaw_core::MidiControllerData {
+                controller: 11,
+                tick: 0,
+                value: 100,
+            },
+            aaadaw_core::MidiControllerData {
+                controller: 10,
+                tick: 120,
+                value: 60,
+            },
+            aaadaw_core::MidiControllerData {
+                controller: 74,
+                tick: 120,
+                value: 64,
+            },
+            aaadaw_core::MidiControllerData {
+                controller: 11,
+                tick: 240,
+                value: 70,
+            },
+        ]
+    );
+    assert_eq!(
+        saved_item.pitch_bends(),
+        [
+            aaadaw_core::MidiPitchBendData {
+                tick: 0,
+                value: 8192,
+            },
+            aaadaw_core::MidiPitchBendData {
+                tick: 240,
+                value: 12000,
+            },
+            aaadaw_core::MidiPitchBendData {
+                tick: 480,
+                value: 8192,
+            },
+        ]
+    );
 }
