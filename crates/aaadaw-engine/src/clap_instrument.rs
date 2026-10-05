@@ -26,7 +26,8 @@ use std::ffi::CString;
 use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Parameter metadata exposed by a CLAP effect.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,16 +49,88 @@ pub enum ClapParameterCommand {
     Begin { id: u32 },
     Set { id: u32, value: f64 },
     End { id: u32 },
+    DisarmAutomation { parameter_id: u32 },
+}
+
+/// A parameter value captured at an absolute project sample while an FX lane is write-armed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClapParameterAutomationEvent {
+    pub parameter_id: u32,
+    pub sample: u64,
+    pub value: f64,
+}
+
+/// Control-thread endpoint for bounded parameter automation capture from one effect.
+pub struct ClapParameterAutomationReceiver {
+    consumer: Consumer<CapturedParameterValue>,
+    overflowed: Arc<AtomicBool>,
+    playback_overflowed: Arc<AtomicBool>,
+    capture_callback_active: Arc<AtomicBool>,
+    write_disarm_acknowledged: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy)]
+struct CapturedParameterValue {
+    parameter_id: u32,
+    sample: u64,
+    value: f64,
+}
+
+#[derive(Clone, Copy)]
+struct ScheduledAutomationValue {
+    offset: u32,
+    parameter_id: u32,
+    value: f64,
+}
+
+impl ClapParameterAutomationReceiver {
+    /// Drains captured values without waiting for the audio thread.
+    pub fn drain_into(&mut self, output: &mut Vec<ClapParameterAutomationEvent>) {
+        while let Ok(event) = self.consumer.pop() {
+            output.push(ClapParameterAutomationEvent {
+                parameter_id: event.parameter_id,
+                sample: event.sample,
+                value: event.value,
+            });
+        }
+    }
+
+    /// Returns and clears the overflow flag set when the bounded capture queue filled.
+    pub fn take_overflowed(&mut self) -> bool {
+        self.overflowed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Returns and clears the flag set when a block exceeded the bounded playback event budget.
+    pub fn take_playback_overflowed(&mut self) -> bool {
+        self.playback_overflowed.swap(false, Ordering::AcqRel)
+    }
+
+    /// Returns whether the audio thread is currently consuming parameter commands and capture.
+    pub fn capture_callback_active(&self) -> bool {
+        self.capture_callback_active.load(Ordering::SeqCst)
+    }
+
+    /// Returns whether the ordered write-disarm command has reached the audio thread.
+    pub fn write_disarm_acknowledged(&self) -> bool {
+        self.write_disarm_acknowledged.load(Ordering::SeqCst)
+    }
 }
 
 /// Control-thread endpoint for one effect's parameter event queue.
-pub struct ClapParameterSender(Producer<ClapParameterCommand>);
+pub struct ClapParameterSender {
+    commands: Producer<ClapParameterCommand>,
+    write_armed_parameter: Arc<AtomicU64>,
+    write_disarm_acknowledged: Arc<AtomicBool>,
+}
 
 impl ClapParameterSender {
     pub fn try_send(&mut self, command: ClapParameterCommand) -> Result<(), ClapParameterCommand> {
         // Keep one slot available for the matching End while a parameter gesture is active.
-        let reserved_slots = usize::from(!matches!(command, ClapParameterCommand::End { .. }));
-        if self.0.slots() <= reserved_slots {
+        let reserved_slots = usize::from(!matches!(
+            command,
+            ClapParameterCommand::End { .. } | ClapParameterCommand::DisarmAutomation { .. }
+        ));
+        if self.commands.slots() <= reserved_slots {
             return Err(command);
         }
         let valid = match command {
@@ -67,13 +140,32 @@ impl ClapParameterSender {
             ClapParameterCommand::Set { id, value } => {
                 clack_host::prelude::ClapId::from_raw(id).is_some() && value.is_finite()
             }
+            ClapParameterCommand::DisarmAutomation { parameter_id } => {
+                clack_host::prelude::ClapId::from_raw(parameter_id).is_some()
+            }
         };
         if !valid {
             return Err(command);
         }
-        self.0.push(command).map_err(|error| match error {
+        self.commands.push(command).map_err(|error| match error {
             rtrb::PushError::Full(command) => command,
         })
+    }
+
+    /// Selects the single parameter captured by this effect, or disarms capture.
+    pub fn set_write_armed_parameter(&self, parameter_id: Option<u32>) {
+        if parameter_id.is_some() {
+            self.write_disarm_acknowledged
+                .store(false, Ordering::SeqCst);
+        }
+        self.write_armed_parameter
+            .store(parameter_id.map_or(u64::MAX, u64::from), Ordering::SeqCst);
+    }
+
+    /// Queues an ordered capture stop after all parameter edits already sent to this processor.
+    pub fn try_disarm_write(&mut self, parameter_id: u32) -> bool {
+        self.try_send(ClapParameterCommand::DisarmAutomation { parameter_id })
+            .is_ok()
     }
 }
 
@@ -209,6 +301,15 @@ pub struct ClapEffectProcessor {
     input_events: EventBuffer,
     parameter_sender: Option<ClapParameterSender>,
     parameter_commands: Consumer<ClapParameterCommand>,
+    automation_capture: Producer<CapturedParameterValue>,
+    automation_capture_overflowed: Arc<AtomicBool>,
+    write_armed_parameter: Arc<AtomicU64>,
+    write_disarm_acknowledged: Arc<AtomicBool>,
+    automation_capture_receiver: Option<ClapParameterAutomationReceiver>,
+    capture_callback_active: Arc<AtomicBool>,
+    parameter_automation: Vec<aaadaw_core::FxParameterAutomationLane>,
+    automation_event_scratch: Vec<ScheduledAutomationValue>,
+    automation_playback_overflowed: Arc<AtomicBool>,
     active_parameter_gestures: Vec<u32>,
     max_block_frames: usize,
 }
@@ -566,6 +667,12 @@ impl ClapEffectOwner {
 
         let instance_id = NEXT_CLAP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
         let (parameter_tx, parameter_commands) = RingBuffer::new(128);
+        let (automation_capture, automation_capture_consumer) = RingBuffer::new(1024);
+        let automation_capture_overflowed = Arc::new(AtomicBool::new(false));
+        let automation_playback_overflowed = Arc::new(AtomicBool::new(false));
+        let capture_callback_active = Arc::new(AtomicBool::new(false));
+        let write_armed_parameter = Arc::new(AtomicU64::new(u64::MAX));
+        let write_disarm_acknowledged = Arc::new(AtomicBool::new(false));
 
         Ok((
             Self {
@@ -582,8 +689,27 @@ impl ClapEffectOwner {
                 output_left: vec![0.0; max_block_frames],
                 output_right: vec![0.0; max_block_frames],
                 input_events: EventBuffer::with_capacity(128),
-                parameter_sender: Some(ClapParameterSender(parameter_tx)),
+                parameter_sender: Some(ClapParameterSender {
+                    commands: parameter_tx,
+                    write_armed_parameter: Arc::clone(&write_armed_parameter),
+                    write_disarm_acknowledged: Arc::clone(&write_disarm_acknowledged),
+                }),
                 parameter_commands,
+                automation_capture,
+                automation_capture_overflowed: Arc::clone(&automation_capture_overflowed),
+                write_armed_parameter,
+                write_disarm_acknowledged: Arc::clone(&write_disarm_acknowledged),
+                automation_capture_receiver: Some(ClapParameterAutomationReceiver {
+                    consumer: automation_capture_consumer,
+                    overflowed: Arc::clone(&automation_capture_overflowed),
+                    playback_overflowed: Arc::clone(&automation_playback_overflowed),
+                    capture_callback_active: Arc::clone(&capture_callback_active),
+                    write_disarm_acknowledged: Arc::clone(&write_disarm_acknowledged),
+                }),
+                capture_callback_active,
+                parameter_automation: Vec::new(),
+                automation_event_scratch: Vec::with_capacity(64),
+                automation_playback_overflowed,
                 active_parameter_gestures: Vec::with_capacity(16),
                 max_block_frames,
             },
@@ -692,6 +818,12 @@ impl ClapEffectOwner {
 }
 
 impl ClapEffectProcessor {
+    /// Installs an owned automation schedule before the processor enters the realtime graph.
+    pub fn set_parameter_automation(&mut self, lanes: &[aaadaw_core::FxParameterAutomationLane]) {
+        self.parameter_automation.clear();
+        self.parameter_automation.extend_from_slice(lanes);
+    }
+
     /// Takes the producer for this processor's fixed-capacity parameter queue.
     pub fn take_parameter_sender(&mut self) -> ClapParameterSender {
         self.parameter_sender
@@ -699,8 +831,20 @@ impl ClapEffectProcessor {
             .expect("parameter sender is taken once before processor installation")
     }
 
+    /// Takes the bounded capture receiver for control-thread polling.
+    pub fn take_automation_capture_receiver(&mut self) -> ClapParameterAutomationReceiver {
+        self.automation_capture_receiver
+            .take()
+            .expect("automation capture receiver is taken once before processor installation")
+    }
+
     /// Runs one interleaved stereo block through the effect.
-    pub fn process(&mut self, audio: &mut [[f32; 2]]) -> Result<(), ClapInstrumentError> {
+    pub fn process(
+        &mut self,
+        audio: &mut [[f32; 2]],
+        start_sample: u64,
+        advances_timeline: bool,
+    ) -> Result<(), ClapInstrumentError> {
         if audio.len() > self.max_block_frames {
             return Err(ClapInstrumentError::new(
                 "CLAP effect block exceeds its prepared frame capacity",
@@ -720,7 +864,14 @@ impl ClapEffectProcessor {
         self.output_left[..audio.len()].fill(0.0);
         self.output_right[..audio.len()].fill(0.0);
         self.input_events.clear();
-        while let Ok(command) = self.parameter_commands.pop() {
+        self.capture_callback_active.store(true, Ordering::SeqCst);
+        let mut write_armed_parameter = self.write_armed_parameter.load(Ordering::SeqCst);
+        // Bound host parameter event work per callback. This reserves half the fixed event
+        // buffer for scheduled automation and prevents a saturated UI queue from growing work.
+        for _ in 0..64 {
+            let Ok(command) = self.parameter_commands.pop() else {
+                break;
+            };
             match command {
                 ClapParameterCommand::Begin { id } => {
                     if let Some(param_id) = clack_host::prelude::ClapId::from_raw(id)
@@ -740,6 +891,21 @@ impl ClapEffectProcessor {
                             Pckn::match_all(),
                             value,
                         ));
+                        if advances_timeline && write_armed_parameter == u64::from(id) {
+                            let sample = start_sample;
+                            if self
+                                .automation_capture
+                                .push(CapturedParameterValue {
+                                    parameter_id: id,
+                                    sample,
+                                    value,
+                                })
+                                .is_err()
+                            {
+                                self.automation_capture_overflowed
+                                    .store(true, Ordering::Release);
+                            }
+                        }
                     }
                 }
                 ClapParameterCommand::End { id } => {
@@ -754,8 +920,17 @@ impl ClapEffectProcessor {
                             .push(&ParamGestureEndEvent::new(0, param_id));
                     }
                 }
+                ClapParameterCommand::DisarmAutomation { parameter_id } => {
+                    if write_armed_parameter == u64::from(parameter_id) {
+                        write_armed_parameter = u64::MAX;
+                        self.write_armed_parameter.store(u64::MAX, Ordering::SeqCst);
+                        self.write_disarm_acknowledged.store(true, Ordering::SeqCst);
+                    }
+                }
             }
         }
+        self.capture_callback_active.store(false, Ordering::SeqCst);
+        self.schedule_parameter_automation(start_sample, audio.len(), write_armed_parameter);
 
         let input_events = InputEvents::from_buffer(&self.input_events);
         let mut plugin_output_events = DiscardPluginOutputEvents;
@@ -807,6 +982,73 @@ impl ClapEffectProcessor {
         Ok(())
     }
 
+    fn schedule_parameter_automation(
+        &mut self,
+        start_sample: u64,
+        frame_count: usize,
+        write_armed_parameter: u64,
+    ) {
+        let block_end = start_sample.saturating_add(frame_count as u64);
+        let scratch = &mut self.automation_event_scratch;
+        scratch.clear();
+        let playback_overflowed = &self.automation_playback_overflowed;
+        'lanes: for lane in &self.parameter_automation {
+            if write_armed_parameter == u64::from(lane.parameter_id()) {
+                continue;
+            }
+            let points = lane.points();
+            let next = points.partition_point(|point| point.sample() <= start_sample);
+            let held_point = next
+                .checked_sub(1)
+                .and_then(|index| points.get(index))
+                .or_else(|| points.first());
+            if let Some(point) = held_point {
+                if scratch.len() == scratch.capacity() {
+                    playback_overflowed.store(true, Ordering::Release);
+                    break 'lanes;
+                }
+                push_automation_value(
+                    scratch,
+                    playback_overflowed,
+                    ScheduledAutomationValue {
+                        offset: 0,
+                        parameter_id: lane.parameter_id(),
+                        value: point.value(),
+                    },
+                );
+            }
+            for point in points[next..]
+                .iter()
+                .take_while(|point| point.sample() < block_end)
+            {
+                if scratch.len() == scratch.capacity() {
+                    playback_overflowed.store(true, Ordering::Release);
+                    break 'lanes;
+                }
+                push_automation_value(
+                    scratch,
+                    playback_overflowed,
+                    ScheduledAutomationValue {
+                        offset: point.sample().saturating_sub(start_sample) as u32,
+                        parameter_id: lane.parameter_id(),
+                        value: point.value(),
+                    },
+                );
+            }
+        }
+        scratch.sort_unstable_by_key(|event| event.offset);
+        for event in scratch.iter() {
+            if let Some(param_id) = clack_host::prelude::ClapId::from_raw(event.parameter_id) {
+                self.input_events.push(&ParamValueEvent::new(
+                    event.offset,
+                    param_id,
+                    Pckn::match_all(),
+                    event.value,
+                ));
+            }
+        }
+    }
+
     pub(crate) fn instance_id(&self) -> u64 {
         self.instance_id
     }
@@ -821,6 +1063,18 @@ impl ClapEffectProcessor {
 
     pub(crate) fn max_block_frames(&self) -> usize {
         self.max_block_frames
+    }
+}
+
+fn push_automation_value(
+    scratch: &mut Vec<ScheduledAutomationValue>,
+    overflowed: &AtomicBool,
+    event: ScheduledAutomationValue,
+) {
+    if scratch.len() < scratch.capacity() {
+        scratch.push(event);
+    } else {
+        overflowed.store(true, Ordering::Release);
     }
 }
 
@@ -1431,7 +1685,7 @@ mod tests {
     use std::fmt::Write as FmtWrite;
     use std::io::{Read, Write};
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU8;
+    use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize};
 
     #[test]
     fn static_processor_errors_borrow_their_message() {
@@ -1687,9 +1941,25 @@ mod tests {
 
     struct TestEffect;
     struct TestStatelessEffect;
-    struct TestEffectShared(Arc<AtomicU8>);
-    struct TestEffectMainThread(Arc<AtomicU8>);
-    struct TestEffectAudioProcessor(Arc<AtomicU8>);
+    struct TestEffectState {
+        value: AtomicU8,
+        event_count: AtomicUsize,
+        event_times: [AtomicU32; 128],
+    }
+
+    impl TestEffectState {
+        fn new() -> Self {
+            Self {
+                value: AtomicU8::new(0),
+                event_count: AtomicUsize::new(0),
+                event_times: std::array::from_fn(|_| AtomicU32::new(0)),
+            }
+        }
+    }
+
+    struct TestEffectShared(Arc<TestEffectState>);
+    struct TestEffectMainThread(Arc<TestEffectState>);
+    struct TestEffectAudioProcessor(Arc<TestEffectState>);
 
     impl PluginShared<'_> for TestEffectShared {}
 
@@ -1716,7 +1986,7 @@ mod tests {
         }
 
         fn get_value(&self, param_id: ClapId) -> Option<f64> {
-            (param_id.get() == 1).then(|| f64::from(self.0.load(Ordering::Relaxed)))
+            (param_id.get() == 1).then(|| f64::from(self.0.value.load(Ordering::Relaxed)))
         }
 
         fn value_to_text(
@@ -1744,6 +2014,7 @@ mod tests {
                     && value.param_id().is_some_and(|id| id.get() == 1)
                 {
                     self.0
+                        .value
                         .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
                 }
             }
@@ -1761,14 +2032,19 @@ mod tests {
 
     impl PluginStateImpl for TestEffectMainThread {
         fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
-            output.write_all(&[self.0.load(Ordering::Relaxed)])?;
+            let event_count = self.0.event_count.load(Ordering::Relaxed).min(128);
+            output.write_all(&[self.0.value.load(Ordering::Relaxed), event_count as u8])?;
+            for event_time in self.0.event_times.iter().take(event_count) {
+                output.write_all(&event_time.load(Ordering::Relaxed).to_le_bytes())?;
+            }
             Ok(())
         }
 
         fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
             let mut state = [0];
             input.read_exact(&mut state)?;
-            self.0.store(state[0], Ordering::Relaxed);
+            self.0.value.store(state[0], Ordering::Relaxed);
+            self.0.event_count.store(0, Ordering::Relaxed);
             Ok(())
         }
     }
@@ -1809,7 +2085,7 @@ mod tests {
         }
 
         fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
-            Ok(TestEffectShared(Arc::new(AtomicU8::new(0))))
+            Ok(TestEffectShared(Arc::new(TestEffectState::new())))
         }
 
         fn new_main_thread<'a>(
@@ -1827,7 +2103,7 @@ mod tests {
         }
 
         fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
-            Ok(TestEffectShared(Arc::new(AtomicU8::new(0))))
+            Ok(TestEffectShared(Arc::new(TestEffectState::new())))
         }
 
         fn new_main_thread<'a>(
@@ -1879,13 +2155,19 @@ mod tests {
             mut audio: Audio,
             events: clack_plugin::process::Events,
         ) -> Result<ProcessStatus, PluginError> {
-            self.0.fetch_add(1, Ordering::Relaxed);
+            self.0.value.fetch_add(1, Ordering::Relaxed);
+            self.0.event_count.store(0, Ordering::Relaxed);
             for event in events.input {
                 if let Some(CoreEventSpace::ParamValue(value)) = event.as_core_event()
                     && value.param_id().is_some_and(|id| id.get() == 1)
                 {
                     self.0
+                        .value
                         .store(value.value().clamp(0.0, 255.0) as u8, Ordering::Relaxed);
+                    let event_index = self.0.event_count.fetch_add(1, Ordering::Relaxed);
+                    if let Some(event_time) = self.0.event_times.get(event_index) {
+                        event_time.store(event.header().time(), Ordering::Relaxed);
+                    }
                 }
             }
             for mut port in &mut audio {
@@ -1951,7 +2233,7 @@ mod tests {
         let (stopped, output) = std::thread::spawn(move || {
             let mut processor = processor;
             processor
-                .process(&mut input)
+                .process(&mut input, 0, true)
                 .expect("effect should process");
             (processor.stop(), input)
         })
@@ -1978,10 +2260,10 @@ mod tests {
         let mut processor = processor;
         let mut audio = [[0.8, -0.4], [0.2, -0.1]];
         processor
-            .process(&mut audio)
+            .process(&mut audio, 0, false)
             .expect("test effect should process and mutate state");
         drop(processor);
-        assert_eq!(owner.save_state().unwrap(), Some(vec![0x28]));
+        assert_eq!(owner.save_state().unwrap(), Some(vec![0x28, 0]));
         owner
             .try_deactivate_unused()
             .expect("unused test effect should deactivate");
@@ -2010,16 +2292,161 @@ mod tests {
         sender
             .try_send(ClapParameterCommand::End { id: 1 })
             .unwrap();
-        processor.process(&mut [[0.0, 0.0]; 4]).unwrap();
+        processor.process(&mut [[0.0, 0.0]; 4], 0, false).unwrap();
         assert_eq!(owner.parameters()[0].value, 42.0);
-        assert_eq!(owner.save_state().unwrap(), Some(vec![42]));
+        assert_eq!(owner.save_state().unwrap(), Some(vec![42, 1, 0, 0, 0, 0]));
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn write_armed_parameter_capture_uses_the_advancing_block_sample() {
+        let (owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let mut sender = processor.take_parameter_sender();
+        let mut capture = processor.take_automation_capture_receiver();
+        sender.set_write_armed_parameter(Some(1));
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 42.0 })
+            .unwrap();
+        processor
+            .process(&mut [[0.0, 0.0]; 4], 12_345, true)
+            .unwrap();
+        let mut captured = Vec::new();
+        capture.drain_into(&mut captured);
+        assert_eq!(
+            captured,
+            vec![ClapParameterAutomationEvent {
+                parameter_id: 1,
+                sample: 12_345,
+                value: 42.0,
+            }]
+        );
+
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 84.0 })
+            .unwrap();
+        processor
+            .process(&mut [[0.0, 0.0]; 4], 12_349, false)
+            .unwrap();
+        capture.drain_into(&mut captured);
+        assert_eq!(captured.len(), 1, "stopped processing must not be captured");
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn parameter_capture_overflow_is_reported_without_blocking_processing() {
+        let (owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let mut sender = processor.take_parameter_sender();
+        let mut capture = processor.take_automation_capture_receiver();
+        sender.set_write_armed_parameter(Some(1));
+        for sample in 0..1_025 {
+            sender
+                .try_send(ClapParameterCommand::Set {
+                    id: 1,
+                    value: sample as f64,
+                })
+                .unwrap();
+            processor.process(&mut [[0.0, 0.0]], sample, true).unwrap();
+        }
+        assert!(capture.take_overflowed());
+        let mut captured = Vec::new();
+        capture.drain_into(&mut captured);
+        assert_eq!(captured.len(), 1_024);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn parameter_automation_schedules_block_offsets_and_holds_between_points() {
+        let (mut owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let lane = aaadaw_core::FxParameterAutomationLane::new(
+            1,
+            vec![
+                aaadaw_core::FxParameterAutomationPoint::new(100, 11.0).unwrap(),
+                aaadaw_core::FxParameterAutomationPoint::new(102, 99.0).unwrap(),
+            ],
+        )
+        .unwrap();
+        processor.set_parameter_automation(&[lane]);
+        let mut sender = processor.take_parameter_sender();
+
+        processor.process(&mut [[0.0, 0.0]; 4], 90, true).unwrap();
+        assert_eq!(
+            owner.parameters()[0].value,
+            11.0,
+            "the first endpoint value must hold before the first point"
+        );
+        processor.process(&mut [[0.0, 0.0]; 4], 100, true).unwrap();
+        assert_eq!(owner.parameters()[0].value, 99.0);
+        assert_eq!(
+            owner.save_state().unwrap(),
+            Some(vec![99, 2, 0, 0, 0, 0, 2, 0, 0, 0]),
+            "the plugin must receive automation offsets zero and two within the block"
+        );
+        sender.set_write_armed_parameter(Some(1));
+        sender
+            .try_send(ClapParameterCommand::Set { id: 1, value: 42.0 })
+            .unwrap();
+        processor.process(&mut [[0.0, 0.0]; 4], 104, true).unwrap();
+        assert_eq!(owner.parameters()[0].value, 42.0);
+        processor.process(&mut [[0.0, 0.0]; 4], 108, true).unwrap();
+        assert_eq!(owner.parameters()[0].value, 43.0);
+        sender.set_write_armed_parameter(None);
+        processor.process(&mut [[0.0, 0.0]; 4], 112, true).unwrap();
+        assert_eq!(owner.parameters()[0].value, 99.0);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
+    fn write_disarm_ack_waits_until_backlogged_parameter_commands_are_captured() {
+        let (owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let mut sender = processor.take_parameter_sender();
+        let mut capture = processor.take_automation_capture_receiver();
+        sender.set_write_armed_parameter(Some(1));
+        for value in 0..65 {
+            sender
+                .try_send(ClapParameterCommand::Set {
+                    id: 1,
+                    value: value as f64,
+                })
+                .unwrap();
+        }
+        assert!(sender.try_disarm_write(1));
+        sender
+            .try_send(ClapParameterCommand::Set {
+                id: 1,
+                value: 200.0,
+            })
+            .unwrap();
+
+        processor.process(&mut [[0.0, 0.0]], 100, true).unwrap();
+        assert!(!capture.write_disarm_acknowledged());
+        let mut captured = Vec::new();
+        capture.drain_into(&mut captured);
+        assert_eq!(captured.len(), 64);
+
+        processor.process(&mut [[0.0, 0.0]], 101, true).unwrap();
+        assert!(capture.write_disarm_acknowledged());
+        capture.drain_into(&mut captured);
+        assert_eq!(captured.len(), 65);
+        assert_eq!(captured.last().unwrap().sample, 101);
         owner.deactivate(processor.stop());
     }
 
     #[test]
     fn parameter_queue_keeps_room_for_a_gesture_end_event() {
         let (producer, mut consumer) = RingBuffer::new(4);
-        let mut sender = ClapParameterSender(producer);
+        let mut sender = ClapParameterSender {
+            commands: producer,
+            write_armed_parameter: Arc::new(AtomicU64::new(u64::MAX)),
+            write_disarm_acknowledged: Arc::new(AtomicBool::new(false)),
+        };
         sender
             .try_send(ClapParameterCommand::Begin { id: 1 })
             .unwrap();
@@ -2041,6 +2468,29 @@ mod tests {
         let commands = std::iter::from_fn(|| consumer.pop().ok()).collect::<Vec<_>>();
         assert_eq!(commands.last(), Some(&ClapParameterCommand::End { id: 1 }));
         assert_eq!(commands.len(), 4);
+    }
+
+    #[test]
+    fn parameter_automation_playback_caps_block_events_and_reports_overflow() {
+        let (owner, mut processor) =
+            ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 16)
+                .expect("test effect should load");
+        let lanes = (1..=65)
+            .map(|parameter_id| {
+                aaadaw_core::FxParameterAutomationLane::new(
+                    parameter_id,
+                    vec![aaadaw_core::FxParameterAutomationPoint::new(100, 1.0).unwrap()],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        processor.set_parameter_automation(&lanes);
+        let mut capture = processor.take_automation_capture_receiver();
+
+        processor.process(&mut [[0.0, 0.0]; 4], 100, true).unwrap();
+
+        assert!(capture.take_playback_overflowed());
+        owner.deactivate(processor.stop());
     }
 
     #[test]
@@ -2115,7 +2565,7 @@ mod tests {
         let mut input = [[1.0, -1.0]; 2];
         assert!(
             processor
-                .process(&mut input)
+                .process(&mut input, 0, true)
                 .expect_err("oversized block should fail")
                 .to_string()
                 .contains("prepared frame capacity")

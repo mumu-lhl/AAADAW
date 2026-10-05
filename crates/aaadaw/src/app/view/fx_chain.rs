@@ -212,6 +212,15 @@ fn selected_plugin_details<'a>(
         } else {
             parameter.display_value.as_str().to_owned()
         };
+        #[cfg(feature = "audio-device")]
+        let write_armed = app
+            .fx_chain_track_id
+            .zip(app.fx_chain_selected_index)
+            .is_some_and(|(track_id, chain_index)| {
+                app.fx_automation_write_target == Some((track_id, chain_index, id))
+            });
+        #[cfg(not(feature = "audio-device"))]
+        let write_armed = false;
         let parameter_label = if parameter.stepped {
             column![
                 text(parameter.name.as_str()).size(11),
@@ -241,6 +250,9 @@ fn selected_plugin_details<'a>(
                 .width(Length::Fixed(78.0)),
                 button("Reset")
                     .on_press(Message::ResetFxParameterValue(id))
+                    .padding([3, 5]),
+                button(if write_armed { "Write*" } else { "Write" })
+                    .on_press(Message::FxAutomationWriteToggled(id))
                     .padding([3, 5]),
             ]
             .spacing(6)

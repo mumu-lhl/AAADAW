@@ -21,7 +21,9 @@ use aaadaw_core::{
     TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
-use aaadaw_engine::{ClapEffectOwner, ClapInstrumentOwner, ClapParameterSender};
+use aaadaw_engine::{
+    ClapEffectOwner, ClapInstrumentOwner, ClapParameterAutomationReceiver, ClapParameterSender,
+};
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
@@ -332,9 +334,29 @@ struct App {
     #[cfg(feature = "audio-device")]
     clap_effect_parameter_senders: HashMap<u64, ClapParameterSender>,
     #[cfg(feature = "audio-device")]
+    clap_effect_automation_receivers: HashMap<u64, ClapParameterAutomationReceiver>,
+    #[cfg(feature = "audio-device")]
     clap_effect_targets: HashMap<u64, (TrackId, usize, String)>,
     #[cfg(feature = "audio-device")]
     clap_effect_parameter_targets: HashMap<u64, (TrackId, usize)>,
+    #[cfg(feature = "audio-device")]
+    fx_automation_write_target: Option<(TrackId, usize, u32)>,
+    #[cfg(feature = "audio-device")]
+    fx_automation_instance_id: Option<u64>,
+    #[cfg(feature = "audio-device")]
+    fx_automation_disarm_command_queued: bool,
+    #[cfg(feature = "audio-device")]
+    fx_automation_disarming: bool,
+    #[cfg(feature = "audio-device")]
+    fx_automation_finish_requested: bool,
+    #[cfg(feature = "audio-device")]
+    fx_automation_capture: Vec<aaadaw_core::FxParameterAutomationPoint>,
+    #[cfg(feature = "audio-device")]
+    fx_automation_capture_overflowed: bool,
+    #[cfg(feature = "audio-device")]
+    fx_automation_parameter_change: Option<FxAutomationParameterChange>,
+    #[cfg(feature = "audio-device")]
+    pending_fx_automation_history: Option<FxAutomationHistoryAction>,
     pending_fx_parameter_sync: Option<FxParameterChange>,
     #[cfg(feature = "audio-device")]
     clap_effect_state_overrides: HashSet<(TrackId, usize, String)>,
@@ -363,14 +385,47 @@ struct MeterMapEdit {
 }
 
 #[cfg(feature = "audio-device")]
-fn action_changes_tempo_map(action: &DawAction) -> bool {
+fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
         DawAction::SetTempo { .. }
         | DawAction::DeleteTempoPoint { .. }
-        | DawAction::SetTempoCurve { .. } => true,
-        DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_changes_tempo_map),
+        | DawAction::SetTempoCurve { .. }
+        | DawAction::SetTrackFxParameterAutomation { .. } => true,
+        DawAction::BatchTransaction { actions, .. } => {
+            actions.iter().any(action_rebuilds_playback_graph)
+        }
         _ => false,
     }
+}
+
+#[cfg(feature = "audio-device")]
+fn fx_parameter_automation_schedule(
+    project: &Project,
+) -> Vec<(
+    TrackId,
+    usize,
+    String,
+    Vec<aaadaw_core::FxParameterAutomationLane>,
+)> {
+    project
+        .tracks()
+        .iter()
+        .flat_map(|track| {
+            track
+                .fx_chain()
+                .iter()
+                .enumerate()
+                .filter(|(_, plugin)| !plugin.parameter_automation().is_empty())
+                .map(|(chain_index, plugin)| {
+                    (
+                        track.id(),
+                        chain_index,
+                        plugin.plugin_id().to_owned(),
+                        plugin.parameter_automation().to_vec(),
+                    )
+                })
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -381,6 +436,27 @@ struct FxParameterGesture {
     before: f64,
     after: f64,
     before_state: Option<Vec<u8>>,
+    #[cfg(feature = "audio-device")]
+    write_armed: bool,
+}
+
+#[cfg(feature = "audio-device")]
+#[derive(Debug)]
+struct FxAutomationParameterChange {
+    track_id: TrackId,
+    chain_index: usize,
+    parameter_id: u32,
+    before: f64,
+    after: f64,
+    before_state: Option<Vec<u8>>,
+    after_state: Option<Vec<u8>>,
+}
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FxAutomationHistoryAction {
+    Undo,
+    Redo,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -712,6 +788,11 @@ impl App {
         #[cfg(not(feature = "audio-device"))]
         let playback_active = false;
         #[cfg(feature = "audio-device")]
+        let fx_automation_finishing =
+            self.fx_automation_disarming || self.fx_automation_finish_requested;
+        #[cfg(not(feature = "audio-device"))]
+        let fx_automation_finishing = false;
+        #[cfg(feature = "audio-device")]
         let recording_active =
             self.recording.is_some() || self.recording_starting || self.recording_stopping;
         #[cfg(not(feature = "audio-device"))]
@@ -725,6 +806,7 @@ impl App {
         let background_ticks = if self.import_busy
             || playback_active
             || recording_active
+            || fx_automation_finishing
             || self.offline_render_busy
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
@@ -1442,6 +1524,12 @@ impl App {
             }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
             Message::FxParameterChanged(id, value) => self.change_fx_parameter(id, value),
+            Message::FxAutomationWriteToggled(id) => {
+                #[cfg(feature = "audio-device")]
+                self.toggle_fx_automation_write(id);
+                #[cfg(not(feature = "audio-device"))]
+                let _ = id;
+            }
             Message::FxParameterEnded(id) => self.end_fx_parameter_gesture(id),
             Message::FxParameterValueTextChanged(id, value) => {
                 self.fx_parameter_value_edits.insert(id, value);
@@ -2104,10 +2192,22 @@ impl App {
                 }
                 #[cfg(feature = "audio-device")]
                 {
+                    self.poll_fx_automation_capture();
                     if self.fx_parameter_end_requested
                         && let Some(gesture) = self.fx_parameter_gesture.as_ref()
                     {
                         self.end_fx_parameter_gesture(gesture.parameter_id);
+                    }
+                    if self.fx_automation_finish_requested && self.fx_parameter_gesture.is_none() {
+                        self.fx_automation_finish_requested = false;
+                        self.finish_fx_automation_write();
+                    }
+                    if self.fx_automation_write_target.is_none() {
+                        match self.pending_fx_automation_history.take() {
+                            Some(FxAutomationHistoryAction::Undo) => self.undo(),
+                            Some(FxAutomationHistoryAction::Redo) => self.redo(),
+                            None => {}
+                        }
                     }
                     if let Some(change) = self.pending_fx_parameter_sync {
                         self.sync_fx_parameter_change(change);
@@ -2322,6 +2422,7 @@ impl App {
             Message::StartPlayback => task = self.start_playback(),
             #[cfg(feature = "audio-device")]
             Message::StopPlayback => {
+                self.finish_fx_automation_write();
                 if self.recording.is_some() {
                     task = self.stop_recording();
                 } else {
@@ -3575,7 +3676,7 @@ impl App {
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
         #[cfg(feature = "audio-device")]
-        let tempo_map_changed = action_changes_tempo_map(&action);
+        let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
             DawAction::SetTrackVolume { track_id, .. }
             | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
@@ -3593,7 +3694,7 @@ impl App {
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 #[cfg(feature = "audio-device")]
-                if tempo_map_changed {
+                if rebuild_playback_graph {
                     self.playback_graph_dirty = true;
                 }
                 if let Some(track_id) = live_mix_track {
@@ -4247,6 +4348,8 @@ impl App {
     fn undo(&mut self) {
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
+        #[cfg(feature = "audio-device")]
+        let fx_automation_before = fx_parameter_automation_schedule(&self.project);
         if let Some(parameter_id) = self
             .fx_parameter_gesture
             .as_ref()
@@ -4258,6 +4361,16 @@ impl App {
             self.status = "Waiting for the active CLAP parameter update to finish".to_owned();
             return;
         }
+        #[cfg(feature = "audio-device")]
+        if self.fx_automation_write_target.is_some() {
+            self.pending_fx_automation_history = Some(FxAutomationHistoryAction::Undo);
+            self.finish_fx_automation_write();
+            if self.fx_automation_write_target.is_some() {
+                self.status = "Waiting for the FX automation take to finish before undo".to_owned();
+                return;
+            }
+            self.pending_fx_automation_history = None;
+        }
         self.audio_item_start_edits.clear();
         self.status = match self.project.undo() {
             Ok(true) => {
@@ -4266,6 +4379,10 @@ impl App {
                 self.timeline.rebuild(&self.project);
                 #[cfg(feature = "audio-device")]
                 if self.project.tempo_points().ne(tempo_before) {
+                    self.playback_graph_dirty = true;
+                }
+                #[cfg(feature = "audio-device")]
+                if fx_automation_before != fx_parameter_automation_schedule(&self.project) {
                     self.playback_graph_dirty = true;
                 }
                 self.sync_fx_parameter_cache_from_project();
@@ -4279,6 +4396,8 @@ impl App {
     fn redo(&mut self) {
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
+        #[cfg(feature = "audio-device")]
+        let fx_automation_before = fx_parameter_automation_schedule(&self.project);
         if let Some(parameter_id) = self
             .fx_parameter_gesture
             .as_ref()
@@ -4289,6 +4408,16 @@ impl App {
         if self.fx_parameter_end_requested || self.pending_fx_parameter_sync.is_some() {
             self.status = "Waiting for the active CLAP parameter update to finish".to_owned();
             return;
+        }
+        #[cfg(feature = "audio-device")]
+        if self.fx_automation_write_target.is_some() {
+            self.pending_fx_automation_history = Some(FxAutomationHistoryAction::Redo);
+            self.finish_fx_automation_write();
+            if self.fx_automation_write_target.is_some() {
+                self.status = "Waiting for the FX automation take to finish before redo".to_owned();
+                return;
+            }
+            self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
         self.status = match self.project.redo() {
@@ -4302,6 +4431,10 @@ impl App {
                 self.timeline.rebuild(&self.project);
                 #[cfg(feature = "audio-device")]
                 if self.project.tempo_points().ne(tempo_before) {
+                    self.playback_graph_dirty = true;
+                }
+                #[cfg(feature = "audio-device")]
+                if fx_automation_before != fx_parameter_automation_schedule(&self.project) {
                     self.playback_graph_dirty = true;
                 }
                 self.sync_fx_parameter_cache_from_project();

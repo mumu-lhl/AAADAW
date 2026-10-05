@@ -146,6 +146,7 @@ pub(crate) enum Message {
     SelectScannedInstrument(String),
     SelectFxChainPlugin(usize),
     FxParameterChanged(u32, f64),
+    FxAutomationWriteToggled(u32),
     FxParameterEnded(u32),
     FxParameterValueTextChanged(u32, String),
     CommitFxParameterValue(u32),

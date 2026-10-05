@@ -1,7 +1,11 @@
+#[cfg(feature = "audio-device")]
+use super::FxAutomationParameterChange;
 use super::{App, Message};
 #[cfg(feature = "audio-device")]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackFxPlugin, TrackId};
+#[cfg(feature = "audio-device")]
+use aaadaw_engine::ClapParameterAutomationReceiver;
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::TrackFxProcessor;
 use aaadaw_engine::{ClapParameterCommand, ClapParameterInfo};
@@ -20,6 +24,254 @@ fn x11_window_id(handle: RawWindowHandle) -> Option<u64> {
 
 impl App {
     #[cfg(feature = "audio-device")]
+    pub(super) fn toggle_fx_automation_write(&mut self, parameter_id: u32) {
+        let Some(track_id) = self.fx_chain_track_id else {
+            return;
+        };
+        let Some(chain_index) = self.fx_chain_selected_index else {
+            return;
+        };
+        let target = (track_id, chain_index, parameter_id);
+        if self.fx_automation_write_target == Some(target) {
+            self.finish_fx_automation_write();
+            return;
+        }
+        self.finish_fx_automation_write();
+        if self.fx_automation_write_target.is_some() {
+            self.status = "Finishing the previous FX automation take".to_owned();
+            return;
+        }
+        let Some(instance_id) =
+            self.clap_effect_parameter_targets
+                .iter()
+                .find_map(|(instance_id, target)| {
+                    (*target == (track_id, chain_index)).then_some(*instance_id)
+                })
+        else {
+            self.status =
+                "Open the FX chain while audio playback is active to write automation".to_owned();
+            return;
+        };
+        if let Some(sender) = self.clap_effect_parameter_senders.get(&instance_id) {
+            sender.set_write_armed_parameter(Some(parameter_id));
+            self.fx_automation_write_target = Some(target);
+            self.fx_automation_instance_id = Some(instance_id);
+            self.fx_automation_disarm_command_queued = false;
+            self.fx_automation_disarming = false;
+            self.fx_automation_finish_requested = false;
+            self.fx_automation_capture.clear();
+            self.fx_automation_capture_overflowed = false;
+            self.fx_automation_parameter_change = None;
+            self.status = format!("Writing automation for parameter {parameter_id}");
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    pub(super) fn poll_fx_automation_capture(&mut self) {
+        let Some((track_id, chain_index, parameter_id)) = self.fx_automation_write_target else {
+            return;
+        };
+        let instance_ids = self
+            .clap_effect_parameter_targets
+            .iter()
+            .filter_map(|(instance_id, target)| {
+                (*target == (track_id, chain_index)).then_some(*instance_id)
+            })
+            .collect::<Vec<_>>();
+        for instance_id in &instance_ids {
+            self.drain_fx_automation_instance(*instance_id, track_id, chain_index, parameter_id);
+        }
+        if self.fx_automation_disarming {
+            let instance_id = self.fx_automation_instance_id;
+            if !self.fx_automation_disarm_command_queued
+                && let Some(instance_id) = instance_id
+                && let Some(sender) = self.clap_effect_parameter_senders.get_mut(&instance_id)
+            {
+                self.fx_automation_disarm_command_queued = sender.try_disarm_write(parameter_id);
+            }
+            let callback_active = instance_id.is_some_and(|instance_id| {
+                self.clap_effect_automation_receivers
+                    .get(&instance_id)
+                    .is_some_and(ClapParameterAutomationReceiver::capture_callback_active)
+            });
+            let disarm_acknowledged = instance_id.is_some_and(|instance_id| {
+                self.clap_effect_automation_receivers
+                    .get(&instance_id)
+                    .is_some_and(ClapParameterAutomationReceiver::write_disarm_acknowledged)
+            });
+            if self.fx_automation_disarm_command_queued && disarm_acknowledged && !callback_active {
+                // A callback that observed the old arm state has now finished. Drain once more
+                // after the acknowledgement to include any event it published after the first
+                // poll; later callbacks observe the disarmed state.
+                for instance_id in &instance_ids {
+                    self.drain_fx_automation_instance(
+                        *instance_id,
+                        track_id,
+                        chain_index,
+                        parameter_id,
+                    );
+                }
+                self.fx_automation_write_target = None;
+                self.fx_automation_instance_id = None;
+                self.fx_automation_disarm_command_queued = false;
+                self.fx_automation_disarming = false;
+                self.commit_fx_automation_write(track_id, chain_index, parameter_id);
+            }
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    pub(super) fn finish_fx_automation_write(&mut self) {
+        let Some((_track_id, _chain_index, _parameter_id)) = self.fx_automation_write_target else {
+            return;
+        };
+        if self.fx_automation_disarming {
+            return;
+        }
+        if self
+            .fx_parameter_gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.write_armed)
+        {
+            self.fx_automation_finish_requested = true;
+            if let Some(gesture) = self.fx_parameter_gesture.as_ref() {
+                self.end_fx_parameter_gesture(gesture.parameter_id);
+            }
+            if self.fx_parameter_gesture.is_some() {
+                return;
+            }
+            self.fx_automation_finish_requested = false;
+        }
+        self.fx_automation_disarming = true;
+        self.poll_fx_automation_capture();
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn drain_fx_automation_instance(
+        &mut self,
+        instance_id: u64,
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+    ) {
+        let Some(receiver) = self.clap_effect_automation_receivers.get_mut(&instance_id) else {
+            return;
+        };
+        let mut events = Vec::new();
+        receiver.drain_into(&mut events);
+        let capture_overflowed = receiver.take_overflowed();
+        let playback_overflowed = receiver.take_playback_overflowed();
+        let existing_point_count = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .and_then(|track| track.fx_chain().get(chain_index))
+            .and_then(|plugin| plugin.parameter_automation_for(parameter_id))
+            .map_or(0, |lane| lane.points().len());
+        let capture_limit =
+            aaadaw_core::MAX_FX_PARAMETER_AUTOMATION_POINTS.saturating_sub(existing_point_count);
+        for event in events
+            .into_iter()
+            .filter(|event| event.parameter_id == parameter_id)
+        {
+            if self.fx_automation_capture.len() >= capture_limit {
+                self.fx_automation_capture_overflowed = true;
+                continue;
+            }
+            if let Some(point) =
+                aaadaw_core::FxParameterAutomationPoint::new(event.sample, event.value)
+            {
+                self.fx_automation_capture.push(point);
+            }
+        }
+        self.fx_automation_capture_overflowed |= capture_overflowed;
+        if playback_overflowed {
+            self.status = "FX automation density exceeded the realtime event budget".to_owned();
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn commit_fx_automation_write(
+        &mut self,
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+    ) {
+        let capture_overflowed = self.fx_automation_capture_overflowed;
+        let has_captured_points = !self.fx_automation_capture.is_empty();
+        if capture_overflowed {
+            self.status = "Automation capture queue overflowed; this take is incomplete".to_owned();
+        }
+        if self.fx_automation_capture.is_empty() && self.fx_automation_parameter_change.is_none() {
+            if !capture_overflowed {
+                self.status = "No FX parameter automation was captured".to_owned();
+            }
+            return;
+        }
+        let mut points = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+            .and_then(|track| track.fx_chain().get(chain_index))
+            .and_then(|plugin| plugin.parameter_automation_for(parameter_id))
+            .map(|lane| lane.points().to_vec())
+            .unwrap_or_default();
+        points.append(&mut self.fx_automation_capture);
+        points.sort_by_key(|point| point.sample());
+        points.dedup_by(|current, next| {
+            if current.sample() == next.sample() {
+                *current = *next;
+                true
+            } else {
+                false
+            }
+        });
+        let mut actions = Vec::with_capacity(2);
+        if let Some(change) = self.fx_automation_parameter_change.take()
+            && (change.track_id, change.chain_index, change.parameter_id)
+                == (track_id, chain_index, parameter_id)
+            && (change.after - change.before).abs() >= f64::EPSILON
+        {
+            actions.push(DawAction::SetTrackFxParameter {
+                track_id,
+                chain_index,
+                parameter_id,
+                before: change.before,
+                after: change.after,
+                before_state: change.before_state,
+                after_state: change.after_state,
+            });
+        }
+        if has_captured_points {
+            actions.push(DawAction::SetTrackFxParameterAutomation {
+                track_id,
+                chain_index,
+                parameter_id,
+                points,
+            });
+        }
+        let action = match actions.len() {
+            0 => return,
+            1 => actions.pop().expect("one action was inserted"),
+            _ => DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+        };
+        self.fx_automation_capture.clear();
+        self.apply_action(
+            action,
+            if capture_overflowed {
+                "Partial FX parameter automation recorded; capture queue overflowed"
+            } else {
+                "FX parameter automation recorded"
+            },
+        );
+    }
+
+    #[cfg(feature = "audio-device")]
     pub(super) fn install_track_fx_processors(
         &mut self,
         prepared: &mut PreparedAudioPlayback,
@@ -28,6 +280,7 @@ impl App {
         let mut owner_targets = Vec::new();
         let mut parameter_targets = Vec::new();
         let mut parameter_senders = Vec::new();
+        let mut automation_receivers = Vec::new();
         let mut processors = Vec::new();
         let sample_rate = self.project.settings().sample_rate();
         let max_block_frames = prepared.graph().max_block_frames();
@@ -88,6 +341,8 @@ impl App {
                         }
                         owners.push((instance_id, owner));
                         parameter_senders.push((instance_id, processor.take_parameter_sender()));
+                        automation_receivers
+                            .push((instance_id, processor.take_automation_capture_receiver()));
                         processors.push(TrackFxProcessor::new(
                             track.id(),
                             chain_index,
@@ -117,6 +372,8 @@ impl App {
         self.clap_effect_targets.extend(owner_targets);
         self.clap_effect_parameter_targets.extend(parameter_targets);
         self.clap_effect_parameter_senders.extend(parameter_senders);
+        self.clap_effect_automation_receivers
+            .extend(automation_receivers);
         for (instance_id, owner) in owners {
             self.clap_effect_owners.insert(instance_id, owner);
         }
@@ -137,6 +394,7 @@ impl App {
                     self.clap_effect_targets.remove(id);
                     self.clap_effect_parameter_targets.remove(id);
                     self.clap_effect_parameter_senders.remove(id);
+                    self.clap_effect_automation_receivers.remove(id);
                 }
                 Some(Err(error)) => {
                     error_message = Some(format!(
@@ -160,6 +418,7 @@ impl App {
                 self.clap_effect_targets.remove(&instance_id);
                 self.clap_effect_parameter_targets.remove(&instance_id);
                 self.clap_effect_parameter_senders.remove(&instance_id);
+                self.clap_effect_automation_receivers.remove(&instance_id);
                 let (_, _, _, processor) = stopped.into_parts();
                 owner.deactivate(processor);
             } else {
@@ -679,6 +938,9 @@ impl App {
                 before,
                 after: before,
                 before_state,
+                #[cfg(feature = "audio-device")]
+                write_armed: self.fx_automation_write_target
+                    == Some((track_id, chain_index, parameter_id)),
             });
         }
         let command = ClapParameterCommand::Set {
@@ -804,6 +1066,27 @@ impl App {
             }
             None => gesture.before_state.clone(),
         };
+        #[cfg(feature = "audio-device")]
+        if gesture.write_armed {
+            if let Some(change) = &mut self.fx_automation_parameter_change
+                && (change.track_id, change.chain_index, change.parameter_id)
+                    == (gesture.track_id, gesture.chain_index, parameter_id)
+            {
+                change.after = gesture.after;
+                change.after_state = after_state;
+            } else {
+                self.fx_automation_parameter_change = Some(FxAutomationParameterChange {
+                    track_id: gesture.track_id,
+                    chain_index: gesture.chain_index,
+                    parameter_id,
+                    before: gesture.before,
+                    after: gesture.after,
+                    before_state: gesture.before_state,
+                    after_state,
+                });
+            }
+            return;
+        }
         self.apply_action(
             DawAction::SetTrackFxParameter {
                 track_id: gesture.track_id,

@@ -1,11 +1,13 @@
 use crate::snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackSnapshot,
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
-    ActionError, AudioItem, DawAction, ItemId, MidiControllerData, MidiItem, MidiNote,
+    ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
+    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MidiControllerData, MidiItem, MidiNote,
     MidiPitchBendData, MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature,
     TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
@@ -13,12 +15,21 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
+pub const MAX_FX_PARAMETER_AUTOMATION_POINTS: usize = 65_536;
 
 fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
     points.len() <= MAX_VOLUME_AUTOMATION_POINTS
         && points
             .iter()
             .all(|point| point.gain_db().is_finite() && (-60.0..=6.0).contains(&point.gain_db()))
+        && points
+            .windows(2)
+            .all(|pair| pair[0].sample() < pair[1].sample())
+}
+
+fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool {
+    points.len() <= MAX_FX_PARAMETER_AUTOMATION_POINTS
+        && points.iter().all(|point| point.value().is_finite())
         && points
             .windows(2)
             .all(|pair| pair[0].sample() < pair[1].sample())
@@ -149,6 +160,13 @@ enum ProjectEvent {
         after: f64,
         before_state: Option<Vec<u8>>,
         after_state: Option<Vec<u8>>,
+    },
+    TrackFxParameterAutomationChanged {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        before: Option<FxParameterAutomationLane>,
+        after: Option<FxParameterAutomationLane>,
     },
     TrackRenamed {
         track_id: TrackId,
@@ -365,6 +383,19 @@ impl ProjectEvent {
                 after: *before,
                 before_state: after_state.clone(),
                 after_state: before_state.clone(),
+            },
+            Self::TrackFxParameterAutomationChanged {
+                track_id,
+                chain_index,
+                parameter_id,
+                before,
+                after,
+            } => Self::TrackFxParameterAutomationChanged {
+                track_id: *track_id,
+                chain_index: *chain_index,
+                parameter_id: *parameter_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::TrackRenamed {
                 track_id,
@@ -736,6 +767,21 @@ impl Project {
                                     value,
                                 })
                                 .collect(),
+                            parameter_automation: plugin
+                                .parameter_automation()
+                                .iter()
+                                .map(|lane| TrackFxParameterAutomationLaneSnapshot {
+                                    parameter_id: lane.parameter_id(),
+                                    points: lane
+                                        .points()
+                                        .iter()
+                                        .map(|point| TrackFxParameterAutomationPointSnapshot {
+                                            sample: point.sample(),
+                                            value: point.value(),
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
                         })
                         .collect(),
                     volume_automation: track.volume_automation.clone(),
@@ -883,6 +929,22 @@ impl Project {
                         }
                         plugin_ref = plugin_ref
                             .with_parameter_value(parameter.parameter_id, parameter.value);
+                    }
+                    let mut automation_ids =
+                        HashSet::with_capacity(plugin.parameter_automation.len());
+                    if plugin.parameter_automation.len() > MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES {
+                        return Err(SnapshotError::InvalidProjectData);
+                    }
+                    for lane in plugin.parameter_automation {
+                        if !automation_ids.insert(lane.parameter_id) {
+                            return Err(SnapshotError::InvalidProjectData);
+                        }
+                        if lane.points.len() > MAX_FX_PARAMETER_AUTOMATION_POINTS {
+                            return Err(SnapshotError::InvalidProjectData);
+                        }
+                        let lane = FxParameterAutomationLane::try_from(lane)?;
+                        plugin_ref =
+                            plugin_ref.with_parameter_automation(lane.parameter_id(), Some(lane));
                     }
                     Ok(plugin_ref)
                 })
@@ -1391,6 +1453,47 @@ impl Project {
                     after,
                     before_state,
                     after_state,
+                }
+            }
+            DawAction::SetTrackFxParameterAutomation {
+                track_id,
+                chain_index,
+                parameter_id,
+                points,
+            } => {
+                if !valid_fx_parameter_automation(&points) {
+                    return Err(ActionError::InvalidTrackFxParameterAutomation);
+                }
+                let after = if points.is_empty() {
+                    None
+                } else {
+                    Some(
+                        FxParameterAutomationLane::new(parameter_id, points)
+                            .ok_or(ActionError::InvalidTrackFxParameterAutomation)?,
+                    )
+                };
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let plugin = track
+                    .fx_chain
+                    .get(chain_index)
+                    .ok_or(ActionError::InvalidTrackFxParameter)?;
+                if after.is_some()
+                    && plugin.parameter_automation_for(parameter_id).is_none()
+                    && plugin.parameter_automation().len()
+                        >= MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES
+                {
+                    return Err(ActionError::InvalidTrackFxParameterAutomation);
+                }
+                ProjectEvent::TrackFxParameterAutomationChanged {
+                    track_id,
+                    chain_index,
+                    parameter_id,
+                    before: plugin.parameter_automation_for(parameter_id).cloned(),
+                    after,
                 }
             }
             DawAction::SetTrackName { track_id, name } => {
@@ -2202,6 +2305,29 @@ impl Project {
                     .clone()
                     .with_state(after_state.clone())
                     .with_parameter_value(*parameter_id, *after);
+            }
+            ProjectEvent::TrackFxParameterAutomationChanged {
+                track_id,
+                chain_index,
+                parameter_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let plugin = track
+                    .fx_chain
+                    .get_mut(*chain_index)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if plugin.parameter_automation_for(*parameter_id).cloned() != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                *plugin = plugin
+                    .clone()
+                    .with_parameter_automation(*parameter_id, after.clone());
             }
             ProjectEvent::TrackRenamed {
                 track_id,

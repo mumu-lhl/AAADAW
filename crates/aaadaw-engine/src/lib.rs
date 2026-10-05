@@ -35,9 +35,10 @@ pub use capture::{
 pub use clap_gui::ClapPluginGuiOwner;
 pub use clap_instrument::{
     ClapEffectOwner, ClapEffectProcessor, ClapInstrumentDescriptor, ClapInstrumentError,
-    ClapInstrumentOwner, ClapInstrumentProcessor, ClapParameterCommand, ClapParameterInfo,
-    ClapParameterSender, ClapPluginDescriptor, StoppedClapEffectProcessor,
-    StoppedClapInstrumentProcessor, inspect_clap_instrument_entry, inspect_clap_plugin_entry,
+    ClapInstrumentOwner, ClapInstrumentProcessor, ClapParameterAutomationEvent,
+    ClapParameterAutomationReceiver, ClapParameterCommand, ClapParameterInfo, ClapParameterSender,
+    ClapPluginDescriptor, StoppedClapEffectProcessor, StoppedClapInstrumentProcessor,
+    inspect_clap_instrument_entry, inspect_clap_plugin_entry,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};
@@ -1366,7 +1367,7 @@ fn compile_fx_routes(
     }
 
     let mut routes = Vec::with_capacity(effects.len());
-    for effect in effects.iter() {
+    for effect in effects.iter_mut() {
         let track_index = project
             .tracks()
             .iter()
@@ -1384,6 +1385,10 @@ fn compile_fx_routes(
                 chain_index: effect.chain_index,
             });
         }
+        let plugin = &project.tracks()[track_index].fx_chain()[effect.chain_index];
+        effect
+            .processor
+            .set_parameter_automation(plugin.parameter_automation());
         if std::mem::replace(
             &mut seen_effect_slots[track_index][effect.chain_index],
             true,
@@ -2386,7 +2391,11 @@ impl AudioRenderGraph {
                     .processor
                     .as_mut()
                     .expect("active graphs retain their effect processors")
-                    .process(&mut track_buffer[..output.len()])
+                    .process(
+                        &mut track_buffer[..output.len()],
+                        mix_block.start_sample,
+                        mix_block.advances_timeline,
+                    )
                     .map_err(|error| AudioGraphError::FxProcess {
                         track_id: route.track_id,
                         chain_index: route.chain_index,
