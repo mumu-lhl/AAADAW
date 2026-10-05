@@ -1,0 +1,115 @@
+name: Native installers
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/native-installers.yml
+      - crates/aaadaw/Cargo.toml
+      - crates/aaadaw/src/main.rs
+      - crates/aaadaw/tests/cli.rs
+      - docs/native-installers.md
+      - packaging/**
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE-APACHE
+      - LICENSE-MIT
+      - crates/**
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Ubuntu 24.04 deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install audio build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+      - name: Build release executable
+        run: cargo build --release -p aaadaw --features "jack-backend pipewire-backend"
+      - name: Package and install deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo deb --manifest-path crates/aaadaw/Cargo.toml --no-build --features "jack-backend pipewire-backend"
+          deb="$(find target/debian -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb --info "$deb"
+          dependencies="$(dpkg-deb -f "$deb" Depends)"
+          grep -q 'libjack' <<< "$dependencies"
+          grep -q 'libpipewire-0.3-0' <<< "$dependencies"
+          mkdir -p "$HOME/.config/aaadaw"
+          printf 'preserve\n' > "$HOME/.config/aaadaw/installer-smoke"
+          sudo apt-get purge --yes libjack-jackd2-dev libpipewire-0.3-dev
+          sudo apt-get autoremove --yes
+          sudo apt-get install --yes "./$deb"
+          aaadaw --version
+          test -x /usr/bin/aaadaw
+          test -f /usr/share/applications/aaadaw.desktop
+          ! ldd /usr/bin/aaadaw | grep -q 'not found'
+          sudo apt-get remove --yes aaadaw
+          test -f "$HOME/.config/aaadaw/installer-smoke"
+          mkdir -p artifacts
+          cp "$deb" artifacts/aaadaw-linux-x86_64.deb
+          sha256sum artifacts/aaadaw-linux-x86_64.deb > artifacts/aaadaw-linux-x86_64.deb.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaadaw-linux-x86_64-deb
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows x86_64 MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install WiX Toolset CLI
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build release executable
+        run: cargo build --release -p aaadaw --features wasapi-backend
+      - name: Build MSI and validate install lifecycle
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches.Groups[1].Value
+          New-Item -ItemType Directory -Path artifacts | Out-Null
+          wix build packaging/windows/Package.wxs -arch x64 -d ProductVersion=0.0.1 -o artifacts/aaadaw-test-old.msi
+          wix build packaging/windows/Package.wxs -arch x64 -d "ProductVersion=$version" -o artifacts/aaadaw-windows-x86_64.msi
+          $userData = Join-Path $env:APPDATA 'aaadaw'
+          New-Item -ItemType Directory -Force -Path $userData | Out-Null
+          Set-Content -Path (Join-Path $userData 'installer-smoke') -Value 'preserve'
+          $oldInstall = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
+          if ($oldInstall.ExitCode -notin @(0, 3010)) { throw "Baseline MSI install failed: $($oldInstall.ExitCode)" }
+          $upgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-windows-x86_64.msi), '/qn', '/norestart') -Wait -PassThru
+          if ($upgrade.ExitCode -notin @(0, 3010)) { throw "MSI major upgrade failed: $($upgrade.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\AAADAW\aaadaw.exe'
+          if (-not (Test-Path $exe)) { throw 'Installed executable missing' }
+          $versionOutput = & $exe --version
+          if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "AAADAW $version") { throw "Headless version check failed: $versionOutput" }
+          if (-not (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AAADAW\AAADAW.lnk'))) { throw 'Start Menu shortcut missing' }
+          $downgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
+          if ($downgrade.ExitCode -eq 0) { throw 'MSI downgrade was accepted' }
+          $versionOutput = & $exe --version
+          if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "AAADAW $version") { throw "Downgrade changed installed version: $versionOutput" }
+          $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', (Resolve-Path artifacts/aaadaw-windows-x86_64.msi), '/qn', '/norestart') -Wait -PassThru
+          if ($uninstall.ExitCode -notin @(0, 3010)) { throw "MSI uninstall failed: $($uninstall.ExitCode)" }
+          if (Test-Path $exe) { throw 'Uninstall left application executable behind' }
+          if (-not (Test-Path (Join-Path $userData 'installer-smoke'))) { throw 'Uninstall removed user data' }
+          Get-FileHash -Algorithm SHA256 artifacts/aaadaw-windows-x86_64.msi | ForEach-Object { "$($_.Hash.ToLowerInvariant())  aaadaw-windows-x86_64.msi" | Set-Content artifacts/aaadaw-windows-x86_64.msi.sha256 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaadaw-windows-x86_64-msi
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
