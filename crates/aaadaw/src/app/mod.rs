@@ -1306,6 +1306,7 @@ impl App {
                             | Message::CancelAudioItemStartSampleEdit(_)
                             | Message::DeleteAudioItem(_)
                             | Message::DeleteSelectedItems
+                            | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
