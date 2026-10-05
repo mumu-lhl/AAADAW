@@ -98,7 +98,11 @@ jobs:
           $versionOutput = & $exe --version
           if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "AAADAW $version") { throw "Headless version check failed: $versionOutput" }
           if (-not (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AAADAW\AAADAW.lnk'))) { throw 'Start Menu shortcut missing' }
-          $appEntry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object DisplayName -eq 'AAADAW'
+          $appEntry = foreach ($root in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall')) {
+            if (Test-Path $root) {
+              Get-ChildItem $root | Get-ItemProperty | Where-Object DisplayName -eq 'AAADAW'
+            }
+          }
           if (-not $appEntry) { throw 'AAADAW missing from installed apps' }
           $downgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path target/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
           if ($downgrade.ExitCode -eq 0) { throw 'MSI downgrade was accepted' }
