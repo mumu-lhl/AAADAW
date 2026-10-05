@@ -8,6 +8,7 @@
 use std::cell::UnsafeCell;
 use std::fs::OpenOptions;
 use std::io;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -172,6 +173,8 @@ pub unsafe fn run_clap_ipc_instrument_helper(
     entry_path: &Path,
     plugin_id: &str,
     expected: ClapIpcConfig,
+    state_input_path: &Path,
+    state_output_path: &Path,
 ) -> Result<(), String> {
     // SAFETY: the parent creates and owns this fixed-size mapping for the child lifetime.
     let mapping = unsafe { ClapIpcMapping::open(mapping_path) }
@@ -182,10 +185,13 @@ pub unsafe fn run_clap_ipc_instrument_helper(
     }
 
     // SAFETY: the parent passes only the trusted entry selected for the track instrument.
-    let (owner, mut processor) = unsafe {
-        crate::ClapInstrumentOwner::load(
+    let state = read_helper_state(state_input_path)
+        .map_err(|error| format!("could not read CLAP state: {error}"))?;
+    let (mut owner, processor) = unsafe {
+        crate::ClapInstrumentOwner::load_with_state(
             entry_path,
             plugin_id,
+            state.as_deref(),
             expected.sample_rate,
             expected.max_block_frames as usize,
             expected.event_capacity as usize,
@@ -200,15 +206,61 @@ pub unsafe fn run_clap_ipc_instrument_helper(
         return Err("CLAP helper protocol handshake mismatch".to_owned());
     }
 
+    let region = mapping.region();
+    let worker_result = thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            let mut processor = processor;
+            let panicked = catch_unwind(AssertUnwindSafe(|| {
+                process_helper_requests(region, &mut processor, expected)
+            }))
+            .is_err();
+            if panicked {
+                region.mark_faulted(6);
+            }
+            (processor.stop(), panicked)
+        });
+        while !region.is_shutdown() && !region.is_faulted() {
+            thread::sleep(std::time::Duration::from_millis(1));
+        }
+        worker.join()
+    });
+    let (stopped_processor, processing_panicked) = match worker_result {
+        Ok(result) => result,
+        Err(_) => {
+            owner
+                .try_deactivate_unused()
+                .map_err(|error| format!("could not deactivate panicked CLAP helper: {error}"))?;
+            return Err("CLAP helper audio worker panicked".to_owned());
+        }
+    };
+    if processing_panicked {
+        owner.deactivate(stopped_processor);
+        return Err("CLAP helper audio worker panicked".to_owned());
+    }
+
+    let saved_state = owner.save_state();
+    owner.deactivate(stopped_processor);
+    let saved_state =
+        saved_state.map_err(|error| format!("could not save CLAP instrument state: {error}"))?;
+    write_helper_state(state_output_path, saved_state.as_deref())
+        .map_err(|error| format!("could not write CLAP state: {error}"))?;
+    Ok(())
+}
+
+fn process_helper_requests(
+    region: &ClapIpcRegion,
+    processor: &mut crate::ClapInstrumentProcessor,
+    expected: ClapIpcConfig,
+) {
     let mut events = Vec::with_capacity(expected.event_capacity as usize);
-    while !mapping.region().is_shutdown() && !mapping.region().is_faulted() {
-        mapping.region().publish_heartbeat();
-        if let Some(request) = mapping.region().try_claim_request() {
+    while !region.is_shutdown() && !region.is_faulted() {
+        region.publish_heartbeat();
+        if let Some(request) = region.try_claim_request() {
             let _ = request.process(|request| {
                 events.clear();
                 for event in request.events {
                     let Some(event_kind) = midi_kind_from_wire(event.kind) else {
-                        mapping.region().mark_faulted(4);
+                        region.mark_faulted(4);
                         return false;
                     };
                     let note_id = match event.kind {
@@ -246,7 +298,7 @@ pub unsafe fn run_clap_ipc_instrument_helper(
                     });
                 }
                 if processor.process(&events, request.audio).is_err() {
-                    mapping.region().mark_faulted(3);
+                    region.mark_faulted(3);
                     return false;
                 }
                 true
@@ -255,9 +307,83 @@ pub unsafe fn run_clap_ipc_instrument_helper(
             thread::sleep(std::time::Duration::from_millis(1));
         }
     }
+}
 
-    owner.deactivate(processor.stop());
-    Ok(())
+pub(crate) fn write_helper_state(path: &Path, state: Option<&[u8]>) -> io::Result<()> {
+    use std::io::Write;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(b"AAST")?;
+    file.write_all(&[u8::from(state.is_some())])?;
+    let bytes = state.unwrap_or_default();
+    file.write_all(&(bytes.len() as u64).to_le_bytes())?;
+    file.write_all(bytes)?;
+    file.flush()
+}
+
+pub(crate) fn clear_helper_state(path: &Path) -> io::Result<()> {
+    use std::io::Write;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(b"AAST")?;
+    file.write_all(&[2])?;
+    file.write_all(&0_u64.to_le_bytes())?;
+    file.flush()
+}
+
+pub(crate) fn read_helper_state(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    let bytes = std::fs::read(path)?;
+    if bytes.len() < 13 || &bytes[..4] != b"AAST" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "CLAP state file has an invalid header",
+        ));
+    }
+    let state_len = usize::try_from(u64::from_le_bytes(bytes[5..13].try_into().unwrap()))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "CLAP state is too large"))?;
+    let expected_len = 13_usize
+        .checked_add(state_len)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "CLAP state is too large"))?;
+    if bytes.len() != expected_len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "CLAP state file has an invalid payload length",
+        ));
+    }
+    match bytes[4] {
+        0 if state_len == 0 => Ok(None),
+        1 => Ok(Some(bytes[13..].to_vec())),
+        2 if state_len == 0 => Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "CLAP helper has not saved state",
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "CLAP state file has an invalid presence marker",
+        )),
+    }
+}
+
+pub(crate) fn read_saved_helper_state(
+    output_path: &Path,
+    input_path: &Path,
+) -> io::Result<Option<Vec<u8>>> {
+    match read_helper_state(output_path) {
+        Ok(state) => Ok(state),
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            clear_helper_state(output_path)?;
+            read_helper_state(input_path)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn midi_kind_from_wire(kind: u8) -> Option<crate::MidiEventKind> {
@@ -887,11 +1013,48 @@ mod tests {
                 Path::new("plugin-must-not-be-loaded.clap"),
                 "test.plugin",
                 mismatched,
+                Path::new("unused-input-state"),
+                Path::new("unused-output-state"),
             )
         };
         assert!(result.is_err());
         assert!(mapping.region().is_faulted());
         assert_eq!(mapping.region().fault_code(), 1);
+    }
+
+    #[test]
+    fn helper_state_file_roundtrips_optional_opaque_state() {
+        let path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+        write_helper_state(&path, None).unwrap();
+        assert_eq!(read_helper_state(&path).unwrap(), None);
+
+        let state = [0, 1, 255, 42];
+        write_helper_state(&path, Some(&state)).unwrap();
+        assert_eq!(read_helper_state(&path).unwrap(), Some(state.to_vec()));
+
+        clear_helper_state(&path).unwrap();
+        assert_eq!(
+            read_helper_state(&path).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn interrupted_helper_state_write_keeps_last_saved_state() {
+        let input = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+        let output = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+        let prior_state = [4, 8, 15, 16, 23, 42];
+        write_helper_state(&input, Some(&prior_state)).unwrap();
+        std::fs::write(&output, b"AAST\x01\x20").unwrap();
+
+        assert_eq!(
+            read_saved_helper_state(&output, &input).unwrap(),
+            Some(prior_state.to_vec())
+        );
+        assert_eq!(
+            read_helper_state(&output).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

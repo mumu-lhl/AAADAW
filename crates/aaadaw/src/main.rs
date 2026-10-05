@@ -57,7 +57,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
         .first()
         .is_some_and(|argument| argument == CLAP_INSTRUMENT_HELPER_COMMAND)
     {
-        if args.len() != 7 {
+        if args.len() != 9 {
             return Err("invalid internal CLAP instrument helper invocation".into());
         }
         let plugin_id = args[3]
@@ -86,6 +86,8 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
                 std::path::Path::new(&args[2]),
                 plugin_id,
                 config,
+                std::path::Path::new(&args[7]),
+                std::path::Path::new(&args[8]),
             )
         }
         .map_err(std::io::Error::other)?;

@@ -1,11 +1,13 @@
 //! Control-thread ownership for one supervised CLAP instrument helper process.
 
+use crate::clap_ipc::{clear_helper_state, read_saved_helper_state, write_helper_state};
 use crate::{ClapIpcConfig, ClapIpcMapping, ClapIpcRegion};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+use tempfile::{NamedTempFile, TempPath};
 
 const HELPER_COMMAND: &str = "--clap-instrument-helper";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -22,6 +24,8 @@ pub struct ClapInstrumentHelperProcess {
     entry_path: PathBuf,
     plugin_id: String,
     config: ClapIpcConfig,
+    state_input: TempPath,
+    state_output: TempPath,
     observed_heartbeat: u64,
     heartbeat_changed_at: Instant,
 }
@@ -33,13 +37,27 @@ impl ClapInstrumentHelperProcess {
         entry_path: &Path,
         plugin_id: &str,
         config: ClapIpcConfig,
+        state: Option<&[u8]>,
     ) -> io::Result<Self> {
         let mapping = ClapIpcMapping::create(config)?;
+        let state_input = NamedTempFile::new()?.into_temp_path();
+        write_helper_state(&state_input, state)?;
+        let state_output_file = NamedTempFile::new()?;
+        let state_output = state_output_file.into_temp_path();
+        clear_helper_state(&state_output)?;
         // SAFETY: the mapping owner keeps this fixed-size private file alive until the child exits.
         let mapping_path = unsafe { mapping.path() }.ok_or_else(|| {
             io::Error::other("new CLAP helper mapping has no private backing path")
         })?;
-        let child = spawn_helper(executable, &mapping_path, entry_path, plugin_id, config)?;
+        let child = spawn_helper(
+            executable,
+            &mapping_path,
+            entry_path,
+            plugin_id,
+            config,
+            &state_input,
+            &state_output,
+        )?;
         let mut process = Self {
             mapping,
             child: Some(child),
@@ -47,6 +65,8 @@ impl ClapInstrumentHelperProcess {
             entry_path: entry_path.to_path_buf(),
             plugin_id: plugin_id.to_owned(),
             config,
+            state_input,
+            state_output,
             observed_heartbeat: 0,
             heartbeat_changed_at: Instant::now(),
         };
@@ -108,6 +128,13 @@ impl ClapInstrumentHelperProcess {
                 "CLAP helper must exit before it can be restarted",
             ));
         }
+        if self.child.is_some() {
+            match self.take_saved_state() {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error),
+            }
+        }
         self.child.take();
         // SAFETY: this owner retains the fixed-size backing file throughout helper restart.
         let mapping_path = unsafe { self.mapping.path() }
@@ -119,6 +146,8 @@ impl ClapInstrumentHelperProcess {
             &self.entry_path,
             &self.plugin_id,
             self.config,
+            &self.state_input,
+            &self.state_output,
         ) {
             Ok(child) => child,
             Err(error) => {
@@ -139,8 +168,24 @@ impl ClapInstrumentHelperProcess {
         Ok(())
     }
 
+    /// Returns the helper's saved CLAP state after it has exited and carries it into restarts.
+    pub fn take_saved_state(&mut self) -> io::Result<Option<Vec<u8>>> {
+        if let Some(child) = self.child.as_mut()
+            && child.try_wait()?.is_none()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "CLAP helper must exit before its state can be read",
+            ));
+        }
+        let state = read_saved_helper_state(&self.state_output, &self.state_input)?;
+        write_helper_state(&self.state_input, state.as_deref())?;
+        clear_helper_state(&self.state_output)?;
+        Ok(state)
+    }
+
     /// Signals orderly shutdown, then reaps or terminates the helper on this control thread.
-    pub fn shutdown(mut self) -> io::Result<Option<ExitStatus>> {
+    pub fn shutdown(&mut self) -> io::Result<Option<ExitStatus>> {
         self.mapping.region().mark_shutdown();
         let Some(mut child) = self.child.take() else {
             return Ok(None);
@@ -148,11 +193,16 @@ impl ClapInstrumentHelperProcess {
         let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         loop {
             if let Some(status) = child.try_wait()? {
+                if status.success() {
+                    let _ = self.take_saved_state()?;
+                }
                 return Ok(Some(status));
             }
             if Instant::now() >= deadline {
                 child.kill()?;
-                return child.wait().map(Some);
+                let status = child.wait()?;
+                self.mapping.region().recover_after_helper_exit();
+                return Ok(Some(status));
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -206,6 +256,8 @@ fn spawn_helper(
     entry_path: &Path,
     plugin_id: &str,
     config: ClapIpcConfig,
+    state_input: &Path,
+    state_output: &Path,
 ) -> io::Result<Child> {
     Command::new(executable)
         .arg(HELPER_COMMAND)
@@ -215,6 +267,8 @@ fn spawn_helper(
         .arg(config.sample_rate.to_string())
         .arg(config.max_block_frames.to_string())
         .arg(config.event_capacity.to_string())
+        .arg(state_input)
+        .arg(state_output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .spawn()
