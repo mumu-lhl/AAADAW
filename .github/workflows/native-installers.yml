@@ -58,7 +58,7 @@ jobs:
           test -f "$HOME/.config/aaadaw/installer-smoke"
           mkdir -p artifacts
           cp "$deb" artifacts/aaadaw-linux-x86_64.deb
-          sha256sum artifacts/aaadaw-linux-x86_64.deb > artifacts/aaadaw-linux-x86_64.deb.sha256
+          (cd artifacts && sha256sum aaadaw-linux-x86_64.deb > aaadaw-linux-x86_64.deb.sha256)
       - uses: actions/upload-artifact@v4
         with:
           name: aaadaw-linux-x86_64-deb
