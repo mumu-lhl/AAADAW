@@ -32,6 +32,9 @@ const MAX_MIDI_QUERY_TICKS: u64 = 245_760;
 const MIDI_EXPRESSION_QUERY_TOOL: &str = "daw_scoped_query_midi_expression";
 const MAX_MIDI_EXPRESSION_RESULTS: usize = 512;
 const DEFAULT_MIDI_EXPRESSION_RESULTS: usize = 256;
+const VOLUME_AUTOMATION_QUERY_TOOL: &str = "daw_scoped_query_volume_automation";
+const MAX_VOLUME_AUTOMATION_RESULTS: usize = 512;
+const DEFAULT_VOLUME_AUTOMATION_RESULTS: usize = 256;
 const CREATE_TRACK_TOOL: &str = "daw_create_track";
 const MAX_TRACK_NAME_CHARS: usize = 128;
 const CREATE_MIDI_ITEM_TOOL: &str = "daw_create_midi_item";
@@ -200,7 +203,11 @@ impl ServerHandler for ProjectMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        let mut tools = vec![midi_query_tool(), midi_expression_query_tool()];
+        let mut tools = vec![
+            midi_query_tool(),
+            midi_expression_query_tool(),
+            volume_automation_query_tool(),
+        ];
         if self.writable {
             tools.push(create_track_tool());
             tools.push(create_midi_item_tool());
@@ -226,6 +233,7 @@ impl ServerHandler for ProjectMcpServer {
         match name {
             MIDI_QUERY_TOOL => Some(midi_query_tool()),
             MIDI_EXPRESSION_QUERY_TOOL => Some(midi_expression_query_tool()),
+            VOLUME_AUTOMATION_QUERY_TOOL => Some(volume_automation_query_tool()),
             CREATE_TRACK_TOOL if self.writable => Some(create_track_tool()),
             CREATE_MIDI_ITEM_TOOL if self.writable => Some(create_midi_item_tool()),
             EDIT_MIDI_ITEM_TOOL if self.writable => Some(edit_midi_item_tool()),
@@ -278,6 +286,23 @@ impl ServerHandler for ProjectMcpServer {
                         },
                     )
                 }),
+            VOLUME_AUTOMATION_QUERY_TOOL => {
+                self.project
+                    .lock()
+                    .map_err(|_| "project lock was poisoned".to_owned())
+                    .and_then(|project| {
+                        parse_volume_automation_query_arguments(request.arguments.as_ref())
+                            .and_then(|(track_id, start_sample, end_sample, limit)| {
+                                scoped_query_volume_automation(
+                                    &project,
+                                    track_id,
+                                    start_sample,
+                                    end_sample,
+                                    limit,
+                                )
+                            })
+                    })
+            }
             CREATE_TRACK_TOOL if self.writable => {
                 parse_create_track_arguments(request.arguments.as_ref())
                     .and_then(|name| self.create_track(name))
@@ -1114,6 +1139,30 @@ fn midi_expression_query_tool() -> Tool {
                 "limit": {"type": "integer", "minimum": 1, "maximum": MAX_MIDI_EXPRESSION_RESULTS}
             },
             "required": ["track_id", "start_tick", "end_tick"],
+            "additionalProperties": false
+        })),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn volume_automation_query_tool() -> Tool {
+    Tool::new(
+        VOLUME_AUTOMATION_QUERY_TOOL,
+        "Read track volume automation points in a bounded project sample range.",
+        rmcp::model::object(json!({
+            "type": "object",
+            "properties": {
+                "track_id": {"type": "integer", "minimum": 0},
+                "start_sample": {"type": "integer", "minimum": 0},
+                "end_sample": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_VOLUME_AUTOMATION_RESULTS}
+            },
+            "required": ["track_id", "start_sample", "end_sample"],
             "additionalProperties": false
         })),
     )
@@ -2135,6 +2184,34 @@ fn parse_midi_range_query_arguments(
     default_limit: usize,
     maximum_limit: usize,
 ) -> Result<(u64, u64, u64, usize), String> {
+    parse_bounded_range_query_arguments(
+        arguments,
+        "start_tick",
+        "end_tick",
+        default_limit,
+        maximum_limit,
+    )
+}
+
+fn parse_volume_automation_query_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+) -> Result<(u64, u64, u64, usize), String> {
+    parse_bounded_range_query_arguments(
+        arguments,
+        "start_sample",
+        "end_sample",
+        DEFAULT_VOLUME_AUTOMATION_RESULTS,
+        MAX_VOLUME_AUTOMATION_RESULTS,
+    )
+}
+
+fn parse_bounded_range_query_arguments(
+    arguments: Option<&serde_json::Map<String, Value>>,
+    start_key: &str,
+    end_key: &str,
+    default_limit: usize,
+    maximum_limit: usize,
+) -> Result<(u64, u64, u64, usize), String> {
     let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
     let read_integer = |name: &str| {
         arguments
@@ -2143,8 +2220,8 @@ fn parse_midi_range_query_arguments(
             .ok_or_else(|| format!("{name} must be a non-negative integer"))
     };
     let track_id = read_integer("track_id")?;
-    let start_tick = read_integer("start_tick")?;
-    let end_tick = read_integer("end_tick")?;
+    let start = read_integer(start_key)?;
+    let end = read_integer(end_key)?;
     let limit = arguments
         .get("limit")
         .map(|_| read_integer("limit"))
@@ -2155,14 +2232,14 @@ fn parse_midi_range_query_arguments(
         .unwrap_or(default_limit);
     if arguments
         .keys()
-        .any(|key| !["track_id", "start_tick", "end_tick", "limit"].contains(&key.as_str()))
+        .any(|key| !["track_id", start_key, end_key, "limit"].contains(&key.as_str()))
     {
         return Err("arguments contain an unknown field".to_owned());
     }
     if !(1..=maximum_limit).contains(&limit) {
         return Err(format!("limit must be between 1 and {maximum_limit}"));
     }
-    Ok((track_id, start_tick, end_tick, limit))
+    Ok((track_id, start, end, limit))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -2260,6 +2337,50 @@ fn scoped_query_midi_expression(
         "start_tick": start_tick,
         "end_tick": end_tick,
         "events": events,
+        "truncated": truncated,
+    }))
+}
+
+fn scoped_query_volume_automation(
+    project: &Project,
+    track_id: u64,
+    start_sample: u64,
+    end_sample: u64,
+    limit: usize,
+) -> Result<Value, String> {
+    if !(1..=MAX_VOLUME_AUTOMATION_RESULTS).contains(&limit) {
+        return Err(format!(
+            "limit must be between 1 and {MAX_VOLUME_AUTOMATION_RESULTS}"
+        ));
+    }
+    if end_sample <= start_sample {
+        return Err("end_sample must be greater than start_sample".to_owned());
+    }
+    let track = project
+        .tracks()
+        .iter()
+        .find(|track| track.id().value() == track_id)
+        .ok_or_else(|| "unknown track id".to_owned())?;
+    let track_id = track.id();
+    let mut points = track
+        .volume_automation()
+        .iter()
+        .copied()
+        .filter(|point| (start_sample..end_sample).contains(&point.sample()))
+        .take(limit + 1)
+        .collect::<Vec<_>>();
+    let truncated = points.len() > limit;
+    points.truncate(limit);
+    let points = points
+        .into_iter()
+        .map(|point| json!({"sample": point.sample(), "gain_db": point.gain_db()}))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "track_id": track_id.value(),
+        "start_sample": start_sample,
+        "end_sample": end_sample,
+        "limit": limit,
+        "points": points,
         "truncated": truncated,
     }))
 }
@@ -2370,6 +2491,10 @@ fn validate_midi_query_scope(
             "requested range exceeds {MAX_MIDI_QUERY_TICKS} ticks"
         ));
     }
+    resolve_project_track_id(project, track_id)
+}
+
+fn resolve_project_track_id(project: &Project, track_id: u64) -> Result<TrackId, String> {
     project
         .tracks()
         .iter()
@@ -2499,17 +2624,19 @@ mod tests {
         MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS,
         MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT,
         MAX_MIDI_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS,
-        parse_create_midi_item_arguments, parse_create_track_arguments,
-        parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
-        parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
-        parse_midi_expression_query_arguments, parse_note_query_arguments,
-        parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
+        MAX_VOLUME_AUTOMATION_RESULTS, parse_create_midi_item_arguments,
+        parse_create_track_arguments, parse_delete_midi_notes_arguments,
+        parse_edit_midi_item_arguments, parse_edit_midi_note_arguments,
+        parse_insert_midi_notes_arguments, parse_midi_expression_query_arguments,
+        parse_note_query_arguments, parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
         parse_set_time_signature_arguments, parse_track_summary_uri,
         parse_upsert_midi_controllers_arguments, parse_upsert_midi_pitch_bends_arguments,
-        scoped_query_midi_expression, scoped_query_notes, structure_summary, track_midi_summary,
+        parse_volume_automation_query_arguments, scoped_query_midi_expression, scoped_query_notes,
+        scoped_query_volume_automation, structure_summary, track_midi_summary,
     };
     use aaadaw_core::{
         DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
+        VolumeAutomationPoint,
     };
     use serde_json::{Value, json};
 
@@ -3206,6 +3333,85 @@ mod tests {
         ] {
             assert!(parse_midi_expression_query_arguments(arguments.as_object()).is_err());
         }
+    }
+
+    #[test]
+    fn volume_automation_query_uses_half_open_ranges_and_caps_results() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Volume".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id,
+                points: vec![
+                    VolumeAutomationPoint::new(99, -1.0).unwrap(),
+                    VolumeAutomationPoint::new(100, -2.0).unwrap(),
+                    VolumeAutomationPoint::new(110, -3.0).unwrap(),
+                    VolumeAutomationPoint::new(120, -4.0).unwrap(),
+                    VolumeAutomationPoint::new(130, -5.0).unwrap(),
+                ],
+            })
+            .unwrap();
+
+        let result =
+            scoped_query_volume_automation(&project, track_id.value(), 100, 130, 10).unwrap();
+        assert_eq!(result["track_id"], track_id.value());
+        assert_eq!(
+            result["points"],
+            json!([
+                {"sample": 100, "gain_db": -2.0},
+                {"sample": 110, "gain_db": -3.0},
+                {"sample": 120, "gain_db": -4.0}
+            ])
+        );
+        assert_eq!(result["truncated"], false);
+
+        let truncated =
+            scoped_query_volume_automation(&project, track_id.value(), 100, 130, 2).unwrap();
+        assert_eq!(truncated["points"].as_array().unwrap().len(), 2);
+        assert_eq!(truncated["truncated"], true);
+        assert!(scoped_query_volume_automation(&project, track_id.value(), 100, 100, 2).is_err());
+        assert!(scoped_query_volume_automation(&project, track_id.value(), 130, 100, 2).is_err());
+        assert!(scoped_query_volume_automation(&project, track_id.value() + 1, 0, 100, 2).is_err());
+        assert!(scoped_query_volume_automation(&project, track_id.value(), 0, 100, 0).is_err());
+        assert!(
+            scoped_query_volume_automation(
+                &project,
+                track_id.value(),
+                0,
+                100,
+                MAX_VOLUME_AUTOMATION_RESULTS + 1,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn volume_automation_query_parser_rejects_invalid_fields_and_bounds() {
+        let valid = json!({
+            "track_id": 7,
+            "start_sample": 100,
+            "end_sample": 200,
+            "limit": 12
+        });
+        assert_eq!(
+            parse_volume_automation_query_arguments(valid.as_object()).unwrap(),
+            (7, 100, 200, 12)
+        );
+        for arguments in [
+            json!({"track_id": 7, "start_sample": 100, "end_sample": 200, "other": true}),
+            json!({"track_id": 7, "start_sample": -1, "end_sample": 200}),
+            json!({"track_id": 7, "start_sample": 100, "end_sample": 200, "limit": 0}),
+            json!({"track_id": 7, "start_sample": 100, "end_sample": 200, "limit": MAX_VOLUME_AUTOMATION_RESULTS + 1}),
+        ] {
+            assert!(parse_volume_automation_query_arguments(arguments.as_object()).is_err());
+        }
+        assert!(parse_volume_automation_query_arguments(None).is_err());
     }
 
     #[test]
