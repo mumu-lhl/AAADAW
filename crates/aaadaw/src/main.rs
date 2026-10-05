@@ -5,11 +5,15 @@ mod mcp;
 mod timeline;
 
 fn main() -> std::process::ExitCode {
-    let helper_mode = std::env::args_os()
-        .nth(1)
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let Some(exit_code) = run_information_command(&args) {
+        return exit_code;
+    }
+    let helper_mode = args
+        .first()
         .is_some_and(|argument| argument == clap_scanner::SCAN_COMMAND);
     let _log_guard = (!helper_mode).then(logging::initialize);
-    match run() {
+    match run(&args) {
         Ok(()) => {
             tracing::info!("AAADAW stopped");
             std::process::ExitCode::SUCCESS
@@ -22,8 +26,24 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+fn run_information_command(args: &[std::ffi::OsString]) -> Option<std::process::ExitCode> {
+    match args {
+        [argument] if argument == "--version" || argument == "-V" => {
+            println!("AAADAW {}", env!("CARGO_PKG_VERSION"));
+            Some(std::process::ExitCode::SUCCESS)
+        }
+        [argument] if argument == "--help" || argument == "-h" => {
+            println!(
+                "AAADAW {}\n\nUsage:\n  aaadaw                           Start the desktop application\n  aaadaw --help                    Show this help\n  aaadaw --version                 Show the application version\n  aaadaw mcp --stdio --project <path.aaadaw> [--write]",
+                env!("CARGO_PKG_VERSION")
+            );
+            Some(std::process::ExitCode::SUCCESS)
+        }
+        _ => None,
+    }
+}
+
+fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
     if args
         .first()
         .is_some_and(|argument| argument == clap_scanner::SCAN_COMMAND)

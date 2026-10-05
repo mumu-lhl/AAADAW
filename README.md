@@ -15,6 +15,7 @@ The core project model includes sample-clock `AudioItem`s with undoable edits, A
 - [Application logs and diagnostics](docs/logging.md)
 - [Desktop development and build notes](docs/platforms.md)
 - [Portable desktop builds and first launch](docs/portable-builds.md)
+- [Native installers](docs/native-installers.md)
 - [Project action-history decision](docs/adr/0001-project-action-history.md)
 - [Desktop runtime and dependency policy](docs/adr/0007-desktop-runtime-and-dependency-policy.md)
 

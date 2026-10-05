@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "A desktop digital audio workstation for recording, editing, and mixing audio and MIDI."
 
 [features]
 audio-device = ["aaadaw-app/audio-device"]
@@ -30,6 +31,22 @@ directories = "6.0.0"
 tracing = "0.1"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }
+
+[package.metadata.deb]
+maintainer = "AAADAW contributors"
+copyright = "2026, AAADAW contributors"
+license-file = ["../../LICENSE-MIT", "0"]
+assets = [
+    ["target/release/aaadaw", "usr/bin/aaadaw", "755"],
+    ["../../packaging/linux/aaadaw.desktop", "usr/share/applications/aaadaw.desktop", "644"],
+    ["../../docs/native-installers.md", "usr/share/doc/aaadaw/README.Debian", "644"],
+    ["../../LICENSE-MIT", "usr/share/doc/aaadaw/LICENSE-MIT", "644"],
+    ["../../LICENSE-APACHE", "usr/share/doc/aaadaw/LICENSE-APACHE", "644"],
+]
+depends = ["$auto", "libjack-jackd2-0"]
+section = "sound"
+priority = "optional"
+extended-description = "AAADAW is a desktop digital audio workstation for recording, editing, and mixing audio and MIDI."
 
 [dev-dependencies]
 rmcp = { version = "3.5.0", default-features = false, features = ["client", "server", "transport-io"] }

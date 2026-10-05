@@ -1,0 +1,57 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="AAADAW"
+    Manufacturer="AAADAW contributors"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="8A1CFDA2-67A8-49EA-BB59-D5E60F8B428D"
+    Scope="perUser"
+    InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AAADAW is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="Main" Title="AAADAW" Level="1">
+      <ComponentRef Id="Application" />
+      <ComponentRef Id="MitLicense" />
+      <ComponentRef Id="ApacheLicense" />
+      <ComponentRef Id="InstallNotes" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="AAADAW">
+          <Component Id="Application" Guid="C058B949-3389-4D0C-9B15-8017B937F3C8">
+            <File Id="ApplicationExe" Source="target/release/aaadaw.exe" KeyPath="yes">
+              <Shortcut
+                Id="StartMenuApplicationShortcut"
+                Directory="AppMenuFolder"
+                Name="AAADAW"
+                WorkingDirectory="INSTALLFOLDER"
+                Advertise="no" />
+            </File>
+          </Component>
+          <Component Id="MitLicense" Guid="88BB5B6F-1DF7-4B1A-9A8F-EC228A9CF5A5">
+            <File Id="MitLicenseFile" Source="LICENSE-MIT" KeyPath="yes" />
+          </Component>
+          <Component Id="ApacheLicense" Guid="DF7259B2-A664-4DE0-A43A-41EB25A773F3">
+            <File Id="ApacheLicenseFile" Source="LICENSE-APACHE" KeyPath="yes" />
+          </Component>
+          <Component Id="InstallNotes" Guid="A6834401-826D-4647-AF9B-8B6D20112C69">
+            <File Id="InstallNotesFile" Source="docs/native-installers.md" Name="README-INSTALL.md" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="AAADAW">
+        <Component Id="StartMenuShortcut" Guid="F7FC8D64-45E4-42DE-B62E-18D3D3E2ED1E">
+          <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\AAADAW" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+</Wix>
