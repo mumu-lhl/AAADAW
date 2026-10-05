@@ -176,27 +176,53 @@ fn selected_plugin_details<'a>(
     };
     let mut parameter_controls = column![].spacing(3);
     for parameter in &app.fx_chain_parameters {
-        if parameter.stepped
-            || parameter.read_only
+        if parameter.read_only
             || !parameter.min_value.is_finite()
             || !parameter.max_value.is_finite()
-            || parameter.max_value <= parameter.min_value
+            || parameter.max_value < parameter.min_value
         {
             continue;
         }
         let id = parameter.id;
-        let minimum = parameter.min_value as f32;
-        let maximum = parameter.max_value as f32;
+        let (minimum, maximum) = if parameter.stepped {
+            (parameter.min_value.ceil(), parameter.max_value.floor())
+        } else {
+            (parameter.min_value, parameter.max_value)
+        };
+        if maximum <= minimum {
+            continue;
+        }
+        let minimum = minimum as f32;
+        let maximum = maximum as f32;
         if !minimum.is_finite() || !maximum.is_finite() || maximum <= minimum {
             continue;
         }
-        let value = (parameter.value as f32).clamp(minimum, maximum);
-        let step = ((maximum - minimum) / 100.0).max(f32::EPSILON);
+        let value = if parameter.stepped {
+            (parameter.value as f32).round().clamp(minimum, maximum)
+        } else {
+            (parameter.value as f32).clamp(minimum, maximum)
+        };
+        let step = if parameter.stepped {
+            1.0
+        } else {
+            ((maximum - minimum) / 100.0).max(f32::EPSILON)
+        };
+        let displayed_value = if parameter.stepped {
+            parameter.value.to_string()
+        } else {
+            parameter.display_value.as_str().to_owned()
+        };
+        let parameter_label = if parameter.stepped {
+            column![
+                text(parameter.name.as_str()).size(11),
+                text(parameter.display_value.as_str()).size(10),
+            ]
+        } else {
+            column![text(parameter.name.as_str()).size(11)]
+        };
         parameter_controls = parameter_controls.push(
             row![
-                text(parameter.name.as_str())
-                    .size(11)
-                    .width(Length::Fixed(120.0)),
+                parameter_label.width(Length::Fixed(120.0)),
                 slider(minimum..=maximum, value, move |value| {
                     Message::FxParameterChanged(id, f64::from(value))
                 })
@@ -208,7 +234,7 @@ fn selected_plugin_details<'a>(
                     app.fx_parameter_value_edits
                         .get(&id)
                         .map(String::as_str)
-                        .unwrap_or(parameter.display_value.as_str()),
+                        .unwrap_or(displayed_value.as_str()),
                 )
                 .on_input(move |value| Message::FxParameterValueTextChanged(id, value))
                 .on_submit(Message::CommitFxParameterValue(id))
@@ -222,10 +248,12 @@ fn selected_plugin_details<'a>(
         );
     }
     if app.fx_chain_parameters.iter().all(|parameter| {
-        parameter.stepped || parameter.read_only || parameter.max_value <= parameter.min_value
+        parameter.read_only
+            || parameter.max_value <= parameter.min_value
+            || (parameter.stepped && parameter.max_value.floor() <= parameter.min_value.ceil())
     }) {
         parameter_controls = parameter_controls
-            .push(text("No continuous host parameters are exposed by this plugin.").size(11));
+            .push(text("No editable host parameters are exposed by this plugin.").size(11));
     }
     column![
         text(name).size(17),
@@ -240,8 +268,10 @@ fn selected_plugin_details<'a>(
         })
         .size(12),
         rule::horizontal(1),
-        text("Parameters · Enter a value and press Return for exact entry; Reset uses the plugin default.")
-            .size(10),
+        text(
+            "Parameters · Enter a value and press Return for exact entry; stepped parameters use whole numbers; Reset uses the plugin default.",
+        )
+        .size(10),
         scrollable(parameter_controls).height(Length::Fill),
     ]
     .spacing(8)

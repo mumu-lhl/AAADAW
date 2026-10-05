@@ -7,7 +7,7 @@ use clack_host::events::event_types::{
     ParamGestureBeginEvent, ParamGestureEndEvent, ParamValueEvent,
 };
 use clack_host::events::io::{EventBuffer, InputEvents};
-use clack_host::prelude::{HostInfo, PluginEntry, PluginInstance};
+use clack_host::prelude::{ClapId, HostInfo, PluginEntry, PluginInstance};
 use std::ffi::CString;
 use std::io::Cursor;
 use std::os::raw::c_ulong;
@@ -79,6 +79,21 @@ impl ClapPluginGuiOwner {
             });
         }
         result
+    }
+
+    /// Formats one value through the plugin's parameter text extension.
+    pub fn parameter_value_to_text(&mut self, id: u32, value: f64) -> Option<String> {
+        if !value.is_finite() {
+            return None;
+        }
+        let id = ClapId::from_raw(id)?;
+        let handle = self.instance.plugin_handle();
+        let params = handle.get_extension::<PluginParams>()?;
+        let mut display_buffer = [0_u8; 64];
+        params
+            .value_to_text(&handle, id, value, &mut display_buffer)
+            .ok()
+            .map(|display| String::from_utf8_lossy(display).into_owned())
     }
 
     /// Flushes one host parameter gesture event on the inactive GUI instance.
