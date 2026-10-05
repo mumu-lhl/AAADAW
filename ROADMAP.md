@@ -163,6 +163,7 @@
 - [x] 将连续 CLAP 效果器参数接入 Action；提供 begin/perform/end 手势语义、撤销/重做和参数状态保存恢复（[Issue #18](https://github.com/mumu-lhl/AAADAW/issues/18)）。
 - [x] 在轨道 FX 编辑器中以整数步进控件编辑 CLAP stepped 参数，保持有界验证、重置和 undo/redo（[Issue #159](https://github.com/mumu-lhl/AAADAW/issues/159)）。
 - [x] 录制并回放 sample-clock CLAP 轨道 FX 参数自动化；Arrangement 可显示和编辑参数点、吸附并撤销/重做（[Issue #165](https://github.com/mumu-lhl/AAADAW/issues/165)、[Issue #167](https://github.com/mumu-lhl/AAADAW/issues/167)）。
+- [x] Arrangement 同时显示每轨多条 CLAP FX 参数自动化 lane；lane 独立编辑，轨道高度、TCP、标签和命中区域同步展开，插件重排时 lane 继续跟随实例（[Issue #169](https://github.com/mumu-lhl/AAADAW/issues/169)）。
 - [x] 记录插件状态和必要元数据到工程；处理缺失插件、加载失败和状态恢复失败（[Issue #14](https://github.com/mumu-lhl/AAADAW/issues/14)）。
 - [x] 在插件选择、FX 编辑器和轨道乐器入口提示进程内执行风险；MVP 不承诺插件崩溃隔离（[Issue #16](https://github.com/mumu-lhl/AAADAW/issues/16)）。
 

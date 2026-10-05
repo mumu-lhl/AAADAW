@@ -67,6 +67,9 @@ fn vs_main(
     if kind == 0u {
         x = corner.x * uniforms.view.x;
         width = uniforms.view.x;
+    } else if kind == 14u {
+        x = 0.0;
+        width = uniforms.view.x;
     } else if kind == 8u {
         x = 0.0;
         width = uniforms.view.x;
