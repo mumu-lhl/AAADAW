@@ -43,8 +43,8 @@ jobs:
           test -n "$deb"
           dpkg-deb --info "$deb"
           dependencies="$(dpkg-deb -f "$deb" Depends)"
-          grep -q 'libjack' <<< "$dependencies"
-          grep -q 'libpipewire-0.3-0' <<< "$dependencies"
+          grep -q 'libjack-jackd2-0' <<< "$dependencies"
+          grep -q 'libpipewire-0.3-0t64' <<< "$dependencies"
           mkdir -p "$HOME/.config/aaadaw"
           printf 'preserve\n' > "$HOME/.config/aaadaw/installer-smoke"
           sudo apt-get purge --yes libjack-jackd2-dev libpipewire-0.3-dev
