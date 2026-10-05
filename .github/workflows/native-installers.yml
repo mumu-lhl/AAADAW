@@ -84,12 +84,12 @@ jobs:
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches.Groups[1].Value
           New-Item -ItemType Directory -Path artifacts | Out-Null
-          wix build packaging/windows/Package.wxs -arch x64 -d ProductVersion=0.0.1 -o artifacts/aaadaw-test-old.msi
+          wix build packaging/windows/Package.wxs -arch x64 -d ProductVersion=0.0.1 -o target/aaadaw-test-old.msi
           wix build packaging/windows/Package.wxs -arch x64 -d "ProductVersion=$version" -o artifacts/aaadaw-windows-x86_64.msi
           $userData = Join-Path $env:APPDATA 'aaadaw'
           New-Item -ItemType Directory -Force -Path $userData | Out-Null
           Set-Content -Path (Join-Path $userData 'installer-smoke') -Value 'preserve'
-          $oldInstall = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
+          $oldInstall = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path target/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
           if ($oldInstall.ExitCode -notin @(0, 3010)) { throw "Baseline MSI install failed: $($oldInstall.ExitCode)" }
           $upgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-windows-x86_64.msi), '/qn', '/norestart') -Wait -PassThru
           if ($upgrade.ExitCode -notin @(0, 3010)) { throw "MSI major upgrade failed: $($upgrade.ExitCode)" }
@@ -98,7 +98,7 @@ jobs:
           $versionOutput = & $exe --version
           if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "AAADAW $version") { throw "Headless version check failed: $versionOutput" }
           if (-not (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AAADAW\AAADAW.lnk'))) { throw 'Start Menu shortcut missing' }
-          $downgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path artifacts/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
+          $downgrade = Start-Process msiexec.exe -ArgumentList @('/i', (Resolve-Path target/aaadaw-test-old.msi), '/qn', '/norestart') -Wait -PassThru
           if ($downgrade.ExitCode -eq 0) { throw 'MSI downgrade was accepted' }
           $versionOutput = & $exe --version
           if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "AAADAW $version") { throw "Downgrade changed installed version: $versionOutput" }
