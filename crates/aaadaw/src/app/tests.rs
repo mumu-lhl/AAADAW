@@ -5,6 +5,8 @@ use super::prepare_project_playback_file;
 use super::project_io::{
     load_project_file, load_project_session, save_project_file, save_project_session_file,
 };
+#[cfg(feature = "audio-device")]
+use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
     shortcut_message,
@@ -19,6 +21,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn unavailable_recording_input_reports_failure_without_inserting_an_item() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Armed take".to_owned(),
+        })
+        .unwrap();
+    app.recording_starting = true;
+    app.recording_tracks = vec![app.project.tracks()[0].id()];
+    let input_error =
+        "JACK has 0 physical audio input port(s); stereo recording needs two".to_owned();
+    let result: Result<ActiveRecording, String> = Err(input_error.clone());
+
+    let _ = app.update(Message::RecordingStarted(SharedRecordingStart(
+        std::sync::Arc::new(std::sync::Mutex::new(Some(result))),
+    )));
+
+    assert!(!app.recording_starting);
+    assert!(app.recording_tracks.is_empty());
+    assert!(app.project.audio_items().is_empty());
+    assert!(app.status.contains("Recording could not start"));
+    assert!(app.status.contains(&input_error));
+}
 
 #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
 #[test]
