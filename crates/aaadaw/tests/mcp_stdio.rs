@@ -95,6 +95,15 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         })
         .unwrap();
     project
+        .apply(DawAction::SetTrackVolumeAutomation {
+            track_id,
+            points: vec![
+                VolumeAutomationPoint::new(12_000, -3.0).unwrap(),
+                VolumeAutomationPoint::new(48_000, -9.0).unwrap(),
+            ],
+        })
+        .unwrap();
+    project
         .apply(DawAction::SetTrackOutput {
             track_id,
             output_track: Some(bus_id),
@@ -354,6 +363,12 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             "method": "tools/call",
             "params": {"name": "daw_scoped_query_midi_expression", "arguments": {"track_id": track_id.value(), "start_tick": 100, "end_tick": 400}}
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {"name": "daw_scoped_query_volume_automation", "arguments": {"track_id": track_id.value(), "start_sample": 0, "end_sample": 48_001}}
+        }),
         Value::String("{malformed json".to_owned()),
     ];
     {
@@ -401,7 +416,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     );
     assert_eq!(
         response_for(7)["result"]["tools"].as_array().unwrap().len(),
-        2
+        3
     );
     assert!(
         response_for(7)["result"]["tools"]
@@ -416,6 +431,13 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
             .unwrap()
             .iter()
             .any(|tool| tool["name"] == "daw_scoped_query_midi_expression")
+    );
+    assert!(
+        response_for(7)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "daw_scoped_query_volume_automation")
     );
     assert!(
         response_for(7)["result"]["tools"]
@@ -568,6 +590,14 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
     assert_eq!(events[0]["event"]["value"], 80);
     assert_eq!(events[1]["event"]["type"], "pitch_bend");
     assert_eq!(events[1]["event"]["value"], 10_000);
+    assert_eq!(response_for(31)["result"]["isError"], false);
+    assert_eq!(
+        response_for(31)["result"]["structuredContent"]["points"],
+        json!([
+            {"sample": 12_000, "gain_db": -3.0},
+            {"sample": 48_000, "gain_db": -9.0}
+        ])
+    );
     // rmcp 3.5 skips malformed stdio lines and continues serving later requests.
     assert!(
         responses
@@ -1807,6 +1837,15 @@ fn explicitly_authorized_mcp_sets_volume_automation_points_and_persists_them() {
                 "arguments": {"track_id": u64::MAX, "sample": 30_000, "gain_db": -1.0}
             }
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "daw_scoped_query_volume_automation",
+                "arguments": {"track_id": track_id.value(), "start_sample": 0, "end_sample": 48_000, "limit": 2}
+            }
+        }),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -1857,6 +1896,18 @@ fn explicitly_authorized_mcp_sets_volume_automation_points_and_persists_them() {
     for id in [6, 7, 8, 9, 10] {
         assert_eq!(response_for(id)["result"]["isError"], true);
     }
+    assert_eq!(response_for(11)["result"]["isError"], false);
+    assert_eq!(
+        response_for(11)["result"]["structuredContent"]["points"],
+        json!([
+            {"sample": 12_000, "gain_db": -3.0},
+            {"sample": 24_000, "gain_db": -12.0}
+        ])
+    );
+    assert_eq!(
+        response_for(11)["result"]["structuredContent"]["truncated"],
+        false
+    );
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();
     assert_eq!(
