@@ -131,6 +131,76 @@ fn prepares_and_renders_an_embedded_audio_item() {
 }
 
 #[test]
+fn repeated_embedded_source_reuses_cached_pcm_and_preserves_each_trim() {
+    let database_path = unique_path("aaadaw");
+    let frames = [
+        [4096, -4096],
+        [8192, -8192],
+        [12_288, -12_288],
+        [16_384, -16_384],
+    ];
+    let wav = stereo_pcm_wav(&frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://shared-short-source",
+            "shared.wav",
+            Cursor::new(&wav),
+        )
+        .expect("WAV should embed");
+    let mut project = project_with_audio_item("asset://shared-short-source".to_owned(), 4);
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://shared-short-source".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 1,
+            length_samples: 3,
+        })
+        .expect("second item should be inserted");
+
+    let prepared = prepare_audio_playback(&project, &store, 16, 4)
+        .expect("repeated embedded source should prepare");
+    assert_eq!(prepared.feeder_count(), 2);
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("cached source feeder should finish");
+    }
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("cached source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!((output[0][0] - 0.375).abs() < 1.0e-5);
+    assert!((output[1][0] - 0.625).abs() < 1.0e-5);
+    assert!((output[2][0] - 0.875).abs() < 1.0e-5);
+    assert!((output[3][0] - 0.5).abs() < 1.0e-5);
+    assert_eq!(output.map(|frame| frame[1]), output.map(|frame| -frame[0]));
+    drop(graph);
+
+    let prepared = prepare_audio_playback_at(&project, &store, 1, 16, 4)
+        .expect("cached source should prepare again after a seek");
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("cached seek feeder should finish");
+    }
+    graph.transport_mut().start();
+    let mut seek_output = [[0.0; 2]; 3];
+    let seek_stats = graph
+        .render_into(&mut seek_output)
+        .expect("cached source should render after a seek");
+    assert_eq!(seek_stats.underrun_samples, 0);
+    assert!((seek_output[0][0] - 0.625).abs() < 1.0e-5);
+    assert!((seek_output[1][0] - 0.875).abs() < 1.0e-5);
+    assert!((seek_output[2][0] - 0.5).abs() < 1.0e-5);
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     let database_path = unique_path("aaadaw");
     let export_path = unique_path("wav");
