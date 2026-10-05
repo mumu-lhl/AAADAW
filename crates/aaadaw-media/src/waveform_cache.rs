@@ -204,7 +204,8 @@ mod tests {
             waveform,
         };
         let decoded =
-            decode_waveform_cache(&encode_waveform_cache(&[entry.clone()]).unwrap()).unwrap();
+            decode_waveform_cache(&encode_waveform_cache(std::slice::from_ref(&entry)).unwrap())
+                .unwrap();
         assert_eq!(decoded, vec![entry]);
         assert_eq!(decoded[0].waveform.levels().len(), 2);
     }
