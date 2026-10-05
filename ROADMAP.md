@@ -231,7 +231,7 @@
 
 ### 音频性能与媒体管线
 
-- [ ] 将多级 Min/Max 波形峰值持久化到可重建的 `.aaapeaks` 缓存，后台复用未变化的素材（[Issue #190](https://github.com/mumu-lhl/AAADAW/issues/190)）。
+- [x] 将多级 Min/Max 波形峰值持久化到可重建的 `.aaapeaks` 缓存，后台复用未变化的素材（[Issue #190](https://github.com/mumu-lhl/AAADAW/issues/190)）。
 - [ ] Arrangement 按当前视口和缩放查询波形层级及素材范围，只为可见峰值构建几何（[Issue #191](https://github.com/mumu-lhl/AAADAW/issues/191)）。
 - [ ] 实现音频预读、素材缓存和内存使用上限；验证磁盘欠载时的恢复行为。
 - [ ] 实现 Track Freeze、后台离线渲染、导出队列和明确的抖动（Dither）/浮点输出策略。
