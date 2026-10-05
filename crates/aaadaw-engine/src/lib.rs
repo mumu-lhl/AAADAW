@@ -44,7 +44,8 @@ pub use clap_instrument::{
 pub use clap_ipc::{
     CLAP_IPC_CHANNELS, CLAP_IPC_MAGIC, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS,
     CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT, ClapIpcConfig, ClapIpcMapping,
-    ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcSubmitError,
+    ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcRequestSlot,
+    ClapIpcSubmitError,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};

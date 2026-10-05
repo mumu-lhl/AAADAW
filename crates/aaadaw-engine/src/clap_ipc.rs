@@ -83,8 +83,14 @@ impl ClapIpcMapping {
         })
     }
 
-    /// Opens a helper-side view of a mapping created by the host.
-    pub fn open(path: &Path) -> io::Result<Self> {
+    /// Opens a helper-side view of a mapping created by this process.
+    ///
+    /// # Safety
+    ///
+    /// `path` must name the same-length mapping initialized by [`Self::create`]. No process may
+    /// resize or replace the backing file while this mapping is open. The helper executable only
+    /// receives this private path from its trusted AAADAW parent.
+    pub unsafe fn open(path: &Path) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         if file.metadata()?.len() != Self::mapped_len() as u64 {
             return Err(io::Error::new(
@@ -420,7 +426,7 @@ impl ClapIpcRegion {
     }
 
     /// Claims the oldest pending slot. Returns immediately when no request is ready.
-    pub fn try_claim_request(&self) -> Option<usize> {
+    pub fn try_claim_request(&self) -> Option<ClapIpcRequestSlot<'_>> {
         if self
             .helper_busy
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -459,11 +465,14 @@ impl ClapIpcRegion {
             return None;
         }
         self.active_slot.store(index as u32, Ordering::Release);
-        Some(index)
+        Some(ClapIpcRequestSlot {
+            region: self,
+            index,
+        })
     }
 
     /// Processes one claimed request and publishes its response after the closure returns.
-    pub fn process_request(
+    fn process_claimed_request(
         &self,
         index: usize,
         process: impl for<'a> FnOnce(ClapIpcRequest<'a>) -> bool,
@@ -519,8 +528,6 @@ impl ClapIpcRegion {
                 Ordering::Relaxed,
             )
             .is_ok();
-        self.active_slot.store(NO_ACTIVE_SLOT, Ordering::Release);
-        self.helper_busy.store(false, Ordering::Release);
         transitioned && succeeded
     }
 
@@ -556,9 +563,13 @@ impl ClapIpcRegion {
                 || response_start != start_sample
             {
                 if response_generation < generation
-                    || (response_generation == generation && response_sequence < sequence)
+                    || (response_generation == generation
+                        && (response_sequence < sequence
+                            || (response_sequence == sequence && response_start != start_sample)))
                 {
                     slot.state.store(SLOT_FREE, Ordering::Release);
+                } else {
+                    slot.state.store(SLOT_RESPONSE_READY, Ordering::Release);
                 }
                 continue;
             }
@@ -586,6 +597,50 @@ pub struct ClapIpcRequest<'a> {
     pub start_sample: u64,
     pub events: &'a [ClapIpcMidiEvent],
     pub audio: &'a mut [[f32; CLAP_IPC_CHANNELS]],
+}
+
+/// Exclusive claim for one helper request. Dropping an unused claim frees its slot.
+pub struct ClapIpcRequestSlot<'a> {
+    region: &'a ClapIpcRegion,
+    index: usize,
+}
+
+impl ClapIpcRequestSlot<'_> {
+    /// Processes the claimed request and publishes its output if processing succeeds.
+    pub fn process(self, process: impl for<'a> FnOnce(ClapIpcRequest<'a>) -> bool) -> bool {
+        self.region.process_claimed_request(self.index, process)
+    }
+}
+
+impl Drop for ClapIpcRequestSlot<'_> {
+    fn drop(&mut self) {
+        if self
+            .region
+            .active_slot
+            .compare_exchange(
+                self.index as u32,
+                NO_ACTIVE_SLOT,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            let slot = &self.region.slots[self.index];
+            let _ = slot.state.compare_exchange(
+                SLOT_PROCESSING,
+                SLOT_FREE,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
+            let _ = slot.state.compare_exchange(
+                SLOT_RENDERING,
+                SLOT_FREE,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
+        }
+        self.region.helper_busy.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -628,13 +683,15 @@ mod tests {
     fn file_mapping_is_shared_between_host_and_helper_views() {
         let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
         let host = ClapIpcMapping::create(config).unwrap();
-        let helper = ClapIpcMapping::open(&host.path().unwrap()).unwrap();
+        // SAFETY: `host.path()` names the fixed-size mapping initialized above; the host retains
+        // it for the full helper-view lifetime.
+        let helper = unsafe { ClapIpcMapping::open(&host.path().unwrap()) }.unwrap();
         assert!(helper.accept_handshake(config));
         assert!(host.region().is_ready());
 
         host.region().try_submit(1, 7, 512, &[], 4).unwrap();
         let slot = helper.region().try_claim_request().unwrap();
-        assert!(helper.region().process_request(slot, |request| {
+        assert!(slot.process(|request| {
             request.audio.fill([0.25, -0.25]);
             true
         }));
@@ -660,18 +717,26 @@ mod tests {
                 let barrier = Arc::clone(&claim_barrier);
                 thread::spawn(move || {
                     barrier.wait();
-                    region.try_claim_request()
+                    let claim = region.try_claim_request();
+                    let won = claim.is_some();
+                    barrier.wait();
+                    won
                 })
             })
             .collect::<Vec<_>>();
         claim_barrier.wait();
+        claim_barrier.wait();
         let claims = claimers
             .into_iter()
-            .filter_map(|join| join.join().unwrap())
+            .map(|join| join.join().unwrap())
+            .filter(|won| *won)
             .collect::<Vec<_>>();
         assert_eq!(claims.len(), 1);
-        let slot = claims[0];
-        assert!(region.process_request(slot, |request| {
+        assert!(!region.helper_busy.load(Ordering::Acquire));
+        assert_eq!(region.slots[0].state.load(Ordering::Acquire), SLOT_FREE);
+        region.try_submit(3, 11, 64, &[], 8).unwrap();
+        let slot = region.try_claim_request().unwrap();
+        assert!(slot.process(|request| {
             request.audio.fill([0.5, -0.5]);
             true
         }));
@@ -713,7 +778,7 @@ mod tests {
         };
         region.try_submit(4, 9, 256, &[event], 16).unwrap();
         let slot = region.try_claim_request().unwrap();
-        assert!(region.process_request(slot, |request| {
+        assert!(slot.process(|request| {
             assert_eq!(request.generation, 4);
             assert_eq!(request.sequence, 9);
             assert_eq!(request.start_sample, 256);
@@ -773,5 +838,39 @@ mod tests {
         assert!(event.is_valid(4));
         event.frame_offset = 4;
         assert!(!event.is_valid(4));
+    }
+
+    #[test]
+    fn future_response_stays_available_until_its_audio_position() {
+        let region = region();
+        region.try_submit(2, 5, 128, &[], 4).unwrap();
+        let slot = region.try_claim_request().unwrap();
+        assert!(slot.process(|request| {
+            request.audio.fill([0.75, -0.75]);
+            true
+        }));
+
+        let mut output = [[0.0; CLAP_IPC_CHANNELS]; 4];
+        assert!(!region.try_read_response(2, 4, 96, &mut output));
+        assert_eq!(output, [[0.0, 0.0]; 4]);
+        assert!(region.try_read_response(2, 5, 128, &mut output));
+        assert_eq!(output, [[0.75, -0.75]; 4]);
+    }
+
+    #[test]
+    fn mismatched_sample_for_matching_sequence_reclaims_corrupt_response() {
+        let region = region();
+        region.try_submit(2, 5, 128, &[], 4).unwrap();
+        let slot = region.try_claim_request().unwrap();
+        assert!(slot.process(|request| {
+            request.audio.fill([0.75, -0.75]);
+            true
+        }));
+
+        let mut output = [[1.0; CLAP_IPC_CHANNELS]; 4];
+        assert!(!region.try_read_response(2, 5, 124, &mut output));
+        assert_eq!(output, [[0.0, 0.0]; 4]);
+        assert!(!region.try_read_response(2, 5, 128, &mut output));
+        assert_eq!(output, [[0.0, 0.0]; 4]);
     }
 }
