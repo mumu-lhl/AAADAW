@@ -370,8 +370,9 @@ BatchTransaction { tx_id: u64, actions: Vec\<DawAction\> },
   Pyramid)：根据每像素采样率缩放级别，匹配读取 Min/Max
   多级降采样数据（.aaapeaks）。
 
-- 统一矩阵投影 (Uniform Matrix Projection)：时间线的缩放和平移仅通过更新
-  GPU Uniform 投影矩阵完成，彻底消除了 CPU 端的坐标重算开销。
+- 统一矩阵投影 (Uniform Matrix Projection)：时间线主体的缩放和平移通过更新 GPU
+  Uniform 投影矩阵完成，不重算轨道和 Item 等静态几何。可见波形是例外：视口或缩放改变时，
+  按可见素材帧范围查询 Min/Max 金字塔，只更新可见波形实例缓冲；不重建无关工程几何。
 
 - 自动化包络线 (Automation
   Envelopes)：贝塞尔曲线求值直接在顶点着色器（Vertex Shader）中完成。
