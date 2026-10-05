@@ -174,6 +174,7 @@
 - [x] 保存并触发可排序的参数无关命令宏；宏经 Actions 搜索和快捷键复用现有命令分发，破坏性操作不纳入宏步骤（[Issue #137](https://github.com/mumu-lhl/AAADAW/issues/137)）。
 - [x] 提供只读 MCP STDIO 服务，可对启动时读取的已保存工程快照查询结构和单轨 MIDI 汇总；读取采用 SQLite 只读连接且不迁移 schema（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。后续写操作仍需经 Action 校验。
 - [x] 提供有范围与结果上限的 MIDI 音符 MCP 查询工具（[Issue #90](https://github.com/mumu-lhl/AAADAW/issues/90)）。
+- [ ] 通过只读 MCP 查询工具按轨道/项目时间范围读取 CC 与 pitch-bend 事件；有界、稳定排序并报告截断（[Issue #161](https://github.com/mumu-lhl/AAADAW/issues/161)）。
 - [x] 通过显式 `--write` MCP 会话创建普通轨道；请求经 `DawAction::CreateTrack` 校验并原子保存，桌面工程会话与第二个 MCP writer 由独占 session lock 互斥（[Issue #107](https://github.com/mumu-lhl/AAADAW/issues/107)）。
 - [x] 通过显式 `--write` MCP 会话向指定 MIDI item 原子插入有限批次的音符；请求经 `DawAction::AddMidiNotes` 校验并返回稳定 Note ID（[Issue #109](https://github.com/mumu-lhl/AAADAW/issues/109)）。
 - [x] 通过显式 `--write` MCP 会话按指定音乐网格量化 MIDI item；请求经 `DawAction::QuantizeItem` 校验并返回发生变化的 Note ID（[Issue #111](https://github.com/mumu-lhl/AAADAW/issues/111)）。

@@ -27,6 +27,7 @@ The server provides:
 - `daw://project/structure`: sample rate, PPQ, bounded track IDs/names/types, volume dB, pan, mute/solo and record-arm state, output bus IDs, and tempo/meter points. A null output bus ID means Master. At most 512 tracks and 256 points per map are returned; the response marks truncated collections.
 - `daw://project/track/{track_id}/midi_summary`: a per-track MIDI item and note count with the overall project-tick range. It returns aggregates rather than individual notes.
 - `daw_scoped_query_notes`: accepts `track_id`, `start_tick`, and `end_tick` for a half-open project-tick range `[start_tick, end_tick)`. It returns notes ordered by absolute tick, item ID, then note ID. The default response cap is 256 notes; callers may request up to 512. Ranges may span at most 245,760 project ticks. The result includes `truncated` when more matching notes exist than the requested limit.
+- `daw_scoped_query_midi_expression`: accepts the same track and half-open tick range, with an optional result limit (default 256, maximum 512). It returns CC and pitch-bend events ordered by project tick, item ID, event type, then controller number. Each event includes its item ID/start, clip-relative tick, absolute project tick, and type-specific controller/value data. The 245,760-tick range bound applies; `truncated` reports when matching events exceed the limit. This read-only tool is available in both server modes.
 
 ## Read-only access boundary
 
