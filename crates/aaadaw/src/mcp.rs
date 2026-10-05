@@ -2636,10 +2636,13 @@ mod tests {
         parse_volume_automation_query_arguments, scoped_query_midi_expression, scoped_query_notes,
         scoped_query_volume_automation, structure_summary, track_midi_summary,
     };
+    use aaadaw_app::{render_project_file_to_pcm24_wav, start_audio_item_import};
     use aaadaw_core::{
         DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
         VolumeAutomationPoint,
     };
+    use aaadaw_engine::MasterOutputCeiling;
+    use aaadaw_media::AudioStreamDecoder;
     use aaadaw_storage::ProjectStore;
     use rmcp::{
         ServiceExt,
@@ -3738,6 +3741,142 @@ mod tests {
             assert_eq!(persisted.tracks()[0].is_muted(), expected_muted);
         }
 
+        drop(client);
+        server.cancel().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn saved_audio_edit_renders_and_is_visible_through_mcp() {
+        let directory = tempfile::tempdir().unwrap();
+        let project_path = directory.path().join("acceptance.aaadaw");
+        let source_path = directory.path().join("source.wav");
+        let export_path = directory.path().join("mix.wav");
+        let mut project = Project::new();
+        let project_sample_rate = project.settings().sample_rate();
+        let mut wav = Vec::new();
+        let samples = vec![8_192_i16; 4_096];
+        let data_len = u32::try_from(samples.len() * 2).unwrap();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&project_sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(project_sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for sample in &samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(&source_path, wav).unwrap();
+
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        let mut store = ProjectStore::open(&project_path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+
+        let worker = start_audio_item_import(
+            &project_path,
+            &source_path,
+            track_id,
+            0,
+            project_sample_rate,
+        )
+        .unwrap();
+        while !worker.is_finished() {
+            let _ = worker.progress().try_iter().count();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        project.apply(worker.finish().unwrap()).unwrap();
+        let item = &project.audio_items()[0];
+        let item_id = item.id();
+        let media_ref = item.media_ref().to_owned();
+        project
+            .apply(DawAction::EditAudioItem {
+                item_id,
+                media_ref: media_ref.clone(),
+                start_sample: 128,
+                source_offset_samples: 64,
+                length_samples: 3_000,
+            })
+            .unwrap();
+        assert_eq!(project.audio_items()[0].start_sample(), 128);
+        assert_eq!(project.audio_items()[0].length_samples(), 3_000);
+        assert!(project.undo().unwrap());
+        assert_eq!(project.audio_items()[0].start_sample(), 0);
+        assert_eq!(project.audio_items()[0].length_samples(), 4_096);
+        assert!(project.redo().unwrap());
+        assert_eq!(project.audio_items()[0].start_sample(), 128);
+        project
+            .apply(DawAction::SetTrackVolume {
+                track_id,
+                volume_db: -6.0,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackPan {
+                track_id,
+                pan: 0.25,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&project_path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&project_path).unwrap();
+        let reopened = store.load().unwrap();
+        assert_eq!(reopened.audio_items().len(), 1);
+        assert_eq!(reopened.audio_items()[0].start_sample(), 128);
+        assert_eq!(reopened.audio_items()[0].source_offset_samples(), 64);
+        assert_eq!(reopened.audio_items()[0].length_samples(), 3_000);
+        assert_eq!(reopened.tracks()[0].volume_db(), -6.0);
+        assert_eq!(reopened.tracks()[0].pan(), 0.25);
+        assert!(store.resolve_audio_asset(&media_ref).is_ok());
+        store.close().unwrap();
+
+        render_project_file_to_pcm24_wav(
+            &project_path,
+            &reopened,
+            &export_path,
+            MasterOutputCeiling::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        let mut decoder = AudioStreamDecoder::open(&export_path).unwrap();
+        let rendered = decoder.next_chunk().unwrap().unwrap();
+        assert_eq!(rendered.channels(), 2);
+        assert!(rendered.samples().iter().any(|sample| *sample != 0.0));
+
+        let server = ProjectMcpServer {
+            project: Arc::new(Mutex::new(reopened)),
+            store: Arc::new(Mutex::new(None)),
+            writable: false,
+        };
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let (server, client) = tokio::join!(server.serve(server_io), ().serve(client_io));
+        let server = server.unwrap();
+        let client = client.unwrap();
+        let response = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new(STRUCTURE_URI))
+            .await
+            .unwrap();
+        let response = serde_json::to_value(response).unwrap();
+        let summary: Value =
+            serde_json::from_str(response["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(summary["tracks"][0]["volume_db"], -6.0);
+        assert_eq!(summary["tracks"][0]["pan"], 0.25);
+        assert_eq!(summary["tracks"][0]["id"], track_id.value());
         drop(client);
         server.cancel().await.unwrap();
     }
