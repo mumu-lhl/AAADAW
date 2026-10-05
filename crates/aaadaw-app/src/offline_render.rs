@@ -177,7 +177,11 @@ fn render_prepared_inner(
                 break Ok(available_frames);
             }
             let Some(item_id) = graph.audio_item_missing_for_next_block(1) else {
-                break Ok(requested_frames);
+                // A feeder can publish the first frame between the prefix query above and this
+                // one-frame readiness check. Re-query the prefix instead of assuming the entire
+                // requested block is ready; bounded queues may only have one frame at a time.
+                thread::yield_now();
+                continue;
             };
             if cancelled.load(Ordering::Acquire) {
                 break Err(OfflineRenderError::Cancelled);
