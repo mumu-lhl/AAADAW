@@ -32,4 +32,5 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+rmcp = { version = "3.5.0", default-features = false, features = ["client", "server", "transport-io"] }
 rusqlite = { version = "0.37", features = ["bundled"] }

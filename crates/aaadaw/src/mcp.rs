@@ -2621,14 +2621,16 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_VOLUME_AUTOMATION_RESULTS, MAX_MAP_POINTS, MAX_MIDI_EVENTS_PER_UPSERT,
-        MAX_MIDI_EXPRESSION_RESULTS, MAX_MIDI_ITEM_LENGTH_TICKS, MAX_MIDI_NOTES_PER_DELETE,
-        MAX_MIDI_NOTES_PER_INSERT, MAX_MIDI_QUERY_TICKS, MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS,
-        MAX_TRACKS, MAX_VOLUME_AUTOMATION_RESULTS, parse_create_midi_item_arguments,
-        parse_create_track_arguments, parse_delete_midi_notes_arguments,
-        parse_edit_midi_item_arguments, parse_edit_midi_note_arguments,
-        parse_insert_midi_notes_arguments, parse_midi_expression_query_arguments,
-        parse_note_query_arguments, parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
+        CREATE_TRACK_TOOL, DEFAULT_VOLUME_AUTOMATION_RESULTS, MAX_MAP_POINTS,
+        MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS, MAX_MIDI_ITEM_LENGTH_TICKS,
+        MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT, MAX_MIDI_QUERY_TICKS,
+        MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS, MAX_VOLUME_AUTOMATION_RESULTS,
+        ProjectMcpServer, REDO_TOOL, SET_TRACK_MIX_TOOL, UNDO_TOOL,
+        parse_create_midi_item_arguments, parse_create_track_arguments,
+        parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
+        parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
+        parse_midi_expression_query_arguments, parse_note_query_arguments,
+        parse_quantize_midi_item_arguments, parse_set_tempo_arguments,
         parse_set_time_signature_arguments, parse_track_summary_uri,
         parse_upsert_midi_controllers_arguments, parse_upsert_midi_pitch_bends_arguments,
         parse_volume_automation_query_arguments, scoped_query_midi_expression, scoped_query_notes,
@@ -2638,7 +2640,10 @@ mod tests {
         DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TimeSignature,
         VolumeAutomationPoint,
     };
+    use aaadaw_storage::ProjectStore;
+    use rmcp::{ServiceExt, model::CallToolRequestParams};
     use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn structure_summary_keeps_track_state_bounded() {
@@ -3525,5 +3530,176 @@ mod tests {
             assert!(parse_note_query_arguments(Some(&arguments)).is_err());
         }
         assert!(parse_note_query_arguments(None).is_err());
+    }
+
+    #[tokio::test]
+    async fn mcp_client_boundary_enforces_write_mode_and_preserves_atomic_edits() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id().value();
+
+        let read_only_project = Project::from_snapshot(project.snapshot()).unwrap();
+        let read_only_server = ProjectMcpServer {
+            project: Arc::new(Mutex::new(read_only_project)),
+            store: Arc::new(Mutex::new(None)),
+            writable: false,
+        };
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let (server, client) =
+            tokio::join!(read_only_server.serve(server_io), ().serve(client_io),);
+        let server = server.unwrap();
+        let client = client.unwrap();
+
+        let tools = client.peer().list_tools(None).await.unwrap();
+        assert!(
+            !tools
+                .tools
+                .iter()
+                .any(|tool| tool.name == CREATE_TRACK_TOOL)
+        );
+        let unavailable = client
+            .peer()
+            .call_tool(
+                CallToolRequestParams::new(CREATE_TRACK_TOOL).with_arguments(
+                    serde_json::Map::from_iter([("name".to_owned(), json!("Forbidden"))]),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unavailable.is_error, Some(true));
+        drop(client);
+        server.cancel().await.unwrap();
+
+        let directory = tempfile::tempdir().unwrap();
+        let project_path = directory.path().join("protocol-write.aaadaw");
+        let mut store = ProjectStore::open(&project_path).unwrap();
+        store.save(&project).unwrap();
+        let writable_server = ProjectMcpServer {
+            project: Arc::new(Mutex::new(project)),
+            store: Arc::new(Mutex::new(Some(store))),
+            writable: true,
+        };
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let (server, client) = tokio::join!(writable_server.serve(server_io), ().serve(client_io),);
+        let server = server.unwrap();
+        let client = client.unwrap();
+
+        let tools = client.peer().list_tools(None).await.unwrap();
+        assert!(
+            tools
+                .tools
+                .iter()
+                .any(|tool| tool.name == SET_TRACK_MIX_TOOL)
+        );
+
+        let rejected = client
+            .peer()
+            .call_tool(
+                CallToolRequestParams::new(SET_TRACK_MIX_TOOL).with_arguments(
+                    serde_json::Map::from_iter([
+                        ("track_id".to_owned(), json!(track_id)),
+                        ("volume_db".to_owned(), json!(-6.0)),
+                        ("pan".to_owned(), json!(2.0)),
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.is_error, Some(true));
+        let persisted_after_rejection = ProjectStore::load_read_only(&project_path).unwrap();
+        assert_eq!(persisted_after_rejection.tracks()[0].volume_db(), 0.0);
+        assert_eq!(persisted_after_rejection.tracks()[0].pan(), 0.0);
+
+        let invalid_track = client
+            .peer()
+            .call_tool(
+                CallToolRequestParams::new(SET_TRACK_MIX_TOOL).with_arguments(
+                    serde_json::Map::from_iter([
+                        ("track_id".to_owned(), json!(u64::MAX)),
+                        ("muted".to_owned(), json!(true)),
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid_track.is_error, Some(true));
+
+        let connection = rusqlite::Connection::open(&project_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_track_snapshot_save BEFORE DELETE ON tracks
+                 BEGIN SELECT RAISE(FAIL, 'injected save failure'); END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let failed_save = client
+            .peer()
+            .call_tool(
+                CallToolRequestParams::new(SET_TRACK_MIX_TOOL).with_arguments(
+                    serde_json::Map::from_iter([
+                        ("track_id".to_owned(), json!(track_id)),
+                        ("volume_db".to_owned(), json!(-6.0)),
+                        ("pan".to_owned(), json!(0.25)),
+                        ("muted".to_owned(), json!(true)),
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(failed_save.is_error, Some(true));
+        let persisted_after_failed_save = ProjectStore::load_read_only(&project_path).unwrap();
+        assert_eq!(persisted_after_failed_save.tracks()[0].volume_db(), 0.0);
+        assert_eq!(persisted_after_failed_save.tracks()[0].pan(), 0.0);
+        assert!(!persisted_after_failed_save.tracks()[0].is_muted());
+
+        let connection = rusqlite::Connection::open(&project_path).unwrap();
+        connection
+            .execute_batch("DROP TRIGGER reject_track_snapshot_save;")
+            .unwrap();
+        drop(connection);
+
+        let changed = client
+            .peer()
+            .call_tool(
+                CallToolRequestParams::new(SET_TRACK_MIX_TOOL).with_arguments(
+                    serde_json::Map::from_iter([
+                        ("track_id".to_owned(), json!(track_id)),
+                        ("volume_db".to_owned(), json!(-6.0)),
+                        ("pan".to_owned(), json!(0.25)),
+                        ("muted".to_owned(), json!(true)),
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed.is_error, Some(false));
+        assert_eq!(
+            changed.structured_content.as_ref().unwrap()["changed"],
+            true
+        );
+
+        for (tool_name, expected_volume, expected_pan, expected_muted) in
+            [(UNDO_TOOL, 0.0, 0.0, false), (REDO_TOOL, -6.0, 0.25, true)]
+        {
+            let history = client
+                .peer()
+                .call_tool(CallToolRequestParams::new(tool_name))
+                .await
+                .unwrap();
+            assert_eq!(history.is_error, Some(false));
+            let persisted = ProjectStore::load_read_only(&project_path).unwrap();
+            assert_eq!(persisted.tracks()[0].volume_db(), expected_volume);
+            assert_eq!(persisted.tracks()[0].pan(), expected_pan);
+            assert_eq!(persisted.tracks()[0].is_muted(), expected_muted);
+        }
+
+        drop(client);
+        server.cancel().await.unwrap();
     }
 }

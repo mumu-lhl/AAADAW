@@ -192,10 +192,10 @@
 - [x] 通过授权 MCP writer 移动和调整 MIDI clip 长度；拒绝截断现有音符，成功编辑保留稳定 ID 并支持会话 Undo/Redo（[Issue #155](https://github.com/mumu-lhl/AAADAW/issues/155)）。
 - [x] 通过授权 MCP writer 对 MIDI item 的 CC 和 pitch-bend 点做有界 upsert；保留未涉及的事件，写入持久化且可撤销（[Issue #157](https://github.com/mumu-lhl/AAADAW/issues/157)）。
 - [x] 通过只读 MCP 查询工具按轨道/sample-clock 范围读取音量自动化点；有界排序并报告截断（[Issue #163](https://github.com/mumu-lhl/AAADAW/issues/163)）。
-- [ ] 继续评估其他适合 MCP 的无对话框 Action，并为危险操作保留显式授权边界。
+- [x] 审查适合 MCP 的无对话框 Action 范围：纯工程编辑走同一 Action 路径；文件选择器/设备操作不暴露为无交互写入；写权限只由显式 `--write` 会话授权（[MCP 边界说明](docs/mcp.md)）。后续新工具继续按该边界验收。
 - [x] 实现只读资源 `daw://project/structure` 与轨道 MIDI 摘要；轨道/时间图数量受限，摘要返回聚合结果，避免倾倒整个大型工程（[Issue #88](https://github.com/mumu-lhl/AAADAW/issues/88)）。
-- [ ] 写入请求支持事务、参数验证和可理解的错误；录音、破坏性编辑等操作提供明确的用户授权/确认策略。
-- [ ] 为 MCP 增加协议错误、无效 ID、越界输入、事务回滚和并发修改测试；记录本地服务的信任边界。
+- [x] 写入请求支持事务、参数验证和可理解的错误；录音/破坏性写入仅在显式 `--write` 会话可用，该会话开关是清晰的项目级授权边界（不做逐请求弹窗；见 [MCP 授权说明](docs/mcp.md)、[Issue #178](https://github.com/mumu-lhl/AAADAW/issues/178)）。
+- [x] 为 MCP 增加协议客户端/服务请求、无效 ID、越界输入、事务回滚和保存失败恢复测试；记录本地服务信任边界（[Issue #178](https://github.com/mumu-lhl/AAADAW/issues/178)，[MCP 文档](docs/mcp.md)）。
 
 **退出标准**：MCP 客户端可查询工程并通过同一 Action/事务路径修改工程；非法批量请求全部回滚；MCP 查询不会阻塞音频回调。
 
