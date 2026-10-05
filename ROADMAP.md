@@ -201,7 +201,8 @@
 
 ### 7. MVP 集成与发布候选版
 
-- [ ] 完成 Linux/Windows 桌面打包、配置/日志位置、设备选择和首次启动流程。
+- [x] 提供可手动生成的 Linux/Windows x86_64 portable archives，附带构建 manifest、SHA-256 和首次启动文档（[Issue #184](https://github.com/mumu-lhl/AAADAW/issues/184)，[`docs/portable-builds.md`](docs/portable-builds.md)）。
+- [ ] 制作 Linux/Windows 原生安装包，完成签名、升级/卸载和干净机器安装验证；portable archives 不代表已完成此项。
 - [x] 增加无设备依赖的项目验收测试：导入 WAV、编辑与混音、撤销/重做、保存/重开、离线渲染并通过 MCP 查询重开状态（[Issue #180](https://github.com/mumu-lhl/AAADAW/issues/180)）。
 - [ ] 完成端到端验收：新建 → 导入/录音 → 编辑音频/MIDI → 播放/混音 → 保存/重开 → Undo/Redo → MCP 查询/修改。
 - [ ] 增加示例工程、用户文档、已知限制、故障诊断和插件兼容说明。

@@ -1,0 +1,85 @@
+name: Portable desktop archives
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/portable-archives.yml
+      - docs/portable-builds.md
+      - LICENSE-APACHE
+      - LICENSE-MIT
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64 archive
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install audio build headers
+        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
+      - name: Build release executable
+        run: cargo build --release -p aaadaw --features "jack-backend pipewire-backend"
+      - name: Create archive and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="aaadaw-linux-x86_64"
+          mkdir -p "$stage"
+          install -m 0755 target/release/aaadaw "$stage/aaadaw"
+          install -m 0644 LICENSE-MIT LICENSE-APACHE "$stage/"
+          install -m 0644 docs/portable-builds.md "$stage/README-PORTABLE.txt"
+          cat > "$stage/BUILD.txt" <<EOF
+          target=x86_64-unknown-linux-gnu
+          features=jack-backend,pipewire-backend
+          source_commit=${GITHUB_SHA}
+          base_os=Ubuntu 24.04
+          EOF
+          tar -czf "$stage.tar.gz" "$stage"
+          sha256sum "$stage.tar.gz" > "$stage.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaadaw-linux-x86_64
+          path: aaadaw-linux-x86_64.tar.gz*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows x86_64 archive
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release executable
+        run: cargo build --release -p aaadaw --features wasapi-backend
+      - name: Create archive and checksum
+        shell: pwsh
+        run: |
+          $stage = "aaadaw-windows-x86_64"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target/release/aaadaw.exe "$stage/aaadaw.exe"
+          Copy-Item -Path @("LICENSE-MIT", "LICENSE-APACHE") -Destination $stage
+          Copy-Item docs/portable-builds.md "$stage/README-PORTABLE.txt"
+          @"
+          target=x86_64-pc-windows-msvc
+          features=wasapi-backend
+          source_commit=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding utf8NoBOM "$stage/BUILD.txt"
+          Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$stage.zip").Hash.ToLowerInvariant()
+          "$hash  $stage.zip" | Set-Content "$stage.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaadaw-windows-x86_64
+          path: aaadaw-windows-x86_64.zip*
+          if-no-files-found: error
+          retention-days: 14
