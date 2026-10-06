@@ -300,10 +300,10 @@ fn floating_editor_can_close_reopen_and_leave_instrument_audio_running() {
     wait_for_gui_status(&process, 0);
     for expected_status in [1, 1, 0, 0, 1, 0] {
         let open = expected_status == 1;
-        process
+        let sequence = process
             .request_gui(open, 0)
             .expect("GUI request uses its own bounded control field");
-        wait_for_gui_status(&process, expected_status);
+        wait_for_gui_request(&process, sequence, expected_status);
     }
     let events = [midi_event(
         ClapIpcMidiKind::NoteOn,
@@ -350,6 +350,16 @@ fn wait_for_gui_status(process: &ClapInstrumentHelperProcess, expected: u32) {
     while process.gui_status() != expected && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(1));
     }
+    assert_eq!(process.gui_status(), expected);
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_gui_request(process: &ClapInstrumentHelperProcess, sequence: u64, expected: u32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !process.region().gui_request_completed(sequence) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(process.region().gui_request_completed(sequence));
     assert_eq!(process.gui_status(), expected);
 }
 

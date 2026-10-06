@@ -993,6 +993,11 @@ impl ClapIpcRegion {
         self.gui_complete.store(sequence, Ordering::Release);
     }
 
+    /// Returns whether the helper acknowledged this GUI command sequence.
+    pub fn gui_request_completed(&self, sequence: u64) -> bool {
+        self.gui_complete.load(Ordering::Acquire) >= sequence
+    }
+
     pub(crate) fn publish_gui_status(&self, status: u32) {
         self.gui_status.store(status, Ordering::Release);
     }
