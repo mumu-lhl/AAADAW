@@ -320,6 +320,42 @@ mod tests {
         ClapIpcConfig::new(48_000, 16, 8).unwrap()
     }
 
+    fn ready_fake_helper(mode: &str) -> TempPath {
+        let executable = std::env::current_exe().unwrap();
+        let executable = executable.to_string_lossy().replace('\'', "'\\''");
+        fake_helper(&format!(
+            "AAADAW_TEST_HELPER_MAPPING=\"$2\" AAADAW_TEST_HELPER_MODE='{mode}' exec '{executable}' --exact clap_helper_process::tests::fake_helper_child --ignored --nocapture"
+        ))
+    }
+
+    #[test]
+    #[ignore = "spawned by the supervised fake-helper integration tests"]
+    fn fake_helper_child() {
+        let mode = std::env::var("AAADAW_TEST_HELPER_MODE").expect("helper test mode");
+        let mapping_path = std::env::var_os("AAADAW_TEST_HELPER_MAPPING").expect("mapping path");
+        // SAFETY: the parent created the private fixed-size mapping and keeps it alive until this
+        // child exits.
+        let mapping = unsafe { ClapIpcMapping::open(Path::new(&mapping_path)) }.unwrap();
+        let region = mapping.region();
+        match mode.as_str() {
+            "mismatch" => {
+                let mismatch = ClapIpcConfig::new(44_100, 16, 8).unwrap();
+                assert!(!region.accept_handshake(mismatch));
+            }
+            "crash" => {
+                assert!(region.accept_handshake(config()));
+                thread::sleep(Duration::from_millis(50));
+            }
+            "stall" => {
+                assert!(region.accept_handshake(config()));
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                }
+            }
+            _ => panic!("unknown fake helper mode: {mode}"),
+        }
+    }
+
     #[test]
     fn helper_exit_during_startup_is_reported_and_reaped() {
         let helper = fake_helper("exit 23");
@@ -356,5 +392,63 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started_at.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn helper_crash_after_handshake_is_reported_and_reclaims_child_slots() {
+        let helper = ready_fake_helper("crash");
+        let mut process = ClapInstrumentHelperProcess::spawn_with_timeout(
+            &helper,
+            Path::new("unused-plugin.clap"),
+            "test.plugin",
+            config(),
+            None,
+            Duration::from_secs(1),
+        )
+        .expect("fake helper should complete startup");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while process.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(process.try_wait().unwrap().is_some());
+        assert!(process.region().is_faulted());
+    }
+
+    #[test]
+    fn helper_stall_after_handshake_is_detected_and_terminated() {
+        let helper = ready_fake_helper("stall");
+        let mut process = ClapInstrumentHelperProcess::spawn_with_timeout(
+            &helper,
+            Path::new("unused-plugin.clap"),
+            "test.plugin",
+            config(),
+            None,
+            Duration::from_secs(1),
+        )
+        .expect("fake helper should complete startup");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !process.is_stalled(Duration::from_millis(25)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(process.region().is_faulted());
+        assert_eq!(process.region().fault_code(), 5);
+    }
+
+    #[test]
+    fn helper_protocol_mismatch_after_launch_is_reported_before_playback() {
+        let helper = ready_fake_helper("mismatch");
+        let error = ClapInstrumentHelperProcess::spawn_with_timeout(
+            &helper,
+            Path::new("unused-plugin.clap"),
+            "test.plugin",
+            config(),
+            None,
+            Duration::from_secs(1),
+        )
+        .err()
+        .expect("mismatched helper must not complete startup");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("rejected startup"));
     }
 }
