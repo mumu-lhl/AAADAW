@@ -18,7 +18,7 @@ The CLAP specification does not mandate one cross-platform operating-system mess
 - The helper main thread owns the `PluginInstance`, GUI extension, API negotiation, lifecycle calls, CLAP host GUI callbacks, `on_main_thread`, and native event servicing. Linux services the GLib default context and Windows dispatches the helper thread's Win32 messages. GUI errors are reported against that helper instance.
 - Closing the editor hides or destroys the GUI but keeps the plug-in instance and audio worker alive. Reopening creates/shows the same instance's editor again.
 - A native plug-in fault can still terminate its helper and silence that one instrument; unrelated tracks continue. Process isolation is crash containment, not a security sandbox.
-- Linux lifecycle tests use an X11-capable fixture under Xvfb. Windows CI compiles the Win32 host path and checks unsupported-API status without interrupting audio. Wayland-only sessions without X11, macOS, CLAP effects, and embedded child windows remain outside this ticket.
+- Linux lifecycle tests use an X11-capable fixture under Xvfb. That fixture proves create/show/hide/destroy lifecycle and audio continuity; it does not prove interactive event delivery for arbitrary plug-in toolkits. Linux services GLib's default context and CLAP main-thread callbacks, so editors requiring a separate Qt, Xlib, or other toolkit loop are not guaranteed to be interactive. Windows CI compiles the Win32 host path and checks unsupported-API status without interrupting audio. Wayland-only sessions without X11, macOS, CLAP effects, and embedded child windows remain outside this ticket.
 
 ## Sources
 

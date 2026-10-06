@@ -11,8 +11,10 @@ Linux capture).
 
 Install the stable Rust toolchain with `rustfmt` and `clippy`. The default build
 does not enable a device backend. Linux builds also need the GLib development
-package for the isolated CLAP helper's native GUI event loop (`libglib2.0-dev` on
-Debian/Ubuntu):
+package for the isolated CLAP helper's GLib main-context servicing
+(`libglib2.0-dev` on Debian/Ubuntu). This services GLib-integrated plug-in UI
+events and CLAP main-thread callbacks; it is not a universal event pump for
+every X11 toolkit:
 
 ```sh
 cargo run -p aaadaw
