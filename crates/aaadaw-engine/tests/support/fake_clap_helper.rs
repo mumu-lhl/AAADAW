@@ -26,6 +26,9 @@ fn main() {
     let Some(state_output_path) = args.get(9) else {
         std::process::exit(2);
     };
+    let Some(state_input_path) = args.get(8) else {
+        std::process::exit(2);
+    };
     let expected = ClapIpcConfig::new(
         sample_rate.parse().unwrap_or(0),
         block_frames.parse().unwrap_or(0),
@@ -53,6 +56,7 @@ fn main() {
         "test.crash-restart" => crash_first_launch_then_wait(
             region,
             Path::new(entry_path),
+            Path::new(state_input_path),
             Path::new(state_output_path),
         ),
         "test.state-shutdown" => {
@@ -71,12 +75,16 @@ fn main() {
 }
 
 fn write_state(path: &Path, state: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, encode_state(state))
+}
+
+fn encode_state(state: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(13 + state.len());
     bytes.extend_from_slice(b"AAST");
     bytes.push(1);
     bytes.extend_from_slice(&(state.len() as u64).to_le_bytes());
     bytes.extend_from_slice(state);
-    std::fs::write(path, bytes)
+    bytes
 }
 
 fn crash_while_owning_request(region: &aaadaw_engine::ClapIpcRegion) -> ! {
@@ -93,16 +101,20 @@ fn crash_while_owning_request(region: &aaadaw_engine::ClapIpcRegion) -> ! {
 fn crash_first_launch_then_wait(
     region: &aaadaw_engine::ClapIpcRegion,
     marker_path: &Path,
+    state_input_path: &Path,
     state_output_path: &Path,
 ) -> ! {
     if marker_path.exists() {
         let _ = std::fs::remove_file(marker_path);
-        let no_state = [b"AAST".as_slice(), &[0], &0_u64.to_le_bytes()].concat();
-        if std::fs::write(state_output_path, no_state).is_err() {
+        let expected_state = encode_state(b"state before restart");
+        if std::fs::read(state_input_path).ok().as_deref() != Some(expected_state.as_slice()) {
+            std::process::exit(8);
+        }
+        wait_for_shutdown(region, state_output_path, b"state after restart")
+    } else {
+        if write_state(state_output_path, b"state before restart").is_err() {
             std::process::exit(7);
         }
-        wait_for_shutdown(region)
-    } else {
         if std::fs::write(marker_path, b"started").is_err() {
             std::process::exit(7);
         }
@@ -110,9 +122,16 @@ fn crash_first_launch_then_wait(
     }
 }
 
-fn wait_for_shutdown(region: &aaadaw_engine::ClapIpcRegion) -> ! {
+fn wait_for_shutdown(
+    region: &aaadaw_engine::ClapIpcRegion,
+    state_output_path: &Path,
+    state: &[u8],
+) -> ! {
     while !region.is_shutdown() {
         thread::sleep(Duration::from_millis(1));
+    }
+    if write_state(state_output_path, state).is_err() {
+        std::process::exit(7);
     }
     std::process::exit(0)
 }

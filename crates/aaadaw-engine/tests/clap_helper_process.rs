@@ -25,6 +25,14 @@ fn spawn_with_entry(plugin_id: &str, entry_path: &Path) -> io::Result<ClapInstru
     ClapInstrumentHelperProcess::spawn(helper_path(), entry_path, plugin_id, config(), None)
 }
 
+fn spawn_with_entry_and_state(
+    plugin_id: &str,
+    entry_path: &Path,
+    state: &[u8],
+) -> io::Result<ClapInstrumentHelperProcess> {
+    ClapInstrumentHelperProcess::spawn(helper_path(), entry_path, plugin_id, config(), Some(state))
+}
+
 #[test]
 fn helper_protocol_mismatch_after_launch_prevents_playback() {
     let error = spawn("test.mismatch")
@@ -51,8 +59,9 @@ fn helper_stall_after_handshake_is_detected_and_terminated() {
 fn helper_crash_and_restart_recover_child_owned_slots() {
     let test_files = TempDir::new().unwrap();
     let marker_path = test_files.path().join("helper-started");
-    let mut process = spawn_with_entry("test.crash-restart", &marker_path)
-        .expect("fake helper should complete startup");
+    let mut process =
+        spawn_with_entry_and_state("test.crash-restart", &marker_path, b"initial state")
+            .expect("fake helper should complete startup");
     process
         .region()
         .try_submit(1, 1, 0, &[], 8)
@@ -83,9 +92,15 @@ fn helper_crash_and_restart_recover_child_owned_slots() {
         Err(ClapIpcSubmitError::SlotsFull)
     );
 
-    process
+    let status = process
         .shutdown()
-        .expect("restarted helper should shut down cleanly");
+        .expect("restarted helper should shut down cleanly")
+        .expect("shutdown should return the child status");
+    assert!(status.success());
+    assert_eq!(
+        process.take_saved_state().unwrap(),
+        Some(b"state after restart".to_vec())
+    );
 }
 
 #[test]
