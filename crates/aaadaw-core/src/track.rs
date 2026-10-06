@@ -11,6 +11,11 @@ impl TrackId {
         Self(value)
     }
 
+    /// Reconstructs a nonzero stable track identifier from a serialized or IPC value.
+    pub fn from_value(value: u64) -> Option<Self> {
+        (value != 0).then_some(Self(value))
+    }
+
     /// Returns the stable numeric value of this identifier.
     pub fn value(self) -> u64 {
         self.0

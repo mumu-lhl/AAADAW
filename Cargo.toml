@@ -6,6 +6,7 @@ members = [
     "crates/aaadaw-media",
     "crates/aaadaw-app",
     "crates/aaadaw",
+    "tests/fixtures/clap-synth",
 ]
 resolver = "3"
 

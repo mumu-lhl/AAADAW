@@ -14,8 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
       - name: Check workspace
         run: cargo check --workspace --all-targets
+      - name: Test supervised CLAP helper process
+        run: cargo nextest run -p aaadaw-engine --test clap_helper_process
       - name: Check Windows WASAPI backend
         run: cargo check --workspace --all-targets --features aaadaw/wasapi-backend
       - name: Test WASAPI device enumeration error state

@@ -21,6 +21,19 @@ impl App {
                 None => errors.push(format!("CLAP instrument owner {instance_id} is missing")),
             }
         }
+        for (instance_id, (track_id, plugin_id)) in &self.clap_instrument_helper_targets {
+            match self.clap_instrument_helper_owners.get_mut(instance_id) {
+                Some(owner) => match owner.save_plugin_state() {
+                    Ok(Some(state)) => instrument_states.push((*track_id, state)),
+                    Ok(None) => {}
+                    Err(error) => errors.push(format!(
+                        "Could not save isolated CLAP instrument state for {}: {error}",
+                        plugin_id
+                    )),
+                },
+                None => errors.push(format!("CLAP helper owner {instance_id} is missing")),
+            }
+        }
 
         let mut effect_states = HashMap::new();
         if let (Some(gui), Some((track_id, chain_index, plugin_id))) = (

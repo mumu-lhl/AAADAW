@@ -19,9 +19,17 @@ clack-extensions = { version = "0.2.0", default-features = false, features = ["a
 jack = { version = "0.13.5", optional = true }
 pipewire = { version = "0.10", optional = true }
 rtrb = "0.4.0"
+memmap2 = "0.9.9"
+tempfile = "3.27.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.18.2", optional = true }
+
+[[bin]]
+name = "aaadaw-engine-test-helper"
+path = "tests/support/fake_clap_helper.rs"
+test = false
+bench = false
 
 [dev-dependencies]
 clack-common = "0.2.0"

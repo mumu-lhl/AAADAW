@@ -218,7 +218,7 @@
 ### 插件隔离与兼容性
 
 - [x] 通过 AAADAW helper 子进程加载 CLAP entry；版本化请求、输入/输出上限和超时保护隔离扫描崩溃，缓存失败项并由显式重扫重试（[Issue #182](https://github.com/mumu-lhl/AAADAW/issues/182)，[ADR 0005](docs/adr/0005-clap-midi-instrument-path.md)）。
-- [ ] 设计并实现 `aaadaw-plugin-host`、共享内存音频/MIDI 缓冲和控制 IPC；验证插件崩溃、卡死、重启和版本不匹配处理。
+- [ ] 完成单个 CLAP 乐器的隔离播放：接入共享内存音频/MIDI 协议与 helper 进程，补齐崩溃、卡死、重启、状态往返和版本不匹配验收（[Issue #200](https://github.com/mumu-lhl/AAADAW/issues/200)；当前协议基础与未完成项见[`研究记录`](docs/research/2026-10-05-clap-instrument-helper-process.md)）。
 - [ ] 实现隔离插件的独立原生 GUI 窗口；保留高信任插件的可选进程内模式并显式提示风险。
 - [ ] 在许可审查通过后，通过 `cxx` 增加 VST3 桥接；VST3 SDK/分发合规是独立发布门槛。
 

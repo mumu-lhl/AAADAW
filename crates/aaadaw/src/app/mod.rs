@@ -22,7 +22,8 @@ use aaadaw_core::{
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
-    ClapEffectOwner, ClapInstrumentOwner, ClapParameterAutomationReceiver, ClapParameterSender,
+    ClapEffectOwner, ClapInstrumentHelperProcess, ClapInstrumentOwner,
+    ClapParameterAutomationReceiver, ClapParameterSender,
 };
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
@@ -84,6 +85,10 @@ struct ClapEffectOwners(HashMap<u64, ClapEffectOwner>);
 struct ClapInstrumentOwners(HashMap<u64, ClapInstrumentOwner>);
 
 #[cfg(feature = "audio-device")]
+#[derive(Default)]
+struct ClapInstrumentHelperOwners(HashMap<u64, ClapInstrumentHelperProcess>);
+
+#[cfg(feature = "audio-device")]
 impl Deref for ClapEffectOwners {
     type Target = HashMap<u64, ClapEffectOwner>;
 
@@ -129,6 +134,32 @@ impl Drop for ClapInstrumentOwners {
     fn drop(&mut self) {
         for owner in self.0.values_mut() {
             let _ = owner.try_deactivate_unused();
+        }
+    }
+}
+
+#[cfg(feature = "audio-device")]
+impl Deref for ClapInstrumentHelperOwners {
+    type Target = HashMap<u64, ClapInstrumentHelperProcess>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(feature = "audio-device")]
+impl DerefMut for ClapInstrumentHelperOwners {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(feature = "audio-device")]
+impl Drop for ClapInstrumentHelperOwners {
+    fn drop(&mut self) {
+        for owner in self.0.values_mut() {
+            let _ = owner.shutdown();
+            let _ = owner.take_saved_state();
         }
     }
 }
@@ -363,7 +394,11 @@ struct App {
     #[cfg(feature = "audio-device")]
     clap_instrument_owners: ClapInstrumentOwners,
     #[cfg(feature = "audio-device")]
+    clap_instrument_helper_owners: ClapInstrumentHelperOwners,
+    #[cfg(feature = "audio-device")]
     clap_instrument_targets: HashMap<u64, TrackId>,
+    #[cfg(feature = "audio-device")]
+    clap_instrument_helper_targets: HashMap<u64, (TrackId, String)>,
     #[cfg(feature = "audio-device")]
     clap_plugin_warnings: Vec<String>,
 }
@@ -3583,6 +3618,17 @@ impl App {
                 }
             }
         }
+        let helper_ids = self
+            .clap_instrument_helper_owners
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        if let Some(cleanup_error) = self.discard_unused_instrument_owners(&helper_ids) {
+            shutdown_error = Some(match shutdown_error.take() {
+                Some(error) => format!("{error}; {cleanup_error}"),
+                None => cleanup_error,
+            });
+        }
         self.playback_playing = false;
         self.playback_paused = false;
         self.playhead_sample = 0;
@@ -3775,6 +3821,15 @@ impl App {
             None
         };
         self.playback = Some(playback);
+        let retired_helper_ids = self
+            .clap_instrument_helper_owners
+            .keys()
+            .copied()
+            .filter(|id| !instrument_owner_ids.contains(id))
+            .collect::<Vec<_>>();
+        if let Some(error) = self.discard_unused_instrument_owners(&retired_helper_ids) {
+            self.clap_plugin_warnings.push(error);
+        }
         self.reset_track_meters();
         self.playback_graph_dirty = false;
         self.playback_playing = start_when_ready && play_error.is_none();
@@ -3817,6 +3872,41 @@ impl App {
             };
         self.deactivate_stopped_instruments(retired_instruments);
         self.deactivate_stopped_effects(retired_effects);
+        let mut new_helper_failures = Vec::new();
+        for (instance_id, owner) in self.clap_instrument_helper_owners.iter_mut() {
+            let _ = owner.try_wait();
+            owner.is_stalled(Duration::from_secs(5));
+            let faulted = owner.region().is_faulted();
+            let underruns = owner.region().underrun_count();
+            if (faulted || underruns > 0)
+                && !self
+                    .clap_plugin_warnings
+                    .iter()
+                    .any(|warning| warning.contains(&format!("helper {instance_id}")))
+            {
+                let (track_id, plugin_id) = self
+                    .clap_instrument_helper_targets
+                    .get(instance_id)
+                    .map(|(track_id, plugin_id)| (format!("{track_id:?}"), plugin_id.as_str()))
+                    .unwrap_or_else(|| ("unknown track".to_owned(), "unknown plugin"));
+                new_helper_failures.push(if faulted {
+                    format!(
+                        "Isolated CLAP instrument {plugin_id} on {track_id} failed (helper {instance_id}, fault {}); that track is silent",
+                        owner.region().fault_code()
+                    )
+                } else {
+                    format!(
+                        "Isolated CLAP instrument {plugin_id} on {track_id} missed {underruns} audio blocks (helper {instance_id}); late blocks are silent"
+                    )
+                });
+            }
+        }
+        if !new_helper_failures.is_empty() {
+            self.clap_plugin_warnings
+                .extend(new_helper_failures.iter().cloned());
+            self.status.push_str("; ");
+            self.status.push_str(&new_helper_failures.join("; "));
+        }
         if output_device_lost {
             self.handle_playback_device_lost();
         }

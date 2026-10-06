@@ -56,8 +56,10 @@ dependencies = [
  "clack-plugin",
  "cpal",
  "jack",
+ "memmap2",
  "pipewire",
  "rtrb",
+ "tempfile",
 ]
 
 [[package]]
@@ -80,6 +82,15 @@ dependencies = [
  "rusqlite",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "aaadaw-test-clap-plugin"
+version = "0.1.0"
+dependencies = [
+ "clack-common",
+ "clack-extensions",
+ "clack-plugin",
 ]
 
 [[package]]

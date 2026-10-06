@@ -1,6 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
-    AudioItemStream, AudioRenderGraph, AudioStreamPosition, MasterOutputCeiling,
+    AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapInstrumentHelperProcess,
+    ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument,
     audio_monitor_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -16,7 +17,8 @@ thread_local! {
 static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
 // This integration-test executable contains one test. Tracking is enabled only
-// around render calls on the current test thread, excluding graph and harness setup.
+// around render calls and the callback-side IPC methods on the current test
+// thread, excluding graph and harness setup.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         count_allocation();
@@ -152,6 +154,24 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         128,
     )
     .expect("stream should match the audio item");
+    let isolated_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
+    let mut isolated_helper = ClapInstrumentHelperProcess::spawn(
+        std::path::Path::new(env!("CARGO_BIN_EXE_aaadaw-engine-test-helper")),
+        std::path::Path::new("unused-test-plugin.clap"),
+        "test.synth",
+        isolated_config,
+        None,
+    )
+    .expect("synthetic helper should complete its handshake");
+    let mut isolated_routes = vec![TrackIsolatedInstrument::new(
+        track_id,
+        isolated_helper.instance_id(),
+        isolated_helper.audio_port(),
+        isolated_config,
+    )];
+    graph
+        .install_isolated_instrument_ports(&project, &mut isolated_routes)
+        .expect("isolated route should be prepared before playback");
     let (mut monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(256);
     graph.install_input_monitor(monitor_consumer, monitor_gate);
     assert!(
@@ -164,9 +184,20 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
     master.set_ceiling(MasterOutputCeiling::new(-12).expect("ceiling is supported"));
-    graph.transport_mut().start();
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
+    graph.transport_mut().start();
+
+    let ipc_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
+    let ipc_mapping = ClapIpcMapping::create(ipc_config).expect("IPC mapping should be created");
+    ipc_mapping.region().accept_handshake(ipc_config);
+    let ipc_port = ipc_mapping.audio_port();
+    let mut ipc_reader = ipc_port
+        .reader(1, 0, 0)
+        .expect("reader should match the IPC block size");
+    let mut ipc_sequence = 0;
+    let mut ipc_start_sample = 0;
+    let mut ipc_output = [[0.0; 2]; 64];
 
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
@@ -180,6 +211,35 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             .expect("preallocated MIDI and audio callback block should render");
         midi_events_seen += stats.midi_event_count;
         last_stats = Some(stats);
+    }
+    // Exercise the same bounded port methods used by an audio callback. The test
+    // helper completes requests inline; process and mapping setup stay outside the
+    // callback contract, while submit and read stay inside it.
+    for callback_frames in [7, 23, 16, 64].into_iter().cycle().take(256) {
+        let required_end = ipc_reader
+            .next_sample()
+            .saturating_add(callback_frames as u64);
+        while ipc_start_sample < required_end {
+            ipc_port
+                .try_submit(1, ipc_sequence, ipc_start_sample, &[], 16)
+                .expect("bounded callback request should fit");
+            let request = ipc_mapping
+                .region()
+                .try_claim_request()
+                .expect("test helper should claim the request");
+            assert!(request.process(|request| {
+                request.audio.fill([0.125, -0.125]);
+                true
+            }));
+            ipc_sequence += 1;
+            ipc_start_sample += 16;
+        }
+        assert!(ipc_reader.read_into(&mut ipc_output[..callback_frames]));
+        assert!(
+            ipc_output[..callback_frames]
+                .iter()
+                .all(|frame| *frame == [0.125, -0.125])
+        );
     }
     graph.transport_mut().stop();
     for _ in 0..128 {
@@ -197,4 +257,11 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let stats = last_stats.expect("render loop contains at least one block");
     assert!(stats.master_guarded_samples > 0);
     assert!(midi_events_seen > 0);
+    drop(graph);
+    isolated_helper
+        .shutdown()
+        .expect("isolated helper should stop cleanly");
+    isolated_helper
+        .take_saved_state()
+        .expect("helper state should be retrievable after shutdown");
 }

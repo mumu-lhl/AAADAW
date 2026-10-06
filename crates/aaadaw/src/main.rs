@@ -9,9 +9,9 @@ fn main() -> std::process::ExitCode {
     if let Some(exit_code) = run_information_command(&args) {
         return exit_code;
     }
-    let helper_mode = args
-        .first()
-        .is_some_and(|argument| argument == clap_scanner::SCAN_COMMAND);
+    let helper_mode = args.first().is_some_and(|argument| {
+        argument == clap_scanner::SCAN_COMMAND || argument == CLAP_INSTRUMENT_HELPER_COMMAND
+    });
     let _log_guard = (!helper_mode).then(logging::initialize);
     match run(&args) {
         Ok(()) => {
@@ -53,6 +53,46 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
         }
         return clap_scanner::run_helper(&args[1], &args[2]);
     }
+    if args
+        .first()
+        .is_some_and(|argument| argument == CLAP_INSTRUMENT_HELPER_COMMAND)
+    {
+        if args.len() != 9 {
+            return Err("invalid internal CLAP instrument helper invocation".into());
+        }
+        let plugin_id = args[3]
+            .to_str()
+            .ok_or("CLAP plugin ID must be valid Unicode")?;
+        let sample_rate = args[4]
+            .to_str()
+            .ok_or("CLAP sample rate must be valid Unicode")?
+            .parse::<u32>()?;
+        let max_block_frames = args[5]
+            .to_str()
+            .ok_or("CLAP block size must be valid Unicode")?
+            .parse::<usize>()?;
+        let event_capacity = args[6]
+            .to_str()
+            .ok_or("CLAP event capacity must be valid Unicode")?
+            .parse::<usize>()?;
+        let config =
+            aaadaw_engine::ClapIpcConfig::new(sample_rate, max_block_frames, event_capacity)
+                .ok_or("invalid CLAP helper configuration")?;
+        // SAFETY: this hidden command is launched by the host with its user-selected plugin and
+        // the private fixed-size IPC mapping created for that helper.
+        unsafe {
+            aaadaw_engine::run_clap_ipc_instrument_helper(
+                std::path::Path::new(&args[1]),
+                std::path::Path::new(&args[2]),
+                plugin_id,
+                config,
+                std::path::Path::new(&args[7]),
+                std::path::Path::new(&args[8]),
+            )
+        }
+        .map_err(std::io::Error::other)?;
+        return Ok(());
+    }
     let args = args
         .iter()
         .map(|argument| {
@@ -78,3 +118,5 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
     app::run()?;
     Ok(())
 }
+
+const CLAP_INSTRUMENT_HELPER_COMMAND: &str = "--clap-instrument-helper";

@@ -1,0 +1,14 @@
+[package]
+name = "aaadaw-test-clap-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clack-common = "0.2.0"
+clack-extensions = { version = "0.2.0", default-features = false, features = ["audio-ports", "clack-plugin", "note-ports", "state"] }
+clack-plugin = "0.2.0"
