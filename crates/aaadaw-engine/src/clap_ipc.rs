@@ -838,25 +838,39 @@ unsafe impl Sync for ClapIpcRegion {}
 
 impl ClapIpcRegion {
     pub fn new(config: ClapIpcConfig) -> Option<Box<Self>> {
-        config.validate().then(|| {
-            Box::new(Self {
-                config,
-                state: AtomicU32::new(REGION_INITIALIZING),
-                shutdown: AtomicBool::new(false),
-                fault_code: AtomicU32::new(0),
-                next_slot: AtomicU32::new(0),
-                producer_busy: AtomicBool::new(false),
-                helper_busy: AtomicBool::new(false),
-                active_slot: AtomicU32::new(NO_ACTIVE_SLOT),
-                underruns: AtomicU64::new(0),
-                helper_heartbeat: AtomicU64::new(0),
-                state_save_request: AtomicU64::new(0),
-                state_save_complete: AtomicU64::new(0),
-                state_save_status: AtomicU32::new(0),
-                audio_worker_paused: AtomicBool::new(false),
-                slots: std::array::from_fn(|_| ClapIpcSlot::new()),
-            })
-        })
+        if !config.validate() {
+            return None;
+        }
+
+        // Keep the large fixed slot array on the heap from the first write. Constructing `Self`
+        // as a temporary before `Box::new` can exceed the small default Windows test-thread stack.
+        let mut region = Box::<Self>::new_uninit();
+        let region_ptr = region.as_mut_ptr();
+        // SAFETY: every field is initialized exactly once before `assume_init`; the slot array is
+        // written element-by-element so no full-size array temporary is formed on the stack.
+        unsafe {
+            ptr::addr_of_mut!((*region_ptr).config).write(config);
+            ptr::addr_of_mut!((*region_ptr).state).write(AtomicU32::new(REGION_INITIALIZING));
+            ptr::addr_of_mut!((*region_ptr).shutdown).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region_ptr).fault_code).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region_ptr).next_slot).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region_ptr).producer_busy).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region_ptr).helper_busy).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region_ptr).active_slot).write(AtomicU32::new(NO_ACTIVE_SLOT));
+            ptr::addr_of_mut!((*region_ptr).underruns).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).helper_heartbeat).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).state_save_request).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).state_save_complete).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).state_save_status).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region_ptr).audio_worker_paused).write(AtomicBool::new(false));
+
+            let slots = ptr::addr_of_mut!((*region_ptr).slots).cast::<ClapIpcSlot>();
+            for index in 0..CLAP_IPC_SLOT_COUNT {
+                slots.add(index).write(ClapIpcSlot::new());
+            }
+
+            Some(region.assume_init())
+        }
     }
 
     pub fn config(&self) -> ClapIpcConfig {
@@ -1336,6 +1350,18 @@ pub enum ClapIpcSubmitError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_initialization_fits_in_a_one_megabyte_thread_stack() {
+        let thread = thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
+                assert!(ClapIpcRegion::new(config).is_some());
+            })
+            .unwrap();
+        thread.join().unwrap();
+    }
 
     fn region() -> Box<ClapIpcRegion> {
         let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
