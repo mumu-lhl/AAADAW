@@ -311,7 +311,11 @@ mod tests {
 
     fn fake_helper(contents: &str) -> TempPath {
         let helper = NamedTempFile::new().unwrap();
-        fs::write(helper.path(), format!("#!/bin/sh\n{contents}\n")).unwrap();
+        fs::write(
+            helper.path(),
+            format!("#!/bin/sh\nulimit -c 0\n{contents}\n"),
+        )
+        .unwrap();
         fs::set_permissions(helper.path(), fs::Permissions::from_mode(0o700)).unwrap();
         helper.into_temp_path()
     }
@@ -344,7 +348,15 @@ mod tests {
             }
             "crash" => {
                 assert!(region.accept_handshake(config()));
-                thread::sleep(Duration::from_millis(50));
+                loop {
+                    if let Some(request) = region.try_claim_request() {
+                        // Leave the request child-owned to verify the supervisor recovers it after
+                        // the helper crashes while processing.
+                        std::mem::forget(request);
+                        std::process::abort();
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
             }
             "stall" => {
                 assert!(region.accept_handshake(config()));
@@ -406,12 +418,34 @@ mod tests {
             Duration::from_secs(1),
         )
         .expect("fake helper should complete startup");
+        process
+            .region()
+            .try_submit(1, 1, 0, &[], 8)
+            .expect("helper should receive a request before crashing");
         let deadline = Instant::now() + Duration::from_secs(1);
-        while process.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        let mut exit_status = None;
+        while exit_status.is_none() && Instant::now() < deadline {
+            exit_status = process.try_wait().unwrap();
             thread::sleep(Duration::from_millis(5));
         }
-        assert!(process.try_wait().unwrap().is_some());
+        assert!(exit_status.is_some());
+        assert!(
+            !exit_status.unwrap().success(),
+            "helper must exit abnormally"
+        );
         assert!(process.region().is_faulted());
+        process.mapping.region().begin_startup();
+        assert!(process.mapping.region().accept_handshake(config()));
+        for sequence in 2..=5 {
+            process
+                .region()
+                .try_submit(1, sequence, sequence * 8, &[], 8)
+                .expect("confirmed helper exit must recover every child-owned slot");
+        }
+        assert_eq!(
+            process.region().try_submit(1, 6, 48, &[], 8),
+            Err(crate::ClapIpcSubmitError::SlotsFull)
+        );
     }
 
     #[test]
