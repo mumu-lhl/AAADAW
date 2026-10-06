@@ -142,10 +142,9 @@ fn process_synthetic_instrument(region: &aaadaw_engine::ClapIpcRegion, state_out
                     {
                         if event.kind == ClapIpcMidiKind::NoteOn as u8 {
                             active = true;
-                        } else if event.kind == ClapIpcMidiKind::NoteOff as u8 {
-                            active = false;
-                        } else if event.kind == ClapIpcMidiKind::ControllerChange as u8
-                            && matches!(event.controller, 120 | 123)
+                        } else if event.kind == ClapIpcMidiKind::NoteOff as u8
+                            || (event.kind == ClapIpcMidiKind::ControllerChange as u8
+                                && matches!(event.controller, 120 | 123))
                         {
                             active = false;
                         }
