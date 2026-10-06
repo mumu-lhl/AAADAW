@@ -39,6 +39,24 @@ impl ClapInstrumentHelperProcess {
         config: ClapIpcConfig,
         state: Option<&[u8]>,
     ) -> io::Result<Self> {
+        Self::spawn_with_timeout(
+            executable,
+            entry_path,
+            plugin_id,
+            config,
+            state,
+            STARTUP_TIMEOUT,
+        )
+    }
+
+    fn spawn_with_timeout(
+        executable: &Path,
+        entry_path: &Path,
+        plugin_id: &str,
+        config: ClapIpcConfig,
+        state: Option<&[u8]>,
+        startup_timeout: Duration,
+    ) -> io::Result<Self> {
         let mapping = ClapIpcMapping::create(config)?;
         let state_input = NamedTempFile::new()?.into_temp_path();
         write_helper_state(&state_input, state)?;
@@ -70,7 +88,7 @@ impl ClapInstrumentHelperProcess {
             observed_heartbeat: 0,
             heartbeat_changed_at: Instant::now(),
         };
-        if let Err(error) = process.wait_until_ready() {
+        if let Err(error) = process.wait_until_ready(startup_timeout) {
             process.terminate_child();
             return Err(error);
         }
@@ -158,7 +176,7 @@ impl ClapInstrumentHelperProcess {
         self.child = Some(child);
         self.observed_heartbeat = self.mapping.region().helper_heartbeat();
         self.heartbeat_changed_at = Instant::now();
-        if let Err(error) = self.wait_until_ready() {
+        if let Err(error) = self.wait_until_ready(STARTUP_TIMEOUT) {
             self.terminate_child();
             if !self.mapping.region().is_faulted() {
                 self.mapping.region().mark_faulted(7);
@@ -208,8 +226,8 @@ impl ClapInstrumentHelperProcess {
         }
     }
 
-    fn wait_until_ready(&mut self) -> io::Result<()> {
-        let deadline = Instant::now() + STARTUP_TIMEOUT;
+    fn wait_until_ready(&mut self, timeout: Duration) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
         loop {
             if self.mapping.region().is_ready() {
                 return Ok(());
@@ -277,5 +295,61 @@ fn spawn_helper(
 impl Drop for ClapInstrumentHelperProcess {
     fn drop(&mut self) {
         self.terminate_child();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn fake_helper(contents: &str) -> TempPath {
+        let helper = NamedTempFile::new().unwrap();
+        fs::write(helper.path(), format!("#!/bin/sh\n{contents}\n")).unwrap();
+        fs::set_permissions(helper.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        helper.into_temp_path()
+    }
+
+    fn config() -> ClapIpcConfig {
+        ClapIpcConfig::new(48_000, 16, 8).unwrap()
+    }
+
+    #[test]
+    fn helper_exit_during_startup_is_reported_and_reaped() {
+        let helper = fake_helper("exit 23");
+        let error = ClapInstrumentHelperProcess::spawn_with_timeout(
+            &helper,
+            Path::new("unused-plugin.clap"),
+            "test.plugin",
+            config(),
+            None,
+            Duration::from_secs(1),
+        )
+        .err()
+        .expect("fake helper must exit before the startup handshake");
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(error.to_string().contains("exited during startup"));
+        assert!(error.to_string().contains("23"));
+    }
+
+    #[test]
+    fn helper_startup_stall_times_out_and_terminates_child() {
+        let helper = fake_helper("exec sleep 5");
+        let started_at = Instant::now();
+        let error = ClapInstrumentHelperProcess::spawn_with_timeout(
+            &helper,
+            Path::new("unused-plugin.clap"),
+            "test.plugin",
+            config(),
+            None,
+            Duration::from_millis(25),
+        )
+        .err()
+        .expect("fake helper must time out before the startup handshake");
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started_at.elapsed() < Duration::from_secs(1));
     }
 }
