@@ -1,10 +1,13 @@
 //! Control-thread ownership for one supervised CLAP instrument helper process.
 
-use crate::clap_ipc::{clear_helper_state, read_saved_helper_state, write_helper_state};
+use crate::clap_ipc::{
+    clear_helper_state, read_helper_state, read_saved_helper_state, write_helper_state,
+};
 use crate::{ClapIpcAudioPort, ClapIpcConfig, ClapIpcMapping, ClapIpcRegion};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, TempPath};
@@ -12,6 +15,8 @@ use tempfile::{NamedTempFile, TempPath};
 const HELPER_COMMAND: &str = "--clap-instrument-helper";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const STATE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
+static NEXT_HELPER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 enum SavedStateCache {
     Unread,
@@ -24,6 +29,7 @@ enum SavedStateCache {
 /// Create, inspect, and stop this value from the control thread. Its mapping methods are bounded
 /// and callback-safe; process management methods are not.
 pub struct ClapInstrumentHelperProcess {
+    instance_id: u64,
     mapping: ClapIpcMapping,
     child: Option<Child>,
     executable: PathBuf,
@@ -84,6 +90,7 @@ impl ClapInstrumentHelperProcess {
             &state_output,
         )?;
         let mut process = Self {
+            instance_id: NEXT_HELPER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
             mapping,
             child: Some(child),
             executable: executable.to_path_buf(),
@@ -101,6 +108,14 @@ impl ClapInstrumentHelperProcess {
             return Err(error);
         }
         Ok(process)
+    }
+
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
+    pub fn config(&self) -> ClapIpcConfig {
+        self.config
     }
 
     /// Returns the shared region for bounded callback-side submission and response reads.
@@ -221,6 +236,46 @@ impl ClapInstrumentHelperProcess {
         Ok(state)
     }
 
+    /// Requests a state snapshot while the helper audio worker is paused between process blocks.
+    pub fn save_plugin_state(&mut self) -> io::Result<Option<Vec<u8>>> {
+        if let Some(child) = self.child.as_mut()
+            && child.try_wait()?.is_none()
+        {
+            let request = self.mapping.region().request_state_save().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "CLAP state save is already pending",
+                )
+            })?;
+            let deadline = Instant::now() + STATE_SAVE_TIMEOUT;
+            loop {
+                if self.mapping.region().state_save_is_complete(request) {
+                    if !self.mapping.region().state_save_succeeded() {
+                        return Err(io::Error::other("CLAP helper could not save plugin state"));
+                    }
+                    let state = read_helper_state(&self.state_output)?;
+                    write_helper_state(&self.state_input, state.as_deref())?;
+                    clear_helper_state(&self.state_output)?;
+                    return Ok(state);
+                }
+                if child.try_wait()?.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "CLAP helper exited during state save",
+                    ));
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "CLAP helper state save timed out",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        self.take_saved_state()
+    }
+
     /// Signals orderly shutdown, then reaps or terminates the helper on this control thread.
     /// Call [`Self::take_saved_state`] afterward to retrieve state written during shutdown.
     pub fn shutdown(&mut self) -> io::Result<Option<ExitStatus>> {
@@ -253,13 +308,13 @@ impl ClapInstrumentHelperProcess {
                 return Ok(());
             }
             if self.mapping.region().is_faulted() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "CLAP helper rejected startup with fault code {}",
-                        self.mapping.region().fault_code()
-                    ),
-                ));
+                let fault_code = self.mapping.region().fault_code();
+                let message = if fault_code == 3 {
+                    "CLAP helper rejected startup because saved plugin state restore failed (fault code 3)".to_owned()
+                } else {
+                    format!("CLAP helper rejected startup with fault code {fault_code}")
+                };
+                return Err(io::Error::new(io::ErrorKind::InvalidData, message));
             }
             if let Some(status) = self.try_wait()? {
                 return Err(io::Error::other(format!(

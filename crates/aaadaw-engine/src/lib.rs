@@ -1151,6 +1151,37 @@ pub struct TrackInstrumentProcessor {
     processor: ClapInstrumentProcessor,
 }
 
+/// A supervised helper port prepared for one project track.
+pub struct TrackIsolatedInstrument {
+    track_id: TrackId,
+    instance_id: u64,
+    port: ClapIpcAudioPort,
+    config: ClapIpcConfig,
+}
+
+impl TrackIsolatedInstrument {
+    pub fn new(
+        track_id: TrackId,
+        instance_id: u64,
+        port: ClapIpcAudioPort,
+        config: ClapIpcConfig,
+    ) -> Self {
+        Self {
+            track_id,
+            instance_id,
+            port,
+            config,
+        }
+    }
+
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+    pub fn track_id(&self) -> TrackId {
+        self.track_id
+    }
+}
+
 /// A prepared audio effect assigned to one ordered slot in a track's FX chain.
 pub struct TrackFxProcessor {
     track_id: TrackId,
@@ -1286,6 +1317,15 @@ struct InstrumentRoute {
     track_index: usize,
     instance_id: u64,
     processor: Option<ClapInstrumentProcessor>,
+    isolated_port: Option<ClapIpcAudioPort>,
+    isolated_reader: Option<ClapIpcAudioReader>,
+    isolated_generation: u64,
+    isolated_next_sequence: u64,
+    isolated_next_start_sample: u64,
+    isolated_config: Option<ClapIpcConfig>,
+    isolated_events: Vec<ClapIpcMidiEvent>,
+    isolated_schedule_scratch: Vec<Option<ScheduledMidiEvent>>,
+    isolated_faulted: bool,
     stopped_processor: Option<StoppedClapInstrumentProcessor>,
     midi_events: Vec<ScheduledMidiEvent>,
     audio: Vec<[f32; 2]>,
@@ -1302,6 +1342,122 @@ struct FxRoute {
 }
 
 type TrackEffectBuffers = Vec<Option<Vec<[f32; 2]>>>;
+
+fn submit_isolated_block(
+    midi_plan: &MidiEventPlan,
+    route: &mut InstrumentRoute,
+    chase: bool,
+) -> bool {
+    let Some(config) = route.isolated_config else {
+        fault_isolated_route(route);
+        return false;
+    };
+    let midi_scratch = route.isolated_schedule_scratch.as_mut_slice();
+    let frame_count = config.max_block_frames as usize;
+    let mut count = 0;
+    if chase {
+        let Ok(controllers) =
+            midi_plan.active_controllers_at(route.isolated_next_start_sample, midi_scratch)
+        else {
+            fault_isolated_route(route);
+            return false;
+        };
+        let Ok(pitch_bends) = midi_plan.active_pitch_bends_at(
+            route.isolated_next_start_sample,
+            &mut midi_scratch[controllers..],
+        ) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        let Ok(notes) = midi_plan.active_notes_at(
+            route.isolated_next_start_sample,
+            &mut midi_scratch[controllers + pitch_bends..],
+        ) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        count = controllers + pitch_bends + notes;
+    }
+    let Ok(scheduled) = midi_plan.events_for_block(
+        route.isolated_next_start_sample,
+        frame_count,
+        &mut midi_scratch[count..],
+    ) else {
+        fault_isolated_route(route);
+        return false;
+    };
+    count += scheduled;
+    if chase {
+        midi_scratch[..count].sort_unstable_by_key(|event| {
+            let event = event.expect("MIDI query initializes every event slot");
+            (
+                event.sample_offset,
+                event.sort_priority(),
+                event.track_id.value(),
+                event.controller.unwrap_or(event.pitch),
+                event.note_id.map_or(0, aaadaw_core::NoteId::value),
+            )
+        });
+    }
+    route.isolated_events.clear();
+    for event in midi_scratch[..count]
+        .iter()
+        .flatten()
+        .filter(|event| event.track_id == route.track_id)
+    {
+        let Some(encoded) = ClapIpcMidiEvent::from_scheduled(*event, frame_count) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        if route.isolated_events.len() == config.event_capacity as usize {
+            fault_isolated_route(route);
+            return false;
+        }
+        route.isolated_events.push(encoded);
+    }
+    let Some(port) = route.isolated_port.as_ref() else {
+        fault_isolated_route(route);
+        return false;
+    };
+    let submit = port.try_submit(
+        route.isolated_generation,
+        route.isolated_next_sequence,
+        route.isolated_next_start_sample,
+        &route.isolated_events,
+        frame_count,
+    );
+    if let Err(error) = submit {
+        if !matches!(error, ClapIpcSubmitError::SlotsFull) {
+            fault_isolated_route(route);
+        }
+        return false;
+    }
+    route.isolated_next_sequence = route.isolated_next_sequence.wrapping_add(1);
+    route.isolated_next_start_sample = route
+        .isolated_next_start_sample
+        .saturating_add(frame_count as u64);
+    true
+}
+
+fn fault_isolated_route(route: &mut InstrumentRoute) {
+    route.isolated_faulted = true;
+    if let Some(port) = &route.isolated_port {
+        port.mark_faulted(8);
+    }
+}
+
+fn isolated_window_ready(route: &InstrumentRoute) -> bool {
+    let (Some(port), Some(config)) = (route.isolated_port.as_ref(), route.isolated_config) else {
+        return false;
+    };
+    (0..config.slot_count as usize).all(|sequence| {
+        let start_sample = route
+            .isolated_next_start_sample
+            .saturating_sub(config.max_block_frames as u64 * config.slot_count as u64)
+            .saturating_add(config.max_block_frames as u64 * sequence as u64);
+        port.has_response(route.isolated_generation, sequence as u64, start_sample)
+    })
+}
 
 #[derive(Clone, Copy)]
 struct TrackRoute {
@@ -1765,6 +1921,15 @@ impl AudioRenderGraph {
                 midi_events: Vec::with_capacity(available_events),
                 audio: vec![[0.0, 0.0]; max_block_frames],
                 processor: None,
+                isolated_port: None,
+                isolated_reader: None,
+                isolated_generation: 0,
+                isolated_next_sequence: 0,
+                isolated_next_start_sample: 0,
+                isolated_config: None,
+                isolated_events: Vec::new(),
+                isolated_schedule_scratch: Vec::new(),
+                isolated_faulted: false,
                 stopped_processor: None,
             });
         }
@@ -2020,6 +2185,15 @@ impl AudioRenderGraph {
                 midi_events: Vec::with_capacity(available_events),
                 audio: vec![[0.0, 0.0]; self.max_block_frames()],
                 processor: None,
+                isolated_port: None,
+                isolated_reader: None,
+                isolated_generation: 0,
+                isolated_next_sequence: 0,
+                isolated_next_start_sample: 0,
+                isolated_config: None,
+                isolated_events: Vec::new(),
+                isolated_schedule_scratch: Vec::new(),
+                isolated_faulted: false,
                 stopped_processor: None,
             });
         }
@@ -2040,6 +2214,130 @@ impl AudioRenderGraph {
         if self.midi_scratch.len() < self.midi_plan.len() {
             self.midi_scratch.resize(self.midi_plan.len(), None);
         }
+        Ok(())
+    }
+
+    /// Installs supervised CLAP routes and submits their first fixed-size blocks before playback.
+    ///
+    /// Priming happens on the control thread. The render callback only reads ready shared-memory
+    /// responses, submits bounded future blocks, and emits silence for a late or failed route.
+    pub fn install_isolated_instrument_ports(
+        &mut self,
+        project: &aaadaw_core::Project,
+        instruments: &mut Vec<TrackIsolatedInstrument>,
+    ) -> Result<(), AudioGraphBuildError> {
+        if instruments.is_empty() {
+            return Ok(());
+        }
+        let start_sample = self.transport.position_samples();
+        // A stopped graph's next start advances the transport chase generation. Prime for that
+        // generation so playback can use the prepared lookahead immediately on its first callback.
+        let generation = self
+            .transport
+            .chase_generation()
+            .wrapping_add(u64::from(!self.transport.is_playing()));
+        let mut seen_tracks = vec![false; project.tracks().len()];
+        for route in &self.instruments {
+            if let Some(track_index) = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == route.track_id)
+                && let Some(seen) = seen_tracks.get_mut(track_index)
+            {
+                *seen = true;
+            }
+        }
+        let mut routes = Vec::with_capacity(instruments.len());
+        for instrument in instruments.iter() {
+            let track_index = project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == instrument.track_id)
+                .ok_or(AudioGraphBuildError::MissingInstrumentTrack {
+                    track_id: instrument.track_id.value(),
+                })?;
+            if std::mem::replace(&mut seen_tracks[track_index], true) {
+                return Err(AudioGraphBuildError::DuplicateTrackInstrument {
+                    track_id: instrument.track_id.value(),
+                });
+            }
+            if !instrument.config.validate() || instrument.config.sample_rate != self.sample_rate {
+                return Err(AudioGraphBuildError::InstrumentEventCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: 1,
+                    available: instrument.config.event_capacity as usize,
+                });
+            }
+            let reader = instrument.port.reader(generation, 0, start_sample).ok_or(
+                AudioGraphBuildError::InstrumentEventCapacity {
+                    track_id: instrument.track_id.value(),
+                    required: 1,
+                    available: 0,
+                },
+            )?;
+            routes.push(InstrumentRoute {
+                track_id: instrument.track_id,
+                track_index,
+                instance_id: instrument.instance_id,
+                midi_events: Vec::new(),
+                audio: vec![[0.0, 0.0]; self.max_block_frames()],
+                processor: None,
+                isolated_port: Some(instrument.port.clone()),
+                isolated_reader: Some(reader),
+                isolated_generation: generation,
+                isolated_next_sequence: 0,
+                isolated_next_start_sample: start_sample,
+                isolated_config: Some(instrument.config),
+                isolated_events: Vec::with_capacity(instrument.config.event_capacity as usize),
+                isolated_schedule_scratch: vec![None; self.midi_scratch.len()],
+                isolated_faulted: false,
+                stopped_processor: None,
+            });
+        }
+        routes.sort_by_key(|route| route.track_index);
+        instruments.sort_by_key(|instrument| {
+            project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == instrument.track_id)
+                .expect("validated isolated instrument track remains present")
+        });
+        for (route, instrument) in routes.iter_mut().zip(instruments.drain(..)) {
+            route.instance_id = instrument.instance_id;
+        }
+
+        for route in &mut routes {
+            let Some(config) = route.isolated_config else {
+                continue;
+            };
+            for sequence in 0..config.slot_count as usize {
+                if !submit_isolated_block(&self.midi_plan, route, sequence == 0) {
+                    route.isolated_faulted = true;
+                    break;
+                }
+            }
+        }
+
+        // Wait only during graph preparation and only for the initial lookahead window. A helper
+        // that stalls still yields a usable graph; its route renders silence and remains isolated.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        while std::time::Instant::now() < deadline
+            && routes
+                .iter()
+                .any(|route| !route.isolated_faulted && !isolated_window_ready(route))
+        {
+            if routes.iter().any(|route| {
+                route
+                    .isolated_port
+                    .as_ref()
+                    .is_some_and(ClapIpcAudioPort::is_faulted)
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        self.instruments.append(&mut routes);
+        self.instruments.sort_by_key(|route| route.track_index);
         Ok(())
     }
 
@@ -2401,27 +2699,65 @@ impl AudioRenderGraph {
         let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
         for route in self.instruments.iter_mut().filter(|_| block.is_playing) {
             self.track_has_stereo_input[route.track_index] = true;
-            route.midi_events.clear();
-            for event in scheduled_events.clone().flatten() {
-                if event.track_id == route.track_id {
-                    if route.midi_events.len() == route.midi_events.capacity() {
-                        return Err(AudioGraphError::InstrumentEventBufferFull {
-                            track_id: route.track_id,
-                        });
+            if route.isolated_reader.is_none() {
+                route.midi_events.clear();
+                for event in scheduled_events.clone().flatten() {
+                    if event.track_id == route.track_id {
+                        if route.midi_events.len() == route.midi_events.capacity() {
+                            return Err(AudioGraphError::InstrumentEventBufferFull {
+                                track_id: route.track_id,
+                            });
+                        }
+                        route.midi_events.push(*event);
                     }
-                    route.midi_events.push(*event);
                 }
             }
-            let processor = route
-                .processor
-                .as_mut()
-                .expect("active render graphs retain their instrument processors");
-            processor
-                .process(&route.midi_events, &mut route.audio[..output.len()])
-                .map_err(|error| AudioGraphError::InstrumentProcess {
-                    track_id: route.track_id,
-                    error,
-                })?;
+            if route.isolated_reader.is_some() && route.isolated_generation != chase_generation {
+                route.isolated_generation = chase_generation;
+                route.isolated_next_sequence = 0;
+                route.isolated_next_start_sample = block.start_sample;
+                if let Some(reader) = route.isolated_reader.as_mut() {
+                    reader.reset(chase_generation, 0, block.start_sample);
+                }
+                if let Some(port) = route.isolated_port.as_ref() {
+                    port.discard_stale_requests(chase_generation);
+                }
+                for sequence in 0..CLAP_IPC_SLOT_COUNT {
+                    if !submit_isolated_block(&self.midi_plan, route, sequence == 0) {
+                        break;
+                    }
+                }
+            }
+            if let Some(reader) = route.isolated_reader.as_mut() {
+                let helper_failed = route
+                    .isolated_port
+                    .as_ref()
+                    .is_none_or(ClapIpcAudioPort::is_faulted);
+                if helper_failed || route.isolated_faulted {
+                    route.isolated_faulted = true;
+                    route.audio[..output.len()].fill([0.0, 0.0]);
+                } else {
+                    reader.read_into(&mut route.audio[..output.len()]);
+                    // A callback never waits for a slot. Once a response is consumed, the freed
+                    // capacity is opportunistically filled with the next scheduled MIDI quantum.
+                    for _ in 0..CLAP_IPC_SLOT_COUNT {
+                        if !submit_isolated_block(&self.midi_plan, route, false) {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                let processor = route
+                    .processor
+                    .as_mut()
+                    .expect("active render graphs retain their instrument processors");
+                processor
+                    .process(&route.midi_events, &mut route.audio[..output.len()])
+                    .map_err(|error| AudioGraphError::InstrumentProcess {
+                        track_id: route.track_id,
+                        error,
+                    })?;
+            }
             let track_buffer = self.track_effect_buffers[route.track_index]
                 .as_mut()
                 .expect("every track has a preallocated routing buffer");

@@ -3183,6 +3183,52 @@ mod tests {
     }
 
     #[test]
+    fn isolated_shared_memory_route_renders_a_real_test_clap_instrument() {
+        let (project, track_id, _) = test_project(120);
+        let config = crate::ClapIpcConfig::new(48_000, 1024, 8).unwrap();
+        let mapping = crate::ClapIpcMapping::create(config).unwrap();
+        assert!(mapping.region().accept_handshake(config));
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            1024,
+            8,
+        )
+        .expect("test instrument should load");
+        let region = mapping.region();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(move || {
+                let mut processor = processor;
+                crate::clap_ipc::process_helper_requests(region, &mut processor, config);
+                processor.stop()
+            });
+
+            let (_, pcm) = crate::pcm_stream(1024).unwrap();
+            let mut graph = crate::AudioRenderGraph::new(&project, vec![pcm], 1024).unwrap();
+            let mut routes = vec![crate::TrackIsolatedInstrument::new(
+                track_id,
+                owner.instance_id(),
+                mapping.audio_port(),
+                config,
+            )];
+            graph
+                .install_isolated_instrument_ports(&project, &mut routes)
+                .expect("shared-memory instrument route should install");
+            graph.transport_mut().start();
+            let mut output = [[0.0_f32; 2]; 128];
+            graph
+                .render_into(&mut output)
+                .expect("isolated instrument block should render");
+            assert!(output.iter().any(|sample| sample[0].abs() > 0.001));
+
+            mapping.region().mark_shutdown();
+            let stopped = worker.join().expect("helper audio worker should stop");
+            owner.deactivate(stopped);
+        });
+    }
+
+    #[test]
     fn transport_stop_releases_held_notes_and_retirement_returns_processor_to_owner() {
         let (project, track_id, _) = test_project(120);
         let (owner, processor) = ClapInstrumentOwner::load_from_entry(

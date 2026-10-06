@@ -1,7 +1,8 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
-    AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapIpcConfig, ClapIpcMapping,
-    MasterOutputCeiling, audio_monitor_stream, stereo_pcm_stream,
+    AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapInstrumentHelperProcess,
+    ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument,
+    audio_monitor_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -153,6 +154,24 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         128,
     )
     .expect("stream should match the audio item");
+    let isolated_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
+    let mut isolated_helper = ClapInstrumentHelperProcess::spawn(
+        std::path::Path::new(env!("CARGO_BIN_EXE_aaadaw-engine-test-helper")),
+        std::path::Path::new("unused-test-plugin.clap"),
+        "test.synth",
+        isolated_config,
+        None,
+    )
+    .expect("synthetic helper should complete its handshake");
+    let mut isolated_routes = vec![TrackIsolatedInstrument::new(
+        track_id,
+        isolated_helper.instance_id(),
+        isolated_helper.audio_port(),
+        isolated_config,
+    )];
+    graph
+        .install_isolated_instrument_ports(&project, &mut isolated_routes)
+        .expect("isolated route should be prepared before playback");
     let (mut monitor_producer, monitor_consumer, monitor_gate) = audio_monitor_stream(256);
     graph.install_input_monitor(monitor_consumer, monitor_gate);
     assert!(
@@ -165,9 +184,9 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
     master.set_ceiling(MasterOutputCeiling::new(-12).expect("ceiling is supported"));
-    graph.transport_mut().start();
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
+    graph.transport_mut().start();
 
     let ipc_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
     let ipc_mapping = ClapIpcMapping::create(ipc_config).expect("IPC mapping should be created");
@@ -238,4 +257,11 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let stats = last_stats.expect("render loop contains at least one block");
     assert!(stats.master_guarded_samples > 0);
     assert!(midi_events_seen > 0);
+    drop(graph);
+    isolated_helper
+        .shutdown()
+        .expect("isolated helper should stop cleanly");
+    isolated_helper
+        .take_saved_state()
+        .expect("helper state should be retrievable after shutdown");
 }

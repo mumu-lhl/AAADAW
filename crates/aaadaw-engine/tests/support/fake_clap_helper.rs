@@ -36,6 +36,26 @@ fn main() {
     )
     .unwrap_or_else(|| std::process::exit(2));
 
+    if plugin_id == "test.dynamic-clap" {
+        // Exercise the production CLAP loader and shared-memory worker inside a supervised child.
+        // SAFETY: integration tests pass the locally built deterministic test plugin fixture.
+        let result = unsafe {
+            aaadaw_engine::run_clap_ipc_instrument_helper(
+                Path::new(mapping_path),
+                Path::new(entry_path),
+                plugin_id,
+                expected,
+                Path::new(state_input_path),
+                Path::new(state_output_path),
+            )
+        };
+        if let Err(error) = result {
+            eprintln!("test CLAP helper failed: {error}");
+            std::process::exit(8);
+        }
+        return;
+    }
+
     // SAFETY: the test supervisor owns the private, fixed-size mapping for this child lifetime.
     let mapping = unsafe { ClapIpcMapping::open(Path::new(mapping_path)) }
         .unwrap_or_else(|_| std::process::exit(3));
@@ -53,6 +73,9 @@ fn main() {
     }
 
     match plugin_id {
+        "test.state-restore-failure" => {
+            region.mark_faulted(3);
+        }
         "test.crash-restart" => crash_first_launch_then_wait(
             region,
             Path::new(entry_path),
@@ -80,10 +103,62 @@ fn main() {
                 std::process::exit(7);
             }
         }
+        "test.live-state" => loop {
+            if let Some(request) = region.pending_state_save() {
+                region.mark_audio_worker_paused(true);
+                let succeeded =
+                    write_state(Path::new(state_output_path), b"live helper state").is_ok();
+                region.complete_state_save(request, succeeded);
+                region.mark_audio_worker_paused(false);
+            }
+            if region.is_shutdown() {
+                if write_state(Path::new(state_output_path), b"final helper state").is_err() {
+                    std::process::exit(7);
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        },
+        "test.synth" => process_synthetic_instrument(region, Path::new(state_output_path)),
+        "test.crash-only" => crash_while_owning_request(region),
         "test.stall" => loop {
             thread::sleep(Duration::from_secs(1));
         },
         _ => std::process::exit(6),
+    }
+}
+
+fn process_synthetic_instrument(region: &aaadaw_engine::ClapIpcRegion, state_output_path: &Path) {
+    use aaadaw_engine::ClapIpcMidiKind;
+
+    let mut active = false;
+    while !region.is_shutdown() && !region.is_faulted() {
+        if let Some(request) = region.try_claim_request() {
+            let _ = request.process(|request| {
+                let mut event_index = 0;
+                for (frame_index, frame) in request.audio.iter_mut().enumerate() {
+                    while let Some(event) = request.events.get(event_index)
+                        && event.frame_offset as usize == frame_index
+                    {
+                        if event.kind == ClapIpcMidiKind::NoteOn as u8 {
+                            active = true;
+                        } else if event.kind == ClapIpcMidiKind::NoteOff as u8 {
+                            active = false;
+                        }
+                        event_index += 1;
+                    }
+                    if active {
+                        *frame = [0.5, 0.5];
+                    }
+                }
+                true
+            });
+        } else {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    if write_state(state_output_path, b"synthetic instrument state").is_err() {
+        std::process::exit(7);
     }
 }
 

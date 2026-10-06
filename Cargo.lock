@@ -85,6 +85,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aaadaw-test-clap-plugin"
+version = "0.1.0"
+dependencies = [
+ "clack-common",
+ "clack-extensions",
+ "clack-plugin",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

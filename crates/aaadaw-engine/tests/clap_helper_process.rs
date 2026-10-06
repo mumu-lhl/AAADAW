@@ -1,6 +1,10 @@
-use aaadaw_engine::{ClapInstrumentHelperProcess, ClapIpcConfig, ClapIpcSubmitError};
+use aaadaw_engine::{
+    ClapInstrumentHelperProcess, ClapIpcConfig, ClapIpcMidiEvent, ClapIpcMidiKind,
+    ClapIpcSubmitError,
+};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -15,6 +19,88 @@ fn config() -> ClapIpcConfig {
 
 fn helper_path() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_aaadaw-engine-test-helper"))
+}
+
+fn build_test_clap_plugin() -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("engine crate is part of the workspace");
+    let manifest = workspace.join("tests/fixtures/clap-synth/Cargo.toml");
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "--package",
+            "aaadaw-test-clap-plugin",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .current_dir(workspace)
+        .status()
+        .expect("Cargo should build the deterministic CLAP fixture");
+    assert!(status.success(), "CLAP fixture build must succeed");
+
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("target"));
+    let library_name = if cfg!(target_os = "windows") {
+        "aaadaw_test_clap_plugin.dll"
+    } else if cfg!(target_os = "macos") {
+        "libaaadaw_test_clap_plugin.dylib"
+    } else {
+        "libaaadaw_test_clap_plugin.so"
+    };
+    let library = target.join("debug").join(library_name);
+    assert!(
+        library.is_file(),
+        "built CLAP fixture exists at {library:?}"
+    );
+    library
+}
+
+fn midi_event(
+    kind: ClapIpcMidiKind,
+    frame_offset: u32,
+    pitch: u8,
+    velocity: u8,
+    controller: u8,
+) -> ClapIpcMidiEvent {
+    ClapIpcMidiEvent {
+        frame_offset,
+        note_id: ClapIpcMidiEvent::NO_NOTE_ID,
+        pitch_bend: ClapIpcMidiEvent::NO_PITCH_BEND,
+        kind: kind as u8,
+        pitch,
+        velocity,
+        controller,
+        reserved: [0; 2],
+    }
+}
+
+fn render_helper_block(
+    process: &ClapInstrumentHelperProcess,
+    sequence: u64,
+    events: &[ClapIpcMidiEvent],
+) -> [[f32; 2]; 16] {
+    process
+        .audio_port()
+        .try_submit(1, sequence, sequence * 16, events, 16)
+        .expect("fixture helper accepts a bounded MIDI block");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut output = [[0.0; 2]; 16];
+    loop {
+        if process
+            .audio_port()
+            .try_read_response(1, sequence, sequence * 16, &mut output)
+        {
+            return output;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CLAP helper should render its block"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn spawn(plugin_id: &str) -> io::Result<ClapInstrumentHelperProcess> {
@@ -41,6 +127,14 @@ fn helper_protocol_mismatch_after_launch_prevents_playback() {
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(error.to_string().contains("rejected startup"));
+}
+
+#[test]
+fn state_restore_startup_failure_is_distinguishable_from_plugin_load_failure() {
+    let error = spawn("test.state-restore-failure")
+        .err()
+        .expect("helper must reject state restore failure");
+    assert!(error.to_string().contains("state restore"));
 }
 
 #[test]
@@ -81,14 +175,14 @@ fn helper_crash_and_restart_recover_child_owned_slots() {
         .restart()
         .expect("supervisor should restart the helper");
     assert!(process.region().is_ready());
-    for sequence in 2..=5 {
+    for sequence in 2..=13 {
         process
             .region()
             .try_submit(1, sequence, sequence * 8, &[], 8)
             .expect("restart should recover every child-owned slot");
     }
     assert_eq!(
-        process.region().try_submit(1, 6, 48, &[], 8),
+        process.region().try_submit(1, 14, 112, &[], 8),
         Err(ClapIpcSubmitError::SlotsFull)
     );
 
@@ -130,4 +224,81 @@ fn orderly_shutdown_reports_no_state_for_a_stateless_helper() {
 
     assert_eq!(process.take_saved_state().unwrap(), None);
     assert_eq!(process.take_saved_state().unwrap(), None);
+}
+
+#[test]
+fn dynamically_loaded_child_plugin_renders_midi_and_roundtrips_saved_state() {
+    let fixture = build_test_clap_plugin();
+    let mut process = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        None,
+    )
+    .expect("helper should load the dynamic CLAP fixture");
+
+    let events = [
+        midi_event(ClapIpcMidiKind::ControllerChange, 0, 0, 96, 7),
+        midi_event(
+            ClapIpcMidiKind::NoteOn,
+            0,
+            60,
+            100,
+            ClapIpcMidiEvent::NO_CONTROLLER,
+        ),
+    ];
+    let output = render_helper_block(&process, 0, &events);
+    let expected = 96.0 / 127.0;
+    assert!((output[0][0] - expected).abs() < 0.001);
+    assert!((output[15][1] - expected).abs() < 0.001);
+
+    let saved_state = process
+        .save_plugin_state()
+        .expect("plugin state should save through the helper")
+        .expect("fixture plugin exposes persistent state");
+    assert_eq!(saved_state, [96]);
+    process.shutdown().unwrap();
+    assert_eq!(
+        process.take_saved_state().unwrap(),
+        Some(saved_state.clone())
+    );
+
+    let mut restored = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        Some(&saved_state),
+    )
+    .expect("helper should restore saved CLAP state before activation");
+    let note_on = [midi_event(
+        ClapIpcMidiKind::NoteOn,
+        0,
+        60,
+        100,
+        ClapIpcMidiEvent::NO_CONTROLLER,
+    )];
+    let restored_output = render_helper_block(&restored, 0, &note_on);
+    assert!((restored_output[0][0] - expected).abs() < 0.001);
+    restored.shutdown().unwrap();
+    restored.take_saved_state().unwrap();
+}
+
+#[test]
+fn active_helper_state_can_be_saved_without_stopping_its_process() {
+    let mut process = spawn("test.live-state").expect("state helper should complete startup");
+    let state = process
+        .save_plugin_state()
+        .expect("the helper should pause between blocks and save state");
+    assert_eq!(state, Some(b"live helper state".to_vec()));
+    assert!(process.region().is_ready());
+
+    process
+        .shutdown()
+        .expect("helper should still shut down after a live state save");
+    assert_eq!(
+        process.take_saved_state().unwrap(),
+        Some(b"final helper state".to_vec())
+    );
 }

@@ -18,11 +18,12 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 1;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 2;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
-pub const CLAP_IPC_SLOT_COUNT: usize = 4;
+/// Keeps at least one maximum render-graph block of helper output queued ahead of playback.
+pub const CLAP_IPC_SLOT_COUNT: usize = 12;
 pub const CLAP_IPC_MAGIC: u32 = u32::from_le_bytes(*b"AAIP");
 
 const REGION_INITIALIZING: u32 = 0;
@@ -112,8 +113,23 @@ impl ClapIpcAudioPort {
         self.region().is_faulted()
     }
 
+    pub(crate) fn mark_faulted(&self, code: u32) {
+        self.region().mark_faulted(code);
+    }
+
     pub fn fault_code(&self) -> u32 {
         self.region().fault_code()
+    }
+
+    /// Checks for one completed response without consuming its slot.
+    pub(crate) fn has_response(&self, generation: u64, sequence: u64, start_sample: u64) -> bool {
+        self.region()
+            .has_response(generation, sequence, start_sample)
+    }
+
+    /// Frees requests queued for an obsolete transport generation without waiting on the helper.
+    pub(crate) fn discard_stale_requests(&self, generation: u64) {
+        self.region().discard_stale_requests(generation);
     }
 
     /// Allocates a fixed-size reader on a control thread for variable callback frame counts.
@@ -335,6 +351,10 @@ impl ClapIpcMapping {
             ptr::addr_of_mut!((*region).active_slot).write(AtomicU32::new(NO_ACTIVE_SLOT));
             ptr::addr_of_mut!((*region).underruns).write(AtomicU64::new(0));
             ptr::addr_of_mut!((*region).helper_heartbeat).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region).state_save_request).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region).state_save_complete).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region).state_save_status).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region).audio_worker_paused).write(AtomicBool::new(false));
             for index in 0..CLAP_IPC_SLOT_COUNT {
                 let slot = ptr::addr_of_mut!((*region).slots[index]);
                 ptr::addr_of_mut!((*slot).state).write(AtomicU32::new(SLOT_FREE));
@@ -383,7 +403,10 @@ pub unsafe fn run_clap_ipc_instrument_helper(
         )
     }
     .map_err(|error| {
-        mapping.region().mark_faulted(2);
+        let state_restore_failed = error.is_state_restore_error();
+        mapping
+            .region()
+            .mark_faulted(if state_restore_failed { 3 } else { 2 });
         format!("could not activate CLAP instrument: {error}")
     })?;
     if !mapping.accept_handshake(expected) {
@@ -405,6 +428,23 @@ pub unsafe fn run_clap_ipc_instrument_helper(
             (processor.stop(), panicked)
         });
         while !region.is_shutdown() && !region.is_faulted() {
+            if let Some(request) = region.pending_state_save() {
+                while !region.is_audio_worker_paused()
+                    && !region.is_shutdown()
+                    && !region.is_faulted()
+                {
+                    thread::sleep(std::time::Duration::from_millis(1));
+                }
+                if region.is_shutdown() || region.is_faulted() {
+                    break;
+                }
+                let saved_state = owner.save_state().map_err(|_| ()).and_then(|state| {
+                    write_helper_state(state_output_path, state.as_deref())
+                        .map(|()| state)
+                        .map_err(|_| ())
+                });
+                region.complete_state_save(request, saved_state.is_ok());
+            }
             thread::sleep(std::time::Duration::from_millis(1));
         }
         worker.join()
@@ -432,7 +472,7 @@ pub unsafe fn run_clap_ipc_instrument_helper(
     Ok(())
 }
 
-fn process_helper_requests(
+pub(crate) fn process_helper_requests(
     region: &ClapIpcRegion,
     processor: &mut crate::ClapInstrumentProcessor,
     expected: ClapIpcConfig,
@@ -440,6 +480,17 @@ fn process_helper_requests(
     let mut events = Vec::with_capacity(expected.event_capacity as usize);
     while !region.is_shutdown() && !region.is_faulted() {
         region.publish_heartbeat();
+        if region.pending_state_save().is_some() {
+            region.mark_audio_worker_paused(true);
+            while region.pending_state_save().is_some()
+                && !region.is_shutdown()
+                && !region.is_faulted()
+            {
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+            region.mark_audio_worker_paused(false);
+            continue;
+        }
         if let Some(request) = region.try_claim_request() {
             let _ = request.process(|request| {
                 events.clear();
@@ -612,7 +663,9 @@ impl ClapIpcMidiEvent {
         };
         let note_id = event
             .note_id
-            .and_then(|id| u32::try_from(id.value()).ok())
+            // Reserve the invalid/zero core ID; the helper uses this as a stable local note ID.
+            .and_then(|id| id.value().checked_add(1))
+            .and_then(|id| u32::try_from(id).ok())
             .filter(|id| *id <= i32::MAX as u32)
             .unwrap_or(Self::NO_NOTE_ID);
         let controller = event.controller.unwrap_or(Self::NO_CONTROLLER);
@@ -760,6 +813,10 @@ pub struct ClapIpcRegion {
     active_slot: AtomicU32,
     underruns: AtomicU64,
     helper_heartbeat: AtomicU64,
+    state_save_request: AtomicU64,
+    state_save_complete: AtomicU64,
+    state_save_status: AtomicU32,
+    audio_worker_paused: AtomicBool,
     slots: [ClapIpcSlot; CLAP_IPC_SLOT_COUNT],
 }
 
@@ -785,6 +842,10 @@ impl ClapIpcRegion {
                 active_slot: AtomicU32::new(NO_ACTIVE_SLOT),
                 underruns: AtomicU64::new(0),
                 helper_heartbeat: AtomicU64::new(0),
+                state_save_request: AtomicU64::new(0),
+                state_save_complete: AtomicU64::new(0),
+                state_save_status: AtomicU32::new(0),
+                audio_worker_paused: AtomicBool::new(false),
                 slots: std::array::from_fn(|_| ClapIpcSlot::new()),
             })
         })
@@ -809,6 +870,17 @@ impl ClapIpcRegion {
     pub(crate) fn begin_startup(&self) {
         self.state.store(REGION_INITIALIZING, Ordering::Release);
         self.shutdown.store(false, Ordering::Release);
+        self.next_slot.store(0, Ordering::Relaxed);
+        self.producer_busy.store(false, Ordering::Relaxed);
+        self.helper_busy.store(false, Ordering::Relaxed);
+        self.active_slot.store(NO_ACTIVE_SLOT, Ordering::Relaxed);
+        self.state_save_request.store(0, Ordering::Relaxed);
+        self.state_save_complete.store(0, Ordering::Relaxed);
+        self.state_save_status.store(0, Ordering::Relaxed);
+        self.audio_worker_paused.store(false, Ordering::Relaxed);
+        for slot in &self.slots {
+            slot.state.store(SLOT_FREE, Ordering::Release);
+        }
     }
 
     pub fn is_ready(&self) -> bool {
@@ -822,6 +894,47 @@ impl ClapIpcRegion {
     /// Returns the monotonically increasing child heartbeat observed by its parent.
     pub fn helper_heartbeat(&self) -> u64 {
         self.helper_heartbeat.load(Ordering::Acquire)
+    }
+
+    pub fn request_state_save(&self) -> Option<u64> {
+        let completed = self.state_save_complete.load(Ordering::Acquire);
+        let requested = self.state_save_request.load(Ordering::Acquire);
+        if requested != completed {
+            return None;
+        }
+        let next = requested.checked_add(1)?;
+        self.state_save_status.store(0, Ordering::Relaxed);
+        self.state_save_request
+            .compare_exchange(requested, next, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| next)
+    }
+
+    pub fn pending_state_save(&self) -> Option<u64> {
+        let requested = self.state_save_request.load(Ordering::Acquire);
+        (requested != self.state_save_complete.load(Ordering::Acquire)).then_some(requested)
+    }
+
+    pub fn mark_audio_worker_paused(&self, paused: bool) {
+        self.audio_worker_paused.store(paused, Ordering::Release);
+    }
+
+    pub fn is_audio_worker_paused(&self) -> bool {
+        self.audio_worker_paused.load(Ordering::Acquire)
+    }
+
+    pub fn complete_state_save(&self, request: u64, success: bool) {
+        self.state_save_status
+            .store(if success { 1 } else { 2 }, Ordering::Relaxed);
+        self.state_save_complete.store(request, Ordering::Release);
+    }
+
+    pub fn state_save_succeeded(&self) -> bool {
+        self.state_save_status.load(Ordering::Acquire) == 1
+    }
+
+    pub(crate) fn state_save_is_complete(&self, request: u64) -> bool {
+        self.state_save_complete.load(Ordering::Acquire) == request
     }
 
     fn publish_heartbeat(&self) {
@@ -1092,6 +1205,58 @@ impl ClapIpcRegion {
         false
     }
 
+    fn has_response(&self, generation: u64, sequence: u64, start_sample: u64) -> bool {
+        self.slots.iter().any(|slot| {
+            if slot
+                .state
+                .compare_exchange(
+                    SLOT_RESPONSE_READY,
+                    SLOT_READING,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                return false;
+            }
+            // SAFETY: RESPONSE_READY -> READING grants exclusive payload access even if the audio
+            // callback consumes a different response concurrently.
+            let payload = unsafe { &*slot.payload.get() };
+            let matches = payload.generation == generation
+                && payload.sequence == sequence
+                && payload.start_sample == start_sample;
+            slot.state.store(SLOT_RESPONSE_READY, Ordering::Release);
+            matches
+        })
+    }
+
+    fn discard_stale_requests(&self, generation: u64) {
+        for slot in &self.slots {
+            if slot
+                .state
+                .compare_exchange(
+                    SLOT_REQUEST_READY,
+                    SLOT_READING,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            // SAFETY: REQUEST_READY -> READING prevents the helper from claiming this payload.
+            let request_generation = unsafe { (&*slot.payload.get()).generation };
+            slot.state.store(
+                if request_generation == generation {
+                    SLOT_REQUEST_READY
+                } else {
+                    SLOT_FREE
+                },
+                Ordering::Release,
+            );
+        }
+    }
+
     pub fn underrun_count(&self) -> u64 {
         self.underruns.load(Ordering::Relaxed)
     }
@@ -1187,6 +1352,15 @@ mod tests {
         assert!(!other.is_ready());
 
         let retry_region = region();
+        retry_region.try_submit(1, 3, 16, &[], 8).unwrap();
+        let request = retry_region.try_claim_request().unwrap();
+        assert!(request.process(|request| {
+            request.audio.fill([0.25, -0.25]);
+            true
+        }));
+        assert!(retry_region.has_response(1, 3, 16));
+        assert!(retry_region.request_state_save().is_some());
+        retry_region.mark_audio_worker_paused(true);
         retry_region.mark_faulted(5);
         retry_region.mark_shutdown();
         assert!(retry_region.is_faulted());
@@ -1195,6 +1369,9 @@ mod tests {
         retry_region.begin_startup();
         assert!(!retry_region.is_faulted());
         assert!(!retry_region.is_shutdown());
+        assert!(!retry_region.has_response(1, 3, 16));
+        assert_eq!(retry_region.pending_state_save(), None);
+        assert!(!retry_region.is_audio_worker_paused());
         assert!(retry_region.accept_handshake(config));
         assert!(retry_region.is_ready());
         assert_eq!(retry_region.fault_code(), 0);
@@ -1430,6 +1607,25 @@ mod tests {
     }
 
     #[test]
+    fn obsolete_transport_generation_requests_are_reclaimed_for_seek_recovery() {
+        let region = region();
+        region.try_submit(4, 0, 128, &[], 8).unwrap();
+        region.try_submit(4, 1, 136, &[], 8).unwrap();
+
+        region.discard_stale_requests(5);
+
+        region.try_submit(5, 0, 256, &[], 8).unwrap();
+        let request = region.try_claim_request().unwrap();
+        assert!(request.process(|request| {
+            assert_eq!(request.generation, 5);
+            assert_eq!(request.sequence, 0);
+            assert_eq!(request.start_sample, 256);
+            true
+        }));
+        assert!(region.has_response(5, 0, 256));
+    }
+
+    #[test]
     fn audio_reader_preserves_helper_block_across_callback_sizes() {
         let config = ClapIpcConfig::new(48_000, 4, 8).unwrap();
         let ipc_mapping = ClapIpcMapping::create(config).unwrap();
@@ -1544,7 +1740,7 @@ mod tests {
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(note, 8).unwrap();
         assert_eq!(encoded.frame_offset, 3);
-        assert_eq!(encoded.note_id, 11);
+        assert_eq!(encoded.note_id, 12);
         assert_eq!(encoded.kind, ClapIpcMidiKind::NoteOn as u8);
         assert!(encoded.is_valid(8));
 
