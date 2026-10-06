@@ -497,7 +497,7 @@ fn write_take(writer: RecordingWriter) -> Result<Vec<PathBuf>, AudioRecordingErr
         let mut frames = [[0.0_f32; 2]; DRAIN_FRAMES];
         let silence = [[0.0_f32; 2]; DRAIN_FRAMES];
         let mut finishing = false;
-        let mut expected_frame = None;
+        let mut expected_frame: Option<u64> = None;
         let mut capture_timeline_anchor = None;
         loop {
             if !finishing {

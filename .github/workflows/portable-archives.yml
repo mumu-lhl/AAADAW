@@ -25,7 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install audio build headers
-        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install --yes libglib2.0-dev libjack-jackd2-dev libpipewire-0.3-dev
       - name: Build release executable
         run: cargo build --release -p aaadaw --features "jack-backend pipewire-backend"
       - name: Create archive and checksum

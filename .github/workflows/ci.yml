@@ -48,7 +48,7 @@ jobs:
         run: cargo deny check licenses
       - uses: taiki-e/install-action@nextest
       - name: Install native audio development headers
-        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install --yes libglib2.0-dev libjack-jackd2-dev libpipewire-0.3-dev xvfb
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -63,4 +63,4 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests with nextest
-        run: cargo nextest run --workspace --features aaadaw/jack-backend
+        run: xvfb-run -a cargo nextest run --workspace --features aaadaw/jack-backend

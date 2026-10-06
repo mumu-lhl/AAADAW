@@ -29,7 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install audio build dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libjack-jackd2-dev libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install --yes libglib2.0-dev libjack-jackd2-dev libpipewire-0.3-dev
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
       - name: Build release executable

@@ -128,6 +128,24 @@ impl ClapInstrumentHelperProcess {
         self.mapping.audio_port()
     }
 
+    /// Queues an editor open/close command without waiting on plugin GUI code.
+    pub fn request_gui(&self, open: bool, parent: u64) -> io::Result<u64> {
+        self.mapping
+            .region()
+            .request_gui(open, parent)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "a CLAP editor command is still pending",
+                )
+            })
+    }
+
+    /// Returns the last helper-reported editor lifecycle status.
+    pub fn gui_status(&self) -> u32 {
+        self.mapping.region().gui_status()
+    }
+
     /// Returns the helper's process exit status when it has exited.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         let Some(child) = self.child.as_mut() else {
