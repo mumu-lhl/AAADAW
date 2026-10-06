@@ -155,8 +155,12 @@ impl<'a> ClackPluginAudioProcessor<'a, Shared, MainThread> for AudioProcessor {
                     Some(CoreEventSpace::NoteOff(_)) => self.active = false,
                     Some(CoreEventSpace::Midi(event)) => {
                         let [status, controller, value] = event.data();
-                        if status & 0xf0 == 0xb0 && controller == 7 {
-                            self.gain.store(value, Ordering::Relaxed);
+                        if status & 0xf0 == 0xb0 {
+                            if controller == 7 {
+                                self.gain.store(value, Ordering::Relaxed);
+                            } else if matches!(controller, 120 | 123) {
+                                self.active = false;
+                            }
                         }
                     }
                     _ => {}

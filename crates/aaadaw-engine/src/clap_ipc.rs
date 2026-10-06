@@ -478,6 +478,7 @@ pub(crate) fn process_helper_requests(
     expected: ClapIpcConfig,
 ) {
     let mut events = Vec::with_capacity(expected.event_capacity as usize);
+    let mut last_generation = None;
     while !region.is_shutdown() && !region.is_faulted() {
         region.publish_heartbeat();
         if region.pending_state_save().is_some() {
@@ -493,6 +494,13 @@ pub(crate) fn process_helper_requests(
         }
         if let Some(request) = region.try_claim_request() {
             let _ = request.process(|request| {
+                if last_generation.is_some_and(|generation| generation != request.generation)
+                    && processor.all_notes_off().is_err()
+                {
+                    region.mark_faulted(3);
+                    return false;
+                }
+                last_generation = Some(request.generation);
                 events.clear();
                 for event in request.events {
                     let Some(event_kind) = midi_kind_from_wire(event.kind) else {

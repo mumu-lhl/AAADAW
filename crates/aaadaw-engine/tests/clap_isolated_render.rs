@@ -116,6 +116,18 @@ fn crashed_helper_silences_only_its_track_while_isolated_midi_keeps_rendering() 
             .all(|sample| sample[0] > 0.45 && sample[1] > 0.45)
     );
 
+    graph.transport_mut().seek_sample(48_000);
+    for _ in 0..8 {
+        output.fill([1.0, 1.0]);
+        graph
+            .render_into(&mut output)
+            .expect("seeking must keep the isolated render graph usable");
+        assert!(
+            output.iter().all(|sample| *sample == [0.0, 0.0]),
+            "seek beyond the MIDI note must silence old-generation audio and voices"
+        );
+    }
+
     drop(graph);
     failed.shutdown().unwrap();
     working.shutdown().unwrap();
