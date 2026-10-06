@@ -25,6 +25,12 @@ tempfile = "3.27.0"
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.18.2", optional = true }
 
+[[bin]]
+name = "aaadaw-engine-test-helper"
+path = "tests/support/fake_clap_helper.rs"
+test = false
+bench = false
+
 [dev-dependencies]
 clack-common = "0.2.0"
 clack-host = { version = "0.2.0", features = ["clack-plugin"] }
