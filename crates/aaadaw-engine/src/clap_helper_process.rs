@@ -26,6 +26,7 @@ pub struct ClapInstrumentHelperProcess {
     config: ClapIpcConfig,
     state_input: TempPath,
     state_output: TempPath,
+    saved_state: Option<Vec<u8>>,
     observed_heartbeat: u64,
     heartbeat_changed_at: Instant,
 }
@@ -85,6 +86,7 @@ impl ClapInstrumentHelperProcess {
             config,
             state_input,
             state_output,
+            saved_state: None,
             observed_heartbeat: 0,
             heartbeat_changed_at: Instant::now(),
         };
@@ -159,6 +161,7 @@ impl ClapInstrumentHelperProcess {
             }
         }
         self.child.take();
+        self.saved_state = None;
         // SAFETY: this owner retains the fixed-size backing file throughout helper restart.
         let mapping_path = unsafe { self.mapping.path() }
             .ok_or_else(|| io::Error::other("CLAP helper mapping no longer has a backing path"))?;
@@ -193,6 +196,9 @@ impl ClapInstrumentHelperProcess {
 
     /// Returns the helper's saved CLAP state after it has exited and carries it into restarts.
     pub fn take_saved_state(&mut self) -> io::Result<Option<Vec<u8>>> {
+        if let Some(state) = self.saved_state.take() {
+            return Ok(Some(state));
+        }
         if let Some(child) = self.child.as_mut()
             && child.try_wait()?.is_none()
         {
@@ -208,6 +214,7 @@ impl ClapInstrumentHelperProcess {
     }
 
     /// Signals orderly shutdown, then reaps or terminates the helper on this control thread.
+    /// Call [`Self::take_saved_state`] afterward to retrieve state written during shutdown.
     pub fn shutdown(&mut self) -> io::Result<Option<ExitStatus>> {
         self.mapping.region().mark_shutdown();
         let Some(mut child) = self.child.take() else {
@@ -217,7 +224,7 @@ impl ClapInstrumentHelperProcess {
         loop {
             if let Some(status) = child.try_wait()? {
                 if status.success() {
-                    let _ = self.take_saved_state()?;
+                    self.saved_state = self.take_saved_state()?;
                 }
                 return Ok(Some(status));
             }

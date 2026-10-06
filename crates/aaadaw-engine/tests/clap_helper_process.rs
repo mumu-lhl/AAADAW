@@ -87,3 +87,20 @@ fn helper_crash_and_restart_recover_child_owned_slots() {
         .shutdown()
         .expect("restarted helper should shut down cleanly");
 }
+
+#[test]
+fn orderly_shutdown_makes_helper_state_available_to_the_owner() {
+    let mut process = spawn("test.state-shutdown").expect("state helper should complete startup");
+    let status = process
+        .shutdown()
+        .expect("helper should shut down cleanly")
+        .expect("shutdown should return the child status");
+
+    assert!(status.success());
+    assert_eq!(
+        process
+            .take_saved_state()
+            .expect("saved state should be readable after shutdown"),
+        Some(b"helper shutdown state".to_vec())
+    );
+}

@@ -55,11 +55,28 @@ fn main() {
             Path::new(entry_path),
             Path::new(state_output_path),
         ),
+        "test.state-shutdown" => {
+            while !region.is_shutdown() {
+                thread::sleep(Duration::from_millis(1));
+            }
+            if write_state(Path::new(state_output_path), b"helper shutdown state").is_err() {
+                std::process::exit(7);
+            }
+        }
         "test.stall" => loop {
             thread::sleep(Duration::from_secs(1));
         },
         _ => std::process::exit(6),
     }
+}
+
+fn write_state(path: &Path, state: &[u8]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(13 + state.len());
+    bytes.extend_from_slice(b"AAST");
+    bytes.push(1);
+    bytes.extend_from_slice(&(state.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(state);
+    std::fs::write(path, bytes)
 }
 
 fn crash_while_owning_request(region: &aaadaw_engine::ClapIpcRegion) -> ! {
