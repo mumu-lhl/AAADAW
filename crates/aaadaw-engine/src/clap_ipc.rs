@@ -64,6 +64,10 @@ pub struct ClapIpcMapping {
 }
 
 /// Keeps bounded audio-callback access alive independently of process supervision.
+///
+/// Its methods are callback-safe; dropping the final handle is not. Retire the render graph and
+/// release its handles on a control thread while the supervisor still owns the mapping, so an
+/// audio callback can never unmap shared memory or remove its backing file.
 #[derive(Clone)]
 pub struct ClapIpcAudioPort {
     inner: Arc<ClapIpcMappingInner>,
