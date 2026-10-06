@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
-    AudioItemStream, AudioRenderGraph, AudioStreamPosition, MasterOutputCeiling,
-    audio_monitor_stream, stereo_pcm_stream,
+    AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapIpcConfig, ClapIpcMapping,
+    MasterOutputCeiling, audio_monitor_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -16,7 +16,8 @@ thread_local! {
 static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
 // This integration-test executable contains one test. Tracking is enabled only
-// around render calls on the current test thread, excluding graph and harness setup.
+// around render calls and the callback-side IPC methods on the current test
+// thread, excluding graph and harness setup.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         count_allocation();
@@ -168,6 +169,17 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
 
+    let ipc_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
+    let ipc_mapping = ClapIpcMapping::create(ipc_config).expect("IPC mapping should be created");
+    ipc_mapping.region().accept_handshake(ipc_config);
+    let ipc_port = ipc_mapping.audio_port();
+    let mut ipc_reader = ipc_port
+        .reader(1, 0, 0)
+        .expect("reader should match the IPC block size");
+    let mut ipc_sequence = 0;
+    let mut ipc_start_sample = 0;
+    let mut ipc_output = [[0.0; 2]; 64];
+
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
     let mut midi_events_seen = 0;
@@ -180,6 +192,35 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             .expect("preallocated MIDI and audio callback block should render");
         midi_events_seen += stats.midi_event_count;
         last_stats = Some(stats);
+    }
+    // Exercise the same bounded port methods used by an audio callback. The test
+    // helper completes requests inline; process and mapping setup stay outside the
+    // callback contract, while submit and read stay inside it.
+    for callback_frames in [7, 23, 16, 64].into_iter().cycle().take(256) {
+        let required_end = ipc_reader
+            .next_sample()
+            .saturating_add(callback_frames as u64);
+        while ipc_start_sample < required_end {
+            ipc_port
+                .try_submit(1, ipc_sequence, ipc_start_sample, &[], 16)
+                .expect("bounded callback request should fit");
+            let request = ipc_mapping
+                .region()
+                .try_claim_request()
+                .expect("test helper should claim the request");
+            assert!(request.process(|request| {
+                request.audio.fill([0.125, -0.125]);
+                true
+            }));
+            ipc_sequence += 1;
+            ipc_start_sample += 16;
+        }
+        assert!(ipc_reader.read_into(&mut ipc_output[..callback_frames]));
+        assert!(
+            ipc_output[..callback_frames]
+                .iter()
+                .all(|frame| *frame == [0.125, -0.125])
+        );
     }
     graph.transport_mut().stop();
     for _ in 0..128 {
