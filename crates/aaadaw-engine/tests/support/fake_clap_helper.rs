@@ -8,6 +8,9 @@ fn main() {
     let Some(mapping_path) = args.get(2) else {
         std::process::exit(2);
     };
+    let Some(entry_path) = args.get(3) else {
+        std::process::exit(2);
+    };
     let Some(plugin_id) = args.get(4).and_then(|id| id.to_str()) else {
         std::process::exit(2);
     };
@@ -47,16 +50,14 @@ fn main() {
     }
 
     match plugin_id {
-        "test.crash" => crash_while_owning_request(region),
         "test.crash-restart" => crash_first_launch_then_wait(
             region,
-            Path::new(mapping_path),
+            Path::new(entry_path),
             Path::new(state_output_path),
         ),
         "test.stall" => loop {
             thread::sleep(Duration::from_secs(1));
         },
-        "test.ready" => wait_for_shutdown(region),
         _ => std::process::exit(6),
     }
 }
@@ -74,10 +75,9 @@ fn crash_while_owning_request(region: &aaadaw_engine::ClapIpcRegion) -> ! {
 
 fn crash_first_launch_then_wait(
     region: &aaadaw_engine::ClapIpcRegion,
-    mapping_path: &Path,
+    marker_path: &Path,
     state_output_path: &Path,
 ) -> ! {
-    let marker_path = mapping_path.with_extension("helper-restart-marker");
     if marker_path.exists() {
         let _ = std::fs::remove_file(marker_path);
         let no_state = [b"AAST".as_slice(), &[0], &0_u64.to_le_bytes()].concat();

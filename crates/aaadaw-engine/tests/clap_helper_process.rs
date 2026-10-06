@@ -3,6 +3,7 @@ use std::io;
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 const SAMPLE_RATE: u32 = 48_000;
 const BLOCK_FRAMES: usize = 16;
@@ -17,13 +18,11 @@ fn helper_path() -> &'static Path {
 }
 
 fn spawn(plugin_id: &str) -> io::Result<ClapInstrumentHelperProcess> {
-    ClapInstrumentHelperProcess::spawn(
-        helper_path(),
-        Path::new("unused-test-plugin.clap"),
-        plugin_id,
-        config(),
-        None,
-    )
+    spawn_with_entry(plugin_id, Path::new("unused-test-plugin.clap"))
+}
+
+fn spawn_with_entry(plugin_id: &str, entry_path: &Path) -> io::Result<ClapInstrumentHelperProcess> {
+    ClapInstrumentHelperProcess::spawn(helper_path(), entry_path, plugin_id, config(), None)
 }
 
 #[test]
@@ -50,7 +49,10 @@ fn helper_stall_after_handshake_is_detected_and_terminated() {
 
 #[test]
 fn helper_crash_and_restart_recover_child_owned_slots() {
-    let mut process = spawn("test.crash-restart").expect("fake helper should complete startup");
+    let test_files = TempDir::new().unwrap();
+    let marker_path = test_files.path().join("helper-started");
+    let mut process = spawn_with_entry("test.crash-restart", &marker_path)
+        .expect("fake helper should complete startup");
     process
         .region()
         .try_submit(1, 1, 0, &[], 8)
