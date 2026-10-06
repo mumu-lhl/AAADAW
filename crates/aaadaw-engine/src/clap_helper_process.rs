@@ -332,6 +332,14 @@ mod tests {
         ))
     }
 
+    fn crashing_then_ready_fake_helper() -> TempPath {
+        let executable = std::env::current_exe().unwrap();
+        let executable = executable.to_string_lossy().replace('\'', "'\\''");
+        fake_helper(&format!(
+            "if [ -e \"$0.started\" ]; then MODE=ready; else touch \"$0.started\"; MODE=crash; fi\nAAADAW_TEST_HELPER_MAPPING=\"$2\" AAADAW_TEST_HELPER_STATE_OUTPUT=\"$9\" AAADAW_TEST_HELPER_MODE=\"$MODE\" exec '{executable}' --exact clap_helper_process::tests::fake_helper_child --ignored --nocapture"
+        ))
+    }
+
     #[test]
     #[ignore = "spawned by the supervised fake-helper integration tests"]
     fn fake_helper_child() {
@@ -362,6 +370,15 @@ mod tests {
                 assert!(region.accept_handshake(config()));
                 loop {
                     thread::sleep(Duration::from_secs(1));
+                }
+            }
+            "ready" => {
+                assert!(region.accept_handshake(config()));
+                let state_output = std::env::var_os("AAADAW_TEST_HELPER_STATE_OUTPUT")
+                    .expect("helper state output path");
+                write_helper_state(Path::new(&state_output), None).unwrap();
+                while !region.is_shutdown() {
+                    thread::sleep(Duration::from_millis(1));
                 }
             }
             _ => panic!("unknown fake helper mode: {mode}"),
@@ -408,7 +425,8 @@ mod tests {
 
     #[test]
     fn helper_crash_after_handshake_is_reported_and_reclaims_child_slots() {
-        let helper = ready_fake_helper("crash");
+        let helper = crashing_then_ready_fake_helper();
+        let marker = PathBuf::from(format!("{}.started", helper.display()));
         let mut process = ClapInstrumentHelperProcess::spawn_with_timeout(
             &helper,
             Path::new("unused-plugin.clap"),
@@ -434,8 +452,11 @@ mod tests {
             "helper must exit abnormally"
         );
         assert!(process.region().is_faulted());
-        process.mapping.region().begin_startup();
-        assert!(process.mapping.region().accept_handshake(config()));
+
+        process
+            .restart()
+            .expect("supervisor should restart the helper");
+        assert!(process.region().is_ready());
         for sequence in 2..=5 {
             process
                 .region()
@@ -446,6 +467,10 @@ mod tests {
             process.region().try_submit(1, 6, 48, &[], 8),
             Err(crate::ClapIpcSubmitError::SlotsFull)
         );
+        process
+            .shutdown()
+            .expect("restarted fake helper should shut down cleanly");
+        let _ = fs::remove_file(marker);
     }
 
     #[test]
