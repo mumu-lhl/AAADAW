@@ -13,6 +13,12 @@ const HELPER_COMMAND: &str = "--clap-instrument-helper";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
 
+enum SavedStateCache {
+    Unread,
+    Available(Option<Vec<u8>>),
+    Consumed,
+}
+
 /// Owns the shared mapping and child process for one isolated instrument.
 ///
 /// Create, inspect, and stop this value from the control thread. Its mapping methods are bounded
@@ -26,7 +32,7 @@ pub struct ClapInstrumentHelperProcess {
     config: ClapIpcConfig,
     state_input: TempPath,
     state_output: TempPath,
-    saved_state: Option<Vec<u8>>,
+    saved_state: SavedStateCache,
     observed_heartbeat: u64,
     heartbeat_changed_at: Instant,
 }
@@ -86,7 +92,7 @@ impl ClapInstrumentHelperProcess {
             config,
             state_input,
             state_output,
-            saved_state: None,
+            saved_state: SavedStateCache::Unread,
             observed_heartbeat: 0,
             heartbeat_changed_at: Instant::now(),
         };
@@ -161,7 +167,7 @@ impl ClapInstrumentHelperProcess {
             }
         }
         self.child.take();
-        self.saved_state = None;
+        self.saved_state = SavedStateCache::Unread;
         // SAFETY: this owner retains the fixed-size backing file throughout helper restart.
         let mapping_path = unsafe { self.mapping.path() }
             .ok_or_else(|| io::Error::other("CLAP helper mapping no longer has a backing path"))?;
@@ -196,9 +202,6 @@ impl ClapInstrumentHelperProcess {
 
     /// Returns the helper's saved CLAP state after it has exited and carries it into restarts.
     pub fn take_saved_state(&mut self) -> io::Result<Option<Vec<u8>>> {
-        if let Some(state) = self.saved_state.take() {
-            return Ok(Some(state));
-        }
         if let Some(child) = self.child.as_mut()
             && child.try_wait()?.is_none()
         {
@@ -206,6 +209,11 @@ impl ClapInstrumentHelperProcess {
                 io::ErrorKind::WouldBlock,
                 "CLAP helper must exit before its state can be read",
             ));
+        }
+        match std::mem::replace(&mut self.saved_state, SavedStateCache::Consumed) {
+            SavedStateCache::Available(state) => return Ok(state),
+            SavedStateCache::Consumed => return Ok(None),
+            SavedStateCache::Unread => {}
         }
         let state = read_saved_helper_state(&self.state_output, &self.state_input)?;
         write_helper_state(&self.state_input, state.as_deref())?;
@@ -224,7 +232,7 @@ impl ClapInstrumentHelperProcess {
         loop {
             if let Some(status) = child.try_wait()? {
                 if status.success() {
-                    self.saved_state = self.take_saved_state()?;
+                    self.saved_state = SavedStateCache::Available(self.take_saved_state()?);
                 }
                 return Ok(Some(status));
             }

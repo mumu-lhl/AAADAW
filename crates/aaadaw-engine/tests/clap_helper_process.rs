@@ -119,3 +119,15 @@ fn orderly_shutdown_makes_helper_state_available_to_the_owner() {
         Some(b"helper shutdown state".to_vec())
     );
 }
+
+#[test]
+fn orderly_shutdown_reports_no_state_for_a_stateless_helper() {
+    let mut process =
+        spawn("test.stateless-shutdown").expect("stateless helper should complete startup");
+    process
+        .shutdown()
+        .expect("stateless helper should shut down cleanly");
+
+    assert_eq!(process.take_saved_state().unwrap(), None);
+    assert_eq!(process.take_saved_state().unwrap(), None);
+}

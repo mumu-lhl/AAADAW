@@ -67,6 +67,19 @@ fn main() {
                 std::process::exit(7);
             }
         }
+        "test.stateless-shutdown" => {
+            while !region.is_shutdown() {
+                thread::sleep(Duration::from_millis(1));
+            }
+            if std::fs::write(
+                state_output_path,
+                [b"AAST".as_slice(), &[0], &0_u64.to_le_bytes()].concat(),
+            )
+            .is_err()
+            {
+                std::process::exit(7);
+            }
+        }
         "test.stall" => loop {
             thread::sleep(Duration::from_secs(1));
         },
