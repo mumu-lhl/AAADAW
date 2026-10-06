@@ -11,6 +11,7 @@ use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread;
 use tempfile::{NamedTempFile, TempPath};
@@ -46,17 +47,187 @@ pub enum ClapIpcMidiKind {
     PitchBend = 4,
 }
 
-/// Owns one cross-process mapping and its private temporary backing file.
-pub struct ClapIpcMapping {
+struct ClapIpcMappingInner {
     mapping: MmapMut,
     path: Option<TempPath>,
 }
 
 // SAFETY: the mapping exposes data only through ClapIpcRegion's slot-state protocol. The backing
 // file stays open by the mapping and is never resized. `path` is immutable after construction.
-unsafe impl Send for ClapIpcMapping {}
-// SAFETY: see the Send contract above. All shared payload access is gated by process-shared atomics.
-unsafe impl Sync for ClapIpcMapping {}
+unsafe impl Send for ClapIpcMappingInner {}
+// SAFETY: all shared payload access is gated by process-shared atomics and slot ownership states.
+unsafe impl Sync for ClapIpcMappingInner {}
+
+/// Owns one cross-process mapping and its private temporary backing file.
+pub struct ClapIpcMapping {
+    inner: Arc<ClapIpcMappingInner>,
+}
+
+/// Keeps bounded audio-callback access alive independently of process supervision.
+#[derive(Clone)]
+pub struct ClapIpcAudioPort {
+    inner: Arc<ClapIpcMappingInner>,
+}
+
+impl ClapIpcAudioPort {
+    fn region(&self) -> &ClapIpcRegion {
+        // SAFETY: the shared inner owns this exact-size, initialized mapping for this handle's life.
+        unsafe { &*self.inner.mapping.as_ptr().cast::<ClapIpcRegion>() }
+    }
+
+    /// Submits one bounded MIDI/audio request without waiting or allocating.
+    pub fn try_submit(
+        &self,
+        generation: u64,
+        sequence: u64,
+        start_sample: u64,
+        events: &[ClapIpcMidiEvent],
+        frame_count: usize,
+    ) -> Result<(), ClapIpcSubmitError> {
+        self.region()
+            .try_submit(generation, sequence, start_sample, events, frame_count)
+    }
+
+    /// Reads one matching response without waiting or allocating; a missing response yields silence.
+    pub fn try_read_response(
+        &self,
+        generation: u64,
+        sequence: u64,
+        start_sample: u64,
+        output: &mut [[f32; CLAP_IPC_CHANNELS]],
+    ) -> bool {
+        self.region()
+            .try_read_response(generation, sequence, start_sample, output)
+    }
+
+    pub fn underrun_count(&self) -> u64 {
+        self.region().underrun_count()
+    }
+
+    pub fn is_faulted(&self) -> bool {
+        self.region().is_faulted()
+    }
+
+    pub fn fault_code(&self) -> u32 {
+        self.region().fault_code()
+    }
+
+    /// Allocates a fixed-size reader on a control thread for variable callback frame counts.
+    pub fn reader(
+        &self,
+        generation: u64,
+        first_sequence: u64,
+        first_start_sample: u64,
+    ) -> Option<ClapIpcAudioReader> {
+        self.region().config.validate().then(|| {
+            ClapIpcAudioReader::new(self.clone(), generation, first_sequence, first_start_sample)
+        })
+    }
+}
+
+/// Reads fixed-size helper blocks into variable-size audio callbacks without waiting.
+pub struct ClapIpcAudioReader {
+    port: ClapIpcAudioPort,
+    generation: u64,
+    next_sequence: u64,
+    next_start_sample: u64,
+    block_frames: usize,
+    sample_offset: usize,
+    block_ready: bool,
+    block_expired: bool,
+    scratch: Vec<[f32; CLAP_IPC_CHANNELS]>,
+}
+
+impl ClapIpcAudioReader {
+    fn new(
+        port: ClapIpcAudioPort,
+        generation: u64,
+        first_sequence: u64,
+        first_start_sample: u64,
+    ) -> Self {
+        let block_frames = port.region().config.max_block_frames as usize;
+        Self {
+            port,
+            generation,
+            next_sequence: first_sequence,
+            next_start_sample: first_start_sample,
+            block_frames,
+            sample_offset: 0,
+            block_ready: false,
+            block_expired: false,
+            scratch: vec![[0.0; CLAP_IPC_CHANNELS]; block_frames],
+        }
+    }
+
+    /// Resets the read cursor after a seek or playback generation change.
+    pub fn reset(&mut self, generation: u64, first_sequence: u64, first_start_sample: u64) {
+        self.generation = generation;
+        self.next_sequence = first_sequence;
+        self.next_start_sample = first_start_sample;
+        self.sample_offset = 0;
+        self.block_ready = false;
+        self.block_expired = false;
+    }
+
+    /// Returns the next sample position expected by this reader.
+    pub fn next_sample(&self) -> u64 {
+        let offset = if self.sample_offset == self.block_frames {
+            self.block_frames
+        } else {
+            self.sample_offset
+        };
+        self.next_start_sample.saturating_add(offset as u64)
+    }
+
+    /// Returns sequence number for the block containing [`Self::next_sample`].
+    pub fn next_sequence(&self) -> u64 {
+        self.next_sequence
+            .wrapping_add(u64::from(self.sample_offset == self.block_frames))
+    }
+
+    /// Copies samples into `output`, filling late or missing helper blocks with silence.
+    ///
+    /// A missing block expires at its first read deadline. Later completion cannot replace
+    /// silence already emitted for that block. Callback work is bounded by output length and the
+    /// negotiated block size; this method does not allocate, lock, or perform I/O.
+    pub fn read_into(&mut self, output: &mut [[f32; CLAP_IPC_CHANNELS]]) -> bool {
+        let mut all_ready = true;
+        let mut output_offset = 0;
+        while output_offset < output.len() {
+            if self.sample_offset == self.block_frames {
+                self.next_sequence = self.next_sequence.wrapping_add(1);
+                self.next_start_sample = self
+                    .next_start_sample
+                    .saturating_add(self.block_frames as u64);
+                self.sample_offset = 0;
+                self.block_ready = false;
+                self.block_expired = false;
+            }
+            if !self.block_ready && !self.block_expired {
+                self.block_ready = self.port.try_read_response(
+                    self.generation,
+                    self.next_sequence,
+                    self.next_start_sample,
+                    &mut self.scratch,
+                );
+                self.block_expired = !self.block_ready;
+            }
+            let copy_frames =
+                (output.len() - output_offset).min(self.block_frames - self.sample_offset);
+            if self.block_ready {
+                output[output_offset..output_offset + copy_frames].copy_from_slice(
+                    &self.scratch[self.sample_offset..self.sample_offset + copy_frames],
+                );
+            } else {
+                output[output_offset..output_offset + copy_frames].fill([0.0; CLAP_IPC_CHANNELS]);
+                all_ready = false;
+            }
+            self.sample_offset += copy_frames;
+            output_offset += copy_frames;
+        }
+        all_ready
+    }
+}
 
 impl ClapIpcMapping {
     /// Creates and initializes a private file-backed mapping before helper startup.
@@ -79,8 +250,10 @@ impl ClapIpcMapping {
         // payload fields. Atomics are explicitly initialized after zeroing the backing bytes.
         unsafe { Self::initialize_mapped_region(&mut mapping, config) };
         Ok(Self {
-            mapping,
-            path: Some(temporary.into_temp_path()),
+            inner: Arc::new(ClapIpcMappingInner {
+                mapping,
+                path: Some(temporary.into_temp_path()),
+            }),
         })
     }
 
@@ -103,8 +276,10 @@ impl ClapIpcMapping {
         // is alive. Shared payload access is synchronized by atomic slot states.
         let mapping = unsafe { MmapOptions::new().len(Self::mapped_len()).map_mut(&file)? };
         Ok(Self {
-            mapping,
-            path: None,
+            inner: Arc::new(ClapIpcMappingInner {
+                mapping,
+                path: None,
+            }),
         })
     }
 
@@ -119,13 +294,19 @@ impl ClapIpcMapping {
     /// Keep the file at its original size and do not replace it until this mapping drops. Only
     /// pass the path to the helper process that participates in the IPC protocol.
     pub unsafe fn path(&self) -> Option<PathBuf> {
-        self.path.as_ref().map(|path| path.to_path_buf())
+        self.inner.path.as_ref().map(|path| path.to_path_buf())
     }
 
     pub fn region(&self) -> &ClapIpcRegion {
-        // SAFETY: mapping is aligned to the system page size, initialized before use, and has the
-        // exact region size. Atomic slot ownership protects payload fields shared with the helper.
-        unsafe { &*self.mapping.as_ptr().cast::<ClapIpcRegion>() }
+        // SAFETY: the shared inner owns this exact-size, initialized mapping for its life.
+        unsafe { &*self.inner.mapping.as_ptr().cast::<ClapIpcRegion>() }
+    }
+
+    /// Clones a callback-safe handle without transferring process supervision to the audio graph.
+    pub fn audio_port(&self) -> ClapIpcAudioPort {
+        ClapIpcAudioPort {
+            inner: Arc::clone(&self.inner),
+        }
     }
 
     /// Checks the child's expected limits and publishes its startup handshake.
@@ -416,6 +597,34 @@ impl ClapIpcMidiEvent {
     pub const NO_NOTE_ID: u32 = u32::MAX;
     pub const NO_CONTROLLER: u8 = u8::MAX;
     pub const NO_PITCH_BEND: u16 = u16::MAX;
+
+    /// Encodes one track-scheduled MIDI event into the fixed IPC representation.
+    pub fn from_scheduled(event: crate::ScheduledMidiEvent, frame_count: usize) -> Option<Self> {
+        let kind = match event.kind {
+            crate::MidiEventKind::NoteOn => ClapIpcMidiKind::NoteOn,
+            crate::MidiEventKind::NoteOff => ClapIpcMidiKind::NoteOff,
+            crate::MidiEventKind::ControllerChange => ClapIpcMidiKind::ControllerChange,
+            crate::MidiEventKind::PitchBend => ClapIpcMidiKind::PitchBend,
+        };
+        let note_id = event
+            .note_id
+            .and_then(|id| u32::try_from(id.value()).ok())
+            .filter(|id| *id <= i32::MAX as u32)
+            .unwrap_or(Self::NO_NOTE_ID);
+        let controller = event.controller.unwrap_or(Self::NO_CONTROLLER);
+        let pitch_bend = event.pitch_bend.unwrap_or(Self::NO_PITCH_BEND);
+        let encoded = Self {
+            frame_offset: u32::try_from(event.sample_offset).ok()?,
+            note_id,
+            pitch_bend,
+            kind: kind as u8,
+            pitch: event.pitch,
+            velocity: event.velocity,
+            controller,
+            reserved: [0; 2],
+        };
+        encoded.is_valid(frame_count).then_some(encoded)
+    }
 
     fn is_valid(self, frame_count: usize) -> bool {
         if self.frame_offset as usize >= frame_count
@@ -1103,6 +1312,22 @@ mod tests {
     }
 
     #[test]
+    fn callback_region_handle_keeps_mapping_alive_after_supervisor_release() {
+        let config = ClapIpcConfig::new(48_000, 16, 8).unwrap();
+        let mapping = ClapIpcMapping::create(config).unwrap();
+        assert!(mapping.region().accept_handshake(config));
+        // SAFETY: this test retains the callback handle at the mapping's original size.
+        let path = unsafe { mapping.path() }.unwrap();
+        let port = mapping.audio_port();
+        drop(mapping);
+
+        assert!(path.exists());
+        assert_eq!(port.try_submit(1, 1, 0, &[], 8), Ok(()));
+        drop(port);
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn concurrent_consumers_cannot_claim_or_read_the_same_slot() {
         use std::sync::{Arc, Barrier};
         use std::thread;
@@ -1201,6 +1426,64 @@ mod tests {
     }
 
     #[test]
+    fn audio_reader_preserves_helper_block_across_callback_sizes() {
+        let config = ClapIpcConfig::new(48_000, 4, 8).unwrap();
+        let ipc_mapping = ClapIpcMapping::create(config).unwrap();
+        ipc_mapping.region().accept_handshake(config);
+        ipc_mapping.region().try_submit(3, 5, 64, &[], 4).unwrap();
+        let request = ipc_mapping.region().try_claim_request().unwrap();
+        assert!(request.process(|request| {
+            request
+                .audio
+                .copy_from_slice(&[[0.1, -0.1], [0.2, -0.2], [0.3, -0.3], [0.4, -0.4]]);
+            true
+        }));
+
+        let port = ipc_mapping.audio_port();
+        let mut reader = port.reader(3, 5, 64).unwrap();
+        let mut first = [[0.0; 2]; 1];
+        let mut second = [[0.0; 2]; 3];
+        assert!(reader.read_into(&mut first));
+        assert!(reader.read_into(&mut second));
+        assert_eq!(first, [[0.1, -0.1]]);
+        assert_eq!(second, [[0.2, -0.2], [0.3, -0.3], [0.4, -0.4]]);
+        assert_eq!(reader.next_sequence(), 6);
+        assert_eq!(reader.next_sample(), 68);
+    }
+
+    #[test]
+    fn audio_reader_expires_late_block_and_continues_at_next_position() {
+        let config = ClapIpcConfig::new(48_000, 4, 8).unwrap();
+        let mapping = ClapIpcMapping::create(config).unwrap();
+        mapping.region().accept_handshake(config);
+        let port = mapping.audio_port();
+        let mut reader = port.reader(1, 0, 0).unwrap();
+        mapping.region().try_submit(1, 0, 0, &[], 4).unwrap();
+
+        let mut first = [[1.0; 2]; 2];
+        assert!(!reader.read_into(&mut first));
+        assert_eq!(first, [[0.0; 2]; 2]);
+
+        let late_request = mapping.region().try_claim_request().unwrap();
+        assert!(late_request.process(|request| {
+            request.audio.fill([0.75, -0.75]);
+            true
+        }));
+        mapping.region().try_submit(1, 1, 4, &[], 4).unwrap();
+        let on_time_request = mapping.region().try_claim_request().unwrap();
+        assert!(on_time_request.process(|request| {
+            request.audio.fill([0.25, -0.25]);
+            true
+        }));
+
+        let mut next = [[1.0; 2]; 4];
+        assert!(!reader.read_into(&mut next));
+        assert_eq!(next, [[0.0; 2], [0.0; 2], [0.25, -0.25], [0.25, -0.25]]);
+        assert_eq!(reader.next_sequence(), 1);
+        assert_eq!(reader.next_sample(), 6);
+    }
+
+    #[test]
     fn oversized_blocks_and_full_slot_set_fail_without_waiting() {
         let config = ClapIpcConfig::new(48_000, 2, 1).unwrap();
         let region = ClapIpcRegion::new(config).unwrap();
@@ -1240,6 +1523,44 @@ mod tests {
         assert!(event.is_valid(4));
         event.frame_offset = 4;
         assert!(!event.is_valid(4));
+    }
+
+    #[test]
+    fn scheduled_midi_events_encode_to_valid_ipc_packets() {
+        let track_id = aaadaw_core::TrackId::from_value(1).unwrap();
+        let note = crate::ScheduledMidiEvent {
+            sample_offset: 3,
+            track_id,
+            note_id: Some(aaadaw_core::NoteId::from_value(11).unwrap()),
+            pitch: 64,
+            velocity: 100,
+            controller: None,
+            pitch_bend: None,
+            kind: crate::MidiEventKind::NoteOn,
+        };
+        let encoded = ClapIpcMidiEvent::from_scheduled(note, 8).unwrap();
+        assert_eq!(encoded.frame_offset, 3);
+        assert_eq!(encoded.note_id, 11);
+        assert_eq!(encoded.kind, ClapIpcMidiKind::NoteOn as u8);
+        assert!(encoded.is_valid(8));
+
+        let controller = crate::ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: None,
+            pitch: 0,
+            velocity: 0,
+            controller: Some(64),
+            pitch_bend: None,
+            kind: crate::MidiEventKind::ControllerChange,
+        };
+        let encoded = ClapIpcMidiEvent::from_scheduled(controller, 8).unwrap();
+        assert_eq!(encoded.controller, 64);
+        assert_eq!(encoded.note_id, ClapIpcMidiEvent::NO_NOTE_ID);
+
+        let mut invalid_offset = note;
+        invalid_offset.sample_offset = 8;
+        assert!(ClapIpcMidiEvent::from_scheduled(invalid_offset, 8).is_none());
     }
 
     #[test]

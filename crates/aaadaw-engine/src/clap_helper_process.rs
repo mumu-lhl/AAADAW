@@ -1,7 +1,7 @@
 //! Control-thread ownership for one supervised CLAP instrument helper process.
 
 use crate::clap_ipc::{clear_helper_state, read_saved_helper_state, write_helper_state};
-use crate::{ClapIpcConfig, ClapIpcMapping, ClapIpcRegion};
+use crate::{ClapIpcAudioPort, ClapIpcConfig, ClapIpcMapping, ClapIpcRegion};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -98,6 +98,11 @@ impl ClapInstrumentHelperProcess {
     /// Returns the shared region for bounded callback-side submission and response reads.
     pub fn region(&self) -> &ClapIpcRegion {
         self.mapping.region()
+    }
+
+    /// Clones bounded audio access without transferring child-process ownership to the graph.
+    pub fn audio_port(&self) -> ClapIpcAudioPort {
+        self.mapping.audio_port()
     }
 
     /// Returns the helper's process exit status when it has exited.
