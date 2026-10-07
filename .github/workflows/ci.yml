@@ -46,6 +46,7 @@ jobs:
   android-emulator:
     name: Launch Android APK on emulator
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: android
     steps:
       - uses: actions/download-artifact@v4
@@ -61,7 +62,7 @@ jobs:
           profile: pixel_2
           script: |
             adb install android-apk/app-debug.apk
-            adb shell am start -W -n org.aaadaw.app/org.aaadaw.app.MainActivity
+            adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
             for attempt in $(seq 1 30); do
               if adb shell pidof org.aaadaw.app >/dev/null; then break; fi
               sleep 1
