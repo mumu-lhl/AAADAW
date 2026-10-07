@@ -80,8 +80,8 @@ pub enum WavExport {
 
 #[derive(Debug)]
 pub enum WavExportError {
-    Pcm16(Pcm24WavExportError),
-    Pcm24(Pcm24WavExportError),
+    Pcm16(IntegerPcmWavExportError),
+    Pcm24(IntegerPcmWavExportError),
     Float32(Float32WavExportError),
 }
 
@@ -103,17 +103,18 @@ impl std::error::Error for WavExportError {
     }
 }
 
-/// Errors returned while creating or writing a PCM24 WAV export.
+/// Errors returned while creating or writing an integer PCM WAV export.
 #[derive(Debug)]
-pub enum Pcm24WavExportError {
+pub enum IntegerPcmWavExportError {
     Io(io::Error),
     InvalidSampleRate,
     RiffSizeLimit,
 }
 
-pub type Pcm16WavExportError = Pcm24WavExportError;
+pub type Pcm24WavExportError = IntegerPcmWavExportError;
+pub type Pcm16WavExportError = IntegerPcmWavExportError;
 
-impl std::fmt::Display for Pcm24WavExportError {
+impl std::fmt::Display for IntegerPcmWavExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "WAV export failed: {error}"),
@@ -123,7 +124,7 @@ impl std::fmt::Display for Pcm24WavExportError {
     }
 }
 
-impl std::error::Error for Pcm24WavExportError {
+impl std::error::Error for IntegerPcmWavExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
@@ -132,7 +133,7 @@ impl std::error::Error for Pcm24WavExportError {
     }
 }
 
-impl From<io::Error> for Pcm24WavExportError {
+impl From<io::Error> for IntegerPcmWavExportError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
@@ -146,7 +147,7 @@ impl Pcm24WavExport {
     pub fn create(
         destination: impl AsRef<Path>,
         sample_rate: u32,
-    ) -> Result<Self, Pcm24WavExportError> {
+    ) -> Result<Self, IntegerPcmWavExportError> {
         Ok(Self {
             inner: IntegerPcmWavExport::create(destination.as_ref(), sample_rate, 24, None)?,
         })
@@ -282,7 +283,7 @@ impl IntegerPcmWavExport {
     }
 
     /// Appends rendered interleaved stereo frames using bounded memory.
-    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Pcm24WavExportError> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), IntegerPcmWavExportError> {
         let bytes_per_sample = u64::from(self.bits_per_sample / 8);
         let bytes_per_frame = u64::from(CHANNELS) * bytes_per_sample;
         let added_bytes = (frames.len() as u64)
@@ -315,7 +316,7 @@ impl IntegerPcmWavExport {
     }
 
     /// Flushes the WAV header and atomically publishes the completed export.
-    fn finish(mut self) -> Result<PathBuf, Pcm24WavExportError> {
+    fn finish(mut self) -> Result<PathBuf, IntegerPcmWavExportError> {
         let mut file = self
             .file
             .take()
@@ -677,37 +678,99 @@ mod tests {
 
     #[test]
     fn tpdf_dither_is_seeded_bounded_and_zero_mean() {
-        let path = temp_destination("pcm16-dither");
-        let mut export = Pcm16WavExport::create_with_dither_seed(&path, 48_000, 17)
-            .expect("dithered writer should open");
         let silence = vec![[0.0, 0.0]; 16_384];
-        export
-            .write_frames(&silence)
-            .expect("silence frames should be written");
-        export.finish().expect("export should publish");
+        for bits_per_sample in [16, 24] {
+            let path = temp_destination(&format!("pcm{bits_per_sample}-dither"));
+            let mut export = IntegerPcmWavExport::create(&path, 48_000, bits_per_sample, Some(17))
+                .expect("dithered writer should open");
+            export
+                .write_frames(&silence)
+                .expect("silence frames should be written");
+            export.finish().expect("export should publish");
 
-        let bytes = fs::read(&path).expect("export should be readable");
-        let samples = bytes[44..]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|sample| i16::from_le_bytes(*sample) as i32)
-            .collect::<Vec<_>>();
-        assert!(samples.iter().all(|sample| (-1..=1).contains(sample)));
-        let mean =
-            samples.iter().map(|sample| f64::from(*sample)).sum::<f64>() / samples.len() as f64;
-        assert!(mean.abs() < 0.02, "dither mean was {mean}");
+            let bytes = fs::read(&path).expect("export should be readable");
+            let bytes_per_sample = usize::from(bits_per_sample / 8);
+            let samples = bytes[44..]
+                .chunks_exact(bytes_per_sample)
+                .map(|sample| match bits_per_sample {
+                    16 => i16::from_le_bytes(sample.try_into().unwrap()) as i32,
+                    24 => {
+                        let sign = if sample[2] & 0x80 == 0 { 0 } else { 0xff };
+                        i32::from_le_bytes([sample[0], sample[1], sample[2], sign])
+                    }
+                    _ => unreachable!("test covers supported integer PCM formats"),
+                })
+                .collect::<Vec<_>>();
+            assert!(samples.iter().all(|sample| (-1..=1).contains(sample)));
+            let mean =
+                samples.iter().map(|sample| f64::from(*sample)).sum::<f64>() / samples.len() as f64;
+            assert!(
+                mean.abs() < 0.02,
+                "{bits_per_sample}-bit dither mean was {mean}"
+            );
 
-        let repeat_path = temp_destination("pcm16-dither-repeat");
-        let mut repeated = Pcm16WavExport::create_with_dither_seed(&repeat_path, 48_000, 17)
-            .expect("repeat writer should open");
-        repeated
-            .write_frames(&silence)
-            .expect("repeat silence should be written");
-        repeated.finish().expect("repeat export should publish");
-        assert_eq!(fs::read(&path).unwrap(), fs::read(&repeat_path).unwrap());
-        fs::remove_file(path).expect("test export should be removed");
-        fs::remove_file(repeat_path).expect("repeat test export should be removed");
+            let repeat_path = temp_destination(&format!("pcm{bits_per_sample}-dither-repeat"));
+            let mut repeated =
+                IntegerPcmWavExport::create(&repeat_path, 48_000, bits_per_sample, Some(17))
+                    .expect("repeat writer should open");
+            repeated
+                .write_frames(&silence)
+                .expect("repeat silence should be written");
+            repeated.finish().expect("repeat export should publish");
+            assert_eq!(fs::read(&path).unwrap(), fs::read(&repeat_path).unwrap());
+            fs::remove_file(path).expect("test export should be removed");
+            fs::remove_file(repeat_path).expect("repeat test export should be removed");
+        }
+    }
+
+    #[test]
+    fn every_selected_format_keeps_cancellation_rate_and_destination_failures_atomic() {
+        for sample_format in WavSampleFormat::ALL {
+            let options = WavExportOptions {
+                sample_format,
+                dither: true,
+            };
+            let invalid_rate_path = temp_destination("invalid-rate");
+            assert!(WavExport::create(&invalid_rate_path, 0, options).is_err());
+            assert!(!invalid_rate_path.exists());
+
+            let cancelled_path = temp_destination("cancel-selected-format");
+            let mut cancelled = WavExport::create(&cancelled_path, 48_000, options)
+                .expect("selected writer should open");
+            cancelled
+                .write_frames(&[[0.25, -0.25]])
+                .expect("sample frame should be written");
+            drop(cancelled);
+            assert!(!cancelled_path.exists());
+
+            let write_error_path = temp_destination("write-error-selected-format");
+            let mut write_error = WavExport::create(&write_error_path, 48_000, options)
+                .expect("selected writer should open");
+            match &mut write_error {
+                WavExport::Pcm16(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::Pcm24(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::Float32(export) => export.data_bytes = MAX_RIFF_DATA_BYTES,
+            }
+            assert!(write_error.write_frames(&[[0.25, -0.25]]).is_err());
+            drop(write_error);
+            assert!(!write_error_path.exists());
+
+            let conflict_path = temp_destination("conflict-selected-format");
+            let mut conflict = WavExport::create(&conflict_path, 48_000, options)
+                .expect("selected writer should open");
+            conflict
+                .write_frames(&[[0.25, -0.25]])
+                .expect("sample frame should be written");
+            fs::write(&conflict_path, b"existing destination")
+                .expect("destination should appear during render");
+            assert!(conflict.finish().is_err());
+            assert_eq!(
+                fs::read(&conflict_path).unwrap(),
+                b"existing destination",
+                "{sample_format} export must not replace a destination"
+            );
+            fs::remove_file(conflict_path).expect("existing destination should be removed");
+        }
     }
 
     #[test]
