@@ -55,7 +55,6 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             |grid| Message::Timeline(TimelineEvent::SetSnapGrid(grid)),
         )
         .width(Length::Fixed(120.0)),
-        text("RMB drag: select · Shift-drag: ignore Snap").size(10),
         text("Zoom · MMB drag ↑↓").size(10),
         button("−")
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {
@@ -77,6 +76,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(6)
     .align_y(Alignment::Center);
+    let gesture_hints = column![
+        text("Items: click selects · Ctrl/Cmd-click adds/removes · Shift-click ranges · Ctrl/Cmd-drag copies · RMB-drag marquees")
+            .size(10)
+            .width(Length::Fill),
+        text("Shift-drag bypasses Snap · Esc cancels · Tracks: click selects · Ctrl/Cmd-click toggles · Shift-click ranges")
+            .size(10)
+            .width(Length::Fill),
+    ]
+    .spacing(2);
 
     let panes = pane_grid(&app.timeline.panes, |_pane, role, _is_maximized| {
         let content: Element<'_, Message> = match role {
@@ -95,11 +103,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    column![toolbar, panes, super::item_inspector::view(app)]
-        .spacing(6)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    column![
+        toolbar,
+        gesture_hints,
+        panes,
+        super::item_inspector::view(app)
+    ]
+    .spacing(6)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
