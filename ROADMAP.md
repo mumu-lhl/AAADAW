@@ -218,8 +218,9 @@
 ### 插件隔离与兼容性
 
 - [x] 通过 AAADAW helper 子进程加载 CLAP entry；版本化请求、输入/输出上限和超时保护隔离扫描崩溃，缓存失败项并由显式重扫重试（[Issue #182](https://github.com/mumu-lhl/AAADAW/issues/182)，[ADR 0005](docs/adr/0005-clap-midi-instrument-path.md)）。
-- [ ] 完成单个 CLAP 乐器的隔离播放：接入共享内存音频/MIDI 协议与 helper 进程，补齐崩溃、卡死、重启、状态往返和版本不匹配验收（[Issue #200](https://github.com/mumu-lhl/AAADAW/issues/200)；当前协议基础与未完成项见[`研究记录`](docs/research/2026-10-05-clap-instrument-helper-process.md)）。
-- [ ] 实现隔离插件的独立原生 GUI 窗口；保留高信任插件的可选进程内模式并显式提示风险。
+- [x] 完成单个 CLAP 乐器的隔离播放：以固定上限的共享内存音频/MIDI 协议运行监督 helper，覆盖崩溃、卡死、重启、状态往返、版本不匹配和健康轨道连续播放（[Issue #200](https://github.com/mumu-lhl/AAADAW/issues/200)，[PR #203](https://github.com/mumu-lhl/AAADAW/pull/203)，[`研究记录`](docs/research/2026-10-05-clap-instrument-helper-process.md)）。
+- [x] 在 helper 中实现隔离乐器的独立原生浮动 GUI 窗口，并管理每个实例的打开、关闭和重开生命周期；Linux GLib/CLAP 回调事件服务边界及 fixture 验证范围已记录（[Issue #204](https://github.com/mumu-lhl/AAADAW/issues/204)，[PR #205](https://github.com/mumu-lhl/AAADAW/pull/205)）。
+- [ ] 验证并扩展 Linux 隔离 CLAP editor 的 toolkit 事件循环支持，覆盖交互输入、重绘和用户关闭（[Issue #206](https://github.com/mumu-lhl/AAADAW/issues/206)）。
 - [ ] 在许可审查通过后，通过 `cxx` 增加 VST3 桥接；VST3 SDK/分发合规是独立发布门槛。
 
 ### 平台扩展

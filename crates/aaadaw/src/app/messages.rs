@@ -123,6 +123,8 @@ pub(crate) enum Message {
     ApplyMeterMap,
     OpenTrackFxChain(TrackId),
     OpenTrackInstrumentPicker(TrackId),
+    SetTrackInstrumentGui(TrackId, bool),
+    TrackInstrumentNativeParent(TrackId, bool, u64),
     OpenMidiEditor(ItemId),
     CloseMidiEditor,
     SelectMidiEditorLane(MidiEditorLane),

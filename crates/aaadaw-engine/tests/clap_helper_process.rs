@@ -285,6 +285,84 @@ fn dynamically_loaded_child_plugin_renders_midi_and_roundtrips_saved_state() {
     restored.take_saved_state().unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn floating_editor_can_close_reopen_and_leave_instrument_audio_running() {
+    let fixture = build_test_clap_plugin();
+    let mut process = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        None,
+    )
+    .expect("helper should load the dynamic CLAP fixture");
+    wait_for_gui_status(&process, 0);
+    for expected_status in [1, 1, 0, 0, 1, 0] {
+        let open = expected_status == 1;
+        let sequence = process
+            .request_gui(open, 0)
+            .expect("GUI request uses its own bounded control field");
+        wait_for_gui_request(&process, sequence, expected_status);
+    }
+    let events = [midi_event(
+        ClapIpcMidiKind::NoteOn,
+        0,
+        60,
+        100,
+        ClapIpcMidiEvent::NO_CONTROLLER,
+    )];
+    let output = render_helper_block(&process, 0, &events);
+    assert!(output.iter().any(|frame| frame[0] > 0.0));
+    process.shutdown().unwrap();
+    process.take_saved_state().unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn unsupported_editor_status_does_not_stop_instrument_audio() {
+    let fixture = build_test_clap_plugin();
+    let mut process = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        None,
+    )
+    .expect("helper should load the dynamic CLAP fixture");
+    process.request_gui(true, 0).unwrap();
+    wait_for_gui_status(&process, 2);
+    let events = [midi_event(
+        ClapIpcMidiKind::NoteOn,
+        0,
+        60,
+        100,
+        ClapIpcMidiEvent::NO_CONTROLLER,
+    )];
+    let output = render_helper_block(&process, 0, &events);
+    assert!(output.iter().any(|frame| frame[0] > 0.0));
+    process.shutdown().unwrap();
+    process.take_saved_state().unwrap();
+}
+
+fn wait_for_gui_status(process: &ClapInstrumentHelperProcess, expected: u32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while process.gui_status() != expected && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(process.gui_status(), expected);
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_gui_request(process: &ClapInstrumentHelperProcess, sequence: u64, expected: u32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !process.region().gui_request_completed(sequence) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(process.region().gui_request_completed(sequence));
+    assert_eq!(process.gui_status(), expected);
+}
+
 #[test]
 fn active_helper_state_can_be_saved_without_stopping_its_process() {
     let mut process = spawn("test.live-state").expect("state helper should complete startup");

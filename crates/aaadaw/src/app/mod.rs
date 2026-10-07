@@ -1673,6 +1673,12 @@ impl App {
             Message::OpenTrackInstrumentPicker(track_id) => {
                 task = self.open_track_instrument_picker(track_id)
             }
+            Message::SetTrackInstrumentGui(track_id, open) => {
+                task = self.request_track_instrument_gui(track_id, open)
+            }
+            Message::TrackInstrumentNativeParent(track_id, open, parent) => {
+                self.set_track_instrument_gui(track_id, open, parent)
+            }
             Message::ClearTrackInstrument(track_id) => self.clear_track_instrument(track_id),
             Message::OpenPluginPicker => task = self.open_plugin_picker(),
             Message::CloseTrackFxChain => {
@@ -3899,6 +3905,43 @@ impl App {
                         "Isolated CLAP instrument {plugin_id} on {track_id} missed {underruns} audio blocks (helper {instance_id}); late blocks are silent"
                     )
                 });
+            }
+            let gui_status = owner.gui_status();
+            if matches!(gui_status, 2 | 3)
+                && !self
+                    .clap_plugin_warnings
+                    .iter()
+                    .any(|warning| warning.contains(&format!("editor (helper {instance_id})")))
+            {
+                let (track_id, plugin_id) = self
+                    .clap_instrument_helper_targets
+                    .get(instance_id)
+                    .map(|(track_id, plugin_id)| (format!("{track_id:?}"), plugin_id.as_str()))
+                    .unwrap_or_else(|| ("unknown track".to_owned(), "unknown plugin"));
+                new_helper_failures.push(if gui_status == 2 {
+                    format!("CLAP instrument {plugin_id} on {track_id} does not support a native editor (helper {instance_id})")
+                } else {
+                    format!("CLAP instrument {plugin_id} on {track_id} could not open its native editor (helper {instance_id})")
+                });
+            }
+        }
+        if self.playback.is_none() {
+            let retired_ids = self
+                .clap_instrument_helper_targets
+                .iter()
+                .filter_map(|(instance_id, (track_id, plugin_id))| {
+                    let still_assigned = self
+                        .project
+                        .tracks()
+                        .iter()
+                        .find(|track| track.id() == *track_id)
+                        .and_then(|track| track.instrument())
+                        .is_some_and(|instrument| instrument.plugin_id() == plugin_id);
+                    (!still_assigned).then_some(*instance_id)
+                })
+                .collect::<Vec<_>>();
+            if let Some(error) = self.discard_unused_instrument_owners(&retired_ids) {
+                self.clap_plugin_warnings.push(error);
             }
         }
         if !new_helper_failures.is_empty() {

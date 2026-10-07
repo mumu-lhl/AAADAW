@@ -246,6 +246,14 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
         actions = actions
             .push(text(super::CLAP_PLUGIN_RISK).size(10))
             .push(action_button(
+                if app.track_instrument_gui_open(track_id) {
+                    "Close instrument editor"
+                } else {
+                    "Open instrument editor"
+                },
+                Message::SetTrackInstrumentGui(track_id, !app.track_instrument_gui_open(track_id)),
+            ))
+            .push(action_button(
                 "Clear instrument",
                 Message::ClearTrackInstrument(track_id),
             ));

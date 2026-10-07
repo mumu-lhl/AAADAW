@@ -6,6 +6,9 @@
 
 use crate::{MidiEventKind, ScheduledMidiEvent};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::gui::{
+    GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui,
+};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
@@ -17,8 +20,9 @@ use clack_host::events::event_types::{
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
 use clack_host::plugin::features;
 use clack_host::prelude::{
-    AudioPortBuffer, AudioPortBufferType, AudioPorts, HostInfo, InputAudioBuffers, InputChannel,
-    PluginAudioConfiguration, PluginAudioProcessor, PluginEntry, PluginInstance,
+    AudioPortBuffer, AudioPortBufferType, AudioPorts, HostError, HostExtensions, HostHandlers,
+    HostInfo, InputAudioBuffers, InputChannel, PluginAudioConfiguration, PluginAudioProcessor,
+    PluginEntry, PluginInstance, SharedHandler,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::borrow::Cow;
@@ -27,7 +31,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Parameter metadata exposed by a CLAP effect.
 #[derive(Clone, Debug, PartialEq)]
@@ -170,6 +174,66 @@ impl ClapParameterSender {
 }
 
 static NEXT_CLAP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+const GUI_EVENT_SHOW: u32 = 1;
+const GUI_EVENT_HIDE: u32 = 2;
+const GUI_EVENT_CLOSED: u32 = 4;
+const GUI_EVENT_DESTROYED: u32 = 8;
+
+struct IsolatedInstrumentHost;
+
+#[derive(Default)]
+struct IsolatedInstrumentHostShared {
+    gui_events: AtomicU32,
+    callback_requested: AtomicBool,
+}
+
+impl<'a> SharedHandler<'a> for IsolatedInstrumentHostShared {
+    fn request_restart(&self) {}
+    fn request_process(&self) {}
+    fn request_callback(&self) {
+        self.callback_requested.store(true, Ordering::Release);
+    }
+}
+
+impl HostGuiImpl for IsolatedInstrumentHostShared {
+    fn resize_hints_changed(&self) {}
+
+    fn request_resize(&self, _new_size: GuiSize) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "Floating instrument editors cannot be resized by the host",
+        ))
+    }
+
+    fn request_show(&self) -> Result<(), HostError> {
+        self.gui_events.fetch_or(GUI_EVENT_SHOW, Ordering::Release);
+        Ok(())
+    }
+
+    fn request_hide(&self) -> Result<(), HostError> {
+        self.gui_events.fetch_or(GUI_EVENT_HIDE, Ordering::Release);
+        Ok(())
+    }
+
+    fn closed(&self, was_destroyed: bool) {
+        let event = GUI_EVENT_CLOSED
+            | if was_destroyed {
+                GUI_EVENT_DESTROYED
+            } else {
+                0
+            };
+        self.gui_events.fetch_or(event, Ordering::Release);
+    }
+}
+
+impl HostHandlers for IsolatedInstrumentHost {
+    type Shared<'a> = IsolatedInstrumentHostShared;
+    type MainThread<'a> = ();
+    type AudioProcessor<'a> = ();
+
+    fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
+        builder.register::<HostGui>();
+    }
+}
 
 /// A CLAP instrument available in a single plugin entry file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,14 +313,17 @@ impl std::error::Error for ClapInstrumentError {}
 
 /// Control-thread ownership required to deactivate and destroy one CLAP instrument.
 pub struct ClapInstrumentOwner {
-    instance: Option<PluginInstance<()>>,
+    instance: Option<PluginInstance<IsolatedInstrumentHost>>,
     instance_id: u64,
+    gui_created: bool,
+    gui_visible: bool,
+    gui_status: u32,
 }
 
 /// A started or stopped instrument processor and its preallocated render buffers.
 pub struct ClapInstrumentProcessor {
     instance_id: u64,
-    processor: PluginAudioProcessor<()>,
+    processor: PluginAudioProcessor<IsolatedInstrumentHost>,
     output_ports: AudioPorts,
     left: Vec<f32>,
     right: Vec<f32>,
@@ -279,7 +346,7 @@ struct ActiveNote {
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
 pub struct StoppedClapInstrumentProcessor {
     instance_id: u64,
-    processor: clack_host::prelude::StoppedPluginAudioProcessor<()>,
+    processor: clack_host::prelude::StoppedPluginAudioProcessor<IsolatedInstrumentHost>,
 }
 
 /// Control-thread ownership required to deactivate and destroy one CLAP audio effect.
@@ -330,6 +397,131 @@ impl clack_host::events::io::OutputEventBuffer for DiscardPluginOutputEvents {
 }
 
 impl ClapInstrumentOwner {
+    /// Opens or closes this instrument's floating native editor on the plugin main thread.
+    /// Status values are shared with the helper protocol: 0 closed, 1 visible, 2 unsupported,
+    /// and 3 failed.
+    pub(crate) fn set_floating_gui(&mut self, open: bool, parent: u64) -> u32 {
+        let status = self.apply_floating_gui(open, parent);
+        self.gui_status = status;
+        self.gui_visible = status == 1;
+        status
+    }
+
+    fn apply_floating_gui(&mut self, open: bool, parent: u64) -> u32 {
+        let Some(instance) = self.instance.as_mut() else {
+            return 3;
+        };
+        let plugin = instance.plugin_handle();
+        let Some(gui) = plugin.get_extension::<PluginGui>() else {
+            return 2;
+        };
+        if !open {
+            if self.gui_created {
+                let _ = gui.hide(&plugin);
+                gui.destroy(&plugin);
+                self.gui_created = false;
+            }
+            return 0;
+        }
+        if self.gui_created {
+            return if gui.show(&plugin).is_ok() { 1 } else { 3 };
+        }
+        #[cfg(target_os = "windows")]
+        let native_api = GuiApiType::WIN32;
+        #[cfg(target_os = "linux")]
+        let native_api = GuiApiType::X11;
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        return 2;
+
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let preferred = gui.get_preferred_api(&plugin);
+            let configuration = preferred
+                .filter(|configuration| {
+                    configuration.is_floating
+                        && configuration.api_type == native_api
+                        && gui.is_api_supported(&plugin, *configuration)
+                })
+                .unwrap_or(GuiConfiguration {
+                    api_type: native_api,
+                    is_floating: true,
+                });
+            if !gui.is_api_supported(&plugin, configuration) {
+                return 2;
+            }
+            if gui.create(&plugin, configuration).is_err() {
+                return 3;
+            }
+            self.gui_created = true;
+            if parent != 0 {
+                #[cfg(target_os = "linux")]
+                let parent_window = clack_extensions::gui::Window::from_x11_handle(parent as _);
+                #[cfg(target_os = "windows")]
+                // SAFETY: the DAW main window remains alive until its helper processes are stopped.
+                let parent_window = unsafe {
+                    clack_extensions::gui::Window::from_win32_hwnd(parent as usize as *mut _)
+                };
+                // SAFETY: `parent_window` refers to the live DAW main window, retained until helper shutdown.
+                let _ = unsafe { gui.set_transient(&plugin, parent_window) };
+            }
+            if let Ok(title) = CString::new("AAADAW Instrument") {
+                gui.suggest_title(&plugin, &title);
+            }
+            if gui.show(&plugin).is_err() {
+                gui.destroy(&plugin);
+                self.gui_created = false;
+                return 3;
+            }
+            1
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            2
+        }
+    }
+
+    pub(crate) fn service_gui_host_callbacks(&mut self) -> Option<u32> {
+        let instance = self.instance.as_mut()?;
+        let events =
+            instance.access_shared_handler(|shared| shared.gui_events.swap(0, Ordering::AcqRel));
+        if events == 0 {
+            return None;
+        }
+        let plugin = instance.plugin_handle();
+        if let Some(gui) = plugin.get_extension::<PluginGui>() {
+            if events & GUI_EVENT_DESTROYED != 0 && self.gui_created {
+                gui.destroy(&plugin);
+                self.gui_created = false;
+                self.gui_visible = false;
+                self.gui_status = 0;
+            } else if events & GUI_EVENT_CLOSED != 0 {
+                self.gui_visible = false;
+                self.gui_status = 0;
+            }
+            if events & GUI_EVENT_SHOW != 0 && self.gui_created {
+                self.gui_visible = gui.show(&plugin).is_ok();
+                self.gui_status = if self.gui_visible { 1 } else { 3 };
+            }
+            if events & GUI_EVENT_HIDE != 0 && self.gui_created {
+                self.gui_visible = gui.hide(&plugin).is_err();
+                self.gui_status = if self.gui_visible { 3 } else { 0 };
+            }
+        }
+        Some(self.gui_status)
+    }
+
+    /// Services callbacks requested by the plugin on its main thread.
+    pub(crate) fn service_main_thread_callback(&mut self) {
+        if let Some(instance) = self.instance.as_mut() {
+            let callback_requested = instance.access_shared_handler(|shared| {
+                shared.callback_requested.swap(false, Ordering::AcqRel)
+            });
+            if callback_requested {
+                instance.call_on_main_thread_callback();
+            }
+        }
+    }
+
     /// Loads and activates a stereo-output CLAP instrument from a library entry file.
     ///
     /// Loading runs third-party native code in this process. Call this only after the user chooses
@@ -447,12 +639,16 @@ impl ClapInstrumentOwner {
         .map_err(|error| {
             ClapInstrumentError::new(format!("Invalid CLAP host metadata: {error}"))
         })?;
-        let mut instance =
-            PluginInstance::<()>::new(|_| (), |_| (), &entry, &c_plugin_id, &host_info).map_err(
-                |error| {
-                    ClapInstrumentError::new(format!("Could not create CLAP instrument: {error}"))
-                },
-            )?;
+        let mut instance = PluginInstance::<IsolatedInstrumentHost>::new(
+            |_| IsolatedInstrumentHostShared::default(),
+            |_| (),
+            &entry,
+            &c_plugin_id,
+            &host_info,
+        )
+        .map_err(|error| {
+            ClapInstrumentError::new(format!("Could not create CLAP instrument: {error}"))
+        })?;
         restore_plugin_state(&mut instance, state)?;
         let (input_note_port, input_midi_port) = validate_stereo_synth_ports(&mut instance)?;
 
@@ -473,6 +669,9 @@ impl ClapInstrumentOwner {
             Self {
                 instance: Some(instance),
                 instance_id,
+                gui_created: false,
+                gui_visible: false,
+                gui_status: 0,
             },
             ClapInstrumentProcessor {
                 instance_id,
@@ -500,6 +699,7 @@ impl ClapInstrumentOwner {
             self.instance_id, processor.instance_id,
             "CLAP instrument processor must return to its matching owner"
         );
+        self.set_floating_gui(false, 0);
         let instance = self
             .instance
             .as_mut()
@@ -524,6 +724,7 @@ impl ClapInstrumentOwner {
     /// The processor handle must already have been dropped. Use [`Self::deactivate`] when the
     /// graph returned a stopped processor after realtime processing.
     pub fn try_deactivate_unused(&mut self) -> Result<(), ClapInstrumentError> {
+        self.set_floating_gui(false, 0);
         let instance = self
             .instance
             .as_mut()
@@ -1451,8 +1652,8 @@ pub unsafe fn inspect_clap_instrument_entry(
         .collect())
 }
 
-fn restore_plugin_state(
-    instance: &mut PluginInstance<()>,
+fn restore_plugin_state<H: HostHandlers>(
+    instance: &mut PluginInstance<H>,
     state: Option<&[u8]>,
 ) -> Result<(), ClapInstrumentError> {
     let Some(state) = state else {
@@ -1523,8 +1724,8 @@ pub(crate) fn restore_parameter_values(instance: &mut PluginInstance<()>, values
     params.flush(&mut handle, &input, &mut output_events);
 }
 
-fn save_plugin_state(
-    instance: &mut Option<PluginInstance<()>>,
+fn save_plugin_state<H: HostHandlers>(
+    instance: &mut Option<PluginInstance<H>>,
 ) -> Result<Option<Vec<u8>>, ClapInstrumentError> {
     let instance = instance
         .as_mut()
@@ -1540,8 +1741,8 @@ fn save_plugin_state(
     Ok(Some(state))
 }
 
-fn validate_stereo_synth_ports(
-    instance: &mut PluginInstance<()>,
+fn validate_stereo_synth_ports<H: HostHandlers>(
+    instance: &mut PluginInstance<H>,
 ) -> Result<(u16, Option<u16>), ClapInstrumentError> {
     let plugin = instance.plugin_handle();
     let ports = plugin

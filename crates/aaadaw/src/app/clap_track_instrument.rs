@@ -10,7 +10,165 @@ use iced::Task;
 #[cfg(feature = "audio-device")]
 use std::path::PathBuf;
 
+#[allow(clippy::useless_conversion)]
+fn native_parent_handle(handle: iced::window::raw_window_handle::RawWindowHandle) -> u64 {
+    match handle {
+        iced::window::raw_window_handle::RawWindowHandle::Xlib(handle) => u64::from(handle.window),
+        iced::window::raw_window_handle::RawWindowHandle::Win32(handle) => {
+            handle.hwnd.get() as usize as u64
+        }
+        _ => 0,
+    }
+}
+
 impl App {
+    pub(super) fn track_instrument_gui_open(&self, _track_id: TrackId) -> bool {
+        #[cfg(feature = "audio-device")]
+        {
+            self.clap_instrument_helper_targets
+                .iter()
+                .any(|(instance_id, target)| {
+                    target.0 == _track_id
+                        && self
+                            .clap_instrument_helper_owners
+                            .get(instance_id)
+                            .is_some_and(|owner| owner.gui_status() == 1)
+                })
+        }
+        #[cfg(not(feature = "audio-device"))]
+        false
+    }
+
+    pub(super) fn request_track_instrument_gui(
+        &self,
+        track_id: TrackId,
+        open: bool,
+    ) -> Task<Message> {
+        iced::window::oldest().then(move |window_id| {
+            window_id.map_or_else(Task::none, |window_id| {
+                iced::window::run(window_id, |window| {
+                    window
+                        .window_handle()
+                        .ok()
+                        .map(|handle| native_parent_handle(handle.as_raw()))
+                        .unwrap_or_default()
+                })
+                .map(move |parent| Message::TrackInstrumentNativeParent(track_id, open, parent))
+            })
+        })
+    }
+
+    pub(super) fn set_track_instrument_gui(&mut self, track_id: TrackId, open: bool, parent: u64) {
+        #[cfg(feature = "audio-device")]
+        {
+            let Some(instrument) = self
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)
+                .and_then(|track| track.instrument())
+                .cloned()
+            else {
+                self.status = "Track has no assigned CLAP instrument".to_owned();
+                return;
+            };
+            let existing = self
+                .clap_instrument_helper_targets
+                .iter()
+                .find(|(_, target)| target.0 == track_id && target.1 == instrument.plugin_id())
+                .map(|(instance_id, _)| *instance_id);
+            let instance_id = if let Some(instance_id) = existing {
+                instance_id
+            } else if open {
+                let executable = match std::env::current_exe() {
+                    Ok(executable) => executable,
+                    Err(error) => {
+                        self.status =
+                            format!("Could not locate the CLAP helper executable: {error}");
+                        return;
+                    }
+                };
+                let config = ClapIpcConfig::new(
+                    self.project.settings().sample_rate(),
+                    CLAP_IPC_MAX_BLOCK_FRAMES,
+                    CLAP_IPC_MAX_EVENTS,
+                );
+                let Some(config) = config else {
+                    self.status = "Could not configure the isolated CLAP editor helper".to_owned();
+                    return;
+                };
+                let entry_path = PathBuf::from(instrument.bundle_path());
+                let first_attempt = ClapInstrumentHelperProcess::spawn(
+                    &executable,
+                    &entry_path,
+                    instrument.plugin_id(),
+                    config,
+                    instrument.state(),
+                );
+                let loaded = match first_attempt {
+                    Err(error)
+                        if instrument.state().is_some()
+                            && error
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .contains("state restore") =>
+                    {
+                        self.clap_plugin_warnings.push(format!(
+                            "{} state could not be restored; using its default state ({error})",
+                            instrument.plugin_id()
+                        ));
+                        ClapInstrumentHelperProcess::spawn(
+                            &executable,
+                            &entry_path,
+                            instrument.plugin_id(),
+                            config,
+                            None,
+                        )
+                    }
+                    result => result,
+                };
+                match loaded {
+                    Ok(owner) => {
+                        let instance_id = owner.instance_id();
+                        self.clap_instrument_helper_targets
+                            .insert(instance_id, (track_id, instrument.plugin_id().to_owned()));
+                        self.clap_instrument_helper_owners
+                            .insert(instance_id, owner);
+                        instance_id
+                    }
+                    Err(error) => {
+                        self.status =
+                            format!("Could not start isolated instrument editor: {error}");
+                        return;
+                    }
+                }
+            } else {
+                self.status = "Instrument editor is already closed".to_owned();
+                return;
+            };
+            let result = self
+                .clap_instrument_helper_owners
+                .get(&instance_id)
+                .ok_or_else(|| "Instrument helper is unavailable".to_owned())
+                .and_then(|owner| {
+                    owner
+                        .request_gui(open, parent)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                });
+            self.status = match result {
+                Ok(()) if open => "Opening isolated instrument editor…".to_owned(),
+                Ok(()) => "Closing isolated instrument editor…".to_owned(),
+                Err(error) => format!("Could not change instrument editor state: {error}"),
+            };
+        }
+        #[cfg(not(feature = "audio-device"))]
+        {
+            let _ = (track_id, open, parent);
+            self.status = "CLAP editor windows require an audio-device build".to_owned();
+        }
+    }
+
     pub(super) fn open_track_instrument_picker(&mut self, track_id: TrackId) -> Task<Message> {
         if !self
             .project
@@ -131,6 +289,7 @@ impl App {
         let mut owners = Vec::new();
         let mut owner_targets = Vec::new();
         let mut routes = Vec::new();
+        let mut active_ids = Vec::new();
         let sample_rate = self.project.settings().sample_rate();
         let max_block_frames = prepared
             .graph()
@@ -145,6 +304,30 @@ impl App {
             };
             let config = ClapIpcConfig::new(sample_rate, max_block_frames, CLAP_IPC_MAX_EVENTS)
                 .ok_or_else(|| "Could not create CLAP helper protocol configuration".to_owned())?;
+            let reusable_id = self
+                .clap_instrument_helper_targets
+                .iter()
+                .find(|(_, target)| target.0 == track.id() && target.1 == instrument.plugin_id())
+                .and_then(|(id, _)| {
+                    self.clap_instrument_helper_owners
+                        .get(id)
+                        .filter(|owner| {
+                            let current = owner.config();
+                            current.sample_rate == config.sample_rate
+                                && current.max_block_frames >= config.max_block_frames
+                        })
+                        .map(|owner| (*id, owner.audio_port(), owner.config()))
+                });
+            if let Some((instance_id, audio_port, helper_config)) = reusable_id {
+                routes.push(TrackIsolatedInstrument::new(
+                    track.id(),
+                    instance_id,
+                    audio_port,
+                    helper_config,
+                ));
+                active_ids.push(instance_id);
+                continue;
+            }
             let entry_path = PathBuf::from(instrument.bundle_path());
             let loaded = ClapInstrumentHelperProcess::spawn(
                 &executable,
@@ -189,6 +372,7 @@ impl App {
                         owner.audio_port(),
                         owner.config(),
                     ));
+                    active_ids.push(instance_id);
                     owners.push((instance_id, owner));
                 }
                 Err(error) => {
@@ -211,7 +395,7 @@ impl App {
             return Err(format!("Could not prepare track CLAP instruments: {error}"));
         }
 
-        let ids = owners.iter().map(|(instance_id, _)| *instance_id).collect();
+        let ids = active_ids;
         self.clap_instrument_helper_targets.extend(
             owner_targets
                 .into_iter()

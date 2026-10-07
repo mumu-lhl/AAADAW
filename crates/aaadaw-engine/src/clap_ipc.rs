@@ -18,7 +18,7 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 2;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 3;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
@@ -428,6 +428,15 @@ pub unsafe fn run_clap_ipc_instrument_helper(
             (processor.stop(), panicked)
         });
         while !region.is_shutdown() && !region.is_faulted() {
+            owner.service_main_thread_callback();
+            pump_plugin_gui_events();
+            if let Some(status) = owner.service_gui_host_callbacks() {
+                region.publish_gui_status(status);
+            }
+            if let Some((sequence, open, parent)) = region.pending_gui_request() {
+                let status = owner.set_floating_gui(open, parent);
+                region.complete_gui_request(sequence, status);
+            }
             if let Some(request) = region.pending_state_save() {
                 while !region.is_audio_worker_paused()
                     && !region.is_shutdown()
@@ -459,10 +468,12 @@ pub unsafe fn run_clap_ipc_instrument_helper(
         }
     };
     if processing_panicked {
+        owner.set_floating_gui(false, 0);
         owner.deactivate(stopped_processor);
         return Err("CLAP helper audio worker panicked".to_owned());
     }
 
+    owner.set_floating_gui(false, 0);
     let saved_state = owner.save_state();
     owner.deactivate(stopped_processor);
     let saved_state =
@@ -471,6 +482,33 @@ pub unsafe fn run_clap_ipc_instrument_helper(
         .map_err(|error| format!("could not write CLAP state: {error}"))?;
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+fn pump_plugin_gui_events() {
+    let context = glib::MainContext::default();
+    while context.pending() {
+        context.iteration(false);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn pump_plugin_gui_events() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+    // SAFETY: PeekMessageW removes messages from this helper's current thread only. The message
+    // value is initialized by Windows before TranslateMessage/DispatchMessageW inspect it.
+    unsafe {
+        let mut message = MSG::default();
+        while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn pump_plugin_gui_events() {}
 
 pub(crate) fn process_helper_requests(
     region: &ClapIpcRegion,
@@ -825,6 +863,11 @@ pub struct ClapIpcRegion {
     state_save_complete: AtomicU64,
     state_save_status: AtomicU32,
     audio_worker_paused: AtomicBool,
+    gui_request: AtomicU64,
+    gui_complete: AtomicU64,
+    gui_command: AtomicU32,
+    gui_parent: AtomicU64,
+    gui_status: AtomicU32,
     slots: [ClapIpcSlot; CLAP_IPC_SLOT_COUNT],
 }
 
@@ -863,6 +906,11 @@ impl ClapIpcRegion {
             ptr::addr_of_mut!((*region_ptr).state_save_complete).write(AtomicU64::new(0));
             ptr::addr_of_mut!((*region_ptr).state_save_status).write(AtomicU32::new(0));
             ptr::addr_of_mut!((*region_ptr).audio_worker_paused).write(AtomicBool::new(false));
+            ptr::addr_of_mut!((*region_ptr).gui_request).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).gui_complete).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).gui_command).write(AtomicU32::new(0));
+            ptr::addr_of_mut!((*region_ptr).gui_parent).write(AtomicU64::new(0));
+            ptr::addr_of_mut!((*region_ptr).gui_status).write(AtomicU32::new(0));
 
             let slots = ptr::addr_of_mut!((*region_ptr).slots).cast::<ClapIpcSlot>();
             for index in 0..CLAP_IPC_SLOT_COUNT {
@@ -900,6 +948,11 @@ impl ClapIpcRegion {
         self.state_save_complete.store(0, Ordering::Relaxed);
         self.state_save_status.store(0, Ordering::Relaxed);
         self.audio_worker_paused.store(false, Ordering::Relaxed);
+        self.gui_request.store(0, Ordering::Relaxed);
+        self.gui_complete.store(0, Ordering::Relaxed);
+        self.gui_command.store(0, Ordering::Relaxed);
+        self.gui_parent.store(0, Ordering::Relaxed);
+        self.gui_status.store(0, Ordering::Relaxed);
         for slot in &self.slots {
             slot.state.store(SLOT_FREE, Ordering::Release);
         }
@@ -907,6 +960,51 @@ impl ClapIpcRegion {
 
     pub fn is_ready(&self) -> bool {
         self.state.load(Ordering::Acquire) == REGION_READY && !self.shutdown.load(Ordering::Acquire)
+    }
+
+    /// Requests a GUI transition without touching the audio request slots. `open` is encoded as
+    /// 1 and `close` as 2; only one unacknowledged command can be in flight per helper.
+    pub fn request_gui(&self, open: bool, parent: u64) -> Option<u64> {
+        let completed = self.gui_complete.load(Ordering::Acquire);
+        let requested = self.gui_request.load(Ordering::Acquire);
+        if requested != completed {
+            return None;
+        }
+        let sequence = requested.checked_add(1)?;
+        self.gui_command
+            .store(if open { 1 } else { 2 }, Ordering::Relaxed);
+        self.gui_parent.store(parent, Ordering::Relaxed);
+        self.gui_request.store(sequence, Ordering::Release);
+        Some(sequence)
+    }
+
+    pub(crate) fn pending_gui_request(&self) -> Option<(u64, bool, u64)> {
+        let requested = self.gui_request.load(Ordering::Acquire);
+        let completed = self.gui_complete.load(Ordering::Acquire);
+        (requested != completed).then(|| {
+            let command = self.gui_command.load(Ordering::Acquire);
+            let parent = self.gui_parent.load(Ordering::Relaxed);
+            (requested, command == 1, parent)
+        })
+    }
+
+    pub(crate) fn complete_gui_request(&self, sequence: u64, status: u32) {
+        self.gui_status.store(status, Ordering::Relaxed);
+        self.gui_complete.store(sequence, Ordering::Release);
+    }
+
+    /// Returns whether the helper acknowledged this GUI command sequence.
+    pub fn gui_request_completed(&self, sequence: u64) -> bool {
+        self.gui_complete.load(Ordering::Acquire) >= sequence
+    }
+
+    pub(crate) fn publish_gui_status(&self, status: u32) {
+        self.gui_status.store(status, Ordering::Release);
+    }
+
+    /// Returns the editor lifecycle status: 0 closed, 1 visible, 2 unsupported, 3 failed.
+    pub fn gui_status(&self) -> u32 {
+        self.gui_status.load(Ordering::Acquire)
     }
 
     pub fn is_faulted(&self) -> bool {
@@ -1419,6 +1517,23 @@ mod tests {
         assert_eq!(region.helper_heartbeat(), 1);
         region.publish_heartbeat();
         assert_eq!(region.helper_heartbeat(), 2);
+    }
+
+    #[test]
+    fn gui_requests_are_bounded_and_report_lifecycle_status() {
+        let region = region();
+        let open = region.request_gui(true, 42).unwrap();
+        assert_eq!(open, 1);
+        assert_eq!(region.request_gui(false, 42), None);
+        assert_eq!(region.pending_gui_request(), Some((open, true, 42)));
+        region.complete_gui_request(open, 1);
+        assert_eq!(region.gui_status(), 1);
+
+        let close = region.request_gui(false, 42).unwrap();
+        assert_eq!(close, 2);
+        assert_eq!(region.pending_gui_request(), Some((close, false, 42)));
+        region.complete_gui_request(close, 0);
+        assert_eq!(region.gui_status(), 0);
     }
 
     #[test]
