@@ -771,9 +771,10 @@ pub(super) fn track_mix_controls<'a>(
     .shift_step(0.01_f32)
     .on_release(Message::CommitTrackVolume(track_id))
     .width(Length::Fill);
-    let volume = reset_on_double_click(
+    let volume = slider_interaction(
         volume_slider.into(),
-        Message::ResetTrackVolumeByDoubleClick(track_id),
+        Some(Message::ResetTrackVolumeByDoubleClick(track_id)),
+        Message::CancelTrackMixGesture,
     );
     let pan_slider = slider(-1.0..=1.0, pan, move |value| {
         Message::PreviewTrackPan(track_id, value)
@@ -822,9 +823,10 @@ pub(super) fn track_mix_controls<'a>(
         .width(Length::Fixed(48.0));
     let pan_controls = row![
         text(format!("Pan {}", pan_label(pan))).size(11),
-        reset_on_double_click(
+        slider_interaction(
             pan_slider.into(),
-            Message::ResetTrackPanByDoubleClick(track_id),
+            Some(Message::ResetTrackPanByDoubleClick(track_id)),
+            Message::CancelTrackMixGesture,
         ),
         pan_value,
         button("C")
@@ -840,18 +842,26 @@ pub(super) fn track_mix_controls<'a>(
 struct DoubleClickResetState {
     previous_click: Option<mouse::Click>,
     press_position: Option<iced::Point>,
+    left_pressed: bool,
+    cancelled: bool,
 }
 
-struct DoubleClickReset<'a> {
+struct SliderInteraction<'a> {
     content: Element<'a, Message>,
-    message: Message,
+    reset_message: Option<Message>,
+    cancel_message: Message,
 }
 
-fn reset_on_double_click<'a>(
+pub(super) fn slider_interaction<'a>(
     content: Element<'a, Message>,
-    message: Message,
+    reset_message: Option<Message>,
+    cancel_message: Message,
 ) -> Element<'a, Message> {
-    Element::new(DoubleClickReset { content, message })
+    Element::new(SliderInteraction {
+        content,
+        reset_message,
+        cancel_message,
+    })
 }
 
 fn record_left_click(previous_click: &mut Option<mouse::Click>, position: iced::Point) -> bool {
@@ -869,7 +879,7 @@ fn invalidate_click_after_drag(state: &mut DoubleClickResetState, position: iced
     }
 }
 
-impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
+impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.content.as_widget().size()
     }
@@ -918,6 +928,8 @@ impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
         tree::State::new(DoubleClickResetState {
             previous_click: None,
             press_position: None,
+            left_pressed: false,
+            cancelled: false,
         })
     }
 
@@ -952,30 +964,53 @@ impl Widget<Message, Theme, iced::Renderer> for DoubleClickReset<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) {
+        let state = tree.state.downcast_mut::<DoubleClickResetState>();
+        if state.cancelled {
+            match event {
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    state.left_pressed = false;
+                    state.cancelled = false;
+                    state.press_position = None;
+                    shell.capture_event();
+                    return;
+                }
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                    shell.capture_event();
+                    return;
+                }
+                _ => {}
+            }
+        }
         match event {
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Left))
                 if let Some(position) = cursor.position_over(layout.bounds()) =>
             {
-                let state = tree.state.downcast_mut::<DoubleClickResetState>();
+                state.left_pressed = true;
                 state.press_position = Some(position);
-                if record_left_click(&mut state.previous_click, position) {
-                    shell.publish(self.message.clone());
+                if let Some(reset_message) = &self.reset_message
+                    && record_left_click(&mut state.previous_click, position)
+                {
+                    shell.publish(reset_message.clone());
                     shell.capture_event();
                     return;
                 }
             }
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Right))
+                if state.left_pressed && cursor.is_over(layout.bounds()) =>
+            {
+                state.cancelled = true;
+                shell.publish(self.cancel_message.clone());
+                shell.capture_event();
+                return;
+            }
             iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position() {
-                    invalidate_click_after_drag(
-                        tree.state.downcast_mut::<DoubleClickResetState>(),
-                        position,
-                    );
+                    invalidate_click_after_drag(state, position);
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                tree.state
-                    .downcast_mut::<DoubleClickResetState>()
-                    .press_position = None;
+                state.left_pressed = false;
+                state.press_position = None;
             }
             _ => {}
         }
