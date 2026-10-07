@@ -888,10 +888,13 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
         .into_iter()
         .find(|entry| entry.id == CommandId::Redo)
         .expect("Edit menu should expose Redo");
-    assert_eq!(undo.shortcut.as_deref(), Some("Ctrl/Cmd+Z"));
+    assert_eq!(
+        undo.shortcut.as_deref(),
+        Some(commands::format_shortcut_label("Mod+Z").as_str())
+    );
     assert_eq!(
         redo.shortcut.as_deref(),
-        Some("Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y")
+        Some(commands::format_shortcut_label("Mod+Shift+Z, Mod+Y").as_str())
     );
     let escape_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::Escape),
@@ -1184,7 +1187,10 @@ fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_
             .map(String::as_str),
         Some("Mod+U")
     );
-    assert!(app.shortcut_editor_feedback.contains("Ctrl/Cmd+U"));
+    assert!(
+        app.shortcut_editor_feedback
+            .contains(&commands::format_shortcut_label("Mod+U"))
+    );
 
     let _ = app.update(Message::ClearShortcutBinding("edit.undo".to_owned()));
     assert!(app.shortcut_capture_id.is_none());
@@ -1209,12 +1215,12 @@ fn documented_first_project_shortcuts_match_action_defaults() {
     let app = App::default();
     let shortcuts = commands::shortcut_entries(&app);
     for (action_id, expected) in [
-        ("file.new-project", "Ctrl/Cmd+N"),
-        ("file.open-project", "Ctrl/Cmd+O"),
-        ("file.save-project", "Ctrl/Cmd+S"),
-        ("edit.undo", "Ctrl/Cmd+Z"),
-        ("edit.redo", "Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y"),
-        ("item.duplicate", "Ctrl/Cmd+D"),
+        ("file.new-project", "Mod+N"),
+        ("file.open-project", "Mod+O"),
+        ("file.save-project", "Mod+S"),
+        ("edit.undo", "Mod+Z"),
+        ("edit.redo", "Mod+Shift+Z, Mod+Y"),
+        ("item.duplicate", "Mod+D"),
         ("item.delete-selected", "Delete/Backspace"),
         ("item.split-at-cursor", "S"),
     ] {
@@ -1222,7 +1228,11 @@ fn documented_first_project_shortcuts_match_action_defaults() {
             .iter()
             .find(|entry| entry.id == action_id)
             .unwrap_or_else(|| panic!("documented action {action_id} should exist"));
-        assert_eq!(entry.default_binding, expected, "{action_id}");
+        assert_eq!(
+            entry.default_binding,
+            commands::format_shortcut_label(expected),
+            "{action_id}"
+        );
     }
 
     #[cfg(feature = "audio-device")]
@@ -1312,7 +1322,7 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
             .find(|entry| entry.id == "file.new-project")
             .unwrap()
             .binding,
-        "Ctrl/Cmd+N"
+        commands::format_shortcut_label("Mod+N")
     );
     assert_eq!(
         commands::shortcut_entries(&app)
@@ -1761,7 +1771,10 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
         .into_iter()
         .find(|entry| entry.id == CommandId::Undo)
         .unwrap();
-    assert_eq!(undo.shortcut.as_deref(), Some("Ctrl/Cmd+U"));
+    assert_eq!(
+        undo.shortcut.as_deref(),
+        Some(commands::format_shortcut_label("Mod+U").as_str())
+    );
 
     let conflicting = HashMap::from([
         ("edit.undo".to_owned(), "Mod+X".to_owned()),

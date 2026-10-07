@@ -3526,14 +3526,14 @@ impl App {
                 self.shortcut_binding_edits = bindings;
                 self.shortcut_editor_feedback = format!(
                     "Recorded {}. Save to apply this change.",
-                    binding.replace("Mod+", "Ctrl/Cmd+")
+                    commands::format_shortcut_label(&binding)
                 );
             }
             Err(error) => {
+                let error = commands::friendly_shortcut_error(&error, &self.action_macros);
                 self.shortcut_editor_feedback = format!(
                     "{}; press another key or Escape",
-                    commands::friendly_shortcut_error(&error, &self.action_macros)
-                        .replace("Mod+", "Ctrl/Cmd+")
+                    commands::format_shortcut_label(&error)
                 );
             }
         }
