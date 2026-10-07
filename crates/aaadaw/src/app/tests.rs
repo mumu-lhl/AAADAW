@@ -2850,6 +2850,7 @@ fn item_drag_obeys_project_busy_and_jack_edit_guards() {
             target_track_index: Some(0),
             range: false,
             ignore_snap: false,
+            copy: false,
         });
     assert!(app.timeline.drag_preview().is_some());
 
@@ -4435,6 +4436,7 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
             target_track_index: Some(1),
             range: false,
             ignore_snap: false,
+            copy: false,
         });
 
     app.finish_item_drag();
@@ -4469,6 +4471,110 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
     assert_eq!(app.project.midi_items()[0].track_id(), tracks[2]);
     assert_eq!(app.project.midi_items()[0].start_tick(), 1_200);
     assert_eq!(app.project.midi_items()[0].notes(), midi_notes_before);
+}
+
+#[test]
+fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
+    let mut app = App::default();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://copy-drag".to_owned(),
+            start_sample: app.project.sample_at_tick(480).unwrap(),
+            source_offset_samples: 97,
+            length_samples: 8_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 67,
+                tick: 120,
+                duration: 360,
+                velocity: 88,
+            }],
+        })
+        .unwrap();
+    let audio_before = app.project.audio_items()[0].clone();
+    let midi_before = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(audio_id),
+            additive: false,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(midi_id),
+            additive: true,
+            range: false,
+        });
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemDrag {
+            item_id: audio_id,
+            pointer_delta_ticks: 240,
+            target_track_index: Some(1),
+            range: false,
+            ignore_snap: false,
+            copy: true,
+        });
+    let revision_before_copy = app.revision;
+
+    app.finish_item_drag();
+
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.audio_items()[0], audio_before);
+    assert_eq!(app.project.midi_items()[0], midi_before);
+    let audio_copy = &app.project.audio_items()[1];
+    assert_eq!(audio_copy.track_id(), tracks[1]);
+    assert_eq!(
+        audio_copy.start_sample(),
+        app.project.sample_at_tick(720).unwrap()
+    );
+    assert_eq!(audio_copy.media_ref(), audio_before.media_ref());
+    assert_eq!(
+        audio_copy.source_offset_samples(),
+        audio_before.source_offset_samples()
+    );
+    assert_eq!(audio_copy.length_samples(), audio_before.length_samples());
+    assert_ne!(audio_copy.id(), audio_before.id());
+    let midi_copy = &app.project.midi_items()[1];
+    assert_eq!(midi_copy.track_id(), tracks[2]);
+    assert_eq!(midi_copy.start_tick(), 1_200);
+    assert_eq!(midi_copy.notes()[0].pitch(), 67);
+    assert_ne!(midi_copy.id(), midi_before.id());
+    assert_ne!(midi_copy.notes()[0].id(), midi_before.notes()[0].id());
+    assert_eq!(app.revision, revision_before_copy + 1);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items(), &[audio_before.clone()]);
+    assert_eq!(app.project.midi_items(), &[midi_before.clone()]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.audio_items()[0], audio_before);
+    assert_eq!(app.project.midi_items()[0], midi_before);
 }
 
 #[test]
@@ -4608,6 +4714,7 @@ fn invalid_item_drop_does_not_change_project_or_create_history() {
             target_track_index: Some(1),
             range: false,
             ignore_snap: false,
+            copy: false,
         });
     let revision_before_drop = app.revision;
 

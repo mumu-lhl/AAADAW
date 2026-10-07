@@ -581,11 +581,35 @@ fn duplicate_midi_item_at(
     item_id: ItemId,
     start_tick: u64,
 ) -> Result<ProjectEvent, ActionError> {
+    let track_id = state
+        .midi_items
+        .iter()
+        .find(|item| item.id == item_id)
+        .ok_or(ActionError::MidiItemNotFound { item_id })?
+        .track_id;
+    duplicate_midi_item_to_track(state, ids, item_id, track_id, start_tick)
+}
+
+fn duplicate_midi_item_to_track(
+    state: &mut ProjectState,
+    ids: &mut IdAllocator,
+    item_id: ItemId,
+    track_id: TrackId,
+    start_tick: u64,
+) -> Result<ProjectEvent, ActionError> {
     let original = state
         .midi_items
         .iter()
         .find(|item| item.id == item_id)
         .ok_or(ActionError::MidiItemNotFound { item_id })?;
+    let target_track = state
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or(ActionError::TrackNotFound { track_id })?;
+    if target_track.is_frozen() {
+        return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+    }
     let item_end = start_tick
         .checked_add(original.length_ticks)
         .ok_or(ActionError::InvalidMidiItemPosition)?;
@@ -607,7 +631,7 @@ fn duplicate_midi_item_at(
     }
     let duplicate = MidiItem {
         id: ItemId::from_raw(ids.next_item_id),
-        track_id: original.track_id,
+        track_id,
         start_tick,
         length_ticks: item_end - start_tick,
         notes: Arc::new(notes),
@@ -1916,6 +1940,11 @@ impl Project {
                 item_id,
                 start_tick,
             } => duplicate_midi_item_at(state, ids, item_id, start_tick)?,
+            DawAction::DuplicateMidiItemToTrack {
+                item_id,
+                track_id,
+                start_tick,
+            } => duplicate_midi_item_to_track(state, ids, item_id, track_id, start_tick)?,
             DawAction::SplitMidiItem {
                 item_id,
                 split_ticks,
@@ -2977,6 +3006,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         DawAction::EditMidiItem { item_id, .. }
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }
+        | DawAction::DuplicateMidiItemToTrack { item_id, .. }
         | DawAction::SplitMidiItem { item_id, .. }
         | DawAction::DeleteMidiItem { item_id }
         | DawAction::AddMidiNotes { item_id, .. }
