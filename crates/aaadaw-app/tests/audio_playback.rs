@@ -1,6 +1,6 @@
 use aaadaw_app::{
-    PlaybackBuildError, prepare_audio_playback, prepare_audio_playback_at,
-    render_prepared_audio_to_pcm24_wav,
+    PlaybackBuildError, WavExportOptions, WavSampleFormat, prepare_audio_playback,
+    prepare_audio_playback_at, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
 };
 use aaadaw_core::{DawAction, Project};
 use aaadaw_storage::ProjectStore;
@@ -386,6 +386,88 @@ fn offline_render_waits_for_bounded_media_feeders_and_exports_the_mix() {
     assert_eq!(decoded_frames, 4);
     assert_eq!(progress, [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]);
     std::fs::remove_file(export_path).expect("test export should be removed");
+    remove_database(&database_path);
+}
+
+#[test]
+fn offline_render_routes_selected_pcm_and_float_formats_through_the_same_graph() {
+    let database_path = unique_path("aaadaw");
+    let pcm16_path = unique_path("pcm16-wav");
+    let float_path = unique_path("float-wav");
+    let wav = pcm_wav(&[16_384, -16_384, 8_192, -8_192], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://formats", "formats.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let project = project_with_audio_item("asset://formats".to_owned(), 4);
+    let prepared = prepare_audio_playback(&project, &store, 1, 4)
+        .expect("embedded source should prepare for PCM16 export");
+    store.close().expect("project should close");
+    render_prepared_audio_to_wav(
+        prepared,
+        &project,
+        &pcm16_path,
+        4,
+        WavExportOptions {
+            sample_format: WavSampleFormat::Pcm16,
+            dither: false,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected PCM16 render should finish");
+
+    let pcm16_bytes = std::fs::read(&pcm16_path).expect("PCM16 output should exist");
+    assert_eq!(
+        u16::from_le_bytes(pcm16_bytes[34..36].try_into().unwrap()),
+        16
+    );
+    let mut decoder =
+        aaadaw_media::AudioStreamDecoder::open(&pcm16_path).expect("PCM16 output should decode");
+    let chunk = decoder
+        .next_chunk()
+        .expect("PCM16 output should read")
+        .expect("PCM16 output should contain frames");
+    assert_eq!(chunk.channels(), 2);
+    let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!((chunk.samples()[0] - expected_centered_mono).abs() < 1.0e-4);
+    assert!((chunk.samples()[1] - expected_centered_mono).abs() < 1.0e-4);
+
+    let store = ProjectStore::open(&database_path).expect("project should reopen");
+    let prepared = prepare_audio_playback(&project, &store, 1, 4)
+        .expect("embedded source should prepare for float export");
+    store
+        .close()
+        .expect("project should close before float export");
+    render_prepared_audio_to_wav(
+        prepared,
+        &project,
+        &float_path,
+        4,
+        WavExportOptions {
+            sample_format: WavSampleFormat::Float32,
+            dither: true,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected float render should finish");
+    let float_bytes = std::fs::read(&float_path).expect("float output should exist");
+    assert_eq!(
+        u16::from_le_bytes(float_bytes[20..22].try_into().unwrap()),
+        3
+    );
+    let mut decoder =
+        aaadaw_media::AudioStreamDecoder::open(&float_path).expect("float output should decode");
+    let chunk = decoder
+        .next_chunk()
+        .expect("float output should read")
+        .expect("float output should contain frames");
+    assert_eq!(chunk.channels(), 2);
+    assert!((chunk.samples()[0] - chunk.samples()[1]).abs() < f32::EPSILON);
+
+    std::fs::remove_file(pcm16_path).expect("PCM16 output should be removed");
+    std::fs::remove_file(float_path).expect("float output should be removed");
     remove_database(&database_path);
 }
 

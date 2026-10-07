@@ -174,6 +174,7 @@ impl App {
 
         let snapshot = self.project.snapshot();
         let ceiling = self.audio_settings.master_output_ceiling;
+        let export_options = self.wav_export_options;
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let progress = Arc::new(Mutex::new((0, 1)));
         let worker_cancel = Arc::clone(&cancel);
@@ -189,11 +190,12 @@ impl App {
             run_blocking("aaadaw-offline-render", move || {
                 let project =
                     Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
-                aaadaw_app::render_project_file_to_pcm24_wav(
+                aaadaw_app::render_project_file_to_wav(
                     project_path,
                     &project,
                     &destination,
                     ceiling,
+                    export_options,
                     &worker_cancel,
                     |done, total| {
                         *worker_progress
