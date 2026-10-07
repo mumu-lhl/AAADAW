@@ -1719,7 +1719,14 @@ impl App {
                 if self.midi_note_clipboard.notes.is_empty() {
                     return task;
                 }
-                let grid = (u64::from(self.project.settings().ppq()) / 4).max(1);
+                let grid = if self.timeline.snap_enabled {
+                    self.timeline
+                        .snap_grid
+                        .tick_interval(self.project.settings().ppq())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
                 let tick = self
                     .midi_note_clipboard
                     .last_paste

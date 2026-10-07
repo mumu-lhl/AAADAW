@@ -1,11 +1,14 @@
 use super::super::{App, Message, MidiEditorLane};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
+use crate::timeline::{SnapGrid, TimelineEvent};
 use aaadaw_core::{
     ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
-use iced::widget::{button, canvas as canvas_widget, column, container, row, scrollable, text};
+use iced::widget::{
+    button, canvas as canvas_widget, column, container, pick_list, row, scrollable, text,
+};
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
@@ -24,6 +27,21 @@ const MODULATION_LANE_HEIGHT: f32 = 72.0;
 const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
 const CONTROLLER_CONTEXT_HEIGHT: f32 = 24.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MidiSnap {
+    grid: SnapGrid,
+    enabled: bool,
+}
+
+impl Default for MidiSnap {
+    fn default() -> Self {
+        Self {
+            grid: SnapGrid::Sixteenth,
+            enabled: true,
+        }
+    }
+}
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
@@ -94,6 +112,37 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let grid_toolbar = row![
+        text("Shared grid").size(12),
+        button(if !app.timeline.has_snap_grid() {
+            "Snap unavailable"
+        } else if app.timeline.snap_enabled {
+            "Snap On"
+        } else {
+            "Snap Off"
+        })
+        .style(if app.timeline.snap_enabled {
+            iced::widget::button::warning
+        } else {
+            iced::widget::button::secondary
+        })
+        .on_press_maybe(
+            app.timeline
+                .has_snap_grid()
+                .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+        ),
+        pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
+            Message::Timeline(TimelineEvent::SetSnapGrid(grid))
+        },)
+        .width(Length::Fixed(112.0)),
+        text("Hold Shift to bypass").size(11),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let midi_snap = MidiSnap {
+        grid: app.timeline.snap_grid,
+        enabled: app.timeline.snap_enabled,
+    };
     let ticks_per_beat = u64::from(app.project.settings().ppq());
     let pitch_canvas = canvas_widget::Canvas::new(PianoRoll {
         project: &app.project,
@@ -104,6 +153,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         high_pitch: app.midi_editor_high_pitch,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
+        snap: midi_snap,
         region: RollRegion::Pitch,
     })
     .width(Length::Fill)
@@ -140,6 +190,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 high_pitch: app.midi_editor_high_pitch,
                 pixels_per_beat: app.midi_editor_pixels_per_beat,
                 ticks_per_beat,
+                snap: midi_snap,
                 region: RollRegion::Velocity,
             })
             .width(Length::Fill)
@@ -201,6 +252,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     }
     content
         .push(navigation_toolbar)
+        .push(grid_toolbar)
         .push(lane_toolbar)
         .push(scrollable(pitch_canvas).height(Length::Fill))
         .push(active_lane)
@@ -260,6 +312,10 @@ fn controller_lane<'a>(
         origin_tick: app.midi_editor_origin_tick,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
+        snap: MidiSnap {
+            grid: app.timeline.snap_grid,
+            enabled: app.timeline.snap_enabled,
+        },
     })
     .width(Length::Fill)
     .height(Length::Fixed(lane_height));
@@ -280,6 +336,10 @@ fn pitch_bend_lane<'a>(
         origin_tick: app.midi_editor_origin_tick,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
+        snap: MidiSnap {
+            grid: app.timeline.snap_grid,
+            enabled: app.timeline.snap_enabled,
+        },
     })
     .width(Length::Fill)
     .height(Length::Fixed(lane_height));
@@ -294,12 +354,14 @@ struct ControllerLane<'a> {
     origin_tick: u64,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
+    snap: MidiSnap,
 }
 
 #[derive(Default)]
 struct ControllerLaneInteraction {
     drag: Option<ControllerDrag>,
     context_menu: Option<(usize, Point)>,
+    modifiers: keyboard::Modifiers,
 }
 
 struct ControllerDrag {
@@ -315,15 +377,17 @@ impl ControllerLane<'_> {
             origin_tick: self.origin_tick,
             pixels_per_beat: self.pixels_per_beat,
             ticks_per_beat: self.ticks_per_beat,
+            snap: self.snap,
             high_pitch: 0,
         }
     }
 
-    fn point_data(&self, point: Point) -> MidiControllerData {
+    fn point_data(&self, point: Point, ignore_snap: bool) -> MidiControllerData {
         let mapping = self.mapping();
         MidiControllerData {
             controller: self.controller,
-            tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+            tick: mapping
+                .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
                 .min(self.item.length_ticks().saturating_sub(1)),
             value: self.value_at_y(point.y),
         }
@@ -419,6 +483,14 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         {
             return Some(action);
         }
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+            if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
+                drag.current = self.point_data(point, state.modifiers.shift());
+                return Some(canvas::Action::request_redraw());
+            }
+            return None;
+        }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let point = cursor.position_in(bounds)?;
@@ -456,7 +528,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                         controllers,
                         index: None,
                         original: None,
-                        current: self.point_data(point),
+                        current: self.point_data(point, state.modifiers.shift()),
                     });
                 }
                 Some(canvas::Action::capture())
@@ -483,17 +555,14 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                let mapping = self.mapping();
-                drag.current = MidiControllerData {
-                    controller: self.controller,
-                    tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
-                        .min(self.item.length_ticks().saturating_sub(1)),
-                    value: self.value_at_y(point.y),
-                };
+                drag.current = self.point_data(point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let drag = state.drag.take()?;
+                let mut drag = state.drag.take()?;
+                if let Some(point) = cursor.position_in(bounds) {
+                    drag.current = self.point_data(point, state.modifiers.shift());
+                }
                 let mut controllers = drag.controllers;
                 if let Some(index) = drag.index {
                     controllers[index] = drag.current;
@@ -669,12 +738,14 @@ struct PitchBendLane<'a> {
     origin_tick: u64,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
+    snap: MidiSnap,
 }
 
 #[derive(Default)]
 struct PitchBendLaneInteraction {
     drag: Option<PitchBendDrag>,
     context_menu: Option<(usize, Point)>,
+    modifiers: keyboard::Modifiers,
 }
 
 struct PitchBendDrag {
@@ -690,14 +761,16 @@ impl PitchBendLane<'_> {
             origin_tick: self.origin_tick,
             pixels_per_beat: self.pixels_per_beat,
             ticks_per_beat: self.ticks_per_beat,
+            snap: self.snap,
             high_pitch: 0,
         }
     }
 
-    fn point_data(&self, point: Point) -> MidiPitchBendData {
+    fn point_data(&self, point: Point, ignore_snap: bool) -> MidiPitchBendData {
         let mapping = self.mapping();
         MidiPitchBendData {
-            tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
+            tick: mapping
+                .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
                 .min(self.item.length_ticks().saturating_sub(1)),
             value: pitch_bend_value_at_y(point.y, self.lane_height),
         }
@@ -734,6 +807,14 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             cancel_canvas_drag_on_escape(event, &mut state.drag, Some(&mut state.context_menu))
         {
             return Some(action);
+        }
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+            if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
+                drag.current = self.point_data(point, state.modifiers.shift());
+                return Some(canvas::Action::request_redraw());
+            }
+            return None;
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -772,7 +853,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                         bends,
                         index: None,
                         original: None,
-                        current: self.point_data(point),
+                        current: self.point_data(point, state.modifiers.shift()),
                     });
                 }
                 Some(canvas::Action::capture())
@@ -799,16 +880,14 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                let mapping = self.mapping();
-                drag.current = MidiPitchBendData {
-                    tick: snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks())
-                        .min(self.item.length_ticks().saturating_sub(1)),
-                    value: pitch_bend_value_at_y(point.y, self.lane_height),
-                };
+                drag.current = self.point_data(point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let drag = state.drag.take()?;
+                let mut drag = state.drag.take()?;
+                if let Some(point) = cursor.position_in(bounds) {
+                    drag.current = self.point_data(point, state.modifiers.shift());
+                }
                 let mut bends = drag.bends;
                 if let Some(index) = drag.index {
                     bends[index] = drag.current;
@@ -1010,11 +1089,23 @@ struct RollMapping {
     pixels_per_beat: f32,
     ticks_per_beat: u64,
     high_pitch: u8,
+    snap: MidiSnap,
 }
 
 impl RollMapping {
     fn grid_ticks(self) -> u64 {
-        (self.ticks_per_beat / 4).max(1)
+        self.snap
+            .grid
+            .tick_interval(self.ticks_per_beat.min(u64::from(u32::MAX)) as u32)
+            .unwrap_or_else(|| (self.ticks_per_beat / 4).max(1))
+    }
+
+    fn snap_tick(self, tick: u64, ignore_snap: bool) -> u64 {
+        let grid_ticks = self
+            .snap
+            .grid
+            .tick_interval(self.ticks_per_beat.min(u64::from(u32::MAX)) as u32);
+        snap_tick(tick, grid_ticks, self.snap.enabled, ignore_snap)
     }
 
     fn tick_at_x(self, x: f32) -> u64 {
@@ -1048,6 +1139,7 @@ struct PianoRoll<'a> {
     high_pitch: u8,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
+    snap: MidiSnap,
     region: RollRegion,
 }
 
@@ -1092,6 +1184,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
+            if let (Some(position), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut())
+            {
+                self.update_drag(drag, self.roll_point(position), state.modifiers.shift());
+                return Some(canvas::Action::request_redraw());
+            }
             return None;
         }
         if self.region == RollRegion::Pitch
@@ -1197,7 +1294,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let mapping = self.mapping();
                 let Some((note, resize)) = self.note_at_point(point) else {
                     let pitch = mapping.pitch_at_y(point.y);
-                    let tick = snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks());
+                    let tick =
+                        mapping.snap_tick(mapping.tick_at_x(point.x), state.modifiers.shift());
                     let data = MidiNoteData {
                         pitch,
                         tick,
@@ -1275,28 +1373,18 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                let ticks = (f64::from(point.x - drag.start.x) / f64::from(self.pixels_per_beat)
-                    * self.ticks_per_beat as f64)
-                    .round() as i64;
-                let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
-                let delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
-                if drag.velocity {
-                    drag.delta_velocity = velocity_delta(drag.start.y, point.y);
-                } else if drag.resize {
-                    drag.delta_tick = delta_tick;
-                } else {
-                    let delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
-                    (drag.delta_tick, drag.delta_pitch) = bounded_note_move_delta(
-                        &drag.notes,
-                        self.item.length_ticks(),
-                        delta_tick,
-                        delta_pitch,
-                    );
-                }
+                self.update_drag(drag, point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let drag = state.drag.take()?;
+                let mut drag = state.drag.take()?;
+                if let Some(position) = cursor.position_in(bounds) {
+                    self.update_drag(
+                        &mut drag,
+                        self.roll_point(position),
+                        state.modifiers.shift(),
+                    );
+                }
                 state.hovered_velocity_note = None;
                 let edits = drag
                     .notes
@@ -1571,6 +1659,43 @@ fn delete_key_message(
 }
 
 impl PianoRoll<'_> {
+    fn roll_point(&self, position: Point) -> Point {
+        Point::new(
+            position.x
+                - if self.region == RollRegion::Pitch {
+                    KEY_WIDTH
+                } else {
+                    0.0
+                },
+            position.y
+                - if self.region == RollRegion::Pitch {
+                    HEADER_HEIGHT
+                } else {
+                    0.0
+                },
+        )
+    }
+
+    fn update_drag(&self, drag: &mut NoteDrag, point: Point, ignore_snap: bool) {
+        let ticks = (f64::from(point.x - drag.start.x) / f64::from(self.pixels_per_beat)
+            * self.ticks_per_beat as f64)
+            .round() as i64;
+        let delta_tick = snap_delta(ticks, self.mapping(), ignore_snap);
+        if drag.velocity {
+            drag.delta_velocity = velocity_delta(drag.start.y, point.y);
+        } else if drag.resize {
+            drag.delta_tick = delta_tick;
+        } else {
+            let delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+            (drag.delta_tick, drag.delta_pitch) = bounded_note_move_delta(
+                &drag.notes,
+                self.item.length_ticks(),
+                delta_tick,
+                delta_pitch,
+            );
+        }
+    }
+
     fn note_at_point(&self, point: Point) -> Option<(&aaadaw_core::MidiNote, bool)> {
         let mapping = self.mapping();
         self.item.notes().iter().rev().find_map(|note| {
@@ -1664,12 +1789,28 @@ impl PianoRoll<'_> {
             pixels_per_beat: self.pixels_per_beat.max(16.0),
             ticks_per_beat: self.ticks_per_beat,
             high_pitch: self.high_pitch,
+            snap: self.snap,
         }
     }
 }
 
-fn snap_tick(tick: u64, grid_ticks: u64) -> u64 {
+fn snap_tick(tick: u64, grid_ticks: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+    let Some(grid_ticks) = grid_ticks.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
+        return tick;
+    };
     (tick.saturating_add(grid_ticks / 2) / grid_ticks) * grid_ticks
+}
+
+fn snap_delta(delta_ticks: i64, mapping: RollMapping, ignore_snap: bool) -> i64 {
+    let Some(grid_ticks) = mapping
+        .snap
+        .grid
+        .tick_interval(mapping.ticks_per_beat.min(u64::from(u32::MAX)) as u32)
+        .filter(|_| mapping.snap.enabled && !ignore_snap)
+    else {
+        return delta_ticks;
+    };
+    (delta_ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks as i64
 }
 
 fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
@@ -1912,6 +2053,7 @@ mod tests {
             high_pitch: 80,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             region: RollRegion::Pitch,
         };
         let bounds = Rectangle::new(
@@ -1961,6 +2103,7 @@ mod tests {
             high_pitch: 80,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             region: RollRegion::Pitch,
         };
         let bounds = Rectangle::new(
@@ -2069,6 +2212,7 @@ mod tests {
             high_pitch: 80,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             region: RollRegion::Pitch,
         };
         assert!(
@@ -2090,6 +2234,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut controller_state = ControllerLaneInteraction {
             drag: Some(ControllerDrag {
@@ -2122,6 +2267,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut bend_state = PitchBendLaneInteraction {
             drag: Some(PitchBendDrag {
@@ -2199,6 +2345,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let start = Point::new(0.0, controller_y(64, 72.0));
         let target = Point::new(96.0, start.y);
@@ -2235,6 +2382,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let start = Point::new(0.0, pitch_bend_y(8192, 72.0));
         let target = Point::new(96.0, start.y);
@@ -2351,6 +2499,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let center = mouse::Cursor::Available(Point::new(96.0, 36.0));
         lane.update(
@@ -2394,6 +2543,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         lane.update(
             &mut interaction,
@@ -2443,6 +2593,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         lane.update(
             &mut interaction,
@@ -2472,6 +2623,7 @@ mod tests {
             origin_tick: 1_920,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             high_pitch: 84,
         };
         assert_eq!(mapping.tick_at_x(48.0), 2_400);
@@ -2484,10 +2636,15 @@ mod tests {
 
     #[test]
     fn insertion_grid_rounds_to_nearest_sixteenth() {
-        assert_eq!(snap_tick(100, 240), 0);
-        assert_eq!(snap_tick(140, 240), 240);
-        assert_eq!(snap_tick(500, 240), 480);
-        assert_eq!(snap_tick(u64::MAX, 240), u64::MAX / 240 * 240);
+        assert_eq!(snap_tick(100, Some(240), true, false), 0);
+        assert_eq!(snap_tick(140, Some(240), true, false), 240);
+        assert_eq!(snap_tick(500, Some(240), true, false), 480);
+        assert_eq!(
+            snap_tick(u64::MAX, Some(240), true, false),
+            u64::MAX / 240 * 240
+        );
+        assert_eq!(snap_tick(140, Some(240), false, false), 140);
+        assert_eq!(snap_tick(140, Some(240), true, true), 140);
     }
 
     #[test]
@@ -2496,12 +2653,197 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 480,
+            snap: MidiSnap::default(),
             high_pitch: 60,
         };
         assert_eq!(mapping.tick_at_x(24.0), 120);
         assert_eq!(mapping.x_at_tick(120), 24.0);
         assert_eq!(mapping.grid_ticks(), 120);
-        assert_eq!(snap_tick(70, mapping.grid_ticks()), 120);
+        assert_eq!(mapping.snap_tick(70, false), 120);
+    }
+
+    #[test]
+    fn selected_grid_and_shift_bypass_are_shared_by_midi_editors() {
+        let mapping = RollMapping {
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            high_pitch: 60,
+            snap: MidiSnap {
+                grid: SnapGrid::EighthTriplet,
+                enabled: true,
+            },
+        };
+        assert_eq!(mapping.grid_ticks(), 320);
+        assert_eq!(mapping.snap_tick(190, false), 320);
+        assert_eq!(mapping.snap_tick(190, true), 190);
+        assert_eq!(snap_delta(190, mapping, false), 320);
+        assert_eq!(snap_delta(190, mapping, true), 190);
+
+        let disabled = RollMapping {
+            snap: MidiSnap {
+                enabled: false,
+                ..mapping.snap
+            },
+            ..mapping
+        };
+        assert_eq!(disabled.snap_tick(190, false), 190);
+        assert_eq!(snap_delta(190, disabled, false), 190);
+    }
+
+    #[test]
+    fn shift_changes_recompute_active_note_and_controller_drag_previews() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 480,
+            velocity: 96,
+        };
+        let (project, item_id, note_id) = project_with_note(3_840, note);
+        let item = &project.midi_items()[0];
+        let selected = HashSet::from([note_id]);
+        let snap = MidiSnap {
+            grid: SnapGrid::EighthTriplet,
+            enabled: true,
+        };
+        let modifiers_changed = Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::SHIFT,
+        ));
+
+        let roll = PianoRoll {
+            project: &project,
+            item,
+            item_id,
+            selected: &selected,
+            origin_tick: 0,
+            high_pitch: 60,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap,
+            region: RollRegion::Pitch,
+        };
+        let roll_bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                400.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let note_start = Point::new(KEY_WIDTH + 5.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let note_target = Point::new(KEY_WIDTH + 24.0, note_start.y);
+        let mut roll_state = Interaction::default();
+        roll.update(
+            &mut roll_state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            roll_bounds,
+            mouse::Cursor::Available(note_start),
+        )
+        .expect("note press should start a drag");
+        roll.update(
+            &mut roll_state,
+            &modifiers_changed,
+            roll_bounds,
+            mouse::Cursor::Available(note_target),
+        )
+        .expect("changing Shift should refresh the note preview");
+        assert_eq!(roll_state.drag.as_ref().unwrap().delta_tick, 190);
+        let action = roll
+            .update(
+                &mut roll_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                roll_bounds,
+                mouse::Cursor::Available(note_target),
+            )
+            .expect("release should submit the Shift-bypassed note move");
+        let Message::EditMidiNotes(_, edits) = action.into_inner().0.unwrap() else {
+            panic!("note drag should submit note edits");
+        };
+        assert_eq!(edits[0].1.tick, 190);
+
+        let lane_bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, VOLUME_LANE_HEIGHT));
+        let controller = ControllerLane {
+            item,
+            item_id,
+            controller: 7,
+            lane_height: VOLUME_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap,
+        };
+        let controller_start = Point::new(0.0, 36.0);
+        let controller_target = Point::new(19.0, 36.0);
+        let mut controller_state = ControllerLaneInteraction::default();
+        controller
+            .update(
+                &mut controller_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                lane_bounds,
+                mouse::Cursor::Available(controller_start),
+            )
+            .expect("CC press should start a drag");
+        controller
+            .update(
+                &mut controller_state,
+                &modifiers_changed,
+                lane_bounds,
+                mouse::Cursor::Available(controller_target),
+            )
+            .expect("changing Shift should refresh the CC preview");
+        assert_eq!(controller_state.drag.as_ref().unwrap().current.tick, 190);
+        let action = controller
+            .update(
+                &mut controller_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                lane_bounds,
+                mouse::Cursor::Available(controller_target),
+            )
+            .expect("release should submit the Shift-bypassed CC edit");
+        let Message::SetMidiControllers(_, points) = action.into_inner().0.unwrap() else {
+            panic!("CC drag should submit controller edits");
+        };
+        assert_eq!(points[0].tick, 190);
+
+        let pitch_bend = PitchBendLane {
+            item,
+            item_id,
+            lane_height: PITCH_BEND_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap,
+        };
+        let bend_bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, PITCH_BEND_LANE_HEIGHT));
+        let mut bend_state = PitchBendLaneInteraction::default();
+        pitch_bend
+            .update(
+                &mut bend_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bend_bounds,
+                mouse::Cursor::Available(controller_start),
+            )
+            .expect("pitch-bend press should start a drag");
+        pitch_bend
+            .update(
+                &mut bend_state,
+                &modifiers_changed,
+                bend_bounds,
+                mouse::Cursor::Available(controller_target),
+            )
+            .expect("changing Shift should refresh the pitch-bend preview");
+        assert_eq!(bend_state.drag.as_ref().unwrap().current.tick, 190);
+        let action = pitch_bend
+            .update(
+                &mut bend_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bend_bounds,
+                mouse::Cursor::Available(controller_target),
+            )
+            .expect("release should submit the Shift-bypassed pitch-bend edit");
+        let Message::SetMidiPitchBends(_, points) = action.into_inner().0.unwrap() else {
+            panic!("pitch-bend drag should submit pitch-bend edits");
+        };
+        assert_eq!(points[0].tick, 190);
     }
 
     #[test]
@@ -2531,6 +2873,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         let pressed = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
@@ -2571,6 +2914,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         lane.update(
@@ -2624,6 +2968,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         let action = lane
@@ -2677,8 +3022,9 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
-        let point = lane.point_data(Point::new(96.0, 36.0));
+        let point = lane.point_data(Point::new(96.0, 36.0), false);
         assert_eq!(
             point,
             MidiControllerData {
@@ -2729,6 +3075,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         lane.update(
@@ -2782,6 +3129,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         lane.update(
@@ -2861,6 +3209,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, EXPRESSION_LANE_HEIGHT));
         let mut interaction = ControllerLaneInteraction::default();
@@ -2955,6 +3304,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, VOLUME_LANE_HEIGHT));
         let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
@@ -3052,6 +3402,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         let cursor = mouse::Cursor::Available(Point::new(96.0, 36.0));
@@ -3100,6 +3451,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         lane.update(
@@ -3161,6 +3513,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
         };
         let mut interaction = ControllerLaneInteraction::default();
         lane.update(
@@ -3297,6 +3650,7 @@ mod tests {
             high_pitch: 35,
             pixels_per_beat: 960.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             region: RollRegion::Pitch,
         };
         let bounds = Rectangle::new(
@@ -3363,6 +3717,7 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
+            snap: MidiSnap::default(),
             high_pitch: 84,
         };
         let mut project = Project::new();

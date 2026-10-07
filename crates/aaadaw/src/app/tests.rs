@@ -11,6 +11,7 @@ use super::{
     App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
     midi_editor_shortcut_event, shortcut_message,
 };
+use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
@@ -3288,6 +3289,35 @@ fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
         Some("Paste rejected: notes would extend beyond the MIDI item")
     );
     assert!(app.project.midi_items()[0].notes().is_empty());
+}
+
+#[test]
+fn piano_roll_paste_uses_the_shared_snap_grid_and_respects_snap_off() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
+        SnapGrid::EighthTriplet,
+    )));
+    app.midi_editor_origin_tick = 190;
+    app.midi_note_clipboard.notes = vec![MidiNoteData {
+        pitch: 60,
+        tick: 0,
+        duration: 120,
+        velocity: 96,
+    }];
+    app.midi_note_clipboard.source_item_id = None;
+
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 320);
+
+    let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+    app.midi_editor_origin_tick = 510;
+    app.midi_note_clipboard.last_paste = None;
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 510);
 }
 
 #[test]
