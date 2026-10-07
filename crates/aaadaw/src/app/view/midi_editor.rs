@@ -28,10 +28,15 @@ const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
 const CONTROLLER_CONTEXT_HEIGHT: f32 = 24.0;
 
+fn visible_edit_cursor_tick(app: &App) -> u64 {
+    app.midi_editor_paste_target_tick(app.midi_editor_item_id)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MidiSnap {
     grid: SnapGrid,
     enabled: bool,
+    cursor_tick: u64,
 }
 
 impl Default for MidiSnap {
@@ -39,6 +44,7 @@ impl Default for MidiSnap {
         Self {
             grid: SnapGrid::Sixteenth,
             enabled: true,
+            cursor_tick: 0,
         }
     }
 }
@@ -89,6 +95,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .then_some(Message::PasteMidiNotes(item_id))
             )
             .padding([SPACING_XS / 2.0, SPACING_XS]),
+        button("Duplicate")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(
+                (!app.midi_editor_selected_notes.is_empty())
+                    .then_some(Message::DuplicateMidiNotes(item_id))
+            )
+            .padding([SPACING_XS / 2.0, SPACING_XS]),
         button("Delete notes")
             .style(iced::widget::button::danger)
             .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
@@ -135,13 +148,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Message::Timeline(TimelineEvent::SetSnapGrid(grid))
         },)
         .width(Length::Fixed(112.0)),
-        text("Hold Shift to bypass").size(11),
+        text("Shift bypass · Click ruler to set paste target").size(11),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
     let midi_snap = MidiSnap {
         grid: app.timeline.snap_grid,
         enabled: app.timeline.snap_enabled,
+        cursor_tick: visible_edit_cursor_tick(app),
     };
     let ticks_per_beat = u64::from(app.project.settings().ppq());
     let pitch_canvas = canvas_widget::Canvas::new(PianoRoll {
@@ -153,7 +167,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         high_pitch: app.midi_editor_high_pitch,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
-        snap: midi_snap,
+        snap: MidiSnap {
+            grid: app.timeline.snap_grid,
+            enabled: app.timeline.snap_enabled,
+            cursor_tick: visible_edit_cursor_tick(app),
+        },
         region: RollRegion::Pitch,
     })
     .width(Length::Fill)
@@ -315,6 +333,7 @@ fn controller_lane<'a>(
         snap: MidiSnap {
             grid: app.timeline.snap_grid,
             enabled: app.timeline.snap_enabled,
+            cursor_tick: visible_edit_cursor_tick(app),
         },
     })
     .width(Length::Fill)
@@ -339,6 +358,7 @@ fn pitch_bend_lane<'a>(
         snap: MidiSnap {
             grid: app.timeline.snap_grid,
             enabled: app.timeline.snap_enabled,
+            cursor_tick: visible_edit_cursor_tick(app),
         },
     })
     .width(Length::Fill)
@@ -727,6 +747,19 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 shaping: Shaping::Basic,
             });
         }
+        let cursor_x = mapping.x_at_tick(self.snap.cursor_tick);
+        if (0.0..=bounds.width).contains(&cursor_x) {
+            let cursor_line = canvas::Path::line(
+                Point::new(cursor_x, 0.0),
+                Point::new(cursor_x, bounds.height),
+            );
+            frame.stroke(
+                &cursor_line,
+                canvas::Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgb8(255, 184, 92)),
+            );
+        }
         vec![frame.into_geometry()]
     }
 }
@@ -1059,6 +1092,19 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 shaping: Shaping::Basic,
             });
         }
+        let cursor_x = mapping.x_at_tick(self.snap.cursor_tick);
+        if (0.0..=bounds.width).contains(&cursor_x) {
+            let cursor_line = canvas::Path::line(
+                Point::new(cursor_x, 0.0),
+                Point::new(cursor_x, bounds.height),
+            );
+            frame.stroke(
+                &cursor_line,
+                canvas::Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgb8(255, 184, 92)),
+            );
+        }
         vec![frame.into_geometry()]
     }
 }
@@ -1235,6 +1281,22 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
+                if self.region == RollRegion::Pitch && position.y < HEADER_HEIGHT {
+                    if position.x < KEY_WIDTH {
+                        return Some(canvas::Action::capture());
+                    }
+                    let mapping = self.mapping();
+                    let tick = mapping
+                        .snap_tick(
+                            mapping.tick_at_x(position.x - KEY_WIDTH),
+                            state.modifiers.shift(),
+                        )
+                        .min(self.item.length_ticks());
+                    return Some(canvas::Action::publish(Message::SetPianoRollCursor(
+                        self.item_id,
+                        tick,
+                    )));
+                }
                 let point = Point::new(
                     position.x
                         - if self.region == RollRegion::Pitch {
@@ -1621,6 +1683,19 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 );
             }
         }
+        let cursor_x = grid_left + mapping.x_at_tick(self.snap.cursor_tick);
+        if (grid_left..=bounds.width).contains(&cursor_x) {
+            let cursor_line = canvas::Path::line(
+                Point::new(cursor_x, grid_top),
+                Point::new(cursor_x, bounds.height),
+            );
+            frame.stroke(
+                &cursor_line,
+                canvas::Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgb8(255, 184, 92)),
+            );
+        }
         vec![frame.into_geometry()]
     }
     fn mouse_interaction(
@@ -1780,6 +1855,19 @@ impl PianoRoll<'_> {
                     shaping: Shaping::Basic,
                 });
             }
+        }
+        let cursor_x = mapping.x_at_tick(self.snap.cursor_tick);
+        if (0.0..=bounds.width).contains(&cursor_x) {
+            let cursor_line = canvas::Path::line(
+                Point::new(cursor_x, 0.0),
+                Point::new(cursor_x, bounds.height),
+            );
+            frame.stroke(
+                &cursor_line,
+                canvas::Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgb8(255, 184, 92)),
+            );
         }
     }
 
@@ -1983,6 +2071,53 @@ fn pitch_name(pitch: u8) -> String {
 mod tests {
     use super::*;
     use iced::widget::canvas::Program;
+
+    #[test]
+    fn visible_caret_falls_back_to_the_clipboards_default_paste_target() {
+        let mut app = App::default();
+        app.midi_note_clipboard.default_paste_tick = Some(1_920);
+        assert_eq!(visible_edit_cursor_tick(&app), 1_920);
+
+        app.midi_editor_edit_cursor_tick = Some(960);
+        assert_eq!(visible_edit_cursor_tick(&app), 960);
+
+        app.midi_editor_edit_cursor_tick = Some(190);
+        app.timeline.snap_grid = SnapGrid::EighthTriplet;
+        assert_eq!(visible_edit_cursor_tick(&app), 320);
+
+        app.timeline.snap_enabled = false;
+        assert_eq!(visible_edit_cursor_tick(&app), 190);
+    }
+
+    #[test]
+    fn visible_caret_tracks_continuous_paste_after_the_snap_grid_changes() {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let _ = app.update(Message::AddMidiItem);
+        let item_id = app.project.midi_items()[0].id();
+        let _ = app.update(Message::OpenMidiEditor(item_id));
+        let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+        app.midi_editor_edit_cursor_tick = Some(190);
+        app.midi_note_clipboard.notes = vec![MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 120,
+            velocity: 96,
+        }];
+        app.midi_note_clipboard.span_ticks = 120;
+
+        let _ = app.update(Message::PasteMidiNotes(item_id));
+        assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 190);
+
+        let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
+            SnapGrid::Sixteenth,
+        )));
+        let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+        assert_eq!(visible_edit_cursor_tick(&app), 480);
+
+        let _ = app.update(Message::PasteMidiNotes(item_id));
+        assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 480);
+    }
 
     fn project_with_note(item_length_ticks: u64, note: MidiNoteData) -> (Project, ItemId, NoteId) {
         let mut project = Project::new();
@@ -2672,6 +2807,7 @@ mod tests {
             snap: MidiSnap {
                 grid: SnapGrid::EighthTriplet,
                 enabled: true,
+                cursor_tick: 0,
             },
         };
         assert_eq!(mapping.grid_ticks(), 320);
@@ -2692,6 +2828,52 @@ mod tests {
     }
 
     #[test]
+    fn clicking_the_piano_roll_ruler_sets_the_snapped_edit_cursor() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, _) = project_with_note(3_840, note);
+        let roll = PianoRoll {
+            project: &project,
+            item: &project.midi_items()[0],
+            item_id,
+            selected: &HashSet::new(),
+            origin_tick: 0,
+            high_pitch: 60,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap {
+                grid: SnapGrid::EighthTriplet,
+                enabled: true,
+                cursor_tick: 0,
+            },
+            region: RollRegion::Pitch,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                400.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let action = roll
+            .update(
+                &mut Interaction::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(Point::new(KEY_WIDTH + 19.0, 8.0)),
+            )
+            .expect("ruler click should set the edit cursor");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::SetPianoRollCursor(changed_item, 320)) if changed_item == item_id
+        ));
+    }
+
+    #[test]
     fn shift_changes_recompute_active_note_and_controller_drag_previews() {
         let note = MidiNoteData {
             pitch: 60,
@@ -2705,6 +2887,7 @@ mod tests {
         let snap = MidiSnap {
             grid: SnapGrid::EighthTriplet,
             enabled: true,
+            cursor_tick: 0,
         };
         let modifiers_changed = Event::Keyboard(keyboard::Event::ModifiersChanged(
             keyboard::Modifiers::SHIFT,
