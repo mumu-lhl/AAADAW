@@ -669,6 +669,7 @@ fn track_row_layout<'a>(
             ..container::Style::default()
         });
     mouse_area(row)
+        .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
         .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
             track_id,
         )))
