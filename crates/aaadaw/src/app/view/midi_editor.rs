@@ -1910,20 +1910,25 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         .with_width(0.8),
                 );
             }
-            if pitch % 12 == 0 {
-                frame.fill_text(Text {
-                    content: pitch_name(pitch),
-                    position: Point::new(KEY_WIDTH - 5.0, y + self.pitch_row_height / 2.0),
-                    max_width: KEY_WIDTH - 8.0,
-                    color: Color::from_rgb8(31, 37, 40),
-                    size: Pixels(11.0),
-                    line_height: LineHeight::Relative(1.0),
-                    font: Font::default(),
-                    align_x: TextAlignment::Right,
-                    align_y: iced::alignment::Vertical::Center,
-                    shaping: Shaping::Basic,
-                });
+        }
+        for row in 0..self.pitch_rows {
+            let pitch = self.high_pitch.saturating_sub(row);
+            if pitch % 12 != 0 {
+                continue;
             }
+            let y = grid_top + f32::from(row) * self.pitch_row_height;
+            frame.fill_text(Text {
+                content: pitch_name(pitch),
+                position: Point::new(KEY_WIDTH - 5.0, y + self.pitch_row_height / 2.0),
+                max_width: KEY_WIDTH - 8.0,
+                color: Color::from_rgb8(31, 37, 40),
+                size: Pixels(11.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Right,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
         }
         for row in 0..self.pitch_rows {
             let pitch = self.high_pitch.saturating_sub(row);
