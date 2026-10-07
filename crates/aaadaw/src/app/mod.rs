@@ -38,6 +38,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub(super) const MIDI_EDITOR_KEY_WIDTH: f32 = 84.0;
+pub(super) const MIDI_EDITOR_CONTENT_WIDTH_INSET: f32 = MIDI_EDITOR_KEY_WIDTH + 32.0;
+
 mod action_macros;
 mod audio_config;
 mod audio_export;
@@ -256,6 +259,8 @@ struct App {
     midi_editor_origin_tick: u64,
     midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
+    midi_editor_pitch_rows: u8,
+    midi_editor_pitch_row_height: f32,
     midi_editor_pixels_per_beat: f32,
     midi_editor_follow_playhead: bool,
     midi_editor_window_size: iced::Size,
@@ -1854,7 +1859,7 @@ impl App {
             Message::PianoRollPanPixels(_) => {}
             Message::PianoRollZoom(factor) if factor.is_finite() && factor > 0.0 => {
                 self.midi_editor_pixels_per_beat =
-                    (self.midi_editor_pixels_per_beat * factor).clamp(24.0, 300.0);
+                    (self.midi_editor_pixels_per_beat * factor).clamp(1.0, 300.0);
             }
             Message::PianoRollZoom(_) => {}
             Message::PianoRollZoomAt(factor, anchor_x)
@@ -1864,7 +1869,7 @@ impl App {
                 let old_scale = f64::from(self.midi_editor_pixels_per_beat);
                 let anchor_tick =
                     self.midi_editor_origin_tick as f64 + f64::from(anchor_x) / old_scale * ppq;
-                let new_scale = (self.midi_editor_pixels_per_beat * factor).clamp(24.0, 300.0);
+                let new_scale = (self.midi_editor_pixels_per_beat * factor).clamp(1.0, 300.0);
                 let new_origin = anchor_tick - f64::from(anchor_x) / f64::from(new_scale) * ppq;
                 self.midi_editor_origin_tick =
                     new_origin.round().clamp(0.0, u64::MAX as f64) as u64;
@@ -1877,7 +1882,7 @@ impl App {
                 .clamp(35, 127) as u8;
             }
             Message::FitPianoRollToNotes(item_id) => {
-                self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
+                self.fit_midi_editor_to_item(item_id);
             }
             Message::TogglePianoRollFollowPlayhead => {
                 self.midi_editor_follow_playhead = !self.midi_editor_follow_playhead;
@@ -3713,7 +3718,7 @@ impl App {
             }
             self.midi_editor_item_id = Some(item_id);
             if item_changed {
-                self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
+                self.fit_midi_editor_to_item(item_id);
             }
             self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
@@ -3732,12 +3737,14 @@ impl App {
         self.midi_editor_origin_tick = 0;
         self.midi_editor_edit_cursor_tick = None;
         self.midi_editor_high_pitch = 84;
+        self.midi_editor_pitch_rows = 36;
+        self.midi_editor_pitch_row_height = 18.0;
         self.midi_editor_pixels_per_beat = 96.0;
-        self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
+        self.fit_midi_editor_to_item(item_id);
         task.discard()
     }
 
-    fn fit_midi_editor_to_item(&mut self, item_id: ItemId, window_width: f32) {
+    fn fit_midi_editor_to_item(&mut self, item_id: ItemId) {
         let Some(item) = self
             .project
             .midi_items()
@@ -3765,16 +3772,30 @@ impl App {
             .saturating_add(margin)
             .saturating_sub(origin_tick)
             .max(ppq);
-        let content_width = (window_width - 84.0 - 32.0).max(120.0);
+        let content_width =
+            (self.midi_editor_window_size.width - MIDI_EDITOR_CONTENT_WIDTH_INSET).max(120.0);
         let beats = visible_ticks as f32 / ppq.max(1) as f32;
         self.midi_editor_origin_tick = origin_tick;
-        self.midi_editor_pixels_per_beat = (content_width / beats).clamp(24.0, 300.0);
-        self.midi_editor_high_pitch = item
-            .notes()
-            .iter()
-            .map(|note| note.pitch())
-            .max()
-            .map_or(84, |pitch| pitch.saturating_add(2).min(127));
+        self.midi_editor_pixels_per_beat = (content_width / beats).clamp(1.0, 300.0);
+        let highest_pitch = item.notes().iter().map(|note| note.pitch()).max();
+        let lowest_pitch = item.notes().iter().map(|note| note.pitch()).min();
+        if let (Some(lowest_pitch), Some(highest_pitch)) = (lowest_pitch, highest_pitch) {
+            let high_pitch = highest_pitch.saturating_add(2).min(127);
+            let low_pitch = lowest_pitch.saturating_sub(2);
+            let pitch_rows = high_pitch
+                .saturating_sub(low_pitch)
+                .saturating_add(1)
+                .max(1);
+            let available_height = (self.midi_editor_window_size.height - 260.0).max(80.0);
+            self.midi_editor_high_pitch = high_pitch;
+            self.midi_editor_pitch_rows = pitch_rows;
+            self.midi_editor_pitch_row_height =
+                (available_height / f32::from(pitch_rows)).clamp(2.0, 18.0);
+        } else {
+            self.midi_editor_high_pitch = 84;
+            self.midi_editor_pitch_rows = 36;
+            self.midi_editor_pitch_row_height = 18.0;
+        }
     }
 
     fn midi_editor_playhead_tick(&self, item: &aaadaw_core::MidiItem) -> Option<u64> {
@@ -3811,7 +3832,8 @@ impl App {
         let Some(playhead_tick) = self.midi_editor_playhead_tick(item) else {
             return;
         };
-        let visible_pixels = (self.midi_editor_window_size.width - 116.0).max(120.0);
+        let visible_pixels =
+            (self.midi_editor_window_size.width - MIDI_EDITOR_CONTENT_WIDTH_INSET).max(120.0);
         let visible_ticks = (visible_pixels / self.midi_editor_pixels_per_beat
             * self.project.settings().ppq() as f32) as u64;
         self.midi_editor_origin_tick =

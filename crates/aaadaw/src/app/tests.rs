@@ -3458,6 +3458,44 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
     assert_eq!(app.midi_editor_origin_tick, 2_440);
 }
 
+#[test]
+fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 100_000,
+        })
+        .expect("long MIDI item should be editable");
+    for note in [
+        MidiNoteData {
+            pitch: 12,
+            tick: 0,
+            duration: 960,
+            velocity: 96,
+        },
+        MidiNoteData {
+            pitch: 110,
+            tick: 40_000,
+            duration: 960,
+            velocity: 96,
+        },
+    ] {
+        let _ = app.update(Message::AddMidiNoteAt(item_id, note));
+    }
+
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    assert!(app.midi_editor_pixels_per_beat < 24.0);
+    assert_eq!(app.midi_editor_high_pitch, 112);
+    assert_eq!(app.midi_editor_pitch_rows, 103);
+    assert!(app.midi_editor_pitch_row_height >= 2.0);
+}
+
 #[cfg(feature = "audio-device")]
 #[test]
 fn piano_roll_playhead_matches_arrangement_and_follow_keeps_it_in_view() {

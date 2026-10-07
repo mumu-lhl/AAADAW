@@ -1,4 +1,4 @@
-use super::super::{App, Message, MidiEditorLane};
+use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
 use crate::timeline::{SnapGrid, TimelineEvent};
 use aaadaw_core::{
@@ -12,10 +12,12 @@ use iced::{
 };
 use std::collections::{HashMap, HashSet};
 
-const KEY_WIDTH: f32 = 84.0;
+const KEY_WIDTH: f32 = MIDI_EDITOR_KEY_WIDTH;
 const HEADER_HEIGHT: f32 = 28.0;
 const NOTE_ROW_HEIGHT: f32 = 18.0;
 const PITCH_COUNT: u8 = 36;
+const MOUSE_WHEEL_LINE_PIXELS: f32 = 40.0;
+const PITCH_STEPS_PER_WHEEL_LINE: i8 = 3;
 const VELOCITY_LANE_HEIGHT: f32 = 104.0;
 const SUSTAIN_LANE_HEIGHT: f32 = 96.0;
 const VOLUME_LANE_HEIGHT: f32 = 72.0;
@@ -156,7 +158,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Message::Timeline(TimelineEvent::SetSnapGrid(grid))
         },)
         .width(Length::Fixed(112.0)),
-        text("Wheel: pitch · Shift+wheel: time · Ctrl+wheel: zoom · Click ruler: paste target")
+        text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom · Click ruler: paste target")
             .size(11),
     ]
     .spacing(ROW_GAP)
@@ -174,6 +176,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         selected: &app.midi_editor_selected_notes,
         origin_tick: app.midi_editor_origin_tick,
         high_pitch: app.midi_editor_high_pitch,
+        pitch_rows: app.midi_editor_pitch_rows,
+        pitch_row_height: app.midi_editor_pitch_row_height,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
         snap: MidiSnap {
@@ -214,6 +218,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 selected: &app.midi_editor_selected_notes,
                 origin_tick: app.midi_editor_origin_tick,
                 high_pitch: app.midi_editor_high_pitch,
+                pitch_rows: app.midi_editor_pitch_rows,
+                pitch_row_height: app.midi_editor_pitch_row_height,
                 pixels_per_beat: app.midi_editor_pixels_per_beat,
                 ticks_per_beat,
                 snap: midi_snap,
@@ -411,6 +417,8 @@ impl ControllerLane<'_> {
             ticks_per_beat: self.ticks_per_beat,
             snap: self.snap,
             high_pitch: 0,
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
         }
     }
 
@@ -522,6 +530,11 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 return Some(canvas::Action::request_redraw());
             }
             return None;
+        }
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
+            let position = cursor.position_in(bounds)?;
+            return wheel_navigation_message(delta, state.modifiers, position, false)
+                .map(canvas::Action::publish);
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -827,6 +840,8 @@ impl PitchBendLane<'_> {
             ticks_per_beat: self.ticks_per_beat,
             snap: self.snap,
             high_pitch: 0,
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
         }
     }
 
@@ -879,6 +894,11 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 return Some(canvas::Action::request_redraw());
             }
             return None;
+        }
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
+            let position = cursor.position_in(bounds)?;
+            return wheel_navigation_message(delta, state.modifiers, position, false)
+                .map(canvas::Action::publish);
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -1175,6 +1195,8 @@ struct RollMapping {
     pixels_per_beat: f32,
     ticks_per_beat: u64,
     high_pitch: u8,
+    pitch_rows: u8,
+    pitch_row_height: f32,
     snap: MidiSnap,
 }
 
@@ -1202,7 +1224,9 @@ impl RollMapping {
     }
 
     fn pitch_at_y(self, y: f32) -> u8 {
-        let row = (y.max(0.0) / NOTE_ROW_HEIGHT).floor() as u8;
+        let row = (y.max(0.0) / self.pitch_row_height)
+            .floor()
+            .min(f32::from(self.pitch_rows.saturating_sub(1))) as u8;
         self.high_pitch.saturating_sub(row).min(127)
     }
 
@@ -1212,7 +1236,7 @@ impl RollMapping {
     }
 
     fn y_at_pitch(self, pitch: u8) -> f32 {
-        f32::from(self.high_pitch.saturating_sub(pitch)) * NOTE_ROW_HEIGHT
+        f32::from(self.high_pitch.saturating_sub(pitch)) * self.pitch_row_height
     }
 }
 
@@ -1247,6 +1271,8 @@ struct PianoRoll<'a> {
     selected: &'a HashSet<NoteId>,
     origin_tick: u64,
     high_pitch: u8,
+    pitch_rows: u8,
+    pitch_row_height: f32,
     pixels_per_beat: f32,
     ticks_per_beat: u64,
     snap: MidiSnap,
@@ -1304,28 +1330,13 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             let position = cursor.position_in(bounds)?;
-            let (wheel_x, wheel_y) = match delta {
-                mouse::ScrollDelta::Lines { x, y } => (*x * 40.0, *y * 40.0),
-                mouse::ScrollDelta::Pixels { x, y } => (*x, *y),
-            };
-            if state.modifiers.control() || state.modifiers.command() {
-                let factor = (f64::from(wheel_y) * 0.002).exp() as f32;
-                return Some(canvas::Action::publish(Message::PianoRollZoomAt(
-                    factor,
-                    (position.x - KEY_WIDTH).max(0.0),
-                )));
-            }
-            if state.modifiers.shift() || wheel_x != 0.0 {
-                let delta = if wheel_x != 0.0 { wheel_x } else { wheel_y };
-                return Some(canvas::Action::publish(Message::PianoRollPanPixels(-delta)));
-            }
-            let pitch_delta = (wheel_y / 40.0).round().clamp(-42.0, 42.0) as i8 * 3;
-            if pitch_delta != 0 {
-                return Some(canvas::Action::publish(Message::PianoRollPitchScroll(
-                    pitch_delta,
-                )));
-            }
-            return None;
+            return wheel_navigation_message(
+                delta,
+                state.modifiers,
+                position,
+                self.region == RollRegion::Pitch,
+            )
+            .map(canvas::Action::publish);
         }
         if self.region == RollRegion::Pitch
             && let Event::Keyboard(keyboard::Event::KeyPressed {
@@ -1671,9 +1682,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             }
             tick = next;
         }
-        for row in 0..PITCH_COUNT {
+        for row in 0..self.pitch_rows {
             let pitch = self.high_pitch.saturating_sub(row);
-            let y = grid_top + f32::from(row) * NOTE_ROW_HEIGHT;
+            let y = grid_top + f32::from(row) * self.pitch_row_height;
             let black = matches!(pitch % 12, 1 | 3 | 6 | 8 | 10);
             let row_color = if black {
                 Color::from_rgb8(31, 35, 38)
@@ -1682,7 +1693,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             };
             frame.fill_rectangle(
                 Point::new(grid_left, y),
-                Size::new(bounds.width - grid_left, NOTE_ROW_HEIGHT),
+                Size::new(bounds.width - grid_left, self.pitch_row_height),
                 row_color,
             );
             let line = canvas::Path::line(Point::new(grid_left, y), Point::new(bounds.width, y));
@@ -1692,8 +1703,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .with_color(Color::from_rgb8(52, 59, 63))
                     .with_width(0.7),
             );
-            let key =
-                canvas::Path::rectangle(Point::new(0.0, y), Size::new(KEY_WIDTH, NOTE_ROW_HEIGHT));
+            let key = canvas::Path::rectangle(
+                Point::new(0.0, y),
+                Size::new(KEY_WIDTH, self.pitch_row_height),
+            );
             frame.fill(
                 &key,
                 if black {
@@ -1705,7 +1718,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             if pitch % 12 == 0 || row == 0 {
                 frame.fill_text(Text {
                     content: pitch_name(pitch),
-                    position: Point::new(KEY_WIDTH - 5.0, y + NOTE_ROW_HEIGHT / 2.0),
+                    position: Point::new(KEY_WIDTH - 5.0, y + self.pitch_row_height / 2.0),
                     max_width: KEY_WIDTH - 8.0,
                     color: Color::from_rgb8(218, 222, 224),
                     size: Pixels(10.0),
@@ -1731,7 +1744,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         for note in self.item.notes() {
             if note.pitch() > self.high_pitch
-                || note.pitch() < self.high_pitch.saturating_sub(PITCH_COUNT - 1)
+                || note.pitch() < self.high_pitch.saturating_sub(self.pitch_rows - 1)
             {
                 continue;
             }
@@ -1741,7 +1754,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 note_width_pixels(note.duration(), self.ticks_per_beat, self.pixels_per_beat);
             let rect = canvas::Path::rectangle(
                 Point::new(x, y + 2.0),
-                Size::new(width, NOTE_ROW_HEIGHT - 4.0),
+                Size::new(width, (self.pitch_row_height - 4.0).max(1.0)),
             );
             let color = if self.selected.contains(&note.id()) {
                 Color::from_rgb8(104, 179, 204)
@@ -1764,7 +1777,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     preview.tick.saturating_add(preview.duration) > self.item.length_ticks();
                 frame.fill_rectangle(
                     Point::new(preview_x, preview_y + 2.0),
-                    Size::new(preview_width, NOTE_ROW_HEIGHT - 4.0),
+                    Size::new(preview_width, (self.pitch_row_height - 4.0).max(1.0)),
                     if invalid_target {
                         Color::from_rgba8(230, 70, 65, 0.72)
                     } else {
@@ -1786,6 +1799,15 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .with_color(Color::from_rgb8(255, 184, 92)),
             );
         }
+        draw_playhead_line(
+            &mut frame,
+            mapping,
+            self.playhead_tick,
+            grid_left,
+            grid_top,
+            bounds.width,
+            bounds.height,
+        );
         vec![frame.into_geometry()]
     }
     fn mouse_interaction(
@@ -1823,6 +1845,38 @@ fn delete_key_message(
         .then(|| Message::DeleteMidiNotes(item_id, selected.iter().copied().collect()))
 }
 
+fn wheel_navigation_message(
+    delta: &mouse::ScrollDelta,
+    modifiers: keyboard::Modifiers,
+    position: Point,
+    has_key_gutter: bool,
+) -> Option<Message> {
+    let (wheel_x, wheel_y) = match delta {
+        mouse::ScrollDelta::Lines { x, y } => {
+            (*x * MOUSE_WHEEL_LINE_PIXELS, *y * MOUSE_WHEEL_LINE_PIXELS)
+        }
+        mouse::ScrollDelta::Pixels { x, y } => (*x, *y),
+    };
+    if modifiers.control() || modifiers.command() {
+        let factor = (f64::from(wheel_y) * 0.002).exp() as f32;
+        let anchor_x = if has_key_gutter {
+            (position.x - KEY_WIDTH).max(0.0)
+        } else {
+            position.x
+        };
+        return Some(Message::PianoRollZoomAt(factor, anchor_x));
+    }
+    if modifiers.shift() || wheel_x != 0.0 {
+        let delta = if wheel_x != 0.0 { wheel_x } else { wheel_y };
+        return Some(Message::PianoRollPanPixels(-delta));
+    }
+    let pitch_delta = (wheel_y / MOUSE_WHEEL_LINE_PIXELS)
+        .round()
+        .clamp(-42.0, 42.0) as i8
+        * PITCH_STEPS_PER_WHEEL_LINE;
+    (pitch_delta != 0).then_some(Message::PianoRollPitchScroll(pitch_delta))
+}
+
 impl PianoRoll<'_> {
     fn roll_point(&self, position: Point) -> Point {
         Point::new(
@@ -1851,7 +1905,7 @@ impl PianoRoll<'_> {
         } else if drag.resize {
             drag.delta_tick = delta_tick;
         } else {
-            let delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+            let delta_pitch = ((drag.start.y - point.y) / self.pitch_row_height).round() as i16;
             (drag.delta_tick, drag.delta_pitch) = bounded_note_move_delta(
                 &drag.notes,
                 self.item.length_ticks(),
@@ -1872,7 +1926,7 @@ impl PianoRoll<'_> {
             let hit = point.x >= left
                 && point.x <= right
                 && point.y >= top
-                && point.y < top + NOTE_ROW_HEIGHT;
+                && point.y < top + self.pitch_row_height;
             hit.then_some((note, right - point.x <= resize_handle_width(width)))
         })
     }
@@ -1973,9 +2027,11 @@ impl PianoRoll<'_> {
     fn mapping(&self) -> RollMapping {
         RollMapping {
             origin_tick: self.origin_tick,
-            pixels_per_beat: self.pixels_per_beat.max(16.0),
+            pixels_per_beat: self.pixels_per_beat.max(1.0),
             ticks_per_beat: self.ticks_per_beat,
             high_pitch: self.high_pitch,
+            pitch_rows: self.pitch_rows,
+            pitch_row_height: self.pitch_row_height,
             snap: self.snap,
         }
     }
@@ -2230,6 +2286,8 @@ mod tests {
         let item = &project.midi_items()[0];
         let selected = HashSet::new();
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item,
             item_id,
@@ -2336,6 +2394,8 @@ mod tests {
         };
         let (project, item_id, _) = project_with_note(960, note);
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item: &project.midi_items()[0],
             item_id,
@@ -2388,6 +2448,8 @@ mod tests {
         let item = &project.midi_items()[0];
         let selected = HashSet::new();
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item,
             item_id,
@@ -2499,6 +2561,8 @@ mod tests {
             ..Interaction::default()
         };
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item,
             item_id,
@@ -2931,6 +2995,8 @@ mod tests {
     #[test]
     fn time_and_pitch_mapping_respect_origin_and_visible_pitch_range() {
         let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             origin_tick: 1_920,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
@@ -2961,6 +3027,8 @@ mod tests {
     #[test]
     fn mapping_and_sixteenth_grid_follow_project_ppq() {
         let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 480,
@@ -2976,6 +3044,8 @@ mod tests {
     #[test]
     fn selected_grid_and_shift_bypass_are_shared_by_midi_editors() {
         let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
@@ -2993,6 +3063,8 @@ mod tests {
         assert_eq!(snap_delta(190, mapping, true), 190);
 
         let disabled = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             snap: MidiSnap {
                 enabled: false,
                 ..mapping.snap
@@ -3013,6 +3085,8 @@ mod tests {
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item: &project.midi_items()[0],
             item_id,
@@ -3072,6 +3146,8 @@ mod tests {
         ));
 
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item,
             item_id,
@@ -4031,6 +4107,8 @@ mod tests {
             .map(|note| note.id())
             .collect::<HashSet<_>>();
         let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
             item,
             item_id,
@@ -4105,6 +4183,8 @@ mod tests {
     #[test]
     fn same_onset_velocity_handles_are_spread_around_the_note_tick() {
         let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 960,
