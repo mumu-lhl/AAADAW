@@ -1925,6 +1925,24 @@ fn item_drag_obeys_project_busy_and_jack_edit_guards() {
 }
 
 #[test]
+fn stopped_or_paused_open_playback_does_not_lock_project_editing() {
+    let stopped = super::playback_prevents_project_edits(true, false);
+    let playing = super::playback_prevents_project_edits(true, true);
+
+    assert!(!stopped);
+    assert!(playing);
+    assert!(!super::playback_prevents_project_edits(false, false));
+    assert_eq!(
+        super::item_drag_edit_guard_status(false, false, false, false, stopped, false),
+        None
+    );
+    assert_eq!(
+        super::item_drag_edit_guard_status(false, false, false, false, playing, false),
+        Some("Close audio output before editing the project")
+    );
+}
+
+#[test]
 fn reimport_requires_a_saved_project_and_changed_embedded_source() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
