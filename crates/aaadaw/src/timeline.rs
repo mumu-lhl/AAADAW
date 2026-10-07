@@ -139,6 +139,13 @@ pub(crate) enum TimelineEvent {
         additive: bool,
         range: bool,
     },
+    SelectItemsInMarquee {
+        start_tick: u64,
+        end_tick: u64,
+        top: f32,
+        bottom: f32,
+        additive: bool,
+    },
     OpenItemContextMenu {
         item_id: ItemId,
         x: f32,
@@ -1308,6 +1315,13 @@ impl TimelineState {
                 self.selected_fx_automation_point = None;
                 self.select_item(item_id, additive, range, false);
             }
+            TimelineEvent::SelectItemsInMarquee {
+                start_tick,
+                end_tick,
+                top,
+                bottom,
+                additive,
+            } => self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive),
             TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
                 if self.cache.item_indices.contains_key(&item_id) {
                     if !self.selected_items.contains(&item_id) {
@@ -1605,6 +1619,54 @@ impl TimelineState {
         self.selected_track = Some(clicked.track_id);
     }
 
+    fn select_items_in_marquee(
+        &mut self,
+        start_tick: u64,
+        end_tick: u64,
+        top: f32,
+        bottom: f32,
+        additive: bool,
+    ) {
+        let (start_tick, end_tick) = (start_tick.min(end_tick), start_tick.max(end_tick));
+        let (top, bottom) = if top <= bottom {
+            (top, bottom)
+        } else {
+            (bottom, top)
+        };
+        let selected = self
+            .cache
+            .items
+            .iter()
+            .filter(|item| {
+                item.start_tick <= end_tick
+                    && item.end_tick >= start_tick
+                    && self.row_layout.get(item.track_index).is_some_and(|row| {
+                        if bottom - top < 3.0 {
+                            top >= row.top && top < row.top + row.height
+                        } else {
+                            row.top < bottom && row.top + row.height > top
+                        }
+                    })
+            })
+            .map(|item| (item.id, item.track_id))
+            .collect::<Vec<_>>();
+        if !additive {
+            self.selected_items.clear();
+        }
+        self.selected_items
+            .extend(selected.iter().map(|(id, _)| *id));
+        if let Some((item_id, track_id)) = selected.last().copied() {
+            self.selected_item = Some(item_id);
+            self.selection_anchor = Some(item_id);
+            self.selected_track = Some(track_id);
+        } else if !additive {
+            self.selected_item = None;
+            self.selection_anchor = None;
+        }
+        self.selected_volume_automation_point = None;
+        self.selected_fx_automation_point = None;
+    }
+
     fn update_item_drag(
         &mut self,
         anchor_item_id: ItemId,
@@ -1819,10 +1881,39 @@ struct TimelineInteractionState {
     pending_item_drag: Option<PendingItemDrag>,
     pending_item_trim: Option<PendingItemTrim>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
+    pending_item_selection_drag: Option<PendingItemSelectionDrag>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
     automation_point_preview: Option<AutomationPointPreview>,
     pending_fx_lane_resize: Option<PendingFxAutomationLaneResize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingItemSelectionDrag {
+    start_tick: u64,
+    end_tick: u64,
+    start_x: f32,
+    start_y: f32,
+    end_y: f32,
+    additive: bool,
+    is_dragging: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ItemSelectionPreview {
+    start_tick: u64,
+    end_tick: u64,
+    top: f32,
+    bottom: f32,
+}
+
+fn item_selection_preview(drag: PendingItemSelectionDrag) -> ItemSelectionPreview {
+    ItemSelectionPreview {
+        start_tick: drag.start_tick.min(drag.end_tick),
+        end_tick: drag.start_tick.max(drag.end_tick),
+        top: drag.start_y.min(drag.end_y),
+        bottom: drag.start_y.max(drag.end_y),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2135,6 +2226,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_time_selection_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
+            let cancel_item_selection_drag = state
+                .pending_item_selection_drag
+                .take()
+                .is_some_and(|drag| drag.is_dragging);
             let cancel_automation_point = state.pending_automation_point.take().is_some();
             state.automation_point_preview = None;
             return if cancel_drag {
@@ -2153,7 +2248,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 )
             } else if cancel_time_selection_drag {
                 Some(shader::Action::capture())
-            } else if cancel_automation_point {
+            } else if cancel_item_selection_drag || cancel_automation_point {
                 Some(shader::Action::request_redraw().and_capture())
             } else {
                 None
@@ -2258,6 +2353,18 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         .and_capture(),
                     );
                 }
+                if self.cache.item_at(track_index, tick).is_none() {
+                    state.pending_item_selection_drag = Some(PendingItemSelectionDrag {
+                        start_tick: tick,
+                        end_tick: tick,
+                        start_x: position.x,
+                        start_y: position.y,
+                        end_y: position.y,
+                        additive: state.modifiers.command() || state.modifiers.control(),
+                        is_dragging: false,
+                    });
+                    return Some(shader::Action::capture());
+                }
                 let event = if row_y < TIMELINE_ROW_HEIGHT {
                     self.cache.item_at(track_index, tick).map_or(
                         TimelineEvent::CloseItemContextMenu,
@@ -2275,6 +2382,34 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
                 if state.middle_drag.take().is_some() {
                     Some(shader::Action::capture())
+                } else {
+                    None
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
+                if let Some(drag) = state.pending_item_selection_drag.take() {
+                    if drag.is_dragging {
+                        let preview = item_selection_preview(drag);
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SelectItemsInMarquee {
+                                    start_tick: preview.start_tick,
+                                    end_tick: preview.end_tick,
+                                    top: preview.top,
+                                    bottom: preview.bottom,
+                                    additive: drag.additive,
+                                },
+                            ))
+                            .and_capture(),
+                        )
+                    } else {
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::CloseItemContextMenu,
+                            ))
+                            .and_capture(),
+                        )
+                    }
                 } else {
                     None
                 }
@@ -2368,7 +2503,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                                 pointer_delta_ticks: i128::from(current_tick)
                                     - i128::from(drag.pointer_start_tick),
                                 target_track_index: track_index_at_y(local_y, self.row_layout),
-                                range: drag.modifiers.shift(),
+                                range: false,
                                 ignore_snap: state.modifiers.shift(),
                             }
                         };
@@ -2377,6 +2512,15 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                                 .and_capture(),
                         )
                     }
+                } else if let Some(mut drag) = state.pending_item_selection_drag {
+                    let local_x = position.x - bounds.x;
+                    let local_y = position.y - bounds.y;
+                    let distance = (local_x - drag.start_x).hypot(local_y - drag.start_y);
+                    drag.is_dragging |= distance >= 3.0;
+                    drag.end_y = local_y;
+                    drag.end_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, local_x);
+                    state.pending_item_selection_drag = Some(drag);
+                    Some(shader::Action::request_redraw().and_capture())
                 } else if let Some(mut drag) = state.pending_time_selection_drag {
                     let local_x = position.x - bounds.x;
                     let local_y = position.y - bounds.y;
@@ -3033,6 +3177,18 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     y: preview.y,
                 }
             }),
+            item_selection_preview: state
+                .pending_item_selection_drag
+                .filter(|drag| drag.is_dragging)
+                .map(|drag| {
+                    let preview = item_selection_preview(drag);
+                    renderer::ItemSelectionPreview {
+                        start_tick: preview.start_tick,
+                        end_tick: preview.end_tick,
+                        top: preview.top,
+                        bottom: preview.bottom,
+                    }
+                }),
             selected_track_index: track_index,
             width: bounds.width,
             height: bounds.height,
@@ -5006,6 +5162,221 @@ mod tests {
         assert!(timeline.selected_items.contains(&items[1]));
         assert!(timeline.selected_items.contains(&items[2]));
         assert!(!timeline.selected_items.contains(&items[0]));
+    }
+
+    #[test]
+    fn shift_click_selects_a_range_while_shift_drag_only_bypasses_snap() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 300.0));
+        let modifiers = Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::SHIFT,
+        ));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let click = mouse::Cursor::Available(Point::new(112.0, 20.0));
+
+        let mut drag_state = TimelineInteractionState::default();
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut drag_state,
+            &modifiers,
+            bounds,
+            click,
+        );
+        let _ =
+            iced::widget::shader::Program::update(&program, &mut drag_state, &press, bounds, click);
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(122.0, 20.0),
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut drag_state,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(122.0, 20.0)),
+        )
+        .expect("Shift-drag should start an item drag");
+        let (message, _, _) = action.into_inner();
+        assert!(
+            matches!(
+                message,
+                Some(crate::app::Message::Timeline(TimelineEvent::BeginItemDrag {
+                    item_id,
+                    range: false,
+                    ignore_snap: true,
+                    ..
+                })) if item_id == items[1]
+            ),
+            "unexpected Shift-drag event: {message:?}"
+        );
+
+        let mut click_state = TimelineInteractionState::default();
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut click_state,
+            &modifiers,
+            bounds,
+            click,
+        );
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut click_state,
+            &press,
+            bounds,
+            click,
+        );
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut click_state,
+            &release,
+            bounds,
+            click,
+        )
+        .expect("Shift-click should publish range selection");
+        let (message, _, _) = action.into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(TimelineEvent::SelectItem {
+                item_id: Some(item_id),
+                range: true,
+                ..
+            })) if item_id == items[1]
+        ));
+    }
+
+    #[test]
+    fn right_drag_in_blank_space_previews_and_selects_items_across_tracks() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let project_before = project.snapshot();
+        let program = timeline.program(&project, None);
+        let mut state = TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 300.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 30.0)),
+        )
+        .expect("right-drag on blank track space should begin marquee selection");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(25.0, 130.0),
+        });
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(25.0, 130.0)),
+        )
+        .expect("moving the pointer should show the marquee preview");
+        assert!(
+            state
+                .pending_item_selection_drag
+                .is_some_and(|drag| drag.is_dragging)
+        );
+        assert!(timeline.selected_items.is_empty());
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right));
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(25.0, 130.0)),
+        )
+        .expect("releasing the marquee should publish the selected items");
+        let (message, _, _) = action.into_inner();
+        let Some(crate::app::Message::Timeline(event)) = message else {
+            panic!("marquee release should publish a timeline selection event");
+        };
+        assert_eq!(project.snapshot(), project_before);
+        timeline.handle(event);
+        assert_eq!(timeline.selected_items, HashSet::from(items));
+        assert_eq!(timeline.selected_item, Some(items[2]));
+    }
+
+    #[test]
+    fn horizontal_marquee_selects_items_in_the_track_under_the_drag() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        timeline.handle(TimelineEvent::SelectItemsInMarquee {
+            start_tick: 200,
+            end_tick: 1_300,
+            top: 30.0,
+            bottom: 30.0,
+            additive: false,
+        });
+
+        assert_eq!(timeline.selected_items, HashSet::from([items[0], items[1]]));
+    }
+
+    #[test]
+    fn escape_cancels_an_active_item_marquee_without_changing_selection() {
+        let (project, _, _) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let mut state = TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 300.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 30.0)),
+        );
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(25.0, 130.0),
+        });
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(25.0, 130.0)),
+        );
+
+        let escape = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut state,
+            &escape,
+            bounds,
+            mouse::Cursor::Available(Point::new(25.0, 130.0)),
+        )
+        .expect("Escape should cancel an active item marquee");
+        let (message, _, _) = action.into_inner();
+
+        assert!(message.is_none());
+        assert!(state.pending_item_selection_drag.is_none());
+        assert!(timeline.selected_items.is_empty());
     }
 
     #[test]
