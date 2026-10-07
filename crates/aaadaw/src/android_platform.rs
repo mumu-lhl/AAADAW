@@ -1,7 +1,8 @@
 use android_activity::AndroidApp;
-use aaadaw_core::TrackId;
+use aaadaw_core::{NoteId, TrackId};
 use aaadaw_engine::{
-    AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver, MidiInputDecoder,
+    AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver, MidiEventKind,
+    MidiInputDecoder,
 };
 use jni::JavaVM;
 use jni::objects::{Global, JByteArray, JObject, JString, JValue};
@@ -65,12 +66,14 @@ fn midi_input_worker(commands: mpsc::Receiver<Option<CpalMidiInputSender>>) {
     let mut sender = None;
     let mut decoder = MidiInputDecoder::default();
     let mut messages = Vec::with_capacity(64);
+    let mut active_note_tracks = HashMap::<NoteId, TrackId>::new();
     loop {
         loop {
             match commands.try_recv() {
                 Ok(next) => {
                     sender = next;
                     decoder = MidiInputDecoder::default();
+                    active_note_tracks.clear();
                     if sender.is_some() {
                         let _ = drain_midi_input_packets();
                     }
@@ -86,11 +89,31 @@ fn midi_input_worker(commands: mpsc::Receiver<Option<CpalMidiInputSender>>) {
                 messages.clear();
                 decoder.push_bytes(&packet, &mut messages);
                 for message in messages.drain(..) {
-                    let track_value = MIDI_INPUT_TARGET_TRACK.load(Ordering::Acquire);
-                    let Some(track_id) = TrackId::from_value(track_value) else {
+                    let selected_track =
+                        TrackId::from_value(MIDI_INPUT_TARGET_TRACK.load(Ordering::Acquire));
+                    let track_id = message
+                        .note_id()
+                        .and_then(|note_id| active_note_tracks.get(&note_id).copied())
+                        .or(selected_track);
+                    let Some(track_id) = track_id else {
                         continue;
                     };
-                    if let Some(event) = message.scheduled_event(track_id) {
+                    if let Some(mut event) = message.scheduled_event(track_id) {
+                        match event.kind {
+                            MidiEventKind::NoteOn => {
+                                if let Some(note_id) = event.note_id {
+                                    let _ = active_note_tracks.insert(note_id, track_id);
+                                }
+                            }
+                            MidiEventKind::NoteOff => {
+                                if let Some(note_id) = event.note_id {
+                                    event.track_id = active_note_tracks
+                                        .remove(&note_id)
+                                        .unwrap_or(track_id);
+                                }
+                            }
+                            MidiEventKind::ControllerChange | MidiEventKind::PitchBend => {}
+                        }
                         let _ = sender.send(event);
                     }
                 }

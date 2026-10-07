@@ -40,6 +40,11 @@ pub struct MidiInputMessage {
 }
 
 impl MidiInputMessage {
+    /// Returns the paired note identifier for note-on and note-off messages.
+    pub fn note_id(self) -> Option<NoteId> {
+        self.note_id
+    }
+
     /// Converts supported note, controller, and pitch-bend messages for one instrument track.
     pub fn scheduled_event(self, track_id: TrackId) -> Option<ScheduledMidiEvent> {
         let channel_message = self.status & 0xF0;
