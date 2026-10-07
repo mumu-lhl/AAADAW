@@ -12,8 +12,29 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-/// The fixed decay allowance appended after the last placed audio/MIDI item.
+/// Export decay allowance and minimum fallback when frozen CLAP plugins do not report longer tails.
 pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrozenTrackRender {
+    pub start_sample: u64,
+    pub length_samples: u64,
+}
+
+fn freeze_tail_frames(
+    sample_rate: u32,
+    plugin_tail_frames: &[u32],
+) -> Result<u64, OfflineRenderError> {
+    let minimum_tail = u64::from(sample_rate)
+        .checked_mul(u64::from(DEFAULT_EFFECT_TAIL_SECONDS))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let reported_tail = plugin_tail_frames.iter().try_fold(0_u64, |total, frames| {
+        total
+            .checked_add(u64::from(*frames))
+            .ok_or(OfflineRenderError::TimelineRange)
+    })?;
+    Ok(minimum_tail.max(reported_tail))
+}
 
 /// Failure while rendering a prepared graph to an offline PCM WAV file.
 #[derive(Debug)]
@@ -396,7 +417,7 @@ pub fn render_freeze_track_to_pcm24_wav(
     destination: impl AsRef<Path>,
     cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
-) -> Result<(u64, u64), OfflineRenderError> {
+) -> Result<FrozenTrackRender, OfflineRenderError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
@@ -438,17 +459,6 @@ pub fn render_freeze_track_to_pcm24_wav(
                 .map_err(|_| OfflineRenderError::TimelineRange)?,
         );
     }
-    let tail_frames = u64::from(project.settings().sample_rate())
-        .checked_mul(u64::from(DEFAULT_EFFECT_TAIL_SECONDS))
-        .ok_or(OfflineRenderError::TimelineRange)?;
-    let end_sample = content_end
-        .checked_add(tail_frames)
-        .ok_or(OfflineRenderError::TimelineRange)?;
-    let total_frames = end_sample
-        .checked_sub(start_sample)
-        .filter(|frames| *frames > 0)
-        .ok_or(OfflineRenderError::TimelineRange)?;
-
     let mut snapshot = project.snapshot();
     snapshot
         .tracks
@@ -490,6 +500,7 @@ pub fn render_freeze_track_to_pcm24_wav(
     let mut instrument_processors = Vec::new();
     let mut effect_owners = Vec::new();
     let mut effect_processors = Vec::new();
+    let mut plugin_tail_frames = Vec::new();
     let sample_rate = source_project.settings().sample_rate();
     let max_block_frames = prepared.graph().max_block_frames();
     let source_track = &source_project.tracks()[0];
@@ -509,7 +520,23 @@ pub fn render_freeze_track_to_pcm24_wav(
         )
     }
     .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let (owner, processor) = loaded;
+    let (owner, mut processor) = loaded;
+    match processor.tail_length_samples() {
+        Some(frames) => plugin_tail_frames.push(frames),
+        None => {
+            instrument_owners.push((owner.instance_id(), owner));
+            instrument_processors.push(TrackInstrumentProcessor::new(track_id, processor));
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(OfflineRenderError::Media(
+                "cannot freeze a plugin that reports an infinite tail".into(),
+            ));
+        }
+    }
     instrument_owners.push((owner.instance_id(), owner));
     instrument_processors.push(TrackInstrumentProcessor::new(track_id, processor));
     for (chain_index, effect) in source_track.fx_chain().iter().enumerate() {
@@ -528,7 +555,7 @@ pub fn render_freeze_track_to_pcm24_wav(
                 max_block_frames,
             )
         };
-        let (owner, processor) = match loaded {
+        let (owner, mut processor) = match loaded {
             Ok(loaded) => loaded,
             Err(error) => {
                 cleanup_uninstalled_processors(
@@ -540,6 +567,27 @@ pub fn render_freeze_track_to_pcm24_wav(
                 return Err(OfflineRenderError::Media(error.to_string()));
             }
         };
+        match processor.tail_length_samples() {
+            Some(frames) => plugin_tail_frames.push(frames),
+            None => {
+                effect_owners.push((owner.instance_id(), owner));
+                effect_processors.push(TrackFxProcessor::new(
+                    track_id,
+                    chain_index,
+                    effect.plugin_id(),
+                    processor,
+                ));
+                cleanup_uninstalled_processors(
+                    instrument_owners,
+                    instrument_processors,
+                    effect_owners,
+                    effect_processors,
+                );
+                return Err(OfflineRenderError::Media(
+                    "cannot freeze a plugin that reports an infinite tail".into(),
+                ));
+            }
+        }
         effect_owners.push((owner.instance_id(), owner));
         effect_processors.push(TrackFxProcessor::new(
             track_id,
@@ -548,6 +596,34 @@ pub fn render_freeze_track_to_pcm24_wav(
             processor,
         ));
     }
+    let tail_frames = match freeze_tail_frames(sample_rate, &plugin_tail_frames) {
+        Ok(frames) => frames,
+        Err(error) => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(error);
+        }
+    };
+    let total_frames = match content_end
+        .checked_add(tail_frames)
+        .and_then(|end_sample| end_sample.checked_sub(start_sample))
+        .filter(|frames| *frames > 0)
+    {
+        Some(frames) => frames,
+        None => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(OfflineRenderError::TimelineRange);
+        }
+    };
     if cancelled.load(Ordering::Acquire) {
         cleanup_uninstalled_processors(
             instrument_owners,
@@ -599,7 +675,10 @@ pub fn render_freeze_track_to_pcm24_wav(
     deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
     deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
     result?;
-    Ok((start_sample, total_frames))
+    Ok(FrozenTrackRender {
+        start_sample,
+        length_samples: total_frames,
+    })
 }
 
 fn cleanup_uninstalled_processors(
@@ -784,6 +863,15 @@ mod tests {
                 .expect("render length should be representable"),
             48_000 + 2 * 48_000
         );
+    }
+
+    #[test]
+    fn freeze_tail_uses_the_longer_of_default_allowance_and_serial_plugin_tails() {
+        assert_eq!(
+            freeze_tail_frames(48_000, &[24_000, 120_000]).unwrap(),
+            144_000
+        );
+        assert_eq!(freeze_tail_frames(48_000, &[24_000]).unwrap(), 96_000);
     }
 
     #[test]

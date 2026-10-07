@@ -14,6 +14,7 @@ use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 #[cfg(target_os = "linux")]
 use clack_extensions::posix_fd::{FdFlags, HostPosixFd, HostPosixFdImpl, PluginPosixFd};
 use clack_extensions::state::PluginState;
+use clack_extensions::tail::{PluginTail, TailLength};
 use clack_host::events::Pckn;
 use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
 use clack_host::events::event_types::{
@@ -1206,6 +1207,22 @@ impl ClapEffectOwner {
 }
 
 impl ClapEffectProcessor {
+    /// Returns the CLAP-declared tail length for this effect, or zero when it has no tail extension.
+    ///
+    /// This must be called on the control thread before the processor is moved into the realtime
+    /// graph.
+    pub fn tail_length_samples(&mut self) -> Option<u32> {
+        let plugin = self.processor.plugin_handle();
+        match plugin
+            .get_extension::<PluginTail>()
+            .map(|tail| tail.get(&plugin))
+            .unwrap_or_default()
+        {
+            TailLength::Finite(frames) => Some(frames),
+            TailLength::Infinite => None,
+        }
+    }
+
     /// Installs an owned automation schedule before the processor enters the realtime graph.
     pub fn set_parameter_automation(&mut self, lanes: &[aaadaw_core::FxParameterAutomationLane]) {
         self.parameter_automation.clear();
@@ -1467,6 +1484,20 @@ fn push_automation_value(
 }
 
 impl ClapInstrumentProcessor {
+    /// Returns the CLAP-declared tail length for this instrument, or zero when it has no tail
+    /// extension. Call on the control thread before moving the processor into the render graph.
+    pub fn tail_length_samples(&mut self) -> Option<u32> {
+        let plugin = self.processor.plugin_handle();
+        match plugin
+            .get_extension::<PluginTail>()
+            .map(|tail| tail.get(&plugin))
+            .unwrap_or_default()
+        {
+            TailLength::Finite(frames) => Some(frames),
+            TailLength::Infinite => None,
+        }
+    }
+
     /// Processes one block of scheduled notes into the caller's interleaved stereo output.
     ///
     /// The caller must route only this processor's track events. Input events are sorted by sample

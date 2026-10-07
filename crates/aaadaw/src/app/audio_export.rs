@@ -1,3 +1,4 @@
+use super::messages::FreezeTrackResult;
 use super::{App, Message, run_blocking};
 use aaadaw_core::{DawAction, Project, TrackId};
 use aaadaw_storage::ProjectStore;
@@ -43,7 +44,7 @@ impl App {
                     Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
                 let tempdir = tempfile::tempdir().map_err(|error| error.to_string())?;
                 let wav_path = tempdir.path().join("freeze.wav");
-                let (start_sample, length_samples) = aaadaw_app::render_freeze_track_to_pcm24_wav(
+                let render = aaadaw_app::render_freeze_track_to_pcm24_wav(
                     &project_path,
                     &project,
                     track_id,
@@ -72,16 +73,18 @@ impl App {
                     return Err("freeze was cancelled".to_owned());
                 }
                 store.close().map_err(|error| error.to_string())?;
-                Ok((track_id, media_ref, start_sample, length_samples))
+                Ok(FreezeTrackResult {
+                    track_id,
+                    media_ref,
+                    start_sample: render.start_sample,
+                    length_samples: render.length_samples,
+                })
             }),
             Message::FreezeTrackFinished,
         )
     }
 
-    pub(super) fn finish_freeze_track(
-        &mut self,
-        result: Result<(TrackId, String, u64, u64), String>,
-    ) {
+    pub(super) fn finish_freeze_track(&mut self, result: Result<FreezeTrackResult, String>) {
         let was_cancelled = self
             .offline_render_cancel
             .as_ref()
@@ -91,7 +94,12 @@ impl App {
         self.io_busy = false;
         self.offline_render_cancel = None;
         self.offline_render_progress = None;
-        let (track_id, media_ref, start_sample, length_samples) = match result {
+        let FreezeTrackResult {
+            track_id,
+            media_ref,
+            start_sample,
+            length_samples,
+        } = match result {
             Ok(frozen) => frozen,
             Err(error) => {
                 self.status = if error.contains("cancelled") {
