@@ -115,7 +115,7 @@ Server (JSON-RPC) │
 
 ├────────────────────────────────────────────────────────────────────────┤
 
-│ - Audio: PipeWire / JACK (Linux), WASAPI (Win), AAudio/Oboe (Android)
+│ - Audio: PipeWire / JACK (Linux), WASAPI (Win), CoreAudio via CPAL (macOS), AAudio/Oboe (Android)
 │
 
 │ - MIDI: ALSA / PipeWire (Linux), WinRT (Win), Android JNI MIDI │

@@ -8,6 +8,25 @@ permissions:
   contents: read
 
 jobs:
+  macos:
+    name: Check macOS CoreAudio workspace (Apple Silicon)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Check portable macOS workspace defaults
+        run: cargo check --workspace --all-targets
+      - name: Check macOS workspace with CoreAudio
+        run: cargo check --workspace --all-targets --features aaadaw/coreaudio-backend
+      - name: Test CoreAudio device enumeration recovery
+        run: cargo nextest run -p aaadaw --features coreaudio-backend -E 'test(cpal_output_enumeration_failures_are_visible_and_clear_loading_state) | test(cpal_input_enumeration_failures_are_visible_and_clear_loading_state) | test(cpal_backend_setting_round_trips_with_the_native_platform_name) | test(coreaudio_name_parses_as_cpal_backend_across_platforms) | test(unknown_saved_backend_is_ignored_without_invalidating_other_settings) | test(legacy_wasapi_device_keys_remain_readable)'
+      - name: Test CPAL backend policies
+        run: cargo nextest run -p aaadaw-engine --features coreaudio-backend -E 'test(persisted_cpal_) | test(missing_selected_device_) | test(input_config_requires_)'
+
   windows:
     name: Check Windows workspace
     runs-on: windows-latest
@@ -22,9 +41,9 @@ jobs:
       - name: Check Windows WASAPI backend
         run: cargo check --workspace --all-targets --features aaadaw/wasapi-backend
       - name: Test WASAPI device enumeration error state
-        run: cargo test -p aaadaw --features wasapi-backend wasapi_output_enumeration_failures_are_visible_and_clear_loading_state
+        run: cargo test -p aaadaw --features wasapi-backend cpal_output_enumeration_failures_are_visible_and_clear_loading_state
       - name: Test WASAPI input device enumeration error state
-        run: cargo test -p aaadaw --features wasapi-backend wasapi_input_enumeration_failures_are_visible_and_clear_loading_state
+        run: cargo test -p aaadaw --features wasapi-backend cpal_input_enumeration_failures_are_visible_and_clear_loading_state
       - name: Test Windows WASAPI backend policies
         run: cargo test -p aaadaw-engine --features wasapi-backend
 

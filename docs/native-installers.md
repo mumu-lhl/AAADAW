@@ -1,6 +1,6 @@
 # Native installers
 
-The **Native installers** workflow builds Ubuntu 24.04 x86_64 `.deb` and Windows x86_64 MSI artifacts for pull requests that change installer inputs, or on demand. Artifacts include SHA-256 files and expire after 14 days. The workflow does not publish releases or sign binaries.
+The **Native installers** workflow builds Ubuntu 24.04 x86_64 `.deb`, Windows x86_64 MSI, and an unsigned Apple Silicon macOS `.app` zip for pull requests that change installer inputs, or on demand. Artifacts include SHA-256 files where applicable and expire after 14 days. The workflow does not publish releases or sign binaries.
 
 ## Ubuntu 24.04 x86_64
 
@@ -13,6 +13,14 @@ Remove the application with `sudo apt remove aaadaw`. Projects remain at paths c
 Run the MSI to install AAADAW for the current user under `%LOCALAPPDATA%\Programs\AAADAW`. The installer adds an AAADAW shortcut to the Start Menu and registers the package in Windows installed apps. It uses WASAPI and does not install drivers or audio services.
 
 Uninstall AAADAW from Windows **Settings → Apps → Installed apps**. The MSI removes its program files and shortcut. Projects remain at paths chosen by the user. Preferences and plug-in scan data stay in `%APPDATA%\aaadaw`; logs stay in `%LOCALAPPDATA%\AAADAW\AAADAW\data\logs`.
+
+## macOS Apple Silicon
+
+The workflow assembles `AAADAW.app` with the CoreAudio backend and microphone
+usage description, validates the bundle metadata, and runs the bundled
+executable's headless version command before uploading
+`aaadaw-macos-aarch64-unsigned.zip`. This validation bundle is not signed or
+notarized and is not yet a Gatekeeper-ready installer.
 
 ## Headless checks
 

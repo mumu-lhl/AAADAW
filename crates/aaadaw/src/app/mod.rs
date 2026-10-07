@@ -173,15 +173,21 @@ struct MidiNoteClipboard {
     last_paste: Option<(ItemId, u64)>,
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct WasapiDeviceChoice {
+struct CpalDeviceChoice {
     id: Option<String>,
     label: String,
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-impl std::fmt::Display for WasapiDeviceChoice {
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+impl std::fmt::Display for CpalDeviceChoice {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.label)
     }
@@ -257,18 +263,36 @@ struct App {
     audio_settings: audio_config::AudioSettings,
     audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_output_devices: Vec<aaadaw_engine::WasapiOutputDeviceInfo>,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_output_devices_loading: bool,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_output_devices_error: Option<String>,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_input_devices: Vec<aaadaw_engine::WasapiInputDeviceInfo>,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_input_devices_loading: bool,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    wasapi_input_devices_error: Option<String>,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_output_devices: Vec<aaadaw_engine::CpalOutputDeviceInfo>,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_output_devices_loading: bool,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_output_devices_error: Option<String>,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_input_devices: Vec<aaadaw_engine::CpalInputDeviceInfo>,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_input_devices_loading: bool,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    cpal_input_devices_error: Option<String>,
     clap_plugin_paths: Vec<PathBuf>,
     clap_plugin_default_paths: HashSet<PathBuf>,
     clap_plugin_cache_path: Option<PathBuf>,
@@ -357,13 +381,13 @@ struct App {
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         ),
         all(
             feature = "pipewire-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         )
     ))]
     playback_backend: PlaybackBackend,
@@ -892,13 +916,13 @@ impl App {
                     all(feature = "jack-backend", feature = "pipewire-backend"),
                     all(
                         feature = "jack-backend",
-                        feature = "wasapi-backend",
-                        target_os = "windows"
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
                     ),
                     all(
                         feature = "pipewire-backend",
-                        feature = "wasapi-backend",
-                        target_os = "windows"
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
                     )
                 ))]
                 app.restore_playback_backend(settings.playback_backend);
@@ -1814,11 +1838,14 @@ impl App {
                 if self.shortcut_capture_id.take().is_some() {
                     self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
                 }
-                #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+                #[cfg(all(
+                    feature = "cpal-backend",
+                    any(target_os = "windows", target_os = "macos")
+                ))]
                 if category == SettingsCategory::Audio {
                     task = Task::batch([
-                        self.refresh_wasapi_output_devices(),
-                        self.refresh_wasapi_input_devices(),
+                        self.refresh_cpal_output_devices(),
+                        self.refresh_cpal_input_devices(),
                     ]);
                 }
             }
@@ -1839,18 +1866,27 @@ impl App {
                 self.audio_recording_offset_query = Some(value);
             }
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::WasapiOutputDevicesLoaded(result) => {
-                self.finish_wasapi_output_device_enumeration(result);
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::CpalOutputDevicesLoaded(result) => {
+                self.finish_cpal_output_device_enumeration(result);
             }
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::RefreshWasapiOutputDevices => {
-                task = self.refresh_wasapi_output_devices();
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::RefreshCpalOutputDevices => {
+                task = self.refresh_cpal_output_devices();
             }
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::SelectWasapiOutputDevice(device_id) => {
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::SelectCpalOutputDevice(device_id) => {
                 let settings = audio_config::AudioSettings {
-                    wasapi_output_device_id: device_id.clone(),
+                    cpal_output_device_id: device_id.clone(),
                     ..self.audio_settings.clone()
                 };
                 self.audio_settings = settings.clone();
@@ -1862,41 +1898,49 @@ impl App {
                                 "{target} selected for the next output; close and reopen playback to apply"
                             )
                         } else {
-                            format!("{target} selected for WASAPI playback")
+                            format!("{target} selected for system audio playback")
                         };
                     }
                     Err(error) => {
                         self.audio_settings_feedback = format!(
-                            "WASAPI output selection is active for this session but could not be saved: {error}"
+                            "System audio output selection is active for this session but could not be saved: {error}"
                         );
                     }
                 }
             }
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::WasapiInputDevicesLoaded(result) => {
-                self.finish_wasapi_input_device_enumeration(result);
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::CpalInputDevicesLoaded(result) => {
+                self.finish_cpal_input_device_enumeration(result);
             }
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::RefreshWasapiInputDevices => {
-                task = self.refresh_wasapi_input_devices();
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::RefreshCpalInputDevices => {
+                task = self.refresh_cpal_input_devices();
             }
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            Message::SelectWasapiInputDevice(device_id) => {
-                let input_changed = self.audio_settings.wasapi_input_device_id != device_id;
-                let wasapi_is_selected =
-                    self.selected_playback_backend() == PlaybackBackend::Wasapi;
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Message::SelectCpalInputDevice(device_id) => {
+                let input_changed = self.audio_settings.cpal_input_device_id != device_id;
+                let cpal_is_selected = self.selected_playback_backend() == PlaybackBackend::Cpal;
                 let input_monitor_was_open = self.standby_monitor_starting
                     || self
                         .playback
                         .as_ref()
                         .is_some_and(aaadaw_app::RunningAudioPlayback::has_standby_input);
-                let close_standby = if input_changed && wasapi_is_selected {
+                let close_standby = if input_changed && cpal_is_selected {
                     self.release_standby_input()
                 } else {
                     Task::none()
                 };
                 let settings = audio_config::AudioSettings {
-                    wasapi_input_device_id: device_id.clone(),
+                    cpal_input_device_id: device_id.clone(),
                     ..self.audio_settings.clone()
                 };
                 self.audio_settings = settings.clone();
@@ -1910,9 +1954,9 @@ impl App {
                                 "{target} selected for the next input connection; the current take keeps its existing input"
                             )
                         } else {
-                            format!("{target} selected for WASAPI recording")
+                            format!("{target} selected for system audio recording")
                         };
-                        if input_monitor_was_open && wasapi_is_selected && input_changed {
+                        if input_monitor_was_open && cpal_is_selected && input_changed {
                             self.audio_settings_feedback.push_str(
                                 "; input monitoring stopped, re-enable it to use the new endpoint",
                             );
@@ -1920,7 +1964,7 @@ impl App {
                     }
                     Err(error) => {
                         self.audio_settings_feedback = format!(
-                            "WASAPI input selection is active for this session but could not be saved: {error}"
+                            "System audio input selection is active for this session but could not be saved: {error}"
                         );
                     }
                 }
@@ -2868,13 +2912,13 @@ impl App {
                 all(feature = "jack-backend", feature = "pipewire-backend"),
                 all(
                     feature = "jack-backend",
-                    feature = "wasapi-backend",
-                    target_os = "windows"
+                    feature = "cpal-backend",
+                    any(target_os = "windows", target_os = "macos")
                 ),
                 all(
                     feature = "pipewire-backend",
-                    feature = "wasapi-backend",
-                    target_os = "windows"
+                    feature = "cpal-backend",
+                    any(target_os = "windows", target_os = "macos")
                 )
             ))]
             Message::SelectPlaybackBackend(backend) => {
@@ -2986,13 +3030,19 @@ impl App {
     fn open_settings(&mut self) -> Task<Message> {
         if let Some(window_id) = self.settings_window_id {
             let focus = iced::window::gain_focus(window_id);
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
             return Task::batch([
                 focus,
-                self.refresh_wasapi_output_devices(),
-                self.refresh_wasapi_input_devices(),
+                self.refresh_cpal_output_devices(),
+                self.refresh_cpal_input_devices(),
             ]);
-            #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+            #[cfg(not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            )))]
             return focus;
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
@@ -3001,62 +3051,80 @@ impl App {
             ..iced::window::Settings::default()
         });
         self.settings_window_id = Some(window_id);
-        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        #[cfg(all(
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
+        ))]
         return Task::batch([
             task.discard(),
-            self.refresh_wasapi_output_devices(),
-            self.refresh_wasapi_input_devices(),
+            self.refresh_cpal_output_devices(),
+            self.refresh_cpal_input_devices(),
         ]);
-        #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+        #[cfg(not(all(
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
+        )))]
         task.discard()
     }
 
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    fn refresh_wasapi_output_devices(&mut self) -> Task<Message> {
-        start_wasapi_device_enumeration(
-            &mut self.wasapi_output_devices_loading,
-            &mut self.wasapi_output_devices_error,
-            "aaadaw-wasapi-device-list",
-            || aaadaw_engine::enumerate_wasapi_output_devices().map_err(|error| error.to_string()),
-            Message::WasapiOutputDevicesLoaded,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    fn refresh_cpal_output_devices(&mut self) -> Task<Message> {
+        start_cpal_device_enumeration(
+            &mut self.cpal_output_devices_loading,
+            &mut self.cpal_output_devices_error,
+            "aaadaw-cpal-device-list",
+            || aaadaw_engine::enumerate_cpal_output_devices().map_err(|error| error.to_string()),
+            Message::CpalOutputDevicesLoaded,
         )
     }
 
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    fn finish_wasapi_output_device_enumeration(
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    fn finish_cpal_output_device_enumeration(
         &mut self,
-        result: Result<Vec<aaadaw_engine::WasapiOutputDeviceInfo>, String>,
+        result: Result<Vec<aaadaw_engine::CpalOutputDeviceInfo>, String>,
     ) {
-        finish_wasapi_device_enumeration(
-            &mut self.wasapi_output_devices,
-            &mut self.wasapi_output_devices_loading,
-            &mut self.wasapi_output_devices_error,
+        finish_cpal_device_enumeration(
+            &mut self.cpal_output_devices,
+            &mut self.cpal_output_devices_loading,
+            &mut self.cpal_output_devices_error,
             &mut self.audio_settings_feedback,
             "output",
             result,
         );
     }
 
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    fn refresh_wasapi_input_devices(&mut self) -> Task<Message> {
-        start_wasapi_device_enumeration(
-            &mut self.wasapi_input_devices_loading,
-            &mut self.wasapi_input_devices_error,
-            "aaadaw-wasapi-input-device-list",
-            || aaadaw_engine::enumerate_wasapi_input_devices().map_err(|error| error.to_string()),
-            Message::WasapiInputDevicesLoaded,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    fn refresh_cpal_input_devices(&mut self) -> Task<Message> {
+        start_cpal_device_enumeration(
+            &mut self.cpal_input_devices_loading,
+            &mut self.cpal_input_devices_error,
+            "aaadaw-cpal-input-device-list",
+            || aaadaw_engine::enumerate_cpal_input_devices().map_err(|error| error.to_string()),
+            Message::CpalInputDevicesLoaded,
         )
     }
 
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    fn finish_wasapi_input_device_enumeration(
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    fn finish_cpal_input_device_enumeration(
         &mut self,
-        result: Result<Vec<aaadaw_engine::WasapiInputDeviceInfo>, String>,
+        result: Result<Vec<aaadaw_engine::CpalInputDeviceInfo>, String>,
     ) {
-        finish_wasapi_device_enumeration(
-            &mut self.wasapi_input_devices,
-            &mut self.wasapi_input_devices_loading,
-            &mut self.wasapi_input_devices_error,
+        finish_cpal_device_enumeration(
+            &mut self.cpal_input_devices,
+            &mut self.cpal_input_devices_loading,
+            &mut self.cpal_input_devices_error,
             &mut self.audio_settings_feedback,
             "input",
             result,
@@ -3411,13 +3479,13 @@ impl App {
             all(feature = "jack-backend", feature = "pipewire-backend"),
             all(
                 feature = "jack-backend",
-                feature = "wasapi-backend",
-                target_os = "windows"
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
             ),
             all(
                 feature = "pipewire-backend",
-                feature = "wasapi-backend",
-                target_os = "windows"
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
             )
         ))]
         {
@@ -3426,7 +3494,10 @@ impl App {
         #[cfg(all(
             feature = "jack-backend",
             not(feature = "pipewire-backend"),
-            not(all(feature = "wasapi-backend", target_os = "windows"))
+            not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))
         ))]
         {
             PlaybackBackend::Jack
@@ -3434,24 +3505,30 @@ impl App {
         #[cfg(all(
             feature = "pipewire-backend",
             not(feature = "jack-backend"),
-            not(all(feature = "wasapi-backend", target_os = "windows"))
+            not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))
         ))]
         {
             PlaybackBackend::PipeWire
         }
         #[cfg(all(
-            feature = "wasapi-backend",
-            target_os = "windows",
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos"),
             not(feature = "jack-backend"),
             not(feature = "pipewire-backend")
         ))]
         {
-            PlaybackBackend::Wasapi
+            PlaybackBackend::Cpal
         }
         #[cfg(all(
             not(feature = "jack-backend"),
             not(feature = "pipewire-backend"),
-            not(all(feature = "wasapi-backend", target_os = "windows"))
+            not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))
         ))]
         {
             PlaybackBackend::Unavailable
@@ -3462,13 +3539,13 @@ impl App {
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         ),
         all(
             feature = "pipewire-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         )
     ))]
     fn playback_backend_setting(backend: PlaybackBackend) -> audio_config::PlaybackBackendSetting {
@@ -3477,8 +3554,11 @@ impl App {
             PlaybackBackend::Jack => audio_config::PlaybackBackendSetting::Jack,
             #[cfg(feature = "pipewire-backend")]
             PlaybackBackend::PipeWire => audio_config::PlaybackBackendSetting::PipeWire,
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            PlaybackBackend::Wasapi => audio_config::PlaybackBackendSetting::Wasapi,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            PlaybackBackend::Cpal => audio_config::PlaybackBackendSetting::Cpal,
         }
     }
 
@@ -3486,13 +3566,13 @@ impl App {
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         ),
         all(
             feature = "pipewire-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         )
     ))]
     fn restore_playback_backend(&mut self, setting: Option<audio_config::PlaybackBackendSetting>) {
@@ -3504,8 +3584,11 @@ impl App {
             audio_config::PlaybackBackendSetting::Jack => PlaybackBackend::Jack,
             #[cfg(feature = "pipewire-backend")]
             audio_config::PlaybackBackendSetting::PipeWire => PlaybackBackend::PipeWire,
-            #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-            audio_config::PlaybackBackendSetting::Wasapi => PlaybackBackend::Wasapi,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            audio_config::PlaybackBackendSetting::Cpal => PlaybackBackend::Cpal,
             _ => self.playback_backend,
         };
     }
@@ -3848,12 +3931,18 @@ impl App {
             return;
         }
 
-        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        #[cfg(all(
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
+        ))]
         let output_result = prepared.into_output(
             self.selected_playback_backend(),
-            self.audio_settings.wasapi_output_device_id.as_deref(),
+            self.audio_settings.cpal_output_device_id.as_deref(),
         );
-        #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
+        #[cfg(not(all(
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
+        )))]
         let output_result = prepared.into_output(self.selected_playback_backend(), None);
         let mut playback = match output_result {
             Ok(playback) => playback,
@@ -4018,7 +4107,7 @@ impl App {
         self.playback_playing = false;
         self.playback_paused = false;
         self.reset_track_meters();
-        self.status = "WASAPI output device unavailable; playback stopped. Close playback and reopen it after selecting a default device".to_owned();
+        self.status = "System audio output device unavailable; playback stopped. Close playback and reopen it after selecting an available device".to_owned();
     }
 
     #[cfg(feature = "audio-device")]
@@ -5750,8 +5839,11 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|_| format!("{name} worker panicked"))?
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-fn start_wasapi_device_enumeration<T: Send + 'static>(
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn start_cpal_device_enumeration<T: Send + 'static>(
     loading: &mut bool,
     error: &mut Option<String>,
     worker_name: &'static str,
@@ -5766,8 +5858,11 @@ fn start_wasapi_device_enumeration<T: Send + 'static>(
     Task::perform(run_blocking(worker_name, enumerate), message)
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-fn finish_wasapi_device_enumeration<T>(
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn finish_cpal_device_enumeration<T>(
     devices: &mut Vec<T>,
     loading: &mut bool,
     error: &mut Option<String>,
@@ -5784,8 +5879,9 @@ fn finish_wasapi_device_enumeration<T>(
         Err(enumeration_error) => {
             devices.clear();
             *error = Some(enumeration_error.clone());
-            *feedback =
-                format!("WASAPI {direction} devices could not be listed: {enumeration_error}");
+            *feedback = format!(
+                "System audio {direction} devices could not be listed: {enumeration_error}"
+            );
         }
     }
 }

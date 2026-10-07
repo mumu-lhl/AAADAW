@@ -121,3 +121,48 @@ jobs:
             artifacts/aaadaw-windows-x86_64.msi.sha256
           if-no-files-found: error
           retention-days: 14
+
+  macos:
+    name: macOS Apple Silicon app bundle
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release executable with CoreAudio
+        run: cargo build --release -p aaadaw --features coreaudio-backend
+      - name: Assemble and smoke test unsigned app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          app="artifacts/AAADAW.app"
+          mkdir -p "$app/Contents/MacOS"
+          cp target/release/aaadaw "$app/Contents/MacOS/aaadaw"
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>aaadaw</string>
+            <key>CFBundleIdentifier</key><string>org.aaadaw.desktop</string>
+            <key>CFBundleName</key><string>AAADAW</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$version</string>
+            <key>CFBundleVersion</key><string>$version</string>
+            <key>NSMicrophoneUsageDescription</key><string>AAADAW records audio when you start recording.</string>
+          </dict></plist>
+          PLIST
+          chmod 755 "$app/Contents/MacOS/aaadaw"
+          plutil -lint "$app/Contents/Info.plist"
+          output="$("$app/Contents/MacOS/aaadaw" --version)"
+          test "$output" = "AAADAW $version"
+          ditto -c -k --keepParent "$app" artifacts/aaadaw-macos-aarch64-unsigned.zip
+          shasum -a 256 artifacts/aaadaw-macos-aarch64-unsigned.zip > artifacts/aaadaw-macos-aarch64-unsigned.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aaadaw-macos-aarch64-unsigned-app
+          path: artifacts/aaadaw-macos-aarch64-unsigned.zip*
+          if-no-files-found: error
+          retention-days: 14

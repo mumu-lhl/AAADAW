@@ -344,29 +344,47 @@ pub(crate) enum Message {
         start_when_ready: bool,
         result: SharedPreparedPlayback,
     },
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    WasapiOutputDevicesLoaded(Result<Vec<aaadaw_engine::WasapiOutputDeviceInfo>, String>),
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    RefreshWasapiOutputDevices,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    SelectWasapiOutputDevice(Option<String>),
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    WasapiInputDevicesLoaded(Result<Vec<aaadaw_engine::WasapiInputDeviceInfo>, String>),
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    RefreshWasapiInputDevices,
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    SelectWasapiInputDevice(Option<String>),
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    CpalOutputDevicesLoaded(Result<Vec<aaadaw_engine::CpalOutputDeviceInfo>, String>),
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    RefreshCpalOutputDevices,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    SelectCpalOutputDevice(Option<String>),
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    CpalInputDevicesLoaded(Result<Vec<aaadaw_engine::CpalInputDeviceInfo>, String>),
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    RefreshCpalInputDevices,
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    SelectCpalInputDevice(Option<String>),
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         ),
         all(
             feature = "pipewire-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         )
     ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),
