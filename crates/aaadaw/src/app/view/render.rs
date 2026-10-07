@@ -74,16 +74,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .offline_render_progress
         .as_ref()
         .and_then(|progress| progress.try_lock().ok().map(|value| *value))
+        .filter(|progress| progress.1 > 0)
     {
-        if progress.1 > 0 {
-            contents = contents.push(
-                text(format!(
-                    "Progress: {:.0}%",
-                    (progress.0 as f64 / progress.1 as f64 * 100.0).clamp(0.0, 100.0),
-                ))
-                .size(12),
-            );
-        }
+        contents = contents.push(
+            text(format!(
+                "Progress: {:.0}%",
+                (progress.0 as f64 / progress.1 as f64 * 100.0).clamp(0.0, 100.0),
+            ))
+            .size(12),
+        );
     }
 
     contents = contents.push(
