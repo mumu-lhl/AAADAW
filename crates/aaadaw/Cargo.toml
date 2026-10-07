@@ -13,6 +13,7 @@ pipewire-backend = ["audio-device", "aaadaw-app/pipewire-backend"]
 wasapi-backend = ["audio-device", "aaadaw-app/wasapi-backend"]
 coreaudio-backend = ["audio-device", "aaadaw-app/coreaudio-backend"]
 cpal-backend = ["audio-device", "aaadaw-app/cpal-backend"]
+android-backend = ["audio-device", "cpal-backend", "aaadaw-app/android-backend"]
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }
@@ -39,6 +40,8 @@ crate-type = ["cdylib", "rlib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6.1", features = ["native-activity"] }
+jni = "0.22.4"
+robius-file-picker = "0.3.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15.4"

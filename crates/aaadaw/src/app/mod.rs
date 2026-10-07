@@ -175,7 +175,7 @@ struct MidiNoteClipboard {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CpalDeviceChoice {
@@ -185,7 +185,7 @@ struct CpalDeviceChoice {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 impl std::fmt::Display for CpalDeviceChoice {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -265,32 +265,32 @@ struct App {
     audio_settings_feedback: String,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices: Vec<aaadaw_engine::CpalOutputDeviceInfo>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices_loading: bool,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices_error: Option<String>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices: Vec<aaadaw_engine::CpalInputDeviceInfo>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices_loading: bool,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices_error: Option<String>,
     clap_plugin_paths: Vec<PathBuf>,
@@ -382,12 +382,12 @@ struct App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     playback_backend: PlaybackBackend,
@@ -917,12 +917,12 @@ impl App {
                     all(
                         feature = "jack-backend",
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     ),
                     all(
                         feature = "pipewire-backend",
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))]
                 app.restore_playback_backend(settings.playback_backend);
@@ -1840,7 +1840,7 @@ impl App {
                 }
                 #[cfg(all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 ))]
                 if category == SettingsCategory::Audio {
                     task = Task::batch([
@@ -1868,21 +1868,21 @@ impl App {
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::CpalOutputDevicesLoaded(result) => {
                 self.finish_cpal_output_device_enumeration(result);
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::RefreshCpalOutputDevices => {
                 task = self.refresh_cpal_output_devices();
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::SelectCpalOutputDevice(device_id) => {
                 let settings = audio_config::AudioSettings {
@@ -1910,21 +1910,21 @@ impl App {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::CpalInputDevicesLoaded(result) => {
                 self.finish_cpal_input_device_enumeration(result);
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::RefreshCpalInputDevices => {
                 task = self.refresh_cpal_input_devices();
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::SelectCpalInputDevice(device_id) => {
                 let input_changed = self.audio_settings.cpal_input_device_id != device_id;
@@ -2822,6 +2822,24 @@ impl App {
             Message::PanicMidi => self.panic_midi(),
             #[cfg(feature = "audio-device")]
             Message::StartRecording => task = self.start_recording(),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::MicrophonePermissionResult(result) => {
+                self.recording_starting = false;
+                if self.recording_cancel_requested {
+                    self.recording_cancel_requested = false;
+                    self.status = "Recording setup cancelled".to_owned();
+                } else {
+                    match result {
+                        Ok(true) => task = self.start_recording(),
+                        Ok(false) => {
+                            self.status = "Microphone permission is required to record".to_owned();
+                        }
+                        Err(error) => {
+                            self.status = format!("Microphone permission failed: {error}")
+                        }
+                    }
+                }
+            }
             #[cfg(feature = "audio-device")]
             Message::StopRecording => task = self.stop_recording(),
             #[cfg(feature = "audio-device")]
@@ -2871,6 +2889,10 @@ impl App {
                     task = self.begin_pending_recording();
                 } else if self.recording_starting && self.recording.is_none() {
                     if self.recording_cancel_requested || self.playback.is_none() {
+                        #[cfg(target_os = "android")]
+                        if self.playback.is_none() {
+                            crate::android_platform::stop_recording_service();
+                        }
                         self.recording_starting = false;
                         self.recording_cancel_requested = false;
                         self.recording_cancelled_transport_start = false;
@@ -2913,12 +2935,12 @@ impl App {
                 all(
                     feature = "jack-backend",
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 ),
                 all(
                     feature = "pipewire-backend",
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             ))]
             Message::SelectPlaybackBackend(backend) => {
@@ -3032,7 +3054,7 @@ impl App {
             let focus = iced::window::gain_focus(window_id);
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             return Task::batch([
                 focus,
@@ -3041,7 +3063,7 @@ impl App {
             ]);
             #[cfg(not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )))]
             return focus;
         }
@@ -3053,7 +3075,7 @@ impl App {
         self.settings_window_id = Some(window_id);
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         return Task::batch([
             task.discard(),
@@ -3062,14 +3084,14 @@ impl App {
         ]);
         #[cfg(not(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )))]
         task.discard()
     }
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn refresh_cpal_output_devices(&mut self) -> Task<Message> {
         start_cpal_device_enumeration(
@@ -3083,7 +3105,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn finish_cpal_output_device_enumeration(
         &mut self,
@@ -3101,7 +3123,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn refresh_cpal_input_devices(&mut self) -> Task<Message> {
         start_cpal_device_enumeration(
@@ -3115,7 +3137,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn finish_cpal_input_device_enumeration(
         &mut self,
@@ -3480,12 +3502,12 @@ impl App {
             all(
                 feature = "jack-backend",
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ),
             all(
                 feature = "pipewire-backend",
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))]
         {
@@ -3496,7 +3518,7 @@ impl App {
             not(feature = "pipewire-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -3507,7 +3529,7 @@ impl App {
             not(feature = "jack-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -3515,7 +3537,7 @@ impl App {
         }
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos"),
+            any(target_os = "windows", target_os = "macos", target_os = "android"),
             not(feature = "jack-backend"),
             not(feature = "pipewire-backend")
         ))]
@@ -3527,7 +3549,7 @@ impl App {
             not(feature = "pipewire-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -3540,12 +3562,12 @@ impl App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     fn playback_backend_setting(backend: PlaybackBackend) -> audio_config::PlaybackBackendSetting {
@@ -3556,7 +3578,7 @@ impl App {
             PlaybackBackend::PipeWire => audio_config::PlaybackBackendSetting::PipeWire,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             PlaybackBackend::Cpal => audio_config::PlaybackBackendSetting::Cpal,
         }
@@ -3567,12 +3589,12 @@ impl App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     fn restore_playback_backend(&mut self, setting: Option<audio_config::PlaybackBackendSetting>) {
@@ -3586,7 +3608,7 @@ impl App {
             audio_config::PlaybackBackendSetting::PipeWire => PlaybackBackend::PipeWire,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             audio_config::PlaybackBackendSetting::Cpal => PlaybackBackend::Cpal,
             _ => self.playback_backend,
@@ -3933,7 +3955,7 @@ impl App {
 
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         let output_result = prepared.into_output(
             self.selected_playback_backend(),
@@ -3941,7 +3963,7 @@ impl App {
         );
         #[cfg(not(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )))]
         let output_result = prepared.into_output(self.selected_playback_backend(), None);
         let mut playback = match output_result {
@@ -5841,7 +5863,7 @@ async fn run_blocking<T: Send + 'static>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn start_cpal_device_enumeration<T: Send + 'static>(
     loading: &mut bool,
@@ -5860,7 +5882,7 @@ fn start_cpal_device_enumeration<T: Send + 'static>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn finish_cpal_device_enumeration<T>(
     devices: &mut Vec<T>,

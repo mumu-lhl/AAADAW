@@ -84,20 +84,30 @@ distribution remains a release task.
 
 ## Android
 
-Android support is an early, source-level shell. `aaadaw` exports the
-`android_main` entry point and seeds Iced's winit runner with the current
-`AndroidApp`; the event-loop bridge is a small local `iced_winit` patch. The
-Android package metadata and manifest live in `android-app/`. The shared Iced
-UI has a compact single-column layout below 720 logical pixels, with a
-touch-sized transport and time-line-first Arrange view.
+The Android app uses NativeActivity with the Iced/winit event loop and an
+Android-specific compact touch layout below 720 logical pixels. Project open
+and save use the Storage Access Framework (SAF): documents are staged in the
+app's private storage while open, and saved project/WAV files are copied back
+to the user-selected URI. Audio import is staged before it enters the project.
+The Android audio feature uses CPAL's AAudio backend for playback and capture;
+recording asks for microphone permission at runtime and starts a microphone
+foreground service with an ongoing notification.
 
-This shell is not a usable Android DAW yet. SAF document access and project
-staging ([Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)), an AAudio/Oboe playback and capture backend, Android MIDI, microphone
-permission handling, foreground recording service behavior, and device
-lifecycle validation remain open. The Android NDK and a device/emulator are
-needed to build and validate the APK; the current CI matrix does not cover
-Android. See the Android platform issue linked from the roadmap before treating
-Android as supported.
+Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
+35, Android NDK, and the `aarch64-linux-android` Rust target:
+
+```sh
+cargo ndk -t arm64-v8a -p 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
+cd android-app
+gradle assembleDebug
+```
+
+The APK currently targets ARM64 phones/tablets. Android external MIDI device
+input/output and Android-compatible CLAP discovery/hosting are not implemented;
+the current CLAP helper requires desktop process launching and plugin binaries.
+Real-device validation is also outstanding for file-provider behavior, audio
+routing, background recording, system bars, and screen/font scaling. Android is
+not part of the current GitHub Actions build matrix.
 
 ## Packaging status
 

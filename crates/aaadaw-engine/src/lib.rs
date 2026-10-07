@@ -9,20 +9,20 @@ mod clap_gui;
 mod clap_helper_process;
 mod clap_instrument;
 mod clap_ipc;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
-))]
+#[cfg(any(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
+)))]
 mod cpal_common;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
-))]
+#[cfg(any(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
+)))]
 mod cpal_input;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
-))]
+#[cfg(any(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
+)))]
 mod cpal_output;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
@@ -58,18 +58,18 @@ pub use clap_ipc::{
     ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion,
     ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError, run_clap_ipc_instrument_helper,
 };
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
-))]
+#[cfg(any(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
+)))]
 pub use cpal_input::{
     CpalAudioInput, CpalInputDeviceInfo, CpalInputError,
     enumerate_input_devices as enumerate_cpal_input_devices,
 };
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
-))]
+#[cfg(any(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
+)))]
 pub use cpal_output::{
     CpalAudioOutput, CpalOutputDeviceInfo, CpalOutputError, CpalOutputStats,
     enumerate_output_devices as enumerate_cpal_output_devices,

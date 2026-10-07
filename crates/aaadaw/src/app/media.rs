@@ -15,10 +15,87 @@ use std::sync::{Arc, Mutex};
 
 impl App {
     #[cfg(target_os = "android")]
-    pub(super) fn pick_path(&mut self, _target: PathPickerTarget) -> Task<Message> {
+    pub(super) fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
+        if matches!(target, PathPickerTarget::AddClapPluginPath) {
+            self.status = "Android CLAP plug-in paths are not supported".to_owned();
+            return Task::none();
+        }
+        if self.path_picker_busy {
+            self.status = "A document picker is already open".to_owned();
+            return Task::none();
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let completion =
+            move |result: robius_file_picker::Result<Option<robius_file_picker::PickedFile>>| {
+                let _ = sender.send(result.map_err(|error| error.to_string()));
+            };
+        let picker_result = match target {
+            PathPickerTarget::OpenProject => robius_file_picker::FileDialog::new()
+                .set_title("Open AAADAW project")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project", &["aaadaw"])
+                .pick_file(completion),
+            PathPickerTarget::SaveProject => robius_file_picker::FileDialog::new()
+                .set_title("Save AAADAW project")
+                .set_file_name("project.aaadaw")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project", &["aaadaw"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportWav => robius_file_picker::FileDialog::new()
+                .set_title("Render project to WAV")
+                .set_file_name("render.wav")
+                .set_mime_type("audio/wav")
+                .add_filter("WAV audio", &["wav"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ImportAudio
+            | PathPickerTarget::ImportAudioToProject
+            | PathPickerTarget::RelinkAudio => robius_file_picker::FileDialog::new()
+                .set_title(match target {
+                    PathPickerTarget::RelinkAudio => "Choose replacement audio",
+                    _ => "Choose audio to import",
+                })
+                .set_mime_type("audio/*")
+                .add_filter(
+                    "Audio files",
+                    &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
+                )
+                .pick_file(completion),
+            PathPickerTarget::AddClapPluginPath => unreachable!(),
+        };
+        if let Err(error) = picker_result {
+            self.status = format!("Document picker failed to open: {error}");
+            return Task::none();
+        }
+        self.path_picker_busy = true;
         self.active_menu = None;
-        self.status = "Android document access is not available in this build".to_owned();
-        Task::none()
+        Task::perform(
+            async move {
+                let picked = receiver.await.unwrap_or_else(|_| {
+                    Err("document picker closed without a result".to_owned())
+                })?;
+                let Some(file) = picked else {
+                    return Ok(None);
+                };
+                let result = run_blocking("aaadaw-document-stage", move || {
+                    let path = match target {
+                        PathPickerTarget::SaveProject | PathPickerTarget::ExportWav => {
+                            crate::android_platform::prepare_saf_save(
+                                file,
+                                matches!(target, PathPickerTarget::SaveProject),
+                            )
+                        }
+                        _ => crate::android_platform::stage_picked_file(
+                            file,
+                            matches!(target, PathPickerTarget::OpenProject),
+                        ),
+                    }?;
+                    Ok(Some(path))
+                })
+                .await;
+                result
+            },
+            move |result| Message::PathPicked(target, result),
+        )
     }
 
     #[cfg(not(target_os = "android"))]

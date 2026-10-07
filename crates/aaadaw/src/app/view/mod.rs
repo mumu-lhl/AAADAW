@@ -4,12 +4,12 @@ use super::{App, Message};
     all(
         feature = "jack-backend",
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ),
     all(
         feature = "pipewire-backend",
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )
 ))]
 use aaadaw_app::PlaybackBackend;
@@ -627,12 +627,12 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     let controls = {
@@ -661,7 +661,7 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         );
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         let controls = controls.push(
             button(

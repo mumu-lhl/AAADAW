@@ -48,6 +48,33 @@ impl App {
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
         let cpal_input_device_id = self.audio_settings.cpal_input_device_id.clone();
+        #[cfg(target_os = "android")]
+        {
+            match crate::android_platform::request_microphone_permission() {
+                Ok(Some(receiver)) => {
+                    self.recording_starting = true;
+                    self.recording_cancel_requested = false;
+                    self.status = "Allow microphone access to record audio".to_owned();
+                    return Task::perform(
+                        async move {
+                            receiver.await.map_err(|_| {
+                                "Android permission request was interrupted".to_owned()
+                            })
+                        },
+                        |result| Message::MicrophonePermissionResult(result),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.status = format!("Microphone permission unavailable: {error}");
+                    return Task::none();
+                }
+            }
+            if let Err(error) = crate::android_platform::start_recording_service() {
+                self.status = format!("Could not start Android recording service: {error}");
+                return Task::none();
+            }
+        }
         if self.playback.is_none() {
             self.recording_starting = true;
             self.recording_cancel_requested = false;
@@ -387,6 +414,8 @@ impl App {
         match result {
             Some(Ok(recording)) => {
                 if self.recording_cancel_requested {
+                    #[cfg(target_os = "android")]
+                    crate::android_platform::stop_recording_service();
                     self.recording_cancel_requested = false;
                     self.recording_starting = false;
                     self.recording_tracks.clear();
@@ -407,6 +436,8 @@ impl App {
                             .playhead_sample;
                         if let Err(error) = self.playback.as_mut().expect("playback exists").play()
                         {
+                            #[cfg(target_os = "android")]
+                            crate::android_platform::stop_recording_service();
                             tracing::error!(backend = self.playback_name(), error = %error, "playback could not start for recording");
                             self.recording_starting = false;
                             self.recording_tracks.clear();
@@ -421,6 +452,8 @@ impl App {
                 }
             }
             Some(Err(error)) => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
@@ -432,6 +465,8 @@ impl App {
                 Task::none()
             }
             None => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!("recording setup result was unavailable");
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
@@ -501,6 +536,8 @@ impl App {
     }
 
     pub(super) fn finish_recording_stop(&mut self, result: SharedRecordingStop) -> Task<Message> {
+        #[cfg(target_os = "android")]
+        crate::android_platform::stop_recording_service();
         self.recording_stopping = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
@@ -582,6 +619,8 @@ impl App {
             return Task::none();
         };
         if self.recording_cancel_requested {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_cancel_requested = false;
             self.recording_starting = false;
             self.recording_tracks.clear();
@@ -589,6 +628,8 @@ impl App {
             return self.discard_recording_async(recording);
         }
         if !self.playback_playing {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_starting = false;
             self.recording_tracks.clear();
             self.status = format!(
@@ -611,6 +652,8 @@ impl App {
             .placement_correction
             .apply(transport_sample, self.project.settings().sample_rate())
         else {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_starting = false;
             self.recording_tracks.clear();
             self.status =
@@ -644,6 +687,8 @@ impl App {
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
             Some(Ok((recording, _start_sample))) if self.recording_cancel_requested => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
@@ -758,6 +803,8 @@ impl App {
                 Task::none()
             }
             Some(Err(error)) => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!(error = %error, "recording recovery metadata persistence failed");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
@@ -769,6 +816,8 @@ impl App {
                 Task::none()
             }
             None => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!("recording recovery metadata result was unavailable");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;

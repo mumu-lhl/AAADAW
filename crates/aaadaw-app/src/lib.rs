@@ -74,7 +74,7 @@ use aaadaw_engine::{
 };
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 use aaadaw_engine::{CpalAudioInput, CpalAudioOutput, CpalOutputError, CpalOutputStats};
 #[cfg(feature = "jack-backend")]
@@ -115,7 +115,7 @@ pub enum RunningAudioInput {
     PipeWire(aaadaw_engine::PipeWireAudioInput),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     Cpal(CpalAudioInput),
     #[cfg(not(any(
@@ -123,7 +123,7 @@ pub enum RunningAudioInput {
         feature = "pipewire-backend",
         all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     )))]
     #[allow(dead_code)]
@@ -204,7 +204,7 @@ pub fn open_audio_input(
         }
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         PlaybackBackend::Cpal => {
             CpalAudioInput::open(producer, control, sample_rate, cpal_input_device_id)
@@ -218,7 +218,7 @@ pub fn open_audio_input(
                 feature = "pipewire-backend",
                 all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             ))
         ))]
@@ -244,7 +244,7 @@ impl RunningAudioInput {
             Self::PipeWire(_) => SharedFrameClockMapping::Unsupported,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal(_) => SharedFrameClockMapping::Unsupported,
             #[cfg(not(any(
@@ -252,7 +252,7 @@ impl RunningAudioInput {
                 feature = "pipewire-backend",
                 all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             )))]
             _ => SharedFrameClockMapping::Unsupported,
@@ -268,7 +268,7 @@ impl RunningAudioInput {
             Self::PipeWire(_) => None,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal(_) => None,
             #[cfg(not(any(
@@ -276,7 +276,7 @@ impl RunningAudioInput {
                 feature = "pipewire-backend",
                 all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             )))]
             _ => None,
@@ -292,7 +292,7 @@ impl RunningAudioInput {
             Self::PipeWire(mut input) => input.shutdown(),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal(mut input) => input.shutdown(),
             #[cfg(not(any(
@@ -300,7 +300,7 @@ impl RunningAudioInput {
                 feature = "pipewire-backend",
                 all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             )))]
             Self::Unavailable => {}
@@ -328,7 +328,7 @@ pub enum PlaybackBuildError {
             feature = "pipewire-backend",
             all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))
     ))]
@@ -339,7 +339,7 @@ pub enum PlaybackBuildError {
     PipeWire(PipeWireOutputError),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     Cpal(CpalOutputError),
     ExternalSourceUnavailable {
@@ -370,7 +370,7 @@ impl fmt::Display for PlaybackBuildError {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -383,7 +383,7 @@ impl fmt::Display for PlaybackBuildError {
             Self::PipeWire(error) => write!(formatter, "PipeWire output setup failed: {error}"),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal(error) => write!(formatter, "System audio output setup failed: {error}"),
             Self::ExternalSourceUnavailable { media_ref } => {
@@ -409,7 +409,7 @@ impl StdError for PlaybackBuildError {
             Self::PipeWire(error) => Some(error),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal(error) => Some(error),
             #[cfg(all(
@@ -419,7 +419,7 @@ impl StdError for PlaybackBuildError {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -516,7 +516,7 @@ impl PreparedAudioPlayback {
         feature = "pipewire-backend",
         all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     pub fn into_output(
@@ -542,7 +542,7 @@ impl PreparedAudioPlayback {
             ),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             PlaybackBackend::Cpal => DeviceAudioOutput::Cpal(
                 CpalAudioOutput::open(graph, _cpal_device_id).map_err(PlaybackBuildError::Cpal)?,
@@ -572,7 +572,7 @@ impl PreparedAudioPlayback {
             feature = "pipewire-backend",
             all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))
     ))]
@@ -598,7 +598,7 @@ pub enum PlaybackBackend {
             not(feature = "jack-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ),
         default
@@ -606,7 +606,7 @@ pub enum PlaybackBackend {
     PipeWire,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     #[cfg_attr(
         all(not(feature = "jack-backend"), not(feature = "pipewire-backend")),
@@ -620,7 +620,7 @@ pub enum PlaybackBackend {
             feature = "pipewire-backend",
             all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))
     ))]
@@ -639,7 +639,7 @@ impl PlaybackBackend {
             Self::PipeWire => true,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Self::Cpal => true,
             #[cfg(all(
@@ -649,7 +649,7 @@ impl PlaybackBackend {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -665,12 +665,14 @@ impl PlaybackBackend {
             Self::PipeWire => "PipeWire",
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             #[cfg(target_os = "windows")]
             Self::Cpal => "WASAPI",
             #[cfg(all(feature = "cpal-backend", target_os = "macos"))]
             Self::Cpal => "CoreAudio",
+            #[cfg(all(feature = "cpal-backend", target_os = "android"))]
+            Self::Cpal => "AAudio",
             #[cfg(all(
                 feature = "audio-device",
                 not(any(
@@ -678,7 +680,7 @@ impl PlaybackBackend {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -695,7 +697,7 @@ enum DeviceAudioOutput {
     PipeWire(PipeWireAudioOutput),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     Cpal(CpalAudioOutput),
     #[cfg(all(
@@ -705,7 +707,7 @@ enum DeviceAudioOutput {
             feature = "pipewire-backend",
             all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))
     ))]
@@ -838,7 +840,7 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(_) => PlaybackBackend::PipeWire,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(_) => PlaybackBackend::Cpal,
             #[cfg(all(
@@ -848,7 +850,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -866,7 +868,7 @@ impl RunningAudioPlayback {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => output.play().map_err(PlaybackBuildError::Cpal),
             #[cfg(all(
@@ -876,7 +878,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -896,7 +898,7 @@ impl RunningAudioPlayback {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => output.stop().map_err(PlaybackBuildError::Cpal),
             #[cfg(all(
@@ -906,7 +908,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -930,7 +932,7 @@ impl RunningAudioPlayback {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => {
                 output.panic_midi().map_err(PlaybackBuildError::Cpal)
@@ -942,7 +944,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -967,7 +969,7 @@ impl RunningAudioPlayback {
                 }
                 #[cfg(all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 ))]
                 PlaybackBackend::Cpal => {
                     PlaybackBuildError::Cpal(CpalOutputError::GraphReplacementInFlight)
@@ -979,7 +981,7 @@ impl RunningAudioPlayback {
                         feature = "pipewire-backend",
                         all(
                             feature = "cpal-backend",
-                            any(target_os = "windows", target_os = "macos")
+                            any(target_os = "windows", target_os = "macos", target_os = "android")
                         )
                     ))
                 ))]
@@ -1013,7 +1015,7 @@ impl RunningAudioPlayback {
                 feature = "pipewire-backend",
                 all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             ))
         ))]
@@ -1029,7 +1031,7 @@ impl RunningAudioPlayback {
                 .map_err(PlaybackBuildError::PipeWire)?,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => output
                 .replace_graph(graph, self.is_playing)
@@ -1041,7 +1043,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -1080,7 +1082,7 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => output.take_retired_graphs(),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => output.take_retired_graphs(),
             #[cfg(all(
@@ -1090,7 +1092,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -1151,7 +1153,7 @@ impl RunningAudioPlayback {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(mut output) => {
                 output.shutdown().map_err(PlaybackBuildError::Cpal)?
@@ -1163,7 +1165,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -1187,7 +1189,7 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::PipeWire(output) => output.stats().into(),
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             DeviceAudioOutput::Cpal(output) => output.stats().into(),
             #[cfg(all(
@@ -1197,7 +1199,7 @@ impl RunningAudioPlayback {
                     feature = "pipewire-backend",
                     all(
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))
             ))]
@@ -1259,7 +1261,7 @@ impl From<PipeWireOutputStats> for PlaybackStats {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 impl From<CpalOutputStats> for PlaybackStats {
     fn from(stats: CpalOutputStats) -> Self {

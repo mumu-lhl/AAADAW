@@ -312,6 +312,8 @@ pub(crate) enum Message {
     PanicMidi,
     #[cfg(feature = "audio-device")]
     StartRecording,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    MicrophonePermissionResult(Result<bool, String>),
     #[cfg(feature = "audio-device")]
     StopRecording,
     #[cfg(feature = "audio-device")]
@@ -346,32 +348,32 @@ pub(crate) enum Message {
     },
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     CpalOutputDevicesLoaded(Result<Vec<aaadaw_engine::CpalOutputDeviceInfo>, String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     RefreshCpalOutputDevices,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     SelectCpalOutputDevice(Option<String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     CpalInputDevicesLoaded(Result<Vec<aaadaw_engine::CpalInputDeviceInfo>, String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     RefreshCpalInputDevices,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     SelectCpalInputDevice(Option<String>),
     #[cfg(any(
@@ -379,12 +381,12 @@ pub(crate) enum Message {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),

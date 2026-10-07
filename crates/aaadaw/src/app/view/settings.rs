@@ -179,22 +179,22 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
     });
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     let cpal_output = cpal_output_settings(app);
     #[cfg(not(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )))]
     let cpal_output: Element<'_, Message> = text("").into();
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     let cpal_input = cpal_input_settings(app);
     #[cfg(not(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )))]
     let cpal_input: Element<'_, Message> = text("").into();
     column![
@@ -245,7 +245,7 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn cpal_output_settings(app: &App) -> Element<'_, Message> {
     let saved_id = app.audio_settings.cpal_output_device_id.as_deref();
@@ -288,7 +288,7 @@ fn cpal_output_settings(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn cpal_input_settings(app: &App) -> Element<'_, Message> {
     let saved_id = app.audio_settings.cpal_input_device_id.as_deref();
@@ -331,7 +331,7 @@ fn cpal_input_settings(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn cpal_device_choices<'a>(
     devices: impl Iterator<Item = (&'a str, &'a str)>,
@@ -383,7 +383,7 @@ fn cpal_device_choices<'a>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 #[allow(clippy::too_many_arguments)]
 fn cpal_device_settings(
