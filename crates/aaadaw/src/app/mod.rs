@@ -1353,7 +1353,7 @@ impl App {
                 Message::Redo => !self.project.can_redo_track_mix(),
                 _ => false,
             };
-            if self.playback.is_some()
+            if self.playback_active()
                 && (unsupported_playback_history_edit
                     || matches!(
                         &message,
@@ -4648,7 +4648,7 @@ impl App {
     fn playback_active(&self) -> bool {
         #[cfg(feature = "audio-device")]
         {
-            self.playback.is_some()
+            playback_prevents_project_edits(self.playback.is_some(), self.playback_playing)
         }
         #[cfg(not(feature = "audio-device"))]
         {
@@ -5830,6 +5830,11 @@ fn item_drag_edit_guard_status(
     } else {
         None
     }
+}
+
+#[cfg(any(feature = "audio-device", test))]
+fn playback_prevents_project_edits(playback_open: bool, transport_playing: bool) -> bool {
+    playback_open && transport_playing
 }
 
 fn project_path_from_query(query: &str) -> Option<PathBuf> {
