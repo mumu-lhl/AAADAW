@@ -7,7 +7,8 @@ A musician duplicates a selected MIDI motif and balances its dynamics in the pia
 ## Behavior
 
 - Copy normalizes the selected phrase to its earliest note while preserving each note's pitch, duration, velocity, and relative tick spacing.
-- The first paste into the source Item begins at the copied phrase's end. Repeated pastes advance by the phrase span. Pasting into a different Item starts at the editor's visible tick, snapped to the current 1/16 grid. Notes that do not fit are rejected without changing the project.
+- Paste uses the visible piano-roll edit cursor and the shared snap grid. Clicking the time ruler moves the cursor; if no cursor was set, Copy places it after the copied phrase and carries that default target when switching Items. Repeated pastes advance by the phrase span. Snap Off allows an unsnapped target. Notes that do not fit are rejected without changing the project.
+- Duplicate is a separate action that clones the selected notes after their current range without changing the clipboard.
 - Paste allocates fresh note IDs and selects the new group.
 - The velocity lane draws one bar per note. Hover reveals its numeric velocity; selection and hover have distinct colors. Dragging any selected handle applies one shared velocity delta and clamps each result to 1–127.
 - Copy and paste are available from the editor toolbar and Ctrl/Cmd+C/V while the piano roll has focus. A paste and a completed velocity drag each use the regular undoable project actions.

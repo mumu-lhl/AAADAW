@@ -167,8 +167,8 @@ impl Drop for ClapInstrumentHelperOwners {
 #[derive(Default)]
 struct MidiNoteClipboard {
     notes: Vec<aaadaw_core::MidiNoteData>,
-    source_item_id: Option<ItemId>,
     span_ticks: u64,
+    default_paste_tick: Option<u64>,
     last_paste: Option<(ItemId, u64)>,
 }
 
@@ -254,6 +254,7 @@ struct App {
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_origin_tick: u64,
+    midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
     midi_editor_pixels_per_beat: f32,
     midi_note_clipboard: MidiNoteClipboard,
@@ -1655,6 +1656,7 @@ impl App {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
+                    self.midi_editor_edit_cursor_tick = None;
                     task = iced::window::close(window_id);
                 }
             }
@@ -1698,7 +1700,27 @@ impl App {
                             .map(|note| note.tick.saturating_add(note.duration))
                             .max()
                             .unwrap_or(0);
-                        self.midi_note_clipboard.source_item_id = Some(item_id);
+                        let copy_grid = if self.timeline.snap_enabled {
+                            self.timeline
+                                .snap_grid
+                                .tick_interval(self.project.settings().ppq())
+                                .unwrap_or(1)
+                        } else {
+                            1
+                        };
+                        let default_paste_tick =
+                            self.midi_editor_edit_cursor_tick.unwrap_or_else(|| {
+                                snap_tick_up(
+                                    first_tick.saturating_add(self.midi_note_clipboard.span_ticks),
+                                    copy_grid,
+                                )
+                            });
+                        self.midi_note_clipboard.default_paste_tick =
+                            Some(default_paste_tick.min(item.length_ticks()));
+                        if self.midi_editor_edit_cursor_tick.is_none() {
+                            self.midi_editor_edit_cursor_tick =
+                                self.midi_note_clipboard.default_paste_tick;
+                        }
                         self.midi_note_clipboard.last_paste = None;
                         let feedback =
                             format!("Copied {} MIDI notes", self.midi_note_clipboard.notes.len());
@@ -1719,27 +1741,14 @@ impl App {
                 if self.midi_note_clipboard.notes.is_empty() {
                     return task;
                 }
-                let grid = if self.timeline.snap_enabled {
-                    self.timeline
-                        .snap_grid
-                        .tick_interval(self.project.settings().ppq())
-                        .unwrap_or(1)
-                } else {
-                    1
-                };
+                let grid = self.midi_editor_snap_interval();
+                let item_length = item.length_ticks();
                 let tick = self
                     .midi_note_clipboard
                     .last_paste
                     .filter(|(last_item, _)| *last_item == item_id)
                     .map_or_else(
-                        || {
-                            if self.midi_note_clipboard.source_item_id == Some(item_id) {
-                                snap_tick_up(self.midi_note_clipboard.span_ticks, grid)
-                            } else {
-                                (self.midi_editor_origin_tick.saturating_add(grid / 2) / grid)
-                                    * grid
-                            }
-                        },
+                        || self.midi_editor_paste_target_tick(Some(item_id)),
                         |(_, previous)| {
                             snap_tick_up(
                                 previous.saturating_add(self.midi_note_clipboard.span_ticks),
@@ -1790,7 +1799,27 @@ impl App {
                                 .collect();
                         }
                         self.midi_note_clipboard.last_paste = Some((item_id, tick));
+                        self.midi_editor_edit_cursor_tick = Some(
+                            snap_tick_up(
+                                tick.saturating_add(self.midi_note_clipboard.span_ticks),
+                                grid,
+                            )
+                            .min(item_length),
+                        );
                     }
+                }
+            }
+            Message::DuplicateMidiNotes(item_id) => self.duplicate_selected_midi_notes(item_id),
+            Message::SetPianoRollCursor(item_id, tick) => {
+                if self.midi_editor_item_id == Some(item_id)
+                    && let Some(item) = self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                {
+                    self.midi_editor_edit_cursor_tick = Some(tick.min(item.length_ticks()));
+                    self.midi_note_clipboard.last_paste = None;
                 }
             }
             Message::AddMidiNoteAt(item_id, data) => {
@@ -2868,7 +2897,6 @@ impl App {
                         self.refresh_meter_map_edits();
                         self.tempo_map_feedback.clear();
                         self.meter_map_feedback.clear();
-                        self.midi_note_clipboard.source_item_id = None;
                         self.midi_note_clipboard.last_paste = None;
                         self.timeline
                             .replace_project(&self.project, arrangement_view_state.as_ref());
@@ -3286,7 +3314,6 @@ impl App {
         self.project_generation = self.project_generation.wrapping_add(1);
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;
-        self.midi_note_clipboard.source_item_id = None;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
         self.project_lock = None;
@@ -3766,6 +3793,7 @@ impl App {
         if let Some(window_id) = self.midi_editor_window_id {
             if self.midi_editor_item_id != Some(item_id) {
                 self.midi_editor_origin_tick = 0;
+                self.midi_editor_edit_cursor_tick = None;
             }
             self.midi_editor_item_id = Some(item_id);
             self.midi_editor_feedback = None;
@@ -3782,6 +3810,7 @@ impl App {
         self.midi_editor_feedback = None;
         self.midi_editor_selected_notes.clear();
         self.midi_editor_origin_tick = 0;
+        self.midi_editor_edit_cursor_tick = None;
         self.midi_editor_high_pitch = 84;
         self.midi_editor_pixels_per_beat = 96.0;
         task.discard()
@@ -5703,6 +5732,122 @@ impl App {
                         && note.velocity() == copied.velocity
                 });
         matches_clipboard.then_some(start_tick)
+    }
+
+    fn duplicate_selected_midi_notes(&mut self, item_id: ItemId) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let item_length = item.length_ticks();
+        let selected = item
+            .notes()
+            .iter()
+            .filter(|note| self.midi_editor_selected_notes.contains(&note.id()))
+            .map(|note| {
+                (
+                    note.id(),
+                    aaadaw_core::MidiNoteData {
+                        pitch: note.pitch(),
+                        tick: note.tick(),
+                        duration: note.duration(),
+                        velocity: note.velocity(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let Some(source_start) = selected.iter().map(|(_, note)| note.tick).min() else {
+            return;
+        };
+        let source_end = selected
+            .iter()
+            .map(|(_, note)| note.tick.saturating_add(note.duration))
+            .max()
+            .unwrap_or(source_start);
+        let span = source_end.saturating_sub(source_start);
+        let grid = self.midi_editor_snap_interval();
+        let target = snap_tick_up(source_end, grid);
+        let duplicates = selected
+            .iter()
+            .map(|(_, note)| aaadaw_core::MidiNoteData {
+                tick: target.saturating_add(note.tick.saturating_sub(source_start)),
+                ..*note
+            })
+            .collect::<Vec<_>>();
+        if duplicates
+            .iter()
+            .any(|note| note.tick.saturating_add(note.duration) > item_length)
+        {
+            let feedback = "Duplicate rejected: notes would extend beyond the MIDI item";
+            self.status = feedback.to_owned();
+            self.midi_editor_feedback = Some(feedback.to_owned());
+            return;
+        }
+
+        let old_ids = item
+            .notes()
+            .iter()
+            .map(|note| note.id())
+            .collect::<HashSet<_>>();
+        let revision = self.revision;
+        self.midi_editor_feedback = None;
+        self.apply_action(
+            DawAction::AddMidiNotes {
+                item_id,
+                notes: duplicates,
+            },
+            "MIDI notes duplicated",
+        );
+        if self.revision != revision {
+            if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                self.midi_editor_selected_notes = item
+                    .notes()
+                    .iter()
+                    .map(|note| note.id())
+                    .filter(|id| !old_ids.contains(id))
+                    .collect();
+            }
+            self.midi_note_clipboard.last_paste = None;
+            self.midi_editor_edit_cursor_tick =
+                Some(snap_tick_up(target.saturating_add(span), grid).min(item_length));
+        }
+    }
+
+    fn midi_editor_snap_interval(&self) -> u64 {
+        if self.timeline.snap_enabled {
+            self.timeline
+                .snap_grid
+                .tick_interval(self.project.settings().ppq())
+                .unwrap_or(1)
+        } else {
+            1
+        }
+    }
+
+    fn midi_editor_paste_target_tick(&self, item_id: Option<ItemId>) -> u64 {
+        let grid = self.midi_editor_snap_interval();
+        if let Some((_, previous)) = self
+            .midi_note_clipboard
+            .last_paste
+            .filter(|(last_item, _)| Some(*last_item) == item_id)
+        {
+            return snap_tick_up(
+                previous.saturating_add(self.midi_note_clipboard.span_ticks),
+                grid,
+            );
+        }
+        self.midi_editor_edit_cursor_tick
+            .or(self.midi_note_clipboard.default_paste_tick)
+            .map_or(0, |tick| tick.saturating_add(grid / 2) / grid * grid)
     }
 
     fn run_action_query(&mut self) -> Task<Message> {

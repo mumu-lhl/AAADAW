@@ -3215,8 +3215,8 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     assert!(app.midi_editor_feedback.is_none());
     let notes = app.project.midi_items()[0].notes();
     assert_eq!(notes.len(), 4);
-    assert_eq!(notes[2].tick(), 1_200);
-    assert_eq!(notes[3].tick(), 1_920);
+    assert_eq!(notes[2].tick(), 1_440);
+    assert_eq!(notes[3].tick(), 2_160);
     assert_ne!(notes[2].id(), source_ids[0]);
     assert_eq!(
         app.midi_editor_selected_notes,
@@ -3227,8 +3227,8 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0].notes().len(), 4);
     let _ = app.update(Message::PasteMidiNotes(item_id));
-    assert_eq!(app.project.midi_items()[0].notes()[4].tick(), 2_400);
-    assert_eq!(app.project.midi_items()[0].notes()[5].tick(), 3_120);
+    assert_eq!(app.project.midi_items()[0].notes()[4].tick(), 2_640);
+    assert_eq!(app.project.midi_items()[0].notes()[5].tick(), 3_360);
 
     let pasted = app.project.midi_items()[0].notes()[4..]
         .iter()
@@ -3262,20 +3262,116 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
 }
 
 #[test]
+fn piano_roll_copying_a_late_phrase_pastes_after_it_instead_of_near_item_start() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 2_880,
+            duration: 120,
+            velocity: 96,
+        },
+    ));
+    let source = &app.project.midi_items()[0].notes()[0];
+    let _ = app.update(Message::CopyMidiNotes(item_id, vec![source.id()]));
+
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[1].tick(), 3_120);
+}
+
+#[test]
+fn piano_roll_paste_uses_the_caret_and_duplicate_does_not_replace_the_clipboard() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 2_880,
+            duration: 120,
+            velocity: 96,
+        },
+    ));
+    let source_id = app.project.midi_items()[0].notes()[0].id();
+    let _ = app.update(Message::CopyMidiNotes(item_id, vec![source_id]));
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(3_120));
+
+    let _ = app.update(Message::SetPianoRollCursor(item_id, 1_920));
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 1_920);
+
+    let clipboard = app.midi_note_clipboard.notes.clone();
+    let _ = app.update(Message::SelectMidiNotes(HashSet::from([source_id])));
+    let _ = app.update(Message::DuplicateMidiNotes(item_id));
+    assert_eq!(app.project.midi_items()[0].notes()[2].tick(), 3_120);
+    assert_eq!(app.midi_note_clipboard.notes, clipboard);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes().len(), 2);
+}
+
+#[test]
+fn piano_roll_cross_item_paste_uses_the_copied_phrase_position_when_no_caret_is_set() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let source_item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::AddMidiItem);
+    let target_item_id = app.project.midi_items()[1].id();
+    let _ = app.update(Message::AddMidiItem);
+    let explicit_target_item_id = app.project.midi_items()[2].id();
+    let _ = app.update(Message::OpenMidiEditor(source_item_id));
+    let _ = app.update(Message::AddMidiNoteAt(
+        source_item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 2_880,
+            duration: 120,
+            velocity: 96,
+        },
+    ));
+    let source_id = app.project.midi_items()[0].notes()[0].id();
+    let _ = app.update(Message::CopyMidiNotes(source_item_id, vec![source_id]));
+    let _ = app.update(Message::OpenMidiEditor(target_item_id));
+    assert_eq!(app.midi_editor_edit_cursor_tick, None);
+
+    let _ = app.update(Message::PasteMidiNotes(target_item_id));
+
+    assert_eq!(app.project.midi_items()[1].notes().len(), 1);
+    assert_eq!(app.project.midi_items()[1].notes()[0].tick(), 3_120);
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(3_360));
+
+    let _ = app.update(Message::OpenMidiEditor(explicit_target_item_id));
+    let _ = app.update(Message::SetPianoRollCursor(explicit_target_item_id, 1_920));
+    let _ = app.update(Message::PasteMidiNotes(explicit_target_item_id));
+    assert_eq!(app.project.midi_items()[2].notes()[0].tick(), 1_920);
+}
+
+#[test]
 fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
     let item_id = app.project.midi_items()[0].id();
     let _ = app.update(Message::OpenMidiEditor(item_id));
-    app.midi_editor_origin_tick = 3_600;
+    app.midi_editor_edit_cursor_tick = Some(3_600);
     app.midi_note_clipboard.notes = vec![MidiNoteData {
         pitch: 60,
         tick: 0,
         duration: 480,
         velocity: 96,
     }];
-    app.midi_note_clipboard.source_item_id = None;
     app.status = "Main window status".to_owned();
 
     let _ = app.update(Message::PasteMidiNotes(item_id));
@@ -3301,20 +3397,19 @@ fn piano_roll_paste_uses_the_shared_snap_grid_and_respects_snap_off() {
     let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
         SnapGrid::EighthTriplet,
     )));
-    app.midi_editor_origin_tick = 190;
+    app.midi_editor_edit_cursor_tick = Some(190);
     app.midi_note_clipboard.notes = vec![MidiNoteData {
         pitch: 60,
         tick: 0,
         duration: 120,
         velocity: 96,
     }];
-    app.midi_note_clipboard.source_item_id = None;
 
     let _ = app.update(Message::PasteMidiNotes(item_id));
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 320);
 
     let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
-    app.midi_editor_origin_tick = 510;
+    app.midi_editor_edit_cursor_tick = Some(510);
     app.midi_note_clipboard.last_paste = None;
     let _ = app.update(Message::PasteMidiNotes(item_id));
     assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 510);
