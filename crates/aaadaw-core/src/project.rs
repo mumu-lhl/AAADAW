@@ -147,6 +147,13 @@ enum ProjectEvent {
         before: Option<TrackInstrument>,
         after: Option<TrackInstrument>,
     },
+    TrackFreezeChanged {
+        track_id: TrackId,
+        before: Option<ItemId>,
+        after: Option<ItemId>,
+        before_render: Option<(usize, AudioItem)>,
+        after_render: Option<(usize, AudioItem)>,
+    },
     TrackFxChainChanged {
         track_id: TrackId,
         before: Vec<TrackFxPlugin>,
@@ -357,6 +364,19 @@ impl ProjectEvent {
                 track_id: *track_id,
                 before: after.clone(),
                 after: before.clone(),
+            },
+            Self::TrackFreezeChanged {
+                track_id,
+                before,
+                after,
+                before_render,
+                after_render,
+            } => Self::TrackFreezeChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+                before_render: after_render.clone(),
+                after_render: before_render.clone(),
             },
             Self::TrackFxChainChanged {
                 track_id,
@@ -832,6 +852,7 @@ impl Project {
                         })
                         .collect(),
                     volume_automation: track.volume_automation.clone(),
+                    frozen_audio_item_id: track.frozen_audio_item_id.map(|id| id.value()),
                 })
                 .collect(),
             audio_items: self
@@ -1018,6 +1039,7 @@ impl Project {
                 instrument,
                 fx_chain,
                 volume_automation: track.volume_automation,
+                frozen_audio_item_id: track.frozen_audio_item_id.map(ItemId::from_raw),
             });
         }
         if !valid_track_routing(&tracks) {
@@ -1104,6 +1126,26 @@ impl Project {
             });
         }
 
+        let mut frozen_render_ids = HashSet::new();
+        for track in &tracks {
+            let Some(render_id) = track.frozen_audio_item_id else {
+                continue;
+            };
+            let Some(render) = audio_items.iter().find(|item| item.id == render_id) else {
+                return Err(SnapshotError::InvalidProjectData);
+            };
+            if render.track_id != track.id
+                || track.is_bus
+                || track.instrument.is_none()
+                || !frozen_render_ids.insert(render_id)
+                || !midi_items
+                    .iter()
+                    .any(|item| item.track_id == track.id && !item.notes().is_empty())
+            {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+        }
+
         Ok(Self {
             state: ProjectState {
                 tracks,
@@ -1139,6 +1181,15 @@ impl Project {
             action => action,
         };
 
+        if let Some(track_id) = source_track_for_action(state, &action)
+            && state
+                .tracks
+                .iter()
+                .any(|track| track.id == track_id && track.is_frozen())
+        {
+            return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+        }
+
         let event = match action {
             DawAction::CreateTrack { index, name } => {
                 if index > state.tracks.len() {
@@ -1164,6 +1215,7 @@ impl Project {
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -1192,6 +1244,7 @@ impl Project {
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
                 ProjectEvent::TrackCreated { index, track }
@@ -1442,6 +1495,85 @@ impl Project {
                     after: instrument,
                 }
             }
+            DawAction::FreezeTrack {
+                track_id,
+                media_ref,
+                start_sample,
+                length_samples,
+            } => {
+                if media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if length_samples == 0 {
+                    return Err(ActionError::InvalidAudioItemLength);
+                }
+                if start_sample.checked_add(length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if track.frozen_audio_item_id.is_some() {
+                    return Err(ActionError::TrackAlreadyFrozen { track_id });
+                }
+                if track.is_bus
+                    || track.instrument.is_none()
+                    || state
+                        .audio_items
+                        .iter()
+                        .any(|item| item.track_id == track_id)
+                    || !state
+                        .midi_items
+                        .iter()
+                        .any(|item| item.track_id == track_id && !item.notes().is_empty())
+                {
+                    return Err(ActionError::TrackCannotBeFrozen);
+                }
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    media_ref,
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples,
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::TrackFreezeChanged {
+                    track_id,
+                    before: None,
+                    after: Some(item.id),
+                    before_render: None,
+                    after_render: Some((state.audio_items.len(), item)),
+                }
+            }
+            DawAction::UnfreezeTrack { track_id } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let frozen_audio_item_id = track
+                    .frozen_audio_item_id
+                    .ok_or(ActionError::TrackNotFrozen { track_id })?;
+                let index = state
+                    .audio_items
+                    .iter()
+                    .position(|item| item.id == frozen_audio_item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                ProjectEvent::TrackFreezeChanged {
+                    track_id,
+                    before: Some(frozen_audio_item_id),
+                    after: None,
+                    before_render: Some((index, state.audio_items[index].clone())),
+                    after_render: None,
+                }
+            }
             DawAction::SetTrackFxChain { track_id, plugins } => {
                 if plugins.iter().any(|plugin| {
                     plugin.plugin_id().trim().is_empty() || plugin.bundle_path().trim().is_empty()
@@ -1583,6 +1715,13 @@ impl Project {
                 if !state.tracks.iter().any(|track| track.id == track_id) {
                     return Err(ActionError::TrackNotFound { track_id });
                 }
+                if state
+                    .tracks
+                    .iter()
+                    .any(|track| track.id == track_id && track.frozen_audio_item_id.is_some())
+                {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
                 if media_ref.trim().is_empty() {
                     return Err(ActionError::InvalidAudioMediaRef);
                 }
@@ -1631,6 +1770,9 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
                 let before = item.clone();
                 let after = AudioItem {
                     media_ref,
@@ -1645,7 +1787,17 @@ impl Project {
                 if !state.tracks.iter().any(|track| track.id == track_id) {
                     return Err(ActionError::TrackNotFound { track_id });
                 }
+                if state
+                    .tracks
+                    .iter()
+                    .any(|track| track.id == track_id && track.frozen_audio_item_id.is_some())
+                {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
                 if let Some(item) = state.audio_items.iter().find(|item| item.id == item_id) {
+                    if is_frozen_render(state, item_id) {
+                        return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                    }
                     let before = item.clone();
                     let after = AudioItem {
                         track_id,
@@ -1664,6 +1816,9 @@ impl Project {
                 }
             }
             DawAction::DeleteAudioItem { item_id } => {
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
                 let index = state
                     .audio_items
                     .iter()
@@ -2280,6 +2435,58 @@ impl Project {
                 }
                 track.instrument = after.clone();
             }
+            ProjectEvent::TrackFreezeChanged {
+                track_id,
+                before,
+                after,
+                before_render,
+                after_render,
+            } => {
+                let track_index = state
+                    .tracks
+                    .iter()
+                    .position(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if state.tracks[track_index].frozen_audio_item_id != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                if let Some((index, item)) = before_render {
+                    if before != &Some(item.id)
+                        || item.track_id != *track_id
+                        || state.audio_items.get(*index) != Some(item)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                } else if before.is_some() {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                if let Some((index, item)) = after_render {
+                    if after != &Some(item.id)
+                        || item.track_id != *track_id
+                        || *index > state.audio_items.len()
+                        || !valid_audio_item(item)
+                        || state
+                            .audio_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                        || state
+                            .midi_items
+                            .iter()
+                            .any(|existing| existing.id == item.id)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                } else if after.is_some() {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                if let Some((index, _)) = before_render {
+                    state.audio_items.remove(*index);
+                }
+                if let Some((index, item)) = after_render {
+                    state.audio_items.insert(*index, item.clone());
+                }
+                state.tracks[track_index].frozen_audio_item_id = *after;
+            }
             ProjectEvent::TrackFxChainChanged {
                 track_id,
                 before,
@@ -2751,6 +2958,44 @@ fn valid_audio_item(item: &AudioItem) -> bool {
     !item.media_ref.trim().is_empty()
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
+}
+
+fn is_frozen_render(state: &ProjectState, item_id: ItemId) -> bool {
+    state
+        .tracks
+        .iter()
+        .any(|track| track.frozen_audio_item_id == Some(item_id))
+}
+
+fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<TrackId> {
+    match action {
+        DawAction::SetTrackInstrument { track_id, .. }
+        | DawAction::SetTrackFxChain { track_id, .. }
+        | DawAction::SetTrackFxParameter { track_id, .. }
+        | DawAction::SetTrackFxParameterAutomation { track_id, .. }
+        | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
+        DawAction::EditMidiItem { item_id, .. }
+        | DawAction::DuplicateMidiItem { item_id }
+        | DawAction::DuplicateMidiItemAt { item_id, .. }
+        | DawAction::SplitMidiItem { item_id, .. }
+        | DawAction::DeleteMidiItem { item_id }
+        | DawAction::AddMidiNotes { item_id, .. }
+        | DawAction::EditMidiNote { item_id, .. }
+        | DawAction::DeleteMidiNotes { item_id, .. }
+        | DawAction::SetMidiControllers { item_id, .. }
+        | DawAction::SetMidiPitchBends { item_id, .. }
+        | DawAction::QuantizeItem { item_id, .. } => state
+            .midi_items
+            .iter()
+            .find(|item| item.id == *item_id)
+            .map(|item| item.track_id),
+        DawAction::MoveItemToTrack { item_id, .. } => state
+            .midi_items
+            .iter()
+            .find(|item| item.id == *item_id)
+            .map(|item| item.track_id),
+        _ => None,
+    }
 }
 
 fn valid_midi_controllers(controllers: &[MidiControllerData], length_ticks: u64) -> bool {

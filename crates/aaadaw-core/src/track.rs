@@ -121,6 +121,7 @@ pub struct Track {
     pub(crate) instrument: Option<TrackInstrument>,
     pub(crate) fx_chain: Vec<TrackFxPlugin>,
     pub(crate) volume_automation: Vec<VolumeAutomationPoint>,
+    pub(crate) frozen_audio_item_id: Option<crate::ItemId>,
 }
 
 /// A CLAP instrument selected for a track. The bundle path is a load hint;
@@ -352,5 +353,15 @@ impl Track {
     /// Returns this track's ordered sample-clock volume automation points.
     pub fn volume_automation(&self) -> &[VolumeAutomationPoint] {
         &self.volume_automation
+    }
+
+    /// Returns the frozen render item while this track is frozen.
+    pub fn frozen_audio_item_id(&self) -> Option<crate::ItemId> {
+        self.frozen_audio_item_id
+    }
+
+    /// Returns whether playback uses this track's frozen render instead of its live source chain.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen_audio_item_id.is_some()
     }
 }

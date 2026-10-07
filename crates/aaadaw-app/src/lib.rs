@@ -48,8 +48,8 @@ pub use midi_editing::{
 };
 pub use offline_render::{
     DEFAULT_EFFECT_TAIL_SECONDS, OfflineRenderError, project_render_length_samples,
-    render_graph_to_pcm24_wav, render_prepared_audio_to_pcm24_wav,
-    render_project_file_to_pcm24_wav,
+    render_freeze_track_to_pcm24_wav, render_graph_to_pcm24_wav,
+    render_prepared_audio_to_pcm24_wav, render_project_file_to_pcm24_wav,
 };
 pub use wav_export::{Pcm24WavExport, Pcm24WavExportError};
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};

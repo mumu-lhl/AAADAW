@@ -31,6 +31,7 @@ struct RenderRequest<'a> {
     destination: &'a Path,
     sample_rate: u32,
     total_frames: u64,
+    start_sample: u64,
     cancelled: &'a AtomicBool,
 }
 
@@ -122,6 +123,7 @@ pub fn render_graph_to_pcm24_wav(
             destination: destination.as_ref(),
             sample_rate,
             total_frames,
+            start_sample: 0,
             cancelled,
         },
         |_, frames| Ok(frames),
@@ -168,6 +170,7 @@ fn render_prepared_inner(
             destination: destination.as_ref(),
             sample_rate,
             total_frames,
+            start_sample: 0,
             cancelled,
         },
         |graph, requested_frames| loop {
@@ -257,6 +260,9 @@ pub fn render_project_file_to_pcm24_wav(
     let sample_rate = project.settings().sample_rate();
     let max_block_frames = prepared.graph().max_block_frames();
     for track in project.tracks() {
+        if track.is_frozen() {
+            continue;
+        }
         if cancelled.load(Ordering::Acquire) {
             cleanup_uninstalled_processors(
                 instrument_owners,
@@ -379,6 +385,223 @@ pub fn render_project_file_to_pcm24_wav(
     result
 }
 
+/// Renders one instrument track from its first MIDI item through its last item and a fixed tail.
+/// Track gain, pan, routing, mute, solo, and volume automation remain live after freezing, so they
+/// are neutralized in this temporary source render. The saved project and playback graph are never
+/// modified.
+pub fn render_freeze_track_to_pcm24_wav(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    track_id: aaadaw_core::TrackId,
+    destination: impl AsRef<Path>,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(u64, u64), OfflineRenderError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+    let track = project
+        .tracks()
+        .iter()
+        .find(|track| track.id() == track_id)
+        .ok_or_else(|| OfflineRenderError::Media("freeze track no longer exists".into()))?;
+    if track.is_frozen() || track.is_bus() || track.instrument().is_none() {
+        return Err(OfflineRenderError::Media(
+            "only an unfrozen instrument track can be frozen".into(),
+        ));
+    }
+    let midi_items: Vec<_> = project
+        .midi_items()
+        .iter()
+        .filter(|item| item.track_id() == track_id)
+        .collect();
+    if !midi_items.iter().any(|item| !item.notes().is_empty()) {
+        return Err(OfflineRenderError::Media(
+            "track has no MIDI notes to render".into(),
+        ));
+    }
+    let mut start_sample = u64::MAX;
+    let mut content_end = 0_u64;
+    for item in &midi_items {
+        let end_tick = item
+            .start_tick()
+            .checked_add(item.length_ticks())
+            .ok_or(OfflineRenderError::TimelineRange)?;
+        start_sample = start_sample.min(
+            project
+                .sample_at_tick(item.start_tick())
+                .map_err(|_| OfflineRenderError::TimelineRange)?,
+        );
+        content_end = content_end.max(
+            project
+                .sample_at_tick(end_tick)
+                .map_err(|_| OfflineRenderError::TimelineRange)?,
+        );
+    }
+    let tail_frames = u64::from(project.settings().sample_rate())
+        .checked_mul(u64::from(DEFAULT_EFFECT_TAIL_SECONDS))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let end_sample = content_end
+        .checked_add(tail_frames)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let total_frames = end_sample
+        .checked_sub(start_sample)
+        .filter(|frames| *frames > 0)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+
+    let mut snapshot = project.snapshot();
+    snapshot
+        .tracks
+        .retain(|candidate| candidate.id == track_id.value());
+    let source_track = snapshot
+        .tracks
+        .first_mut()
+        .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
+    source_track.output_track_id = None;
+    source_track.volume_db = 0.0;
+    source_track.pan = 0.0;
+    source_track.muted = false;
+    source_track.solo = false;
+    source_track.record_armed = false;
+    source_track.volume_automation.clear();
+    source_track.frozen_audio_item_id = None;
+    snapshot.audio_items.clear();
+    snapshot
+        .midi_items
+        .retain(|item| item.track_id == track_id.value());
+    let source_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+
+    let store = ProjectStore::open(project_path.as_ref())
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let prepared = prepare_audio_playback(&source_project, &store, 16_384, 2_048)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let close = store
+        .close()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let mut prepared = prepared?;
+    close?;
+    prepared
+        .graph()
+        .master_output_safety_controller()
+        .set_guard_enabled(false);
+
+    let mut instrument_owners = Vec::new();
+    let mut instrument_processors = Vec::new();
+    let mut effect_owners = Vec::new();
+    let mut effect_processors = Vec::new();
+    let sample_rate = source_project.settings().sample_rate();
+    let max_block_frames = prepared.graph().max_block_frames();
+    let source_track = &source_project.tracks()[0];
+    let instrument = source_track
+        .instrument()
+        .expect("validated freeze source has an instrument");
+    let max_events = prepared.graph().midi_event_capacity_for_track(track_id);
+    // SAFETY: this saved instrument was assigned through the normal plugin UI.
+    let loaded = unsafe {
+        ClapInstrumentOwner::load_with_state(
+            Path::new(instrument.bundle_path()),
+            instrument.plugin_id(),
+            instrument.state(),
+            sample_rate,
+            max_block_frames,
+            max_events,
+        )
+    }
+    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let (owner, processor) = loaded;
+    instrument_owners.push((owner.instance_id(), owner));
+    instrument_processors.push(TrackInstrumentProcessor::new(track_id, processor));
+    for (chain_index, effect) in source_track.fx_chain().iter().enumerate() {
+        if !effect.is_enabled() {
+            continue;
+        }
+        let parameter_values: Vec<_> = effect.parameter_values().collect();
+        // SAFETY: this saved effect was assigned through the normal plugin UI.
+        let loaded = unsafe {
+            ClapEffectOwner::load_with_state(
+                Path::new(effect.bundle_path()),
+                effect.plugin_id(),
+                effect.state(),
+                &parameter_values,
+                sample_rate,
+                max_block_frames,
+            )
+        };
+        let (owner, processor) = match loaded {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                cleanup_uninstalled_processors(
+                    instrument_owners,
+                    instrument_processors,
+                    effect_owners,
+                    effect_processors,
+                );
+                return Err(OfflineRenderError::Media(error.to_string()));
+            }
+        };
+        effect_owners.push((owner.instance_id(), owner));
+        effect_processors.push(TrackFxProcessor::new(
+            track_id,
+            chain_index,
+            effect.plugin_id(),
+            processor,
+        ));
+    }
+    if cancelled.load(Ordering::Acquire) {
+        cleanup_uninstalled_processors(
+            instrument_owners,
+            instrument_processors,
+            effect_owners,
+            effect_processors,
+        );
+        return Err(OfflineRenderError::Cancelled);
+    }
+    if let Err(error) = prepared
+        .graph_mut()
+        .install_instrument_processors(&source_project, &mut instrument_processors)
+    {
+        cleanup_uninstalled_processors(
+            instrument_owners,
+            instrument_processors,
+            effect_owners,
+            effect_processors,
+        );
+        return Err(OfflineRenderError::Media(error.to_string()));
+    }
+    if let Err(error) = prepared
+        .graph_mut()
+        .install_fx_processors(&source_project, &mut effect_processors)
+    {
+        let _ = prepared.graph_mut().stop_processors_after_offline_render();
+        deactivate_instruments(
+            prepared.graph_mut().take_stopped_instruments(),
+            instrument_owners,
+        );
+        cleanup_uninstalled_processors(Vec::new(), Vec::new(), effect_owners, effect_processors);
+        return Err(OfflineRenderError::Media(error.to_string()));
+    }
+    let result = render_graph_with_waiter(
+        prepared.graph_mut(),
+        RenderRequest {
+            destination: destination.as_ref(),
+            sample_rate,
+            total_frames,
+            start_sample,
+            cancelled,
+        },
+        |_, frames| Ok(frames),
+        || Ok(()),
+        &mut report_progress,
+    );
+    let graph = prepared.graph_mut();
+    let _ = graph.stop_processors_after_offline_render();
+    deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
+    deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
+    result?;
+    Ok((start_sample, total_frames))
+}
+
 fn cleanup_uninstalled_processors(
     mut instrument_owners: Vec<(u64, ClapInstrumentOwner)>,
     instruments: Vec<TrackInstrumentProcessor>,
@@ -467,6 +690,7 @@ fn render_graph_with_waiter(
         destination,
         sample_rate,
         total_frames,
+        start_sample,
         cancelled,
     } = request;
     let mut export =
@@ -477,7 +701,7 @@ fn render_graph_with_waiter(
         "render graphs reject zero block capacity"
     );
     let mut output = vec![[0.0_f32; 2]; block_capacity];
-    graph.transport_mut().seek_sample(0);
+    graph.transport_mut().seek_sample(start_sample);
     graph.transport_mut().start();
     let mut rendered = 0_u64;
     report_progress(rendered, total_frames);

@@ -299,6 +299,9 @@ impl App {
             .map_err(|error| format!("Could not locate the AAADAW helper executable: {error}"))?;
 
         for track in self.project.tracks() {
+            if track.is_frozen() {
+                continue;
+            }
             let Some(instrument) = track.instrument() else {
                 continue;
             };

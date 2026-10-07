@@ -22,7 +22,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 14;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -221,6 +221,11 @@ CREATE TABLE arrangement_fx_lanes (
     height REAL NOT NULL CHECK (height > 0),
     PRIMARY KEY (track_id, chain_index, parameter_id)
 );
+"#;
+
+const MIGRATION_15: &str = r#"
+ALTER TABLE tracks ADD COLUMN frozen_audio_item_id INTEGER
+    CHECK (frozen_audio_item_id IS NULL OR frozen_audio_item_id >= 0);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -2273,6 +2278,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             12 => transaction.execute_batch(MIGRATION_12)?,
             13 => transaction.execute_batch(MIGRATION_13)?,
             14 => transaction.execute_batch(MIGRATION_14)?,
+            15 => transaction.execute_batch(MIGRATION_15)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2313,8 +2319,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -2328,7 +2334,8 @@ fn write_snapshot(
                 track.instrument.as_ref().map(|instrument| &instrument.bundle_path),
                 track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref()),
                 track.is_bus,
-                track.output_track_id.map(to_sql_integer).transpose()?
+                track.output_track_id.map(to_sql_integer).transpose()?,
+                track.frozen_audio_item_id.map(to_sql_integer).transpose()?
             ],
         )?;
     }
@@ -2680,7 +2687,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2699,6 +2706,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, Option<Vec<u8>>>(10)?,
                 row.get::<_, bool>(11)?,
                 row.get::<_, Option<i64>>(12)?,
+                row.get::<_, Option<i64>>(13)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2718,6 +2726,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 instrument_state,
                 is_bus,
                 output_track_id,
+                frozen_audio_item_id,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2750,6 +2759,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     instrument,
                     fx_chain: fx_chains.remove(&id).unwrap_or_default(),
                     volume_automation: volume_automation.remove(&id).unwrap_or_default(),
+                    frozen_audio_item_id: frozen_audio_item_id.map(from_sql_u64).transpose()?,
                 })
             },
         )

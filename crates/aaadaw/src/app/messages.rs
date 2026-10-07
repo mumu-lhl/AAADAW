@@ -286,6 +286,9 @@ pub(crate) enum Message {
     ),
     CancelOfflineRender,
     OfflineRenderFinished(Result<PathBuf, String>),
+    FreezeTrack(TrackId),
+    FreezeTrackFinished(Result<(TrackId, String, u64, u64), String>),
+    UnfreezeTrack(TrackId),
     RecordingRecoveryScanned(
         PathBuf,
         Result<Vec<aaadaw_app::RecordingRecoveryCandidate>, String>,

@@ -29,6 +29,7 @@ pub struct TrackSnapshot {
     pub instrument: Option<TrackInstrumentSnapshot>,
     pub fx_chain: Vec<TrackFxPluginSnapshot>,
     pub volume_automation: Vec<VolumeAutomationPoint>,
+    pub frozen_audio_item_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
