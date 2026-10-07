@@ -386,13 +386,14 @@ impl App {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
-                let error = self
-                    .record_import_tracks
-                    .take()
-                    .and_then(|target| cleanup_recorded_import(&target).err())
-                    .map_or(error.clone(), |cleanup_error| {
-                        format!("{error}; take cleanup failed: {cleanup_error}")
-                    });
+                let cleanup_error = self.record_import_tracks.take().and_then(|target| {
+                    let media_error = cleanup_recorded_import(&target).err();
+                    self.remove_recreated_recording_tracks(&target.recreated_track_ids);
+                    media_error
+                });
+                let error = cleanup_error.map_or(error.clone(), |cleanup_error| {
+                    format!("{error}; take cleanup failed: {cleanup_error}")
+                });
                 tracing::error!(error = %error, "audio import setup failed");
                 self.status = format!("Audio import could not start: {error}");
             }
@@ -400,10 +401,11 @@ impl App {
                 self.import_busy = false;
                 self.import_finalizing = false;
                 self.import_cancel_requested = false;
-                let cleanup_error = self
-                    .record_import_tracks
-                    .take()
-                    .and_then(|target| cleanup_recorded_import(&target).err());
+                let cleanup_error = self.record_import_tracks.take().and_then(|target| {
+                    let media_error = cleanup_recorded_import(&target).err();
+                    self.remove_recreated_recording_tracks(&target.recreated_track_ids);
+                    media_error
+                });
                 self.status = "Audio import worker result was unavailable".to_owned();
                 if let Some(error) = cleanup_error {
                     self.status
@@ -758,6 +760,7 @@ impl App {
                         Some(next_start) => next_start,
                         None => {
                             let cleanup_error = cleanup_recorded_import(&target).err();
+                            self.remove_recreated_recording_tracks(&target.recreated_track_ids);
                             self.status = cleanup_error.map_or_else(
                                     || "Recorded take exceeds the project timeline range".to_owned(),
                                     |error| format!("Recorded take exceeded timeline range; cleanup failed: {error}"),
@@ -770,6 +773,7 @@ impl App {
                         let source_path = target.source_paths[target.next_segment_index].clone();
                         let Some(first_track) = target.track_ids.first().copied() else {
                             let cleanup_error = cleanup_recorded_import(&target).err();
+                            self.remove_recreated_recording_tracks(&target.recreated_track_ids);
                             self.status = cleanup_error.map_or_else(
                                 || "No armed tracks remain for this take".to_owned(),
                                 |error| {
@@ -837,7 +841,9 @@ impl App {
                     completed_recording_manifest = Some((
                         target.recovery_manifest_path.clone(),
                         target.project_generation,
+                        target.project_path.clone(),
                         media_refs,
+                        target.recreated_track_ids.clone(),
                     ));
                     (
                         Ok(DawAction::BatchTransaction {
@@ -849,23 +855,26 @@ impl App {
                         )),
                     )
                 }
-                Ok(_) => (
-                    {
-                        Err(cleanup_recorded_import(&target).err().map_or_else(
+                Ok(_) => {
+                    let cleanup_error = cleanup_recorded_import(&target).err();
+                    self.remove_recreated_recording_tracks(&target.recreated_track_ids);
+                    (
+                        Err(cleanup_error.map_or_else(
                             || "recorded take import returned an unexpected action".to_owned(),
                             |error| {
                                 format!("unexpected import result; take cleanup failed: {error}")
                             },
-                        ))
-                    },
-                    None,
-                ),
+                        )),
+                        None,
+                    )
+                }
                 Err(error) => {
                     let error = cleanup_recorded_import(&target)
                         .err()
                         .map_or(error.clone(), |cleanup| {
                             format!("{error}; take cleanup failed: {cleanup}")
                         });
+                    self.remove_recreated_recording_tracks(&target.recreated_track_ids);
                     (Err(error), None)
                 }
             }
@@ -889,17 +898,35 @@ impl App {
                         "Audio imported at the edit cursor"
                     },
                 );
-                if self.revision != previous_revision
-                    && let Some((manifest_path, project_generation, media_refs)) =
-                        completed_recording_manifest
+                if let Some((
+                    manifest_path,
+                    project_generation,
+                    project_path,
+                    media_refs,
+                    recreated_track_ids,
+                )) = completed_recording_manifest
                 {
-                    self.pending_recording_cleanup
-                        .push(super::PendingRecordingCleanup {
-                            manifest_path: manifest_path.clone(),
-                            project_generation,
-                            saved_revision: self.revision,
-                            media_refs,
-                        });
+                    if self.revision != previous_revision {
+                        self.pending_recording_cleanup
+                            .push(super::PendingRecordingCleanup {
+                                manifest_path,
+                                project_generation,
+                                saved_revision: self.revision,
+                                media_refs,
+                            });
+                    } else {
+                        let placement_error = self.status.clone();
+                        let cleanup_error =
+                            aaadaw_app::cleanup_unplaced_audio_assets(&project_path, &media_refs)
+                                .err();
+                        self.remove_recreated_recording_tracks(&recreated_track_ids);
+                        self.status = match cleanup_error {
+                            Some(error) => {
+                                format!("{placement_error}; unplaced audio cleanup failed: {error}")
+                            }
+                            None => placement_error,
+                        };
+                    }
                 }
                 if let Some(media_ref) = new_media_ref {
                     self.audio_asset_source_statuses.insert(
@@ -919,6 +946,25 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    pub(super) fn remove_recreated_recording_tracks(&mut self, track_ids: &[aaadaw_core::TrackId]) {
+        if track_ids.is_empty() {
+            return;
+        }
+        let actions = track_ids
+            .iter()
+            .rev()
+            .copied()
+            .map(|track_id| DawAction::DeleteTrack { track_id })
+            .collect();
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Removed incomplete recovered tracks",
+        );
     }
 }
 

@@ -570,6 +570,7 @@ struct ActiveRecording {
 
 struct RecordImportTarget {
     track_ids: Vec<TrackId>,
+    recreated_track_ids: Vec<TrackId>,
     source_paths: Vec<PathBuf>,
     next_segment_index: usize,
     next_start_sample: u64,
@@ -1157,6 +1158,7 @@ impl App {
         let window_safe_message = matches!(
             &message,
             Message::OpenSettings
+                | Message::OpenClapPluginSettings
                 | Message::OpenRenderWindow
                 | Message::ShowMainWorkspace(_)
                 | Message::OpenTempoMap
@@ -1478,6 +1480,10 @@ impl App {
                 self.active_menu = None;
             }
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenClapPluginSettings => {
+                self.settings_category = SettingsCategory::ClapPlugins;
+                task = self.open_settings();
+            }
             Message::OpenRenderWindow => task = self.open_render_window(),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),

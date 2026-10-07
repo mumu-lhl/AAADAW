@@ -114,6 +114,7 @@ pub(crate) enum Message {
     ShowMainWorkspace(MainWorkspace),
     ToggleMediaBrowserPanel,
     OpenSettings,
+    OpenClapPluginSettings,
     OpenRenderWindow,
     OpenTempoMap,
     OpenMeterMap,

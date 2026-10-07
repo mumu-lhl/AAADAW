@@ -24,10 +24,6 @@ impl App {
             self.status = "Wait for the current operation to finish before recording".to_owned();
             return Task::none();
         }
-        if self.is_dirty() {
-            self.status = "Save the project before recording".to_owned();
-            return Task::none();
-        }
         let Some(project_path) = self.project_path.clone() else {
             self.status = "Save the project before recording".to_owned();
             return Task::none();
@@ -44,6 +40,16 @@ impl App {
             return Task::none();
         }
         let recovery_track_ids = tracks.iter().map(|track| track.value()).collect();
+        let recovery_track_names = tracks
+            .iter()
+            .filter_map(|track_id| {
+                self.project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == *track_id)
+                    .map(|track| track.name().to_owned())
+            })
+            .collect();
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
@@ -124,10 +130,11 @@ impl App {
         };
         Task::perform(
             run_blocking("aaadaw-recording-start", move || {
-                let writer = aaadaw_app::AudioRecordingWorker::start_recoverable(
+                let writer = aaadaw_app::AudioRecordingWorker::start_recoverable_with_track_names(
                     project_path,
                     sample_rate,
                     recovery_track_ids,
+                    recovery_track_names,
                     consumer,
                     control.clone(),
                 );
@@ -572,6 +579,7 @@ impl App {
                 let sample_rate = self.project.settings().sample_rate();
                 self.record_import_tracks = Some(RecordImportTarget {
                     track_ids: tracks,
+                    recreated_track_ids: Vec::new(),
                     source_paths: paths,
                     next_segment_index: 0,
                     next_start_sample: start_sample,

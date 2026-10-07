@@ -24,6 +24,126 @@ static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "audio-device")]
 #[test]
+fn dirty_saved_project_can_start_recording_without_saving_again() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    save_project_file(project_path.clone(), app.project.snapshot(), false)
+        .expect("project should be saved before recording");
+    let saved_revision = app.revision;
+    let _ = app.update(Message::ProjectSaved(
+        project_path,
+        saved_revision,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+    let _ = app.update(Message::ToggleRecordArm(track_id));
+
+    assert!(
+        app.is_dirty(),
+        "arming the track should dirty the saved project"
+    );
+
+    let _ = app.update(Message::StartRecording);
+
+    assert!(
+        app.recording_starting,
+        "recording was rejected: {}",
+        app.status
+    );
+    assert!(app.playback_busy);
+    assert_eq!(app.status, "Preparing playback at sample 0…");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn unsaved_new_track_can_start_recording_without_saving_again() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    save_project_file(project_path.clone(), app.project.snapshot(), false)
+        .expect("project should be saved before recording");
+    let saved_revision = app.revision;
+    let _ = app.update(Message::ProjectSaved(
+        project_path,
+        saved_revision,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+
+    let _ = app.update(Message::AddTrack);
+    let unsaved_track_id = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .next_back()
+        .expect("new track should be available");
+    let _ = app.update(Message::ToggleRecordArm(unsaved_track_id));
+    let _ = app.update(Message::StartRecording);
+
+    assert!(
+        app.recording_starting,
+        "recording was rejected: {}",
+        app.status
+    );
+    assert!(app.playback_busy);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn recovery_recreates_a_newly_armed_track_from_manifest_metadata() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    app.project_path = Some(project_path.clone());
+    let candidate = aaadaw_app::RecordingRecoveryCandidate {
+        manifest_path: directory.path().join("recording.recovery.json"),
+        manifest: aaadaw_app::RecordingRecoveryManifest {
+            version: 1,
+            project_path,
+            sample_rate: 48_000,
+            track_ids: vec![u64::MAX],
+            track_names: vec!["New Audio Track".to_owned()],
+            start_sample: Some(24_000),
+            start_sample_is_estimate: false,
+            stem: "recording".to_owned(),
+            segments: Vec::new(),
+            finalized: false,
+            discarded_frames: 0,
+            discarded_tail_bytes: 0,
+        },
+        segment_paths: vec![directory.path().join("recovered.wav")],
+        recorded_frames: 4,
+        discarded_frames: 0,
+        discarded_tail_bytes: 0,
+    };
+
+    let _task = app.recording_recovery_prepared(Ok(candidate));
+
+    let restored_track = app
+        .project
+        .tracks()
+        .last()
+        .expect("missing recorded track should be restored");
+    assert_eq!(restored_track.name(), "New Audio Track");
+    assert_eq!(
+        app.record_import_tracks
+            .as_ref()
+            .expect("recovery import should be prepared")
+            .track_ids,
+        [restored_track.id()]
+    );
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
 fn unavailable_recording_input_reports_failure_without_inserting_an_item() {
     let mut app = App::default();
     app.project
@@ -1462,6 +1582,16 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
             .binding,
         ""
     );
+}
+
+#[test]
+fn plugin_picker_settings_action_opens_the_clap_settings_category() {
+    let mut app = App::default();
+
+    let _ = app.update(Message::OpenClapPluginSettings);
+
+    assert_eq!(app.settings_category, super::SettingsCategory::ClapPlugins);
+    assert!(app.settings_window_id.is_some());
 }
 
 #[test]
@@ -3931,6 +4061,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     .expect("positive calibration offset should fit the project timeline");
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
+        recreated_track_ids: Vec::new(),
         source_paths: vec![source.clone()],
         next_segment_index: 0,
         next_start_sample: recording_start_sample,
@@ -4132,6 +4263,7 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
     ];
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
+        recreated_track_ids: Vec::new(),
         source_paths,
         next_segment_index: 0,
         next_start_sample: 4_800,
@@ -4225,8 +4357,16 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
         ..App::default()
     };
     let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Recovered track".to_owned(),
+        })
+        .expect("unsaved recovery track should be created");
+    let recreated_track_id = app.project.tracks()[1].id();
     app.record_import_tracks = Some(super::RecordImportTarget {
-        track_ids: vec![track_id],
+        track_ids: vec![recreated_track_id],
+        recreated_track_ids: vec![recreated_track_id],
         source_paths: vec![source_path.clone()],
         next_segment_index: 0,
         next_start_sample: 0,
@@ -4245,11 +4385,83 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
     assert!(source_path.is_file());
     assert!(manifest_path.is_file());
     assert!(app.record_import_tracks.is_none());
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].id(), track_id);
     assert!(app.status.contains("simulated interrupted import"));
 
     for path in [&project_path, &manifest_path, &source_path] {
         let _ = std::fs::remove_file(path);
     }
+}
+
+#[test]
+fn failed_recovery_placement_removes_recreated_tracks() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Saved track".to_owned(),
+        })
+        .expect("saved track should be created");
+    save_project_file(project_path.clone(), project.snapshot(), false)
+        .expect("project should be saved");
+    let invalid_track_id = {
+        let index = project.tracks().len();
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: "Missing track".to_owned(),
+            })
+            .expect("temporary track should be created");
+        let track_id = project.tracks()[index].id();
+        project
+            .apply(DawAction::DeleteTrack { track_id })
+            .expect("temporary track should be removed");
+        track_id
+    };
+    project
+        .apply(DawAction::CreateTrack {
+            index: project.tracks().len(),
+            name: "Restored track".to_owned(),
+        })
+        .expect("recreated track should be created");
+    let recreated_track_id = project.tracks()[1].id();
+    let mut app = App {
+        project,
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    app.record_import_tracks = Some(super::RecordImportTarget {
+        track_ids: vec![invalid_track_id],
+        recreated_track_ids: vec![recreated_track_id],
+        source_paths: vec![directory.path().join("recovered.wav")],
+        next_segment_index: 0,
+        next_start_sample: 0,
+        imported_actions: Vec::new(),
+        project_path,
+        sample_rate: app.project.settings().sample_rate(),
+        recovery_manifest_path: directory.path().join("recording.recovery.json"),
+        project_generation: app.project_generation,
+        recovery_discarded_frames: 0,
+        recovery_discarded_tail_bytes: 0,
+        recovery_start_sample_is_estimate: false,
+    });
+    app.import_busy = true;
+
+    let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id: invalid_track_id,
+        media_ref: "asset://failed-recovery-placement".to_owned(),
+        start_sample: 0,
+        source_offset_samples: 0,
+        length_samples: 48_000,
+    }));
+
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].name(), "Saved track");
+    assert!(app.project.audio_items().is_empty());
+    assert!(app.status.contains("Action failed"));
 }
 
 #[test]
