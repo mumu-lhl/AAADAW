@@ -4145,12 +4145,38 @@ impl App {
             backend = self.playback_name(),
             "playback output device was lost"
         );
+        let resume_sample = route_loss_resume_sample(
+            cfg!(target_os = "android"),
+            self.playback_playing,
+            self.playhead_sample,
+        );
         self.playback_playing = false;
         self.playback_paused = false;
         self.reset_track_meters();
         let cleanup = self.close_playback();
+
+        if let Some(resume_sample) = resume_sample
+            && self.project_path.is_some()
+        {
+            self.playhead_sample = resume_sample;
+            self.status = format!(
+                "Android audio route changed; reopening output and resuming from sample {resume_sample}…"
+            );
+            let recovery = self.prepare_playback(resume_sample, true);
+            return Task::batch([cleanup, recovery]);
+        }
+
         self.status = "System audio output device unavailable after a route change; playback stopped and stream closed. Reconnect or select an output, then start playback again".to_owned();
         cleanup
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn route_loss_resume_sample(
+        is_android: bool,
+        playback_was_running: bool,
+        playhead_sample: u64,
+    ) -> Option<u64> {
+        (is_android && playback_was_running).then_some(playhead_sample)
     }
 
     #[cfg(feature = "audio-device")]

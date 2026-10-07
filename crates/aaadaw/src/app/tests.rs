@@ -153,6 +153,17 @@ fn resetting_track_meters_clears_the_visible_peak_values() {
 
 #[test]
 #[cfg(feature = "audio-device")]
+fn android_route_loss_recovery_only_resumes_active_playback() {
+    assert_eq!(
+        App::route_loss_resume_sample(true, true, 48_000),
+        Some(48_000)
+    );
+    assert_eq!(App::route_loss_resume_sample(true, false, 48_000), None);
+    assert_eq!(App::route_loss_resume_sample(false, true, 48_000), None);
+}
+
+#[test]
+#[cfg(feature = "audio-device")]
 fn output_device_loss_stops_transport_and_clears_track_meters() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
