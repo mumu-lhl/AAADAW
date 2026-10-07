@@ -3271,8 +3271,16 @@ impl App {
             return focus;
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(760.0, 620.0),
-            min_size: Some(iced::Size::new(640.0, 460.0)),
+            size: if cfg!(target_os = "android") {
+                iced::Size::new(420.0, 640.0)
+            } else {
+                iced::Size::new(760.0, 620.0)
+            },
+            min_size: Some(if cfg!(target_os = "android") {
+                iced::Size::new(360.0, 480.0)
+            } else {
+                iced::Size::new(640.0, 460.0)
+            }),
             ..iced::window::Settings::default()
         });
         self.settings_window_id = Some(window_id);

@@ -54,7 +54,7 @@ jobs:
           name: aaadaw-android-debug
           path: android-apk
       - uses: android-actions/setup-android@v4.0.4
-      - name: Launch APK and verify foreground activity
+      - name: Launch APK and verify rendered foreground activity
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -67,25 +67,21 @@ jobs:
           script: |
             adb logcat -c
             timeout 180s sh -c 'attempt=0; while [ "$attempt" -lt 12 ]; do if adb shell cmd package list packages >/dev/null 2>&1 && adb install android-apk/app-debug.apk; then exit 0; fi; adb wait-for-device; sleep 5; attempt=$((attempt + 1)); done; exit 1'
-            adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
-            timeout 120s sh -c 'attempt=0; while [ "$attempt" -lt 90 ]; do pid="$(adb shell pidof org.aaadaw.app 2>/dev/null | tr -d "\r")"; if [ -n "$pid" ]; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1'
-            adb shell pidof org.aaadaw.app || { adb logcat -d -v brief -t 400 | tail -n 300; exit 1; }
-            adb shell input keyevent 3
-            adb shell monkey -p org.aaadaw.app 1
-            sleep 3
             adb shell settings put system font_scale 1.3
-            sleep 2
-            adb shell pidof org.aaadaw.app
+            adb shell am force-stop org.aaadaw.app
+            adb shell am start -W -n org.aaadaw.app/org.aaadaw.app.MainActivity
+            timeout 120s sh -c 'attempt=0; while [ "$attempt" -lt 90 ]; do pid="$(adb shell pidof org.aaadaw.app 2>/dev/null | tr -d "[:space:]")"; case "$pid" in ""|*[!0-9]*) ;; *) exit 0 ;; esac; sleep 1; attempt=$((attempt + 1)); done; exit 1'
+            timeout 60s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { adb shell dumpsys activity activities; adb logcat -d -v threadtime | tail -n 400; exit 1; }
+            sleep 5
             adb shell screencap -p /data/local/tmp/aaadaw-portrait.png
             adb pull /data/local/tmp/aaadaw-portrait.png ./aaadaw-portrait.png
+            python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { adb shell dumpsys activity activities; adb logcat -d -v threadtime | tail -n 400; exit 1; }
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 1
-            sleep 3
-            adb shell pidof org.aaadaw.app
+            sleep 5
+            adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app"
             adb shell settings put system user_rotation 0
             adb shell settings put system font_scale 1.0
-            sleep 2
-            adb shell pidof org.aaadaw.app
       - name: Upload emulator screenshot
         uses: actions/upload-artifact@v4
         with:
