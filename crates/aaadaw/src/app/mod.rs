@@ -216,6 +216,8 @@ struct App {
     pending_project_transition: Option<PendingProjectTransition>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
+    midi_item_name_edits: HashMap<ItemId, String>,
+    midi_item_name_errors: HashMap<ItemId, String>,
     track_volume_edits: HashMap<TrackId, String>,
     track_pan_edits: HashMap<TrackId, String>,
     active_track_draft: Option<(TrackId, TrackDraftField)>,
@@ -1459,6 +1461,8 @@ impl App {
                             | Message::DeleteMidiNotes(..)
                             | Message::SetMidiControllers(..)
                             | Message::DeleteMidiItem(_)
+                            | Message::MidiItemNameChanged(..)
+                            | Message::CommitMidiItemName(_)
                             | Message::NudgeMidiItem(..)
                             | Message::NudgeMidiNote(..)
                             | Message::AdjustMidiNotePitch(..)
@@ -2537,8 +2541,15 @@ impl App {
                 self.apply_edit(action, "C4 MIDI note added");
             }
             Message::DeleteMidiItem(item_id) => {
+                self.midi_item_name_edits.remove(&item_id);
+                self.midi_item_name_errors.remove(&item_id);
                 self.apply_action(DawAction::DeleteMidiItem { item_id }, "MIDI item deleted");
             }
+            Message::MidiItemNameChanged(item_id, name) => {
+                self.midi_item_name_errors.remove(&item_id);
+                self.midi_item_name_edits.insert(item_id, name);
+            }
+            Message::CommitMidiItemName(item_id) => self.commit_midi_item_name(item_id),
             Message::NudgeMidiItem(item_id, direction) => {
                 let action = move_midi_item_by_beat(&self.project, item_id, direction);
                 self.apply_edit(action, "MIDI item moved by one beat");
@@ -3276,6 +3287,7 @@ impl App {
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
             || !self.track_name_edits.is_empty()
+            || !self.midi_item_name_edits.is_empty()
             || !self.track_volume_edits.is_empty()
             || !self.track_pan_edits.is_empty()
     }
@@ -4823,6 +4835,16 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                let live_midi_item_ids = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .map(|item| item.id())
+                    .collect::<HashSet<_>>();
+                self.midi_item_name_edits
+                    .retain(|item_id, _| live_midi_item_ids.contains(item_id));
+                self.midi_item_name_errors
+                    .retain(|item_id, _| live_midi_item_ids.contains(item_id));
                 #[cfg(feature = "audio-device")]
                 if rebuild_playback_graph {
                     self.playback_graph_dirty = true;
@@ -5044,6 +5066,8 @@ impl App {
 
     fn clear_track_draft_state(&mut self) {
         self.track_name_edits.clear();
+        self.midi_item_name_edits.clear();
+        self.midi_item_name_errors.clear();
         self.track_volume_edits.clear();
         self.track_pan_edits.clear();
         self.active_track_draft = None;
@@ -5111,6 +5135,33 @@ impl App {
             }
         }
 
+        let mut first_midi_item_error = None;
+        for item in self.project.midi_items() {
+            let Some(text) = self.midi_item_name_edits.get(&item.id()) else {
+                continue;
+            };
+            match parse_midi_item_name_draft(text) {
+                Ok(name) if name != item.name() => {
+                    actions.push(DawAction::SetMidiItemName {
+                        item_id: item.id(),
+                        name,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    first_midi_item_error = Some((item.id(), error));
+                    break;
+                }
+            }
+        }
+
+        if let Some((item_id, error)) = first_midi_item_error {
+            self.midi_item_name_errors.insert(item_id, error.to_owned());
+            self.status =
+                format!("Cannot save MIDI item name: {error}; correct it or clear the draft");
+            return false;
+        }
+
         if let Some((track_id, field, error)) = first_error {
             self.track_draft_errors
                 .insert((track_id, field), error.to_owned());
@@ -5144,6 +5195,42 @@ impl App {
         }
         self.clear_track_draft_state();
         true
+    }
+
+    fn commit_midi_item_name(&mut self, item_id: ItemId) {
+        let Some(text) = self.midi_item_name_edits.get(&item_id).cloned() else {
+            return;
+        };
+        let name = match parse_midi_item_name_draft(&text) {
+            Ok(name) => name,
+            Err(error) => {
+                self.midi_item_name_errors.insert(item_id, error.to_owned());
+                self.status = error.to_owned();
+                return;
+            }
+        };
+        let Some(current_name) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .map(|item| item.name().to_owned())
+        else {
+            self.midi_item_name_edits.remove(&item_id);
+            self.midi_item_name_errors.remove(&item_id);
+            self.status = "MIDI item no longer exists".to_owned();
+            return;
+        };
+        self.midi_item_name_edits.remove(&item_id);
+        self.midi_item_name_errors.remove(&item_id);
+        if name == current_name {
+            self.status = "MIDI item name unchanged".to_owned();
+            return;
+        }
+        self.apply_action(
+            DawAction::SetMidiItemName { item_id, name },
+            "MIDI item renamed",
+        );
     }
 
     fn commit_track_volume_text(&mut self, track_id: TrackId) {
@@ -6580,6 +6667,17 @@ fn parse_track_name_draft(text: &str) -> Result<String, &'static str> {
     let name = text.trim();
     if name.is_empty() {
         Err("Track name must not be empty")
+    } else {
+        Ok(name.to_owned())
+    }
+}
+
+fn parse_midi_item_name_draft(text: &str) -> Result<String, &'static str> {
+    let name = text.trim();
+    if name.is_empty() {
+        Err("MIDI item name must not be empty")
+    } else if name.chars().count() > 128 {
+        Err("MIDI item name must be 128 characters or fewer")
     } else {
         Ok(name.to_owned())
     }

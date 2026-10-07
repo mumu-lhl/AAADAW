@@ -23,6 +23,7 @@ pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 128.0;
 pub(crate) const FX_AUTOMATION_LANE_HEIGHT: f32 = 24.0;
 const MIN_FX_AUTOMATION_LANE_HEIGHT: f32 = 20.0;
 const MAX_FX_AUTOMATION_LANE_HEIGHT: f32 = 192.0;
+const MAX_MIDI_ITEM_PREVIEW_NOTES: usize = 512;
 pub(crate) const TIMELINE_RULER_HEIGHT: f32 = 32.0;
 pub(crate) const TCP_SCROLL_ID: &str = "aaadaw-tcp-scroll";
 pub(crate) const TIMELINE_SCROLL_ID: &str = "aaadaw-timeline-scroll";
@@ -313,9 +314,17 @@ struct TimelineItem {
     kind: ItemKind,
     label: String,
     media_ref: Option<String>,
+    midi_notes: Vec<MidiNotePreview>,
     start_sample: u64,
     length_samples: u64,
     source_offset_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiNotePreview {
+    tick: u64,
+    duration: u64,
+    pitch: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -402,6 +411,7 @@ impl TimelineCache {
                 kind: ItemKind::Audio,
                 label: media_label(item.media_ref()),
                 media_ref: Some(item.media_ref().to_owned()),
+                midi_notes: Vec::new(),
                 start_sample: item.start_sample(),
                 length_samples: item.length_samples(),
                 source_offset_samples: item.source_offset_samples(),
@@ -419,8 +429,24 @@ impl TimelineCache {
                 start_tick: item.start_tick(),
                 end_tick: item.start_tick().saturating_add(item.length_ticks()),
                 kind: ItemKind::Midi,
-                label: "MIDI".to_owned(),
+                label: item.name().to_owned(),
                 media_ref: None,
+                midi_notes: item
+                    .notes()
+                    .iter()
+                    .step_by(
+                        item.notes()
+                            .len()
+                            .div_ceil(MAX_MIDI_ITEM_PREVIEW_NOTES)
+                            .max(1),
+                    )
+                    .take(MAX_MIDI_ITEM_PREVIEW_NOTES)
+                    .map(|note| MidiNotePreview {
+                        tick: note.tick(),
+                        duration: note.duration(),
+                        pitch: note.pitch(),
+                    })
+                    .collect(),
                 start_sample: 0,
                 length_samples: 0,
                 source_offset_samples: 0,
@@ -3580,6 +3606,46 @@ struct ItemLabelsProgram<'a> {
     state: &'a TimelineState,
 }
 
+fn midi_note_preview_geometry<'a>(
+    notes: &'a [MidiNotePreview],
+    item_length: u64,
+    item_left: f32,
+    item_width: f32,
+    top: f32,
+    height: f32,
+) -> impl Iterator<Item = Rectangle> + 'a {
+    let valid_geometry = item_length > 0 && item_width > 0.0 && height > 0.0;
+    let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(0);
+    let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(127);
+    let range = u16::from(highest - lowest);
+    let padded_range = range.max(11);
+    let padding_below = (padded_range - range) / 2;
+    let mut low_pitch = u16::from(lowest).saturating_sub(padding_below);
+    let high_pitch = (low_pitch + padded_range).min(127);
+    low_pitch = high_pitch.saturating_sub(padded_range);
+    let pitch_range = f32::from((high_pitch - low_pitch).max(1));
+    let note_height = (height / f32::from((padded_range + 1).max(12))).clamp(2.0, 6.0);
+
+    notes.iter().filter_map(move |note| {
+        if !valid_geometry {
+            return None;
+        }
+        let note_end = note.tick.saturating_add(note.duration).min(item_length);
+        if note.tick >= item_length || note_end <= note.tick {
+            return None;
+        }
+        let x = item_left + (note.tick as f32 / item_length as f32) * item_width;
+        let right = item_left + (note_end as f32 / item_length as f32) * item_width;
+        let width = (right - x).max(1.25);
+        let pitch_offset = f32::from(high_pitch.saturating_sub(u16::from(note.pitch)));
+        let y = top + (pitch_offset / pitch_range) * (height - note_height).max(0.0);
+        Some(Rectangle::new(
+            Point::new(x, y),
+            Size::new(width.min(item_width), note_height),
+        ))
+    })
+}
+
 impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
     type State = ();
 
@@ -3682,7 +3748,28 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             let right = (i128::from(end_tick) - i128::from(self.state.origin_tick)) as f64
                 * f64::from(self.state.pixels_per_tick);
             let width = right - left;
-            if right < 0.0 || left > f64::from(bounds.width) || width < 54.0 {
+            if right < 0.0 || left > f64::from(bounds.width) || width < 18.0 {
+                continue;
+            }
+            if item.kind == ItemKind::Midi && !item.midi_notes.is_empty() {
+                let preview_top = row.top + 34.0;
+                let preview_height = 50.0_f32.min(row.base_height - 42.0);
+                for note_rect in midi_note_preview_geometry(
+                    &item.midi_notes,
+                    item.end_tick.saturating_sub(item.start_tick),
+                    left as f32,
+                    width as f32,
+                    preview_top,
+                    preview_height,
+                ) {
+                    frame.fill_rectangle(
+                        note_rect.position(),
+                        note_rect.size(),
+                        Color::from_rgb8(195, 222, 153),
+                    );
+                }
+            }
+            if width < 54.0 {
                 continue;
             }
             frame.fill_text(Text {
@@ -3690,7 +3777,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 position: Point::new(
                     (left.max(0.0) + 5.0) as f32,
                     row.top
-                        + if item.media_ref.as_ref().is_some_and(|media_ref| {
+                        + if item.kind == ItemKind::Midi {
+                            20.0
+                        } else if item.media_ref.as_ref().is_some_and(|media_ref| {
                             self.state.audio_waveforms.contains_key(media_ref)
                         }) {
                             16.0
@@ -3853,11 +3942,12 @@ fn media_label(media_ref: &str) -> String {
 mod tests {
     use super::{
         AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT,
-        MiddleDragState, PendingAutomationPoint, PendingTimeSelectionDrag, RulerProgram, SnapGrid,
-        TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
-        TimelineInteractionState, TimelineState, automation_sample_between,
-        fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at, row_at_y,
-        slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+        MiddleDragState, MidiNotePreview, PendingAutomationPoint, PendingTimeSelectionDrag,
+        RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode,
+        TimelineCache, TimelineEvent, TimelineInteractionState, TimelineState,
+        automation_sample_between, fx_automation_band_at_y, fx_automation_lane_resize_target,
+        fx_automation_tick_at, midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport,
+        snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
         DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
@@ -4838,6 +4928,100 @@ mod tests {
         });
         assert!(timeline.selected_tracks.is_empty());
         assert_eq!(timeline.selected_track, None);
+    }
+
+    #[test]
+    fn timeline_cache_keeps_midi_item_names_and_note_preview_content() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiItemName {
+                item_id,
+                name: "Opening theme".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    aaadaw_core::MidiNoteData {
+                        pitch: 60,
+                        tick: 0,
+                        duration: 240,
+                        velocity: 100,
+                    },
+                    aaadaw_core::MidiNoteData {
+                        pitch: 67,
+                        tick: 480,
+                        duration: 360,
+                        velocity: 100,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        let cached = timeline
+            .cache
+            .items
+            .iter()
+            .find(|item| item.id == item_id)
+            .unwrap();
+        assert_eq!(cached.label, "Opening theme");
+        assert_eq!(
+            cached.midi_notes,
+            vec![
+                MidiNotePreview {
+                    tick: 0,
+                    duration: 240,
+                    pitch: 60,
+                },
+                MidiNotePreview {
+                    tick: 480,
+                    duration: 360,
+                    pitch: 67,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn midi_note_preview_geometry_maps_project_time_and_pitch_into_the_clip() {
+        let notes = [
+            MidiNotePreview {
+                tick: 0,
+                duration: 240,
+                pitch: 60,
+            },
+            MidiNotePreview {
+                tick: 480,
+                duration: 240,
+                pitch: 72,
+            },
+        ];
+        let rects =
+            midi_note_preview_geometry(&notes, 960, 100.0, 200.0, 20.0, 48.0).collect::<Vec<_>>();
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0].x, 100.0);
+        assert_eq!(rects[0].width, 50.0);
+        assert_eq!(rects[1].x, 200.0);
+        assert!(rects[0].y > rects[1].y);
+        assert!(rects.iter().all(|rect| (20.0..68.0).contains(&rect.y)));
     }
 
     #[test]

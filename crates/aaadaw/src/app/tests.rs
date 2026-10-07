@@ -24,6 +24,35 @@ use std::time::{Duration, Instant};
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn midi_item_name_draft_commits_as_one_undoable_project_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let original_revision = app.revision;
+
+    let _ = app.update(Message::MidiItemNameChanged(
+        item_id,
+        "  Intro  ".to_owned(),
+    ));
+    assert_eq!(app.project.midi_items()[0].name(), "MIDI");
+    assert_eq!(app.revision, original_revision);
+    assert!(app.is_dirty());
+
+    let _ = app.update(Message::CommitMidiItemName(item_id));
+    assert_eq!(app.project.midi_items()[0].name(), "Intro");
+    assert_eq!(app.revision, original_revision + 1);
+    assert!(app.midi_item_name_edits.is_empty());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].name(), "MIDI");
+
+    let _ = app.update(Message::MidiItemNameChanged(item_id, "Outro".to_owned()));
+    assert!(app.commit_pending_track_drafts());
+    assert_eq!(app.project.midi_items()[0].name(), "Outro");
+}
+
+#[test]
 fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     let mut app = App::default();
     for _ in 0..3 {
