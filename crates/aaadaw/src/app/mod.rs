@@ -254,6 +254,7 @@ struct App {
     fx_parameter_value_edits: HashMap<u32, String>,
     fx_parameter_value_edit_pending: HashSet<u32>,
     midi_editor_window_id: Option<iced::window::Id>,
+    midi_expression_context_menu_epoch: u64,
     midi_editor_item_id: Option<ItemId>,
     midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
@@ -1079,6 +1080,7 @@ impl App {
         };
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
+            iced::event::listen_with(midi_expression_context_menu_event),
             iced::event::listen_with(fx_chain_plugin_drag_event),
             iced::window::close_events().map(Message::WindowClosed),
             iced::window::close_requests().map(Message::WindowCloseRequested),
@@ -1169,6 +1171,18 @@ impl App {
         {
             self.timeline.context_item = None;
             self.timeline.context_item_position = None;
+        }
+        if !preserve_context_targets
+            && !matches!(
+                &message,
+                Message::Timeline(
+                    timeline::TimelineEvent::OpenVolumeAutomationPointMenu { .. }
+                        | timeline::TimelineEvent::OpenFxAutomationPointMenu { .. }
+                ) | Message::Escape
+            )
+        {
+            self.timeline.context_automation_point = None;
+            self.timeline.context_automation_position = None;
         }
         if !preserve_menu_state
             && !matches!(
@@ -2218,6 +2232,12 @@ impl App {
                     task = self.update(message);
                 }
             }
+            Message::DismissMidiExpressionContextMenus(window_id) => {
+                if self.midi_editor_window_id == Some(window_id) {
+                    self.midi_expression_context_menu_epoch =
+                        self.midi_expression_context_menu_epoch.wrapping_add(1);
+                }
+            }
             Message::DismissMainMenu => {
                 self.active_menu = None;
                 self.offline_jobs_panel_open = false;
@@ -2231,10 +2251,13 @@ impl App {
                 } else if self.offline_jobs_panel_open {
                     self.offline_jobs_panel_open = false;
                 } else if self.active_menu.take().is_none() && !self.cancel_active_track_draft() {
-                    if self.timeline.context_item.take().is_some()
-                        || self.timeline.context_track.take().is_some()
-                    {
+                    let dismissed_item_menu = self.timeline.context_item.take().is_some();
+                    let dismissed_track_menu = self.timeline.context_track.take().is_some();
+                    let dismissed_automation_menu =
+                        self.timeline.context_automation_point.take().is_some();
+                    if dismissed_item_menu || dismissed_track_menu || dismissed_automation_menu {
                         self.timeline.context_item_position = None;
+                        self.timeline.context_automation_position = None;
                     } else {
                         self.timeline
                             .handle(timeline::TimelineEvent::ClearTimeSelection);
@@ -6724,6 +6747,18 @@ fn runtime_keyboard_event(
 ) -> Option<Message> {
     matches!(event, iced::Event::Keyboard(_))
         .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
+}
+
+fn midi_expression_context_menu_event(
+    event: iced::Event,
+    _status: iced::event::Status,
+    window_id: iced::window::Id,
+) -> Option<Message> {
+    matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+    )
+    .then_some(Message::DismissMidiExpressionContextMenus(window_id))
 }
 
 fn fx_chain_plugin_drag_event(

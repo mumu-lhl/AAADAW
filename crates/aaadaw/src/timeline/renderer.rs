@@ -36,6 +36,13 @@ pub(super) struct AutomationLane {
     pub(super) points: Vec<(u64, f32)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct AutomationPointPreview {
+    pub(super) track_index: u32,
+    pub(super) tick: u64,
+    pub(super) y: f32,
+}
+
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
     pub(super) generation: u64,
@@ -58,6 +65,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) height: f32,
     pub(super) grid_lines: Vec<(u64, bool)>,
     pub(super) automation_lanes: Vec<AutomationLane>,
+    pub(super) automation_point_preview: Option<AutomationPointPreview>,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -689,6 +697,20 @@ impl Primitive for TimelinePrimitive {
                 item_id: 0,
                 track_index: u32::MAX,
                 kind: if *is_measure { BAR_LINE } else { BEAT_LINE },
+            }));
+        }
+        if let Some(preview) = self.automation_point_preview
+            && let Some(row) = self.row_layout.get(preview.track_index as usize)
+        {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: preview.tick,
+                end_tick: preview.tick,
+                y: row.top + preview.y - 4.0,
+                height: 8.0,
+                color: [255, 238, 174, 255],
+                item_id: 0,
+                track_index: preview.track_index,
+                kind: AUTOMATION_POINT,
             }));
         }
         dynamic.push(GpuRect::new(GpuRectSpec {

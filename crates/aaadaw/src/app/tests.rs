@@ -9,7 +9,7 @@ use super::project_io::{
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
-    midi_editor_shortcut_event, shortcut_message,
+    midi_editor_shortcut_event, midi_expression_context_menu_event, shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -22,6 +22,44 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn left_click_in_midi_editor_dismisses_expression_context_menus_globally() {
+    let midi_editor_window_id = iced::window::Id::unique();
+    let other_window_id = iced::window::Id::unique();
+    let left_click =
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left));
+    let right_click = iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+        iced::mouse::Button::Right,
+    ));
+
+    assert!(matches!(
+        midi_expression_context_menu_event(
+            left_click.clone(),
+            iced::event::Status::Ignored,
+            midi_editor_window_id,
+        ),
+        Some(Message::DismissMidiExpressionContextMenus(window_id))
+            if window_id == midi_editor_window_id
+    ));
+    assert!(
+        midi_expression_context_menu_event(
+            right_click,
+            iced::event::Status::Ignored,
+            midi_editor_window_id,
+        )
+        .is_none()
+    );
+
+    let mut app = App::default();
+    app.midi_editor_window_id = Some(midi_editor_window_id);
+    let _ = app.update(Message::DismissMidiExpressionContextMenus(other_window_id));
+    assert_eq!(app.midi_expression_context_menu_epoch, 0);
+    let _ = app.update(Message::DismissMidiExpressionContextMenus(
+        midi_editor_window_id,
+    ));
+    assert_eq!(app.midi_expression_context_menu_epoch, 1);
+}
 
 #[cfg(feature = "audio-device")]
 #[test]
@@ -947,6 +985,30 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
     assert_eq!(app.timeline.time_selection, None);
     assert_eq!(app.timeline.edit_cursor_tick, 720);
     assert_eq!(app.timeline.selected_track, Some(track_id));
+}
+
+#[test]
+fn escape_dismisses_the_arrangement_automation_point_menu() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.timeline.context_automation_point =
+        Some(crate::timeline::AutomationPointContext::Volume { track_id, index: 0 });
+    app.timeline.context_automation_position = Some((40.0, 70.0));
+
+    let _ = app.update(Message::Escape);
+
+    assert_eq!(app.timeline.context_automation_point, None);
+    assert_eq!(app.timeline.context_automation_position, None);
+
+    app.timeline.context_automation_point =
+        Some(crate::timeline::AutomationPointContext::Volume { track_id, index: 0 });
+    app.timeline.context_automation_position = Some((40.0, 70.0));
+    let _ = app.update(Message::Timeline(
+        crate::timeline::TimelineEvent::SelectEmpty(240),
+    ));
+    assert_eq!(app.timeline.context_automation_point, None);
+    assert_eq!(app.timeline.context_automation_position, None);
 }
 
 #[test]

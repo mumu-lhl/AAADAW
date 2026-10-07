@@ -37,6 +37,7 @@ struct MidiSnap {
     grid: SnapGrid,
     enabled: bool,
     cursor_tick: u64,
+    context_menu_epoch: u64,
 }
 
 impl Default for MidiSnap {
@@ -45,6 +46,7 @@ impl Default for MidiSnap {
             grid: SnapGrid::Sixteenth,
             enabled: true,
             cursor_tick: 0,
+            context_menu_epoch: 0,
         }
     }
 }
@@ -167,6 +169,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         grid: app.timeline.snap_grid,
         enabled: app.timeline.snap_enabled,
         cursor_tick: visible_edit_cursor_tick(app),
+        context_menu_epoch: app.midi_expression_context_menu_epoch,
     };
     let ticks_per_beat = u64::from(app.project.settings().ppq());
     let pitch_canvas = canvas_widget::Canvas::new(PianoRoll {
@@ -184,6 +187,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             grid: app.timeline.snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
+            context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
         playhead_tick,
         region: RollRegion::Pitch,
@@ -350,6 +354,7 @@ fn controller_lane<'a>(
             grid: app.timeline.snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
+            context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
     })
     .width(Length::Fill)
@@ -376,6 +381,7 @@ fn pitch_bend_lane<'a>(
             grid: app.timeline.snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
+            context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
     })
     .width(Length::Fill)
@@ -399,7 +405,19 @@ struct ControllerLane<'a> {
 struct ControllerLaneInteraction {
     drag: Option<ControllerDrag>,
     context_menu: Option<(usize, Point)>,
+    context_menu_epoch: u64,
     modifiers: keyboard::Modifiers,
+}
+
+fn sync_context_menu_epoch(
+    context_menu: &mut Option<(usize, Point)>,
+    current_epoch: &mut u64,
+    next_epoch: u64,
+) {
+    if *current_epoch != next_epoch {
+        *context_menu = None;
+        *current_epoch = next_epoch;
+    }
 }
 
 struct ControllerDrag {
@@ -518,6 +536,11 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        sync_context_menu_epoch(
+            &mut state.context_menu,
+            &mut state.context_menu_epoch,
+            self.snap.context_menu_epoch,
+        );
         if let Some(action) =
             cancel_canvas_drag_on_escape(event, &mut state.drag, Some(&mut state.context_menu))
         {
@@ -757,7 +780,9 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     .with_color(Color::from_rgb8(111, 190, 150)),
             );
         }
-        if let Some((_, origin)) = state.context_menu {
+        if state.context_menu_epoch == self.snap.context_menu_epoch
+            && let Some((_, origin)) = state.context_menu
+        {
             frame.fill_rectangle(
                 origin,
                 Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
@@ -822,6 +847,7 @@ struct PitchBendLane<'a> {
 struct PitchBendLaneInteraction {
     drag: Option<PitchBendDrag>,
     context_menu: Option<(usize, Point)>,
+    context_menu_epoch: u64,
     modifiers: keyboard::Modifiers,
 }
 
@@ -882,6 +908,11 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        sync_context_menu_epoch(
+            &mut state.context_menu,
+            &mut state.context_menu_epoch,
+            self.snap.context_menu_epoch,
+        );
         if let Some(action) =
             cancel_canvas_drag_on_escape(event, &mut state.drag, Some(&mut state.context_menu))
         {
@@ -1128,7 +1159,9 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     .with_color(Color::from_rgb8(128, 165, 226)),
             );
         }
-        if let Some((_, origin)) = state.context_menu {
+        if state.context_menu_epoch == self.snap.context_menu_epoch
+            && let Some((_, origin)) = state.context_menu
+        {
             frame.fill_rectangle(
                 origin,
                 Size::new(CONTROLLER_CONTEXT_WIDTH, CONTROLLER_CONTEXT_HEIGHT),
@@ -2225,6 +2258,17 @@ fn pitch_name(pitch: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_menu_epoch_change_clears_canvas_local_menu() {
+        let mut menu = Some((2, Point::new(16.0, 24.0)));
+        let mut epoch = 4;
+
+        sync_context_menu_epoch(&mut menu, &mut epoch, 5);
+
+        assert!(menu.is_none());
+        assert_eq!(epoch, 5);
+    }
     use iced::widget::canvas::Program;
 
     #[test]
@@ -3054,6 +3098,7 @@ mod tests {
                 grid: SnapGrid::EighthTriplet,
                 enabled: true,
                 cursor_tick: 0,
+                ..MidiSnap::default()
             },
         };
         assert_eq!(mapping.grid_ticks(), 320);
@@ -3099,6 +3144,7 @@ mod tests {
                 grid: SnapGrid::EighthTriplet,
                 enabled: true,
                 cursor_tick: 0,
+                ..MidiSnap::default()
             },
             region: RollRegion::Pitch,
 
@@ -3140,6 +3186,7 @@ mod tests {
             grid: SnapGrid::EighthTriplet,
             enabled: true,
             cursor_tick: 0,
+            ..MidiSnap::default()
         };
         let modifiers_changed = Event::Keyboard(keyboard::Event::ModifiersChanged(
             keyboard::Modifiers::SHIFT,
