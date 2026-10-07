@@ -19,7 +19,7 @@ const MENU_LAYOUT: [MenuLayout; 7] = [
     MenuLayout {
         menu: MainMenu::File,
         button_width: 48.0,
-        popup_width: 360.0,
+        popup_width: 244.0,
     },
     MenuLayout {
         menu: MainMenu::Edit,
@@ -153,20 +153,21 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
             contents = contents.push(wav_export_controls(app));
         }
     }
-    if menu == MainMenu::File
-        && (app.offline_render_busy
-            || !app.offline_job_queue.is_empty()
-            || !app.offline_job_history.is_empty())
-    {
-        contents = contents.push(offline_jobs_controls(app));
-    }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
     }
     contents.into()
 }
 
-fn offline_jobs_controls(app: &App) -> Element<'_, Message> {
+pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
+    let visible_rows = 2
+        + usize::from(app.active_offline_job.is_some())
+        + app
+            .offline_job_queue
+            .len()
+            .max(usize::from(app.offline_job_queue.is_empty()))
+        + app.offline_job_history.len();
+    let panel_height = (46.0 + visible_rows as f32 * 18.0).min(280.0);
     let mut jobs =
         column![rule::horizontal(1), text("Offline jobs").size(11)].spacing(tokens::ROW_GAP);
     if let Some(active) = &app.active_offline_job {
@@ -211,7 +212,18 @@ fn offline_jobs_controls(app: &App) -> Element<'_, Message> {
     for result in &app.offline_job_history {
         jobs = jobs.push(text(result).size(9));
     }
-    jobs.into()
+    container(scrollable(jobs).height(Length::Fixed(panel_height)))
+        .width(Length::Fixed(420.0))
+        .padding(tokens::PANEL_PADDING)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(37, 41, 44).into()),
+            border: Border::default()
+                .color(Color::from_rgb8(83, 91, 96))
+                .width(1.0)
+                .rounded(2.0),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn wav_export_controls(app: &App) -> Element<'_, Message> {

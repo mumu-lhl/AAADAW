@@ -291,6 +291,7 @@ struct App {
     active_offline_job: Option<offline_job_queue::QueuedOfflineJob<audio_export::OfflineRenderJob>>,
     offline_job_queue: offline_job_queue::OfflineJobQueue<audio_export::OfflineRenderJob>,
     offline_job_history: VecDeque<String>,
+    offline_jobs_panel_open: bool,
     wav_export_options: WavExportOptions,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
@@ -1000,6 +1001,7 @@ impl App {
             || recording_active
             || fx_automation_finishing
             || self.offline_render_busy
+            || !self.offline_job_queue.is_empty()
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
             || self.track_mix_gesture.is_some()
@@ -1069,6 +1071,7 @@ impl App {
         if !matches!(
             &message,
             Message::ToggleMainMenu(_)
+                | Message::ToggleOfflineJobsPanel
                 | Message::DismissMainMenu
                 | Message::Escape
                 | Message::ActionQueryChanged(_)
@@ -1106,6 +1109,7 @@ impl App {
                 | Message::ExecuteCommand(commands::CommandId::OpenSettings)
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
+                | Message::ToggleOfflineJobsPanel
                 | Message::WindowClosed(_)
                 | Message::WindowCloseRequested(_)
                 | Message::StartShortcutCapture(_)
@@ -1388,6 +1392,7 @@ impl App {
         match message {
             Message::ToggleMainMenu(menu) => {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
+                self.offline_jobs_panel_open = false;
             }
             Message::ShowMainWorkspace(workspace) => {
                 self.main_workspace = workspace;
@@ -1956,9 +1961,17 @@ impl App {
                     task = self.update(message);
                 }
             }
-            Message::DismissMainMenu => self.active_menu = None,
+            Message::DismissMainMenu => {
+                self.active_menu = None;
+                self.offline_jobs_panel_open = false;
+            }
+            Message::ToggleOfflineJobsPanel => {
+                self.offline_jobs_panel_open = !self.offline_jobs_panel_open;
+            }
             Message::Escape => {
-                if self.active_menu.take().is_none() {
+                if self.offline_jobs_panel_open {
+                    self.offline_jobs_panel_open = false;
+                } else if self.active_menu.take().is_none() {
                     if self.timeline.context_item.take().is_some()
                         || self.timeline.context_track.take().is_some()
                     {
@@ -2512,6 +2525,7 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                let offline_queue_task = self.resume_offline_job_queue();
                 if self
                     .track_mix_commit_at
                     .is_some_and(|deadline| Instant::now() >= deadline)
@@ -2568,6 +2582,7 @@ impl App {
                         self.update_audio_asset_management(),
                     ]);
                 }
+                task = Task::batch([offline_queue_task, task]);
             }
             Message::MeterTick => {
                 #[cfg(feature = "audio-device")]

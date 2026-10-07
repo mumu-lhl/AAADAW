@@ -39,11 +39,17 @@ impl OfflineRenderJob {
 
 impl App {
     pub(super) fn offline_job_submission_allowed(&self) -> bool {
+        #[cfg(feature = "audio-device")]
+        let recording_active =
+            self.recording.is_some() || self.recording_starting || self.recording_stopping;
+        #[cfg(not(feature = "audio-device"))]
+        let recording_active = false;
         let active_freeze_owns_io = self
             .active_offline_job
             .as_ref()
             .is_some_and(|queued| matches!(queued.job.kind, OfflineRenderKind::FreezeTrack { .. }));
-        !self.path_picker_busy
+        !recording_active
+            && !self.path_picker_busy
             && !self.import_busy
             && !self.audio_asset_management_busy
             && (!self.io_busy || active_freeze_owns_io)
@@ -147,6 +153,10 @@ impl App {
     }
 
     fn start_next_offline_job(&mut self) -> Task<Message> {
+        if !self.offline_job_queue.is_empty() && !self.offline_job_submission_allowed() {
+            self.status = "Offline jobs are waiting for the current project operation".to_owned();
+            return Task::none();
+        }
         while let Some(queued) = self.offline_job_queue.pop_front() {
             if let OfflineRenderKind::ProjectWav { destination, .. } = &queued.job.kind
                 && destination == &queued.job.project_path
@@ -265,6 +275,16 @@ impl App {
         self.offline_render_cancel = None;
         self.offline_render_progress = None;
         Task::none()
+    }
+
+    pub(super) fn resume_offline_job_queue(&mut self) -> Task<Message> {
+        if self.offline_render_busy
+            || self.offline_job_queue.is_empty()
+            || !self.offline_job_submission_allowed()
+        {
+            return Task::none();
+        }
+        self.start_next_offline_job()
     }
 
     pub(super) fn remove_queued_offline_job(&mut self, id: u64) {
@@ -525,6 +545,16 @@ mod tests {
     }
 
     #[test]
+    fn offline_jobs_panel_can_be_opened_and_dismissed_with_escape() {
+        let mut app = App::default();
+        let _open_task = app.update(Message::ToggleOfflineJobsPanel);
+        assert!(app.offline_jobs_panel_open);
+
+        let _close_task = app.update(Message::Escape);
+        assert!(!app.offline_jobs_panel_open);
+    }
+
+    #[test]
     fn failed_render_hands_off_to_the_next_queued_job_in_fifo_order() {
         let mut app = App {
             offline_render_busy: true,
@@ -584,6 +614,30 @@ mod tests {
             app.active_offline_job.as_ref().map(|job| job.job.label()),
             Some("Render active.wav")
         );
+    }
+
+    #[test]
+    fn queued_jobs_wait_for_project_io_and_resume_when_it_finishes() {
+        let mut app = App {
+            io_busy: true,
+            ..App::default()
+        };
+        app.offline_job_queue
+            .enqueue(wav_job("Render queued.wav", "queued.wav"))
+            .unwrap();
+
+        let _blocked_task = app.resume_offline_job_queue();
+        assert!(!app.offline_render_busy);
+        assert_eq!(app.offline_job_queue.len(), 1);
+
+        app.io_busy = false;
+        let _started_task = app.resume_offline_job_queue();
+        assert!(app.offline_render_busy);
+        assert_eq!(
+            app.active_offline_job.as_ref().map(|job| job.job.label()),
+            Some("Render queued.wav")
+        );
+        assert!(app.offline_job_queue.is_empty());
     }
 
     #[test]

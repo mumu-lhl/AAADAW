@@ -101,6 +101,7 @@ pub(crate) enum TimeMapTab {
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
     DismissMainMenu,
+    ToggleOfflineJobsPanel,
     Escape,
     NewProject,
     ShowMainWorkspace(MainWorkspace),

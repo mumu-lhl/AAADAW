@@ -182,15 +182,35 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .padding(tokens::PANEL_PADDING)
     .style(iced::widget::container::rounded_box);
-    content = content
-        .push(workspace)
-        .push(text(status_text))
-        .push(transport);
+    let offline_job_count = usize::from(app.offline_render_busy) + app.offline_job_queue.len();
+    let status_row = row![
+        text(status_text).width(Length::Fill),
+        button(text(format!("Jobs · {offline_job_count}")).size(11))
+            .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+            .style(button::secondary)
+            .on_press(Message::ToggleOfflineJobsPanel),
+    ]
+    .spacing(tokens::SECTION_GAP)
+    .align_y(Alignment::Center);
+    content = content.push(workspace).push(status_row).push(transport);
     let base: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
-    let layered = if let Some(active_menu) = app.active_menu {
+    let mut layered = base;
+    if app.offline_jobs_panel_open {
+        let popup = float(menu::offline_jobs_panel(app)).translate(|bounds, viewport| {
+            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+            let target_x = max_x;
+            let target_y = (viewport.y + viewport.height - bounds.height - 76.0).max(viewport.y);
+            iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+        });
+        layered = stack![layered, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    layered = if let Some(active_menu) = app.active_menu {
         let anchor_x = menu::anchor_x(active_menu);
         let popup = float(menu::dropdown(app, active_menu)).translate(move |bounds, viewport| {
             let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
@@ -199,12 +219,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             let target_y = (viewport.y + menu::bar_bottom()).min(max_y);
             iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
         });
-        stack![base, popup]
+        stack![layered, popup]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     } else {
-        base
+        layered
     };
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)

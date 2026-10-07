@@ -63,6 +63,10 @@ impl<T> OfflineJobQueue<T> {
         self.pending.pop_front()
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
     pub(super) fn remove(&mut self, id: OfflineJobId) -> Option<T> {
         let index = self.pending.iter().position(|job| job.id == id)?;
         self.pending.remove(index).map(|job| job.job)
@@ -74,10 +78,6 @@ impl<T> OfflineJobQueue<T> {
 
     pub(super) fn len(&self) -> usize {
         self.pending.len()
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.pending.is_empty()
     }
 
     pub(super) fn remaining_capacity(&self) -> usize {
