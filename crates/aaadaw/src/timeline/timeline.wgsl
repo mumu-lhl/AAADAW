@@ -126,5 +126,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if input.kind == 8u {
         color.a = 0.22;
     }
+    if input.kind == 15u {
+        let edge = input.uv.x <= 0.015 || input.uv.x >= 0.985 || input.uv.y <= 0.025 || input.uv.y >= 0.975;
+        color.a = select(0.18, 0.9, edge);
+    }
     return color;
 }
