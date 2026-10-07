@@ -532,6 +532,7 @@ impl App {
                 let sample_rate = self.project.settings().sample_rate();
                 self.record_import_tracks = Some(RecordImportTarget {
                     track_ids: tracks,
+                    recreated_track_ids: Vec::new(),
                     source_paths: paths,
                     next_segment_index: 0,
                     next_start_sample: start_sample,

@@ -78,6 +78,7 @@ impl App {
             return Task::none();
         };
         let mut track_ids = Vec::with_capacity(candidate.manifest.track_ids.len());
+        let mut recreated_track_ids = Vec::new();
         for (index, raw_id) in candidate.manifest.track_ids.iter().enumerate() {
             if let Some(track) = self
                 .project
@@ -110,6 +111,7 @@ impl App {
                 return Task::none();
             };
             track_ids.push(track_id);
+            recreated_track_ids.push(track_id);
         }
         let Some(first_track) = track_ids.first().copied() else {
             self.status = "No recorded tracks are available for recovery".to_owned();
@@ -133,6 +135,7 @@ impl App {
         }
         self.record_import_tracks = Some(RecordImportTarget {
             track_ids,
+            recreated_track_ids,
             source_paths: candidate.segment_paths,
             next_segment_index: 0,
             next_start_sample: start_sample,

@@ -4040,6 +4040,7 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     .expect("positive calibration offset should fit the project timeline");
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
+        recreated_track_ids: Vec::new(),
         source_paths: vec![source.clone()],
         next_segment_index: 0,
         next_start_sample: recording_start_sample,
@@ -4241,6 +4242,7 @@ fn segmented_recording_import_places_contiguous_segments_in_one_undo_step() {
     ];
     app.record_import_tracks = Some(super::RecordImportTarget {
         track_ids: vec![first_track, second_track],
+        recreated_track_ids: Vec::new(),
         source_paths,
         next_segment_index: 0,
         next_start_sample: 4_800,
@@ -4334,8 +4336,16 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
         ..App::default()
     };
     let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Recovered track".to_owned(),
+        })
+        .expect("unsaved recovery track should be created");
+    let recreated_track_id = app.project.tracks()[1].id();
     app.record_import_tracks = Some(super::RecordImportTarget {
-        track_ids: vec![track_id],
+        track_ids: vec![recreated_track_id],
+        recreated_track_ids: vec![recreated_track_id],
         source_paths: vec![source_path.clone()],
         next_segment_index: 0,
         next_start_sample: 0,
@@ -4354,6 +4364,8 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
     assert!(source_path.is_file());
     assert!(manifest_path.is_file());
     assert!(app.record_import_tracks.is_none());
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].id(), track_id);
     assert!(app.status.contains("simulated interrupted import"));
 
     for path in [&project_path, &manifest_path, &source_path] {

@@ -562,6 +562,7 @@ struct ActiveRecording {
 
 struct RecordImportTarget {
     track_ids: Vec<TrackId>,
+    recreated_track_ids: Vec<TrackId>,
     source_paths: Vec<PathBuf>,
     next_segment_index: usize,
     next_start_sample: u64,
