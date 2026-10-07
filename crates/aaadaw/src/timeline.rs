@@ -4171,8 +4171,7 @@ mod tests {
     #[test]
     fn middle_drag_zooms_vertically_and_pans_horizontally() {
         let mut zoom = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::ZoomAt { factor, anchor_x }) =
-            zoom.update(Point::new(121.0, 48.0))
+        let Some(TimelineEvent::ZoomAt { factor, anchor_x }) = zoom.update(Point::new(121.0, 48.0))
         else {
             panic!("vertical middle drag should zoom");
         };
@@ -4180,9 +4179,7 @@ mod tests {
         assert_eq!(anchor_x, 120.0);
 
         let mut pan = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::PanByPixels(delta_x)) =
-            pan.update(Point::new(160.0, 81.0))
-        else {
+        let Some(TimelineEvent::PanByPixels(delta_x)) = pan.update(Point::new(160.0, 81.0)) else {
             panic!("horizontal middle drag should pan");
         };
         assert_eq!(delta_x, 40.0);
