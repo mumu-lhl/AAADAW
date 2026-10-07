@@ -29,6 +29,7 @@ mod menu;
 mod midi_editor;
 mod mixer;
 mod plugin_picker;
+mod render;
 mod settings;
 mod tempo_map;
 mod tokens;
@@ -74,6 +75,8 @@ pub(super) fn playback_diagnostic_suffix(
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
     if app.settings_window_id == Some(window_id) {
         settings::view(app)
+    } else if app.render_window_id == Some(window_id) {
+        render::view(app)
     } else if app.tempo_map_window_id == Some(window_id) {
         tempo_map::view(app)
     } else if app.fx_chain_window_id == Some(window_id) {

@@ -107,6 +107,7 @@ pub(crate) enum Message {
     ShowMainWorkspace(MainWorkspace),
     ToggleMediaBrowserPanel,
     OpenSettings,
+    OpenRenderWindow,
     OpenTempoMap,
     OpenMeterMap,
     SelectTimeMapTab(TimeMapTab),
