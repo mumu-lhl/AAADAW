@@ -187,7 +187,7 @@ pub(crate) fn midi_port_counts() -> Result<(usize, usize), String> {
             )?
             .l()?;
         let summary = env.cast_local::<JString>(summary)?;
-        let summary: String = env.get_string(&summary)?.into();
+        let summary = summary.try_to_string(env)?;
         let (inputs, outputs) = summary.split_once(',').unwrap_or(("0", "0"));
         Ok((inputs.parse().unwrap_or(0), outputs.parse().unwrap_or(0)))
     })
@@ -248,7 +248,7 @@ fn send_android_midi_messages(messages: &[AndroidMidiOutputMessage]) {
                 .min(i64::MAX as u128) as i64;
             let args = [JValue::Object(bytes.as_ref()), JValue::Long(delay)];
             env.call_method(
-                activity,
+                &activity,
                 jni::jni_str!("sendAndroidMidi"),
                 jni::jni_sig!("([BJ)V"),
                 &args,
