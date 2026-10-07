@@ -425,7 +425,8 @@ fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
     }
     assert!(
         (0.74..0.78).contains(&output[0][0]),
-        "X11 input should trigger the plugin's GLib-integrated event source"
+        "X11 input should trigger the plugin's GLib-integrated event source; observed {}",
+        output[0][0]
     );
 
     x11.destroy_window(window).unwrap().check().unwrap();

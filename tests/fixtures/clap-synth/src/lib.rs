@@ -381,6 +381,7 @@ impl PluginPosixFdImpl for MainThread<'_> {
             match event {
                 x11rb::protocol::Event::Expose(_) => self.gain.store(64, Ordering::Relaxed),
                 x11rb::protocol::Event::KeyPress(_) => {
+                    self.gain.store(80, Ordering::Relaxed);
                     if let Some(signal) = self.glib_signal.borrow_mut().as_mut() {
                         let _ = signal.write_all(&[1]);
                     }
