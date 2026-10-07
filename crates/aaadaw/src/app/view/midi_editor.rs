@@ -1910,7 +1910,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         .with_width(0.8),
                 );
             }
-            if pitch % 12 == 0 && self.pitch_row_height >= 11.0 {
+            if pitch % 12 == 0 {
                 frame.fill_text(Text {
                     content: pitch_name(pitch),
                     position: Point::new(KEY_WIDTH - 5.0, y + self.pitch_row_height / 2.0),
