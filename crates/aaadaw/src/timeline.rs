@@ -145,6 +145,21 @@ pub(crate) enum TimelineEvent {
         y: f32,
     },
     CloseItemContextMenu,
+    OpenVolumeAutomationPointMenu {
+        track_id: TrackId,
+        index: usize,
+        x: f32,
+        y: f32,
+    },
+    OpenFxAutomationPointMenu {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        index: usize,
+        x: f32,
+        y: f32,
+    },
+    CloseAutomationPointMenu,
     ToggleVolumeAutomation(TrackId),
     ToggleFxAutomation {
         track_id: TrackId,
@@ -250,6 +265,20 @@ pub(crate) enum ItemKind {
 pub(crate) struct TimeSelection {
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutomationPointContext {
+    Volume {
+        track_id: TrackId,
+        index: usize,
+    },
+    Fx {
+        track_id: TrackId,
+        chain_index: usize,
+        parameter_id: u32,
+        index: usize,
+    },
 }
 
 impl TimeSelection {
@@ -649,6 +678,8 @@ pub(crate) struct TimelineState {
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
     pub(crate) context_item_position: Option<(f32, f32)>,
+    pub(crate) context_automation_point: Option<AutomationPointContext>,
+    pub(crate) context_automation_position: Option<(f32, f32)>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
     pub(crate) snap_enabled: bool,
     pub(crate) snap_grid: SnapGrid,
@@ -816,6 +847,8 @@ impl Default for TimelineState {
             context_track: None,
             context_item: None,
             context_item_position: None,
+            context_automation_point: None,
+            context_automation_position: None,
             audio_waveforms: HashMap::new(),
             snap_enabled: true,
             snap_grid: SnapGrid::Sixteenth,
@@ -856,6 +889,8 @@ impl TimelineState {
         self.fx_automation_lane_info.clear();
         self.fx_automation_lane_heights.clear();
         self.selected_fx_automation_point = None;
+        self.context_automation_point = None;
+        self.context_automation_position = None;
         self.fx_chain_snapshot.clear();
         self.fx_lane_snapshot.clear();
         self.rebuild(project);
@@ -1285,6 +1320,36 @@ impl TimelineState {
             TimelineEvent::CloseItemContextMenu => {
                 self.context_item = None;
                 self.context_item_position = None;
+            }
+            TimelineEvent::OpenVolumeAutomationPointMenu {
+                track_id,
+                index,
+                x,
+                y,
+            } => {
+                self.context_automation_point =
+                    Some(AutomationPointContext::Volume { track_id, index });
+                self.context_automation_position = Some((x, y));
+            }
+            TimelineEvent::OpenFxAutomationPointMenu {
+                track_id,
+                chain_index,
+                parameter_id,
+                index,
+                x,
+                y,
+            } => {
+                self.context_automation_point = Some(AutomationPointContext::Fx {
+                    track_id,
+                    chain_index,
+                    parameter_id,
+                    index,
+                });
+                self.context_automation_position = Some((x, y));
+            }
+            TimelineEvent::CloseAutomationPointMenu => {
+                self.context_automation_point = None;
+                self.context_automation_position = None;
             }
             TimelineEvent::ToggleVolumeAutomation(track_id) => {
                 if self.volume_automation_tracks.remove(&track_id) {
@@ -1756,6 +1821,7 @@ struct TimelineInteractionState {
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
+    automation_point_preview: Option<AutomationPointPreview>,
     pending_fx_lane_resize: Option<PendingFxAutomationLaneResize>,
 }
 
@@ -1773,6 +1839,13 @@ struct PendingAutomationPoint {
     fx_target: Option<(TrackId, usize, u32)>,
     start_x: f32,
     start_y: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AutomationPointPreview {
+    track_index: u32,
+    tick: u64,
+    y: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1886,6 +1959,86 @@ impl PendingTimeSelectionDrag {
 }
 
 impl TimelineProgram<'_> {
+    fn automation_point_preview(
+        &self,
+        drag: PendingAutomationPoint,
+        position: Point,
+        ignore_snap: bool,
+    ) -> Option<AutomationPointPreview> {
+        let track = self.project.tracks().get(drag.track_index)?;
+        let row = self.row_layout.get(drag.track_index)?;
+        let tick = snap_tick_to_grid(
+            tick_at_x(self.origin_tick, self.pixels_per_tick, position.x),
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+        );
+        let sample = self.project.sample_at_tick(tick).ok()?;
+        if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
+            let plugin = track.fx_chain().get(chain_index)?;
+            let lane = plugin.parameter_automation_for(parameter_id)?;
+            lane.points().get(drag.point_index)?;
+            let min_sample = drag
+                .point_index
+                .checked_sub(1)
+                .map_or(0, |index| lane.points()[index].sample().saturating_add(1));
+            let max_sample = lane
+                .points()
+                .get(drag.point_index + 1)
+                .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
+            let sample = automation_sample_between(sample, min_sample, max_sample)?;
+            let tick = self.project.tick_at_sample(sample).ok()?;
+            let band = self
+                .fx_bands_for_track(track_id)
+                .into_iter()
+                .find(|band| band.target == (track_id, chain_index, parameter_id))?;
+            let range = self
+                .fx_automation_lane_info
+                .get(&(track_id, chain_index, parameter_id))
+                .map(|info| info.value_range)
+                .unwrap_or_else(|| fx_value_range(lane.points().iter().map(|point| point.value())));
+            let lane_top = band.top + 2.0;
+            let lane_bottom = band.top + band.height - 2.0;
+            let row_y = (position.y - row.top).clamp(lane_top, lane_bottom);
+            let value = fx_value_at_y(
+                range,
+                row_y,
+                self.fx_automation_lane_info
+                    .get(&(track_id, chain_index, parameter_id))
+                    .is_some_and(|info| info.stepped),
+                lane_top,
+                lane_bottom,
+            );
+            let y = lane_top
+                + ((range.1 - value) / (range.1 - range.0) * f64::from(lane_bottom - lane_top))
+                    as f32;
+            Some(AutomationPointPreview {
+                track_index: drag.track_index as u32,
+                tick,
+                y,
+            })
+        } else {
+            let points = track.volume_automation();
+            points.get(drag.point_index)?;
+            let min_sample = drag
+                .point_index
+                .checked_sub(1)
+                .map_or(0, |index| points[index].sample().saturating_add(1));
+            let max_sample = points
+                .get(drag.point_index + 1)
+                .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
+            let sample = automation_sample_between(sample, min_sample, max_sample)?;
+            let tick = self.project.tick_at_sample(sample).ok()?;
+            let row_y = (position.y - row.top).clamp(62.0, row.base_height - 1.0);
+            let gain_db = (6.0 - ((row_y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
+            Some(AutomationPointPreview {
+                track_index: drag.track_index as u32,
+                tick,
+                y: 66.0 + (6.0 - gain_db) * (16.0 / 66.0),
+            })
+        }
+    }
+
     fn fx_bands_for_track(&self, track_id: TrackId) -> Vec<FxAutomationBand> {
         fx_automation_bands_for_track(
             track_id,
@@ -1926,6 +2079,12 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
     ) -> Option<shader::Action<crate::app::Message>> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
+            if let Some(drag) = state.pending_automation_point {
+                state.automation_point_preview = cursor.position_in(bounds).and_then(|position| {
+                    self.automation_point_preview(drag, position, state.modifiers.shift())
+                });
+                return Some(shader::Action::request_redraw());
+            }
             return None;
         }
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
@@ -1976,6 +2135,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_time_selection_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
+            let cancel_automation_point = state.pending_automation_point.take().is_some();
+            state.automation_point_preview = None;
             return if cancel_drag {
                 Some(
                     shader::Action::publish(crate::app::Message::Timeline(
@@ -1992,6 +2153,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 )
             } else if cancel_time_selection_drag {
                 Some(shader::Action::capture())
+            } else if cancel_automation_point {
+                Some(shader::Action::request_redraw().and_capture())
             } else {
                 None
             };
@@ -2058,11 +2221,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 {
                     return Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::DeleteFxAutomationPoint {
+                            TimelineEvent::OpenFxAutomationPointMenu {
                                 track_id: track.id(),
                                 chain_index: band.target.1,
                                 parameter_id: band.target.2,
                                 index,
+                                x: position.x,
+                                y: position.y,
                             },
                         ))
                         .and_capture(),
@@ -2083,9 +2248,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 {
                     return Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::DeleteVolumeAutomationPoint {
+                            TimelineEvent::OpenVolumeAutomationPointMenu {
                                 track_id: track.id(),
                                 index,
+                                x: position.x,
+                                y: position.y,
                             },
                         ))
                         .and_capture(),
@@ -2131,8 +2298,12 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
-                } else if state.pending_automation_point.is_some() {
-                    Some(shader::Action::capture())
+                } else if let Some(drag) = state.pending_automation_point {
+                    let preview = cursor.position_in(bounds).and_then(|position| {
+                        self.automation_point_preview(drag, position, state.modifiers.shift())
+                    });
+                    state.automation_point_preview = preview;
+                    Some(shader::Action::request_redraw().and_capture())
                 } else if let Some(mut trim) = state.pending_item_trim {
                     let local_x = position.x - bounds.x;
                     let local_y = position.y - bounds.y;
@@ -2492,6 +2663,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 if state.pending_fx_lane_resize.take().is_some() {
                     Some(shader::Action::capture())
                 } else if let Some(drag) = state.pending_automation_point.take() {
+                    state.automation_point_preview = None;
                     let Some(track) = self.project.tracks().get(drag.track_index) else {
                         return Some(shader::Action::capture());
                     };
@@ -2544,8 +2716,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             let lane_top = band.top + 2.0;
                             let lane_bottom = band.top + band.height - 2.0;
                             let y = (position.y - row.top).clamp(lane_top, lane_bottom);
+                            let Some(sample) =
+                                automation_sample_between(sample, min_sample, max_sample)
+                            else {
+                                return Some(shader::Action::capture());
+                            };
                             if let Some(point) = aaadaw_core::FxParameterAutomationPoint::new(
-                                sample.clamp(min_sample, max_sample),
+                                sample,
                                 fx_value_at_y(
                                     range,
                                     y,
@@ -2586,10 +2763,14 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         let max_sample = points
                             .get(drag.point_index + 1)
                             .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
-                        if let Some(point) = aaadaw_core::VolumeAutomationPoint::new(
-                            sample.clamp(min_sample, max_sample),
-                            gain_db,
-                        ) {
+                        let Some(sample) =
+                            automation_sample_between(sample, min_sample, max_sample)
+                        else {
+                            return Some(shader::Action::capture());
+                        };
+                        if let Some(point) =
+                            aaadaw_core::VolumeAutomationPoint::new(sample, gain_db)
+                        {
                             points[drag.point_index] = point;
                         }
                     }
@@ -2689,7 +2870,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         _cursor: mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
@@ -2845,6 +3026,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             drag_preview: self.drag_preview,
             item_trim_preview: self.item_trim_preview,
             automation_lanes,
+            automation_point_preview: state.automation_point_preview.map(|preview| {
+                renderer::AutomationPointPreview {
+                    track_index: preview.track_index,
+                    tick: preview.tick,
+                    y: preview.y,
+                }
+            }),
             selected_track_index: track_index,
             width: bounds.width,
             height: bounds.height,
@@ -3311,6 +3499,10 @@ fn fx_value_range(values: impl Iterator<Item = f64>) -> (f64, f64) {
     }
 }
 
+fn automation_sample_between(sample: u64, minimum: u64, maximum: u64) -> Option<u64> {
+    (minimum <= maximum).then(|| sample.clamp(minimum, maximum))
+}
+
 fn fx_value_at_y(range: (f64, f64), y: f32, stepped: bool, top: f32, bottom: f32) -> f64 {
     let top = f64::from(top);
     let bottom = f64::from(bottom);
@@ -3402,15 +3594,19 @@ fn media_label(media_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState,
-        PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
-        TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineState,
+        AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT,
+        MiddleDragState, PendingAutomationPoint, PendingTimeSelectionDrag, RulerProgram, SnapGrid,
+        TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
+        TimelineInteractionState, TimelineState, automation_sample_between,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at, row_at_y,
         slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
-    use aaadaw_core::{DawAction, Project, ProjectSettings, TempoCurve, TimeSignature};
+    use aaadaw_core::{
+        DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
+        TrackFxPlugin, VolumeAutomationPoint,
+    };
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
-    use iced::{Event, Point, Rectangle, Size, mouse};
+    use iced::{Event, Point, Rectangle, Size, keyboard, mouse};
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
     use std::sync::Arc;
@@ -3536,6 +3732,285 @@ mod tests {
             ),
             "unexpected blank-area drag event: {message:?}"
         );
+    }
+
+    #[test]
+    fn escape_cancels_a_pending_automation_point_drag_before_release() {
+        let project = Project::new();
+        let timeline = TimelineState::default();
+        let program = timeline.program(&project, None);
+        let mut interaction = TimelineInteractionState {
+            pending_automation_point: Some(PendingAutomationPoint {
+                track_index: 0,
+                point_index: 0,
+                fx_target: None,
+                start_x: 10.0,
+                start_y: 10.0,
+            }),
+            ..TimelineInteractionState::default()
+        };
+        let escape = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &escape,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0)),
+            mouse::Cursor::Available(Point::ORIGIN),
+        )
+        .expect("Escape should cancel the pending automation drag");
+
+        let (message, _, status) = action.into_inner();
+        assert!(
+            message.is_none(),
+            "unexpected drag preview message: {message:?}"
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(interaction.pending_automation_point.is_none());
+        assert!(interaction.automation_point_preview.is_none());
+    }
+
+    #[test]
+    fn dragging_volume_automation_shows_preview_without_mutating_project() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        let sample = project.sample_at_tick(480).unwrap();
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id,
+                points: vec![VolumeAutomationPoint::new(sample, -6.0).unwrap()],
+            })
+            .unwrap();
+        let before = project.snapshot();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let mut interaction = TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(48.0, 69.0)),
+        )
+        .expect("pressing an automation point should begin a drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(160.0, 75.0),
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(160.0, 75.0)),
+        )
+        .expect("moving an automation point should request a preview redraw");
+
+        let (message, _, status) = action.into_inner();
+        assert!(
+            message.is_none(),
+            "unexpected FX drag preview message: {message:?}"
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        let preview = interaction
+            .automation_point_preview
+            .expect("dragging should produce a visible point preview");
+        assert!(preview.tick > 480);
+        assert_eq!(project.snapshot(), before);
+    }
+
+    #[test]
+    fn right_clicking_volume_automation_opens_delete_menu_without_mutation() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        let sample = project.sample_at_tick(480).unwrap();
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id,
+                points: vec![VolumeAutomationPoint::new(sample, -6.0).unwrap()],
+            })
+            .unwrap();
+        let before = project.snapshot();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let mut interaction = TimelineInteractionState::default();
+        let right_click = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &right_click,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0)),
+            mouse::Cursor::Available(Point::new(48.0, 69.0)),
+        )
+        .expect("right-clicking an automation point should open its menu");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::OpenVolumeAutomationPointMenu {
+                    track_id: menu_track,
+                    index: 0,
+                    ..
+                }
+            )) if menu_track == track_id
+        ));
+        assert_eq!(project.snapshot(), before);
+
+        drop(program);
+        timeline.handle(TimelineEvent::OpenVolumeAutomationPointMenu {
+            track_id,
+            index: 0,
+            x: 48.0,
+            y: 69.0,
+        });
+        assert_eq!(
+            timeline.context_automation_point,
+            Some(AutomationPointContext::Volume { track_id, index: 0 })
+        );
+    }
+
+    #[test]
+    fn dragging_fx_automation_shows_preview_without_mutating_project() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![TrackFxPlugin::new("vendor.filter", "/plugins/filter.clap").unwrap()],
+            })
+            .unwrap();
+        let first_sample = project.sample_at_tick(480).unwrap();
+        let second_sample = project.sample_at_tick(960).unwrap();
+        project
+            .apply(DawAction::SetTrackFxParameterAutomation {
+                track_id,
+                chain_index: 0,
+                parameter_id: 7,
+                points: vec![
+                    FxParameterAutomationPoint::new(first_sample, 0.25).unwrap(),
+                    FxParameterAutomationPoint::new(second_sample, 0.75).unwrap(),
+                ],
+            })
+            .unwrap();
+        let before = project.snapshot();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.fx_automation_lanes.insert((track_id, 0, 7));
+        timeline.fx_automation_lane_info.insert(
+            (track_id, 0, 7),
+            super::FxAutomationLaneInfo {
+                name: "Cutoff".to_owned(),
+                value_range: (0.0, 1.0),
+                stepped: false,
+            },
+        );
+        timeline.rebuild_row_layout();
+        assert_eq!(timeline.fx_automation_lanes.len(), 1);
+        assert!(
+            super::fx_automation_band_at_y(
+                track_id,
+                145.0,
+                &timeline.fx_automation_lanes,
+                &timeline.fx_automation_lane_heights,
+            )
+            .is_some()
+        );
+        assert_eq!(
+            super::fx_automation_point_at(
+                &project,
+                0.1,
+                super::FxAutomationTarget {
+                    track_index: 0,
+                    chain_index: 0,
+                    parameter_id: 7,
+                },
+                480,
+                145.0,
+                Some((0.0, 1.0)),
+                (130.0, 150.0),
+            ),
+            Some(0)
+        );
+        let program = timeline.program(&project, None);
+        let mut interaction = TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(48.0, 145.0)),
+        )
+        .expect("pressing an FX automation point should begin a drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(160.0, 138.0),
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(160.0, 138.0)),
+        )
+        .expect("moving an FX automation point should request a preview redraw");
+
+        let (message, _, status) = action.into_inner();
+        assert!(
+            message.is_none(),
+            "unexpected FX drag preview message: {message:?}"
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        let preview = interaction
+            .automation_point_preview
+            .expect("dragging should produce an FX point preview");
+        assert!(preview.tick > 480 && preview.tick <= 960);
+        assert_eq!(project.snapshot(), before);
+    }
+
+    #[test]
+    fn automation_sample_clamping_rejects_a_gap_with_no_available_sample() {
+        assert_eq!(automation_sample_between(8, 4, 9), Some(8));
+        assert_eq!(automation_sample_between(2, 4, 9), Some(4));
+        assert_eq!(automation_sample_between(8, 9, 4), None);
     }
 
     #[test]

@@ -370,6 +370,25 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .spacing(0)
         .width(Length::Fill)
         .height(Length::Fill);
+    if let Some(context) = app.timeline.context_automation_point {
+        let (x, y) = app
+            .timeline
+            .context_automation_position
+            .unwrap_or((0.0, 0.0));
+        let popup =
+            float(automation_point_context_menu(context)).translate(move |bounds, viewport| {
+                let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+                let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+                let target_x = (bounds.x + x).clamp(viewport.x, max_x);
+                let target_y =
+                    (bounds.y + 32.0 + y - app.timeline.vertical_scroll).clamp(viewport.y, max_y);
+                iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+            });
+        return stack![contents, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     let Some(item_id) = app.timeline.context_item else {
         return contents.into();
     };
@@ -386,6 +405,52 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn automation_point_context_menu(
+    context: timeline::AutomationPointContext,
+) -> Element<'static, Message> {
+    let delete_message = match context {
+        timeline::AutomationPointContext::Volume { track_id, index } => {
+            Message::Timeline(TimelineEvent::DeleteVolumeAutomationPoint { track_id, index })
+        }
+        timeline::AutomationPointContext::Fx {
+            track_id,
+            chain_index,
+            parameter_id,
+            index,
+        } => Message::Timeline(TimelineEvent::DeleteFxAutomationPoint {
+            track_id,
+            chain_index,
+            parameter_id,
+            index,
+        }),
+    };
+    container(
+        column![
+            row![
+                text("Automation point").size(12).width(Length::Fill),
+                button("×")
+                    .style(iced::widget::button::text)
+                    .on_press(Message::Timeline(TimelineEvent::CloseAutomationPointMenu))
+                    .padding([super::tokens::SPACING_XS, super::tokens::SPACING_SM]),
+            ]
+            .align_y(Alignment::Center),
+            action_button("Delete point", delete_message),
+        ]
+        .spacing(super::tokens::ROW_GAP),
+    )
+    .width(190)
+    .padding(super::tokens::PANEL_PADDING)
+    .style(|_| container::Style {
+        background: Some(iced::Color::from_rgb8(38, 43, 47).into()),
+        border: iced::Border::default()
+            .color(iced::Color::from_rgb8(91, 100, 106))
+            .width(1.0)
+            .rounded(2.0),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<'a, Message> {
