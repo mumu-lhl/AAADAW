@@ -39,6 +39,7 @@ fn capture_buffer_size(supported: &SupportedBufferSize) -> BufferSize {
 struct CaptureClock {
     origin: Option<StreamInstant>,
     next_frame: Option<u64>,
+    base_frame: u64,
 }
 
 impl CaptureClock {
@@ -54,7 +55,8 @@ impl CaptureClock {
             .as_nanos()
             .checked_mul(u128::from(sample_rate))?
             .checked_add(NANOS_PER_SECOND / 2)?;
-        let first_frame = u64::try_from(numerator / NANOS_PER_SECOND).ok()?;
+        let relative_frame = u64::try_from(numerator / NANOS_PER_SECOND).ok()?;
+        let first_frame = self.base_frame.checked_add(relative_frame)?;
         let end_frame = first_frame.checked_add(u64::try_from(frame_count).ok()?)?;
         if self.next_frame.is_some_and(|next| first_frame < next) {
             return None;
@@ -74,7 +76,9 @@ fn capture_interleaved<T>(
     T: Copy,
     f32: FromSample<T>,
 {
-    if !matches!(input_channels, 1 | 2) || samples.len() % usize::from(input_channels) != 0 {
+    if !matches!(input_channels, 1 | 2)
+        || !samples.len().is_multiple_of(usize::from(input_channels))
+    {
         control.fail_if_enabled();
         return;
     }
@@ -94,7 +98,9 @@ fn capture_interleaved<T>(
         producer.push_frames_at(
             first_frame,
             samples
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|frame| [f32::from_sample(frame[0]), f32::from_sample(frame[1])]),
         );
     }
@@ -117,9 +123,16 @@ fn capture_input<T>(
     if !control.is_enabled() {
         return;
     }
-    if !matches!(input_channels, 1 | 2) || samples.len() % usize::from(input_channels) != 0 {
+    if !matches!(input_channels, 1 | 2)
+        || !samples.len().is_multiple_of(usize::from(input_channels))
+    {
         control.fail_if_enabled();
         return;
+    }
+    if clock.origin.is_none()
+        && let Some(elapsed_frame) = control.elapsed_capture_frames(sample_rate)
+    {
+        clock.base_frame = clock.base_frame.max(elapsed_frame);
     }
     let frame_count = samples.len() / usize::from(input_channels);
     let Some(first_frame) = clock.first_frame(info.timestamp().capture, frame_count, sample_rate)
@@ -134,6 +147,7 @@ fn build_input_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     sample_rate: u32,
+    base_frame: u64,
     mut producer: AudioCaptureProducer,
     control: AudioCaptureControl,
 ) -> Result<cpal::Stream, cpal::Error>
@@ -143,7 +157,10 @@ where
 {
     let error_control = control.clone();
     let input_channels = config.channels;
-    let mut clock = CaptureClock::default();
+    let mut clock = CaptureClock {
+        base_frame,
+        ..CaptureClock::default()
+    };
     device.build_input_stream(
         config,
         move |samples: &[T], info: &InputCallbackInfo| {
@@ -157,7 +174,12 @@ where
                 &control,
             )
         },
-        move |_error| error_control.fail(),
+        move |_error| {
+            #[cfg(target_os = "android")]
+            error_control.mark_device_lost();
+            #[cfg(not(target_os = "android"))]
+            error_control.fail();
+        },
         Some(Duration::from_secs(2)),
     )
 }
@@ -276,53 +298,106 @@ impl CpalAudioInput {
                 is_default_device,
             })?;
         let sample_format = selected.sample_format();
+        let base_frame = producer.base_frame();
         let mut config = selected.with_sample_rate(project_sample_rate).config();
         config.buffer_size = buffer_size;
         let stream = match sample_format {
-            SampleFormat::F32 => {
-                build_input_stream::<f32>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::F64 => {
-                build_input_stream::<f64>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::I8 => {
-                build_input_stream::<i8>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::I16 => {
-                build_input_stream::<i16>(&device, config, project_sample_rate, producer, control)
-            }
+            SampleFormat::F32 => build_input_stream::<f32>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::F64 => build_input_stream::<f64>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::I8 => build_input_stream::<i8>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::I16 => build_input_stream::<i16>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
             SampleFormat::I24 => build_input_stream::<cpal::I24>(
                 &device,
                 config,
                 project_sample_rate,
+                base_frame,
                 producer,
                 control,
             ),
-            SampleFormat::I32 => {
-                build_input_stream::<i32>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::I64 => {
-                build_input_stream::<i64>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::U8 => {
-                build_input_stream::<u8>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::U16 => {
-                build_input_stream::<u16>(&device, config, project_sample_rate, producer, control)
-            }
+            SampleFormat::I32 => build_input_stream::<i32>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::I64 => build_input_stream::<i64>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::U8 => build_input_stream::<u8>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::U16 => build_input_stream::<u16>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
             SampleFormat::U24 => build_input_stream::<cpal::U24>(
                 &device,
                 config,
                 project_sample_rate,
+                base_frame,
                 producer,
                 control,
             ),
-            SampleFormat::U32 => {
-                build_input_stream::<u32>(&device, config, project_sample_rate, producer, control)
-            }
-            SampleFormat::U64 => {
-                build_input_stream::<u64>(&device, config, project_sample_rate, producer, control)
-            }
+            SampleFormat::U32 => build_input_stream::<u32>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
+            SampleFormat::U64 => build_input_stream::<u64>(
+                &device,
+                config,
+                project_sample_rate,
+                base_frame,
+                producer,
+                control,
+            ),
             _unsupported => {
                 return Err(CpalInputError::NoCompatibleConfig {
                     sample_rate: project_sample_rate,

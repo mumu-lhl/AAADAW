@@ -321,6 +321,8 @@ pub(crate) enum Message {
     StopRecording,
     #[cfg(feature = "audio-device")]
     RecordingStarted(super::SharedRecordingStart),
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    RecordingInputReconnected(super::SharedRecordingInputRecovery),
     #[cfg(feature = "audio-device")]
     StandbyInputStarted(TrackId, u64, super::SharedStandbyInput),
     #[cfg(feature = "audio-device")]

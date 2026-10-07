@@ -97,8 +97,11 @@ the Activity moves to the background. The shared service tracks recording and
 playback independently and stops only when both modes end. If an output stream
 is lost while playing, AAADAW closes it and tries to reopen playback at the
 last reported sample. If no output is available, playback stops with an error.
-Input failure safely stops and finalizes the current take; automatic input-route
-recovery remains unimplemented.
+If an input route fails while recording, AAADAW closes the old stream and tries
+to reopen the selected input. The capture writer preserves the outage as silence
+between timestamped audio blocks. If reopening fails, AAADAW finalizes the audio
+captured before the route loss. Gaps longer than ten seconds fail the timing
+check and leave the recoverable recording data available for recovery.
 
 Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:
@@ -119,8 +122,8 @@ GitHub Actions builds ARM64 and x86_64 native libraries, assembles the APK, and
 launches it on an API 35 x86_64 emulator, including relaunch, larger font scale,
 orientation changes, and screenshot capture. This checks packaging and the
 small-screen shell, not physical audio routing or SAF-provider behavior.
-Physical-device checks remain open for SAF providers, route recovery, background
-recording, MIDI devices, system bars, and screen/font scaling.
+Physical-device checks remain open for SAF providers, route recovery behavior,
+background recording, MIDI devices, system bars, and screen/font scaling.
 
 ## Packaging status
 

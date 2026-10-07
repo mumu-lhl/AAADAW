@@ -355,6 +355,8 @@ struct App {
     #[cfg(feature = "audio-device")]
     recording_tracks: Vec<TrackId>,
     #[cfg(feature = "audio-device")]
+    recording_notice: Option<String>,
+    #[cfg(feature = "audio-device")]
     standby_monitor_track: Option<TrackId>,
     #[cfg(feature = "audio-device")]
     standby_monitor_starting: bool,
@@ -552,7 +554,7 @@ struct PendingAudioImport {
 
 #[cfg(feature = "audio-device")]
 struct ActiveRecording {
-    input: RunningAudioInput,
+    input: Option<RunningAudioInput>,
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
     placement_correction: audio_config::RecordingPlacementCorrection,
@@ -588,6 +590,12 @@ pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, 
 
 #[cfg(feature = "audio-device")]
 #[derive(Clone)]
+pub(super) struct SharedRecordingInputRecovery(
+    Arc<Mutex<Option<Result<RunningAudioInput, String>>>>,
+);
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone)]
 pub(super) struct SharedStandbyInput(
     Arc<Mutex<Option<Result<aaadaw_app::StandbyAudioInput, String>>>>,
 );
@@ -603,6 +611,13 @@ impl std::fmt::Debug for SharedStandbyInput {
 impl std::fmt::Debug for SharedRecordingStart {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingStart(..)")
+    }
+}
+
+#[cfg(feature = "audio-device")]
+impl std::fmt::Debug for SharedRecordingInputRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingInputRecovery(..)")
     }
 }
 
@@ -2638,7 +2653,7 @@ impl App {
                     } else {
                         Task::none()
                     };
-                    let background_tasks = if recording_failed {
+                    let mut background_tasks = if recording_failed {
                         Task::batch([
                             self.stop_recording(),
                             self.update_audio_import(),
@@ -2650,6 +2665,13 @@ impl App {
                             self.update_audio_asset_management(),
                         ])
                     };
+                    #[cfg(target_os = "android")]
+                    if !recording_failed {
+                        background_tasks = Task::batch([
+                            background_tasks,
+                            self.recover_recording_input_if_needed(),
+                        ]);
+                    }
                     task = Task::batch([cleanup_output, background_tasks]);
                 }
                 #[cfg(not(feature = "audio-device"))]
@@ -2877,6 +2899,10 @@ impl App {
             Message::StopRecording => task = self.stop_recording(),
             #[cfg(feature = "audio-device")]
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::RecordingInputReconnected(result) => {
+                task = self.finish_recording_input_recovery(result);
+            }
             #[cfg(feature = "audio-device")]
             Message::StandbyInputStarted(track_id, generation, result) => {
                 task = self.finish_standby_input_start(track_id, generation, result);

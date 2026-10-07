@@ -41,7 +41,7 @@ fn convert_stereo_output<T>(output: &mut [T], frames: &[[f32; 2]])
 where
     T: Sample + FromSample<f32>,
 {
-    for (out, frame) in output.chunks_exact_mut(2).zip(frames) {
+    for (out, frame) in output.as_chunks_mut::<2>().0.iter_mut().zip(frames) {
         out[0] = T::from_sample(frame[0]);
         out[1] = T::from_sample(frame[1]);
     }
@@ -135,10 +135,10 @@ impl Callback {
                             .callback_errors
                             .fetch_add(failures as u64, Ordering::Relaxed);
                     }
-                    if let Some(retired) = self.graph.replace(graph) {
-                        if let Err(PushError::Full(retired)) = self.retired.push(retired) {
-                            self.pending_retired = Some(retired);
-                        }
+                    if let Some(retired) = self.graph.replace(graph)
+                        && let Err(PushError::Full(retired)) = self.retired.push(retired)
+                    {
+                        self.pending_retired = Some(retired);
                     }
                 }
                 Command::Shutdown => {
@@ -185,7 +185,7 @@ impl Callback {
             graph.transport_mut().stop();
             return;
         }
-        if output.len() % 2 != 0 || output.len() / 2 > self.scratch.len() {
+        if !output.len().is_multiple_of(2) || output.len() / 2 > self.scratch.len() {
             self.counters
                 .callback_errors
                 .fetch_add(1, Ordering::Relaxed);
