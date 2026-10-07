@@ -1,4 +1,4 @@
-use super::super::commands::{CommandEntry, CommandId};
+use super::super::commands::CommandEntry;
 use super::super::{App, MainMenu, Message, commands};
 use super::tokens;
 use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};

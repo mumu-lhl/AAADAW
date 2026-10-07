@@ -74,7 +74,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .offline_render_progress
         .as_ref()
         .and_then(|progress| progress.try_lock().ok().map(|value| *value))
-        .filter(|progress| progress.1 > 0)
+        && progress.1 > 0
     {
         contents = contents.push(
             text(format!(
