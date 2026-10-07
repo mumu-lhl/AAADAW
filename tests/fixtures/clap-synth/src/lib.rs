@@ -214,6 +214,13 @@ impl PluginGuiImpl for MainThread<'_> {
                 .register_fd(&self.host, connection.stream().as_raw_fd(), FdFlags::READ)
                 .map_err(|_| PluginError::Message("POSIX fd registration failed"))?;
             posix_fd
+                .modify_fd(
+                    &self.host,
+                    connection.stream().as_raw_fd(),
+                    FdFlags::READ | FdFlags::WRITE,
+                )
+                .map_err(|_| PluginError::Message("POSIX fd modification failed"))?;
+            posix_fd
                 .modify_fd(&self.host, connection.stream().as_raw_fd(), FdFlags::READ)
                 .map_err(|_| PluginError::Message("POSIX fd modification failed"))?;
             let (mut reader, writer) =
@@ -245,6 +252,10 @@ impl PluginGuiImpl for MainThread<'_> {
 
     fn destroy(&self) {
         #[cfg(target_os = "linux")]
+        if std::thread::current().id() != self.main_thread_id {
+            self.gain.store(0, Ordering::Relaxed);
+        }
+        #[cfg(target_os = "linux")]
         if let Some(source) = self.glib_fd_source.borrow_mut().take() {
             source.remove();
             self.glib_signal.borrow_mut().take();
@@ -252,7 +263,12 @@ impl PluginGuiImpl for MainThread<'_> {
         #[cfg(target_os = "linux")]
         if let Some((connection, _)) = self.editor.borrow().as_ref() {
             if let Some(posix_fd) = self.host_posix_fd {
-                let _ = posix_fd.unregister_fd(&self.host, connection.stream().as_raw_fd());
+                if posix_fd
+                    .unregister_fd(&self.host, connection.stream().as_raw_fd())
+                    .is_err()
+                {
+                    self.gain.store(0, Ordering::Relaxed);
+                }
             }
         }
         #[cfg(target_os = "linux")]
