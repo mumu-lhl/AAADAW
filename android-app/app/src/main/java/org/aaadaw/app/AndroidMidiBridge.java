@@ -172,7 +172,7 @@ final class AndroidMidiBridge implements AutoCloseable {
                                     });
                                     inputPorts.put(key, source);
                                 }
-                            } catch (IOException | IllegalStateException ignored) {
+                            } catch (IllegalStateException ignored) {
                             }
                         } else if (port.getType() == MidiDeviceInfo.PortInfo.TYPE_INPUT) {
                             try {
@@ -180,7 +180,7 @@ final class AndroidMidiBridge implements AutoCloseable {
                                 if (destination != null) {
                                     outputPorts.put(key, destination);
                                 }
-                            } catch (IOException | IllegalStateException ignored) {
+                            } catch (IllegalStateException ignored) {
                             }
                         }
                     }
