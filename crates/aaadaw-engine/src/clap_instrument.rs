@@ -6,9 +6,9 @@
 
 use crate::{MidiEventKind, ScheduledMidiEvent};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
-use clack_extensions::gui::{
-    GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui,
-};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use clack_extensions::gui::{GuiApiType, GuiConfiguration};
+use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl, PluginGui};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 #[cfg(target_os = "linux")]
@@ -557,6 +557,7 @@ impl ClapInstrumentOwner {
     }
 
     fn apply_floating_gui(&mut self, open: bool, parent: u64) -> u32 {
+        let _ = parent;
         let Some(instance) = self.instance.as_mut() else {
             return 3;
         };
@@ -623,10 +624,6 @@ impl ClapInstrumentOwner {
             }
             1
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        {
-            2
-        }
     }
 
     pub(crate) fn service_gui_host_callbacks(&mut self) -> Option<u32> {
@@ -660,7 +657,8 @@ impl ClapInstrumentOwner {
     }
 
     /// Services callbacks requested by the plugin on its main thread.
-    pub(crate) fn service_main_thread_callback(&mut self) {
+    /// Runs a callback requested by the plugin on the CLAP main thread.
+    pub fn service_main_thread_callback(&mut self) {
         if let Some(instance) = self.instance.as_mut() {
             let callback_requested = instance.access_shared_handler(|shared| {
                 shared.callback_requested.swap(false, Ordering::AcqRel)

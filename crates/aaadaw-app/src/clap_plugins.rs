@@ -23,6 +23,7 @@ pub struct ClapPluginScanReport {
 
 /// Returns the standard CLAP paths for this platform plus paths from `CLAP_PATH`.
 pub fn default_clap_search_paths() -> Vec<PathBuf> {
+    #[allow(unused_mut)]
     let mut paths = env::var_os("CLAP_PATH")
         .map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();

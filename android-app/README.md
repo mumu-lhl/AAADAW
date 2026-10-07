@@ -8,20 +8,24 @@ staged in app-private storage while open and copied back to the selected URI
 after save/render.
 
 Requirements: JDK 17, Android SDK platform 35, Android NDK, Rust target
-`aarch64-linux-android`, `cargo-ndk`, and Gradle 8.11 or newer.
+`aarch64-linux-android`, optional `x86_64-linux-android` for emulator builds,
+`cargo-ndk`, and Gradle 8.11 or newer.
 
 From the repository root, build the native library and copy it into the APK
 source set for each ABI you build:
 
 ```sh
-cargo ndk -t arm64-v8a -p 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
+ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar" cargo ndk -t arm64-v8a -P 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
 cd android-app
 gradle assembleDebug
 ```
 
 The manifest declares the NativeActivity, microphone permission, and recording
 service. `MainActivity` streams local staged files to SAF URIs without loading
-large exports into memory. Android external MIDI device support and Android
-CLAP plugin scanning/hosting are not implemented. Validate file providers,
-audio routes, background recording, system bars, and screen/font scaling on a
-physical ARM64 device before distributing a release build.
+large exports into memory. Import Android ARM64 `.clap` libraries through
+Settings; AAADAW scans and hosts imported plugins in-process. Native plugin code
+can crash the app, so import trusted libraries only. Android external MIDI
+input/output is not implemented yet. CI builds ARM64 and x86_64 APK libraries
+and launches the app on an API 35 emulator. Validate SAF providers, audio routes,
+background recording, MIDI devices, system bars, screen rotation, and font
+scaling on a physical ARM64 device before distributing a release build.

@@ -72,6 +72,29 @@ pub(crate) fn stage_picked_file(
     Ok(destination)
 }
 
+pub(crate) fn stage_clap_plugin_file(
+    file: robius_file_picker::PickedFile,
+) -> Result<PathBuf, String> {
+    let file_name = safe_file_name(file.file_name().unwrap_or("plugin.clap"));
+    if Path::new(&file_name)
+        .extension()
+        .is_none_or(|extension| extension != "clap")
+    {
+        return Err("choose an Android ARM64 CLAP plugin with a .clap extension".to_owned());
+    }
+    let local = file
+        .into_local_file()
+        .map_err(|error| format!("could not read selected CLAP plugin: {error}"))?;
+    let directory = app_data_directory()
+        .ok_or_else(|| "Android app data directory is unavailable".to_owned())?
+        .join("plugins");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let destination = unique_path(&directory, &file_name)?;
+    std::fs::copy(local.path(), &destination)
+        .map_err(|error| format!("could not install selected CLAP plugin: {error}"))?;
+    Ok(destination)
+}
+
 pub(crate) fn prepare_saf_save(
     file: robius_file_picker::PickedFile,
     project: bool,

@@ -231,8 +231,10 @@
 - [x] 通过 Android SAF 打开/保存 `.aaadaw` 工程、导入音频和选择 WAV 导出目标；工程在应用私有目录 staging，保存后同步回用户授权的文档 URI（[Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)）。
 - [x] 接入 CPAL Android AAudio 播放/录音，运行时请求麦克风权限，并在录音期间运行带通知的麦克风前台服务。
 - [x] 为小屏触控提供单栏 Arrange、可横向浏览的菜单和轨道选择器、选中轨道/Item Inspector、常用 Transport 控件及放大的音量、声像和轨道按钮。
-- [ ] 接入 Android 外部 MIDI 设备，并实现 Android 可用的 CLAP 插件扫描/宿主；现有隔离 helper 依赖桌面子进程和插件二进制分发。
-- [ ] 用 ARM64 真机验证 SAF、蓝牙/有线耳机路由、麦克风录音、后台录音服务、系统栏和不同屏幕/字体缩放；当前只完成 NDK/Java 编译验证。
+- [x] 接入 Android ARM64 CLAP 插件导入、扫描和进程内乐器/效果宿主；通过 SAF 导入至应用私有目录，插件编辑器窗口暂不支持。
+- [ ] 接入 Android 外部 MIDI 设备输入和输出。
+- [x] 增加 Android GitHub Actions：构建 ARM64/x86_64 原生库和 APK，并在 API 35 x86_64 模拟器启动应用。
+- [ ] 用 ARM64 真机验证 SAF、蓝牙/有线耳机路由、麦克风录音、后台录音服务、系统栏和不同屏幕/字体缩放；模拟器只验证 APK 安装与启动。
 
 ### 音频性能与媒体管线
 

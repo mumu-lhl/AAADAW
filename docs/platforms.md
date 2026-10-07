@@ -97,17 +97,22 @@ Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:
 
 ```sh
-cargo ndk -t arm64-v8a -p 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
+ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar" cargo ndk -t arm64-v8a -P 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
 cd android-app
 gradle assembleDebug
 ```
 
-The APK currently targets ARM64 phones/tablets. Android external MIDI device
-input/output and Android-compatible CLAP discovery/hosting are not implemented;
-the current CLAP helper requires desktop process launching and plugin binaries.
-Real-device validation is also outstanding for file-provider behavior, audio
-routing, background recording, system bars, and screen/font scaling. Android is
-not part of the current GitHub Actions build matrix.
+The APK targets ARM64 phones/tablets and x86_64 emulators. Import an Android ARM64 `.clap` library
+through Settings to copy it into app-private storage. Android scans and hosts
+these plugins in-process; plugin code can crash the app, so install only trusted
+libraries. Android plugin editor windows are not supported. External Android
+MIDI device input/output is not implemented yet.
+
+GitHub Actions builds ARM64 and x86_64 native libraries, assembles the APK, and
+launches it on an API 35 x86_64 emulator. This checks packaging and activity
+startup. Physical-device checks remain open for SAF providers, audio-route
+changes, background recording, MIDI devices, system bars, screen rotation, and
+font scaling.
 
 ## Packaging status
 

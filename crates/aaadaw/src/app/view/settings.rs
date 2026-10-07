@@ -585,10 +585,20 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
 
     column![
         text("CLAP plug-ins").size(17),
-        text("Search configured folders recursively.").size(11),
+        text(if cfg!(target_os = "android") {
+            "Import Android ARM64 .clap libraries into app storage. Only install trusted plugins."
+        } else {
+            "Search configured folders recursively."
+        })
+        .size(11),
         text(super::CLAP_PLUGIN_RISK).size(11),
         row![
-            button("Add search path…").on_press_maybe(
+            button(if cfg!(target_os = "android") {
+                "Import plugin…"
+            } else {
+                "Add search path…"
+            })
+            .on_press_maybe(
                 (!app.clap_plugin_scan_busy)
                     .then_some(Message::PickPath(PathPickerTarget::AddClapPluginPath,))
             ),

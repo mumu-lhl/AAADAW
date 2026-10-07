@@ -16,10 +16,6 @@ use std::sync::{Arc, Mutex};
 impl App {
     #[cfg(target_os = "android")]
     pub(super) fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
-        if matches!(target, PathPickerTarget::AddClapPluginPath) {
-            self.status = "Android CLAP plug-in paths are not supported".to_owned();
-            return Task::none();
-        }
         if self.path_picker_busy {
             self.status = "A document picker is already open".to_owned();
             return Task::none();
@@ -60,7 +56,11 @@ impl App {
                     &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
                 )
                 .pick_file(completion),
-            PathPickerTarget::AddClapPluginPath => unreachable!(),
+            PathPickerTarget::AddClapPluginPath => robius_file_picker::FileDialog::new()
+                .set_title("Install a trusted Android ARM64 CLAP plugin")
+                .set_mime_type("application/octet-stream")
+                .add_filter("Android CLAP plugin", &["clap"])
+                .pick_file(completion),
         };
         if let Err(error) = picker_result {
             self.status = format!("Document picker failed to open: {error}");
@@ -83,6 +83,10 @@ impl App {
                                 file,
                                 matches!(target, PathPickerTarget::SaveProject),
                             )
+                        }
+                        PathPickerTarget::AddClapPluginPath => {
+                            crate::android_platform::stage_clap_plugin_file(file)
+                                .map(|plugin| plugin.parent().unwrap_or(&plugin).to_owned())
                         }
                         _ => crate::android_platform::stage_picked_file(
                             file,
@@ -180,7 +184,19 @@ impl App {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();
                     Task::none()
                 }
-                PathPickerTarget::AddClapPluginPath => self.add_clap_plugin_path(path),
+                PathPickerTarget::AddClapPluginPath => {
+                    #[cfg(target_os = "android")]
+                    {
+                        let _ = path;
+                        self.clap_plugin_settings_feedback =
+                            "Imported Android plugin; scanning app storage".to_owned();
+                        self.start_clap_plugin_scan(true)
+                    }
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        self.add_clap_plugin_path(path)
+                    }
+                }
             },
             Ok(None) => {
                 if self.status == "Wait for the file dialog to finish" {

@@ -163,7 +163,7 @@ fn output_device_loss_stops_transport_and_clears_track_meters() {
     app.playback_playing = true;
     app.playback_paused = true;
 
-    app.handle_playback_device_lost();
+    let _ = app.handle_playback_device_lost();
 
     assert!(!app.playback_playing);
     assert!(!app.playback_paused);

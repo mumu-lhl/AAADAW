@@ -3,22 +3,37 @@ use aaadaw_app::{
     scan_clap_plugins_with_inspector,
 };
 use aaadaw_engine::inspect_clap_plugin_entry;
+#[cfg(not(target_os = "android"))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "android"))]
 use std::ffi::OsStr;
-use std::fs::{self, File};
+#[cfg(not(target_os = "android"))]
+use std::fs;
+#[cfg(not(target_os = "android"))]
+use std::fs::File;
+#[cfg(not(target_os = "android"))]
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
 use std::process::{Command, Stdio};
+#[cfg(not(target_os = "android"))]
 use std::thread;
+#[cfg(not(target_os = "android"))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "android"))]
 pub(crate) const SCAN_COMMAND: &str = "__aaadaw_scan_clap_entry_v1";
+#[cfg(not(target_os = "android"))]
 const PROTOCOL_VERSION: u32 = 1;
+#[cfg(not(target_os = "android"))]
 const MAX_PATH_ARGUMENT_BYTES: usize = 8 * 1024;
+#[cfg(not(target_os = "android"))]
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
+#[cfg(not(target_os = "android"))]
 const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const PROCESS_ERROR_PREFIX: &str = "CLAP scanner process:";
 
+#[cfg(not(target_os = "android"))]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ScanResponse {
@@ -27,6 +42,7 @@ struct ScanResponse {
     error: Option<String>,
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PluginDescriptor {
@@ -44,38 +60,50 @@ pub(crate) fn scan_plugins(
 }
 
 fn inspect_entry(entry_path: &Path) -> Result<Vec<ClapPluginDescriptor>, String> {
-    validate_path_argument(entry_path.as_os_str())?;
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("{PROCESS_ERROR_PREFIX} could not locate AAADAW: {error}"))?;
-    let response_file = tempfile::NamedTempFile::new().map_err(|error| {
-        format!("{PROCESS_ERROR_PREFIX} could not create response file: {error}")
-    })?;
-    let response_path = response_file.into_temp_path();
-    validate_path_argument(response_path.as_os_str())?;
-    let mut command = Command::new(executable);
-    command
-        .arg(SCAN_COMMAND)
-        .arg(entry_path)
-        .arg(&response_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let status = run_child(&mut command)?;
-    if !status.success() {
-        return Err(format!("{PROCESS_ERROR_PREFIX} child exited with {status}"));
+    #[cfg(target_os = "android")]
+    {
+        // SAFETY: Android plugins are copied into app-private storage after an explicit user
+        // import. CLAP entries execute native code, so only install plugins from trusted sources.
+        return unsafe { inspect_clap_plugin_entry(entry_path) }
+            .map_err(|error| format!("Android in-process CLAP scan: {error}"));
     }
-    let metadata = fs::metadata(&response_path)
-        .map_err(|error| format!("{PROCESS_ERROR_PREFIX} response missing: {error}"))?;
-    if metadata.len() > MAX_RESPONSE_BYTES {
-        return Err(format!(
-            "{PROCESS_ERROR_PREFIX} response exceeded {MAX_RESPONSE_BYTES} bytes"
-        ));
+
+    #[cfg(not(target_os = "android"))]
+    {
+        validate_path_argument(entry_path.as_os_str())?;
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("{PROCESS_ERROR_PREFIX} could not locate AAADAW: {error}"))?;
+        let response_file = tempfile::NamedTempFile::new().map_err(|error| {
+            format!("{PROCESS_ERROR_PREFIX} could not create response file: {error}")
+        })?;
+        let response_path = response_file.into_temp_path();
+        validate_path_argument(response_path.as_os_str())?;
+        let mut command = Command::new(executable);
+        command
+            .arg(SCAN_COMMAND)
+            .arg(entry_path)
+            .arg(&response_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let status = run_child(&mut command)?;
+        if !status.success() {
+            return Err(format!("{PROCESS_ERROR_PREFIX} child exited with {status}"));
+        }
+        let metadata = fs::metadata(&response_path)
+            .map_err(|error| format!("{PROCESS_ERROR_PREFIX} response missing: {error}"))?;
+        if metadata.len() > MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "{PROCESS_ERROR_PREFIX} response exceeded {MAX_RESPONSE_BYTES} bytes"
+            ));
+        }
+        let response = fs::read(&response_path)
+            .map_err(|error| format!("{PROCESS_ERROR_PREFIX} response read failed: {error}"))?;
+        decode_response(entry_path, status, response)
     }
-    let response = fs::read(&response_path)
-        .map_err(|error| format!("{PROCESS_ERROR_PREFIX} response read failed: {error}"))?;
-    decode_response(entry_path, status, response)
 }
 
+#[cfg(not(target_os = "android"))]
 fn validate_path_argument(path: &OsStr) -> Result<(), String> {
     if path.to_string_lossy().len() > MAX_PATH_ARGUMENT_BYTES {
         return Err(format!(
@@ -85,6 +113,7 @@ fn validate_path_argument(path: &OsStr) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 fn decode_response(
     entry_path: &Path,
     status: std::process::ExitStatus,
@@ -127,10 +156,12 @@ fn decode_response(
         .collect())
 }
 
+#[cfg(not(target_os = "android"))]
 fn run_child(command: &mut Command) -> Result<std::process::ExitStatus, String> {
     run_child_with_timeout(command, SCAN_TIMEOUT)
 }
 
+#[cfg(not(target_os = "android"))]
 fn run_child_with_timeout(
     command: &mut Command,
     timeout: Duration,
@@ -163,6 +194,7 @@ fn run_child_with_timeout(
     Ok(status)
 }
 
+#[cfg(not(target_os = "android"))]
 pub(crate) fn run_helper(
     entry_path: &OsStr,
     response_path: &OsStr,
@@ -191,11 +223,13 @@ pub(crate) fn run_helper(
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 struct LimitedWriter<W> {
     inner: W,
     remaining: u64,
 }
 
+#[cfg(not(target_os = "android"))]
 impl<W> LimitedWriter<W> {
     fn new(inner: W, limit: u64) -> Self {
         Self {
@@ -205,6 +239,7 @@ impl<W> LimitedWriter<W> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl<W: Write> Write for LimitedWriter<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() as u64 > self.remaining {
@@ -220,6 +255,7 @@ impl<W: Write> Write for LimitedWriter<W> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl From<ClapPluginDescriptor> for PluginDescriptor {
     fn from(plugin: ClapPluginDescriptor) -> Self {
         Self {
@@ -231,7 +267,7 @@ impl From<ClapPluginDescriptor> for PluginDescriptor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
     use std::process::ExitStatus;

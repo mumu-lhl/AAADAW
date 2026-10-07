@@ -933,7 +933,18 @@ impl App {
                     format!("Audio config unavailable; using defaults ({error})");
             }
         }
-        let default_plugin_paths = default_clap_search_paths();
+        #[allow(unused_mut)]
+        let mut default_plugin_paths = default_clap_search_paths();
+        #[cfg(target_os = "android")]
+        if let Some(app_data) = crate::android_platform::app_data_directory() {
+            let plugin_directory = app_data.join("plugins");
+            if let Err(error) = std::fs::create_dir_all(&plugin_directory) {
+                app.clap_plugin_warnings
+                    .push(format!("Could not create Android CLAP directory: {error}"));
+            } else {
+                default_plugin_paths.push(plugin_directory);
+            }
+        }
         app.clap_plugin_default_paths = default_plugin_paths.iter().cloned().collect();
         app.clap_plugin_paths = default_plugin_paths;
         let mut plugin_settings_warnings = Vec::new();
@@ -2599,14 +2610,23 @@ impl App {
                     if let Some(change) = self.pending_fx_parameter_sync {
                         self.sync_fx_parameter_change(change);
                     }
-                    self.update_playback_stats();
+                    #[cfg(target_os = "android")]
+                    for owner in self.clap_instrument_owners.values_mut() {
+                        owner.service_main_thread_callback();
+                    }
+                    let output_device_lost = self.update_playback_stats();
                     let recording_failed = self
                         .recording
                         .as_ref()
                         .is_some_and(|recording| recording.control.has_failed())
                         && !self.recording_stopping;
                     self.update_audio_waveforms();
-                    task = if recording_failed {
+                    let cleanup_output = if output_device_lost {
+                        self.handle_playback_device_lost()
+                    } else {
+                        Task::none()
+                    };
+                    let background_tasks = if recording_failed {
                         Task::batch([
                             self.stop_recording(),
                             self.update_audio_import(),
@@ -2618,6 +2638,7 @@ impl App {
                             self.update_audio_asset_management(),
                         ])
                     };
+                    task = Task::batch([cleanup_output, background_tasks]);
                 }
                 #[cfg(not(feature = "audio-device"))]
                 {
@@ -4027,7 +4048,7 @@ impl App {
     }
 
     #[cfg(feature = "audio-device")]
-    fn update_playback_stats(&mut self) {
+    fn update_playback_stats(&mut self) -> bool {
         let (retired_instruments, retired_effects, output_device_lost) =
             if let Some(playback) = self.playback.as_mut() {
                 let stats = playback.stats();
@@ -4115,13 +4136,11 @@ impl App {
             self.status.push_str("; ");
             self.status.push_str(&new_helper_failures.join("; "));
         }
-        if output_device_lost {
-            self.handle_playback_device_lost();
-        }
+        output_device_lost
     }
 
     #[cfg(feature = "audio-device")]
-    fn handle_playback_device_lost(&mut self) {
+    fn handle_playback_device_lost(&mut self) -> Task<Message> {
         tracing::error!(
             backend = self.playback_name(),
             "playback output device was lost"
@@ -4129,7 +4148,9 @@ impl App {
         self.playback_playing = false;
         self.playback_paused = false;
         self.reset_track_meters();
-        self.status = "System audio output device unavailable; playback stopped. Close playback and reopen it after selecting an available device".to_owned();
+        let cleanup = self.close_playback();
+        self.status = "System audio output device unavailable after a route change; playback stopped and stream closed. Reconnect or select an output, then start playback again".to_owned();
+        cleanup
     }
 
     #[cfg(feature = "audio-device")]
