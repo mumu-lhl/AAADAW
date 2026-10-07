@@ -50,9 +50,7 @@ impl MidiInputMessage {
         let channel_message = self.status & 0xF0;
         let (kind, pitch, velocity, controller, pitch_bend) = match channel_message {
             0x80 => (MidiEventKind::NoteOff, self.data1, self.data2, None, None),
-            0x90 if self.data2 == 0 => {
-                (MidiEventKind::NoteOff, self.data1, 0, None, None)
-            }
+            0x90 if self.data2 == 0 => (MidiEventKind::NoteOff, self.data1, 0, None, None),
             0x90 => (MidiEventKind::NoteOn, self.data1, self.data2, None, None),
             0xB0 => (
                 MidiEventKind::ControllerChange,

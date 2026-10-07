@@ -1,7 +1,7 @@
 use crate::AudioRenderGraph;
-#[cfg(target_os = "android")]
-use crate::{MidiEventKind, ScheduledMidiEvent, MIDI_INPUT_EVENTS_PER_BLOCK};
 use crate::cpal_common::is_supported_pcm_format;
+#[cfg(target_os = "android")]
+use crate::{MIDI_INPUT_EVENTS_PER_BLOCK, MidiEventKind, ScheduledMidiEvent};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -143,12 +143,8 @@ struct Callback {
 impl Callback {
     #[cfg(target_os = "android")]
     fn send_midi_panic(&mut self) {
-        const RESET_MESSAGES: [(u8, u8, u8); 4] = [
-            (0xB0, 64, 0),
-            (0xB0, 120, 0),
-            (0xB0, 123, 0),
-            (0xE0, 0, 64),
-        ];
+        const RESET_MESSAGES: [(u8, u8, u8); 4] =
+            [(0xB0, 64, 0), (0xB0, 120, 0), (0xB0, 123, 0), (0xE0, 0, 64)];
         for channel in 0..16 {
             for (status, data1, data2) in RESET_MESSAGES {
                 if self

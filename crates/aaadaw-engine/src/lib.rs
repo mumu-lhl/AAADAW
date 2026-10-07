@@ -66,6 +66,8 @@ pub use cpal_input::{
     CpalAudioInput, CpalInputDeviceInfo, CpalInputError,
     enumerate_input_devices as enumerate_cpal_input_devices,
 };
+#[cfg(all(feature = "cpal-backend", target_os = "android"))]
+pub use cpal_output::{AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver};
 #[cfg(all(
     feature = "cpal-backend",
     any(target_os = "windows", target_os = "macos", target_os = "android")
@@ -73,10 +75,6 @@ pub use cpal_input::{
 pub use cpal_output::{
     CpalAudioOutput, CpalOutputDeviceInfo, CpalOutputError, CpalOutputStats,
     enumerate_output_devices as enumerate_cpal_output_devices,
-};
-#[cfg(all(feature = "cpal-backend", target_os = "android"))]
-pub use cpal_output::{
-    AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver,
 };
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};
@@ -2573,7 +2571,8 @@ impl AudioRenderGraph {
 
         let was_playing = self.transport.is_playing();
         let chase_generation = self.transport.chase_generation();
-        let midi_is_processed = !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
+        let midi_is_processed =
+            !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
         let midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
             let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
                 != Some(block_start_sample)
@@ -2786,13 +2785,9 @@ impl AudioRenderGraph {
                 }
             }
         }
-        for route in self
-            .instruments
-            .iter_mut()
-            .filter(|route| {
-                block.is_playing || (!midi_input.is_empty() && route.isolated_reader.is_none())
-            })
-        {
+        for route in self.instruments.iter_mut().filter(|route| {
+            block.is_playing || (!midi_input.is_empty() && route.isolated_reader.is_none())
+        }) {
             self.track_has_stereo_input[route.track_index] = true;
             if route.isolated_reader.is_none() {
                 route.midi_events.clear();

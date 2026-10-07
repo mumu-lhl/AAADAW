@@ -1,9 +1,9 @@
-use android_activity::AndroidApp;
 use aaadaw_core::{NoteId, TrackId};
 use aaadaw_engine::{
     AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver, MidiEventKind,
     MidiInputDecoder,
 };
+use android_activity::AndroidApp;
 use jni::JavaVM;
 use jni::objects::{Global, JByteArray, JObject, JString, JValue};
 use std::collections::HashMap;
@@ -107,9 +107,8 @@ fn midi_input_worker(commands: mpsc::Receiver<Option<CpalMidiInputSender>>) {
                             }
                             MidiEventKind::NoteOff => {
                                 if let Some(note_id) = event.note_id {
-                                    event.track_id = active_note_tracks
-                                        .remove(&note_id)
-                                        .unwrap_or(track_id);
+                                    event.track_id =
+                                        active_note_tracks.remove(&note_id).unwrap_or(track_id);
                                 }
                             }
                             MidiEventKind::ControllerChange | MidiEventKind::PitchBend => {}
@@ -179,12 +178,14 @@ pub(crate) fn midi_port_counts() -> Result<(usize, usize), String> {
     vm.attach_current_thread(|env| -> jni::errors::Result<(usize, usize)> {
         let raw_activity = app.activity_as_ptr().cast();
         let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
-        let summary = env.call_method(
-            activity,
-            jni::jni_str!("androidMidiPortSummary"),
-            jni::jni_sig!("()Ljava/lang/String;"),
-            &[],
-        )?.l()?;
+        let summary = env
+            .call_method(
+                activity,
+                jni::jni_str!("androidMidiPortSummary"),
+                jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
         let summary = JString::from(summary);
         let summary: String = env.get_string(&summary)?.into();
         let (inputs, outputs) = summary.split_once(',').unwrap_or(("0", "0"));
@@ -200,12 +201,14 @@ fn drain_midi_input_packets() -> Result<Vec<Vec<u8>>, String> {
         .attach_current_thread(|env| -> jni::errors::Result<Vec<u8>> {
             let raw_activity = app.activity_as_ptr().cast();
             let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
-            let packed = env.call_method(
-                activity,
-                jni::jni_str!("drainAndroidMidiInput"),
-                jni::jni_sig!("()[B"),
-                &[],
-            )?.l()?;
+            let packed = env
+                .call_method(
+                    activity,
+                    jni::jni_str!("drainAndroidMidiInput"),
+                    jni::jni_sig!("()[B"),
+                    &[],
+                )?
+                .l()?;
             env.convert_byte_array(&JByteArray::from(packed))
         })
         .map_err(|error| error.to_string())?;
@@ -235,20 +238,14 @@ fn send_android_midi_messages(messages: &[AndroidMidiOutputMessage]) {
         let raw_activity = app.activity_as_ptr().cast();
         let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
         for message in messages {
-            let bytes = env.byte_array_from_slice(&[
-                message.status,
-                message.data1,
-                message.data2,
-            ])?;
+            let bytes =
+                env.byte_array_from_slice(&[message.status, message.data1, message.data2])?;
             let delay = (message.sample_offset as u128)
                 .saturating_mul(1_000_000_000)
                 .checked_div(u128::from(message.sample_rate.max(1)))
                 .unwrap_or(0)
                 .min(u128::from(i64::MAX)) as i64;
-            let args = [
-                JValue::Object(bytes.as_ref()),
-                JValue::Long(delay),
-            ];
+            let args = [JValue::Object(bytes.as_ref()), JValue::Long(delay)];
             env.call_method(
                 activity,
                 jni::jni_str!("sendAndroidMidi"),
