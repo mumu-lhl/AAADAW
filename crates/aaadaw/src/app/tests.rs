@@ -964,6 +964,26 @@ fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_me
 }
 
 #[test]
+fn render_command_opens_a_reusable_render_window() {
+    let mut app = App {
+        project_path: Some(std::path::PathBuf::from("session.aaadaw")),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::ExportWav));
+    let first_window = app
+        .render_window_id
+        .expect("render command should open the render window");
+    assert_eq!(app.window_title(first_window), "Render project to WAV");
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::ExportWav));
+    assert_eq!(app.render_window_id, Some(first_window));
+
+    let _ = app.update(Message::WindowClosed(first_window));
+    assert_eq!(app.render_window_id, None);
+}
+
+#[test]
 fn wav_export_options_default_to_pcm24_and_dither_only_applies_to_integer_formats() {
     let mut app = App::default();
     assert_eq!(
