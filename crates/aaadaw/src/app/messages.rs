@@ -391,6 +391,8 @@ pub(crate) enum Message {
         any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     SelectCpalInputDevice(Option<String>),
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    RefreshAndroidMidiDevices,
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(

@@ -1,4 +1,5 @@
 use aaadaw_core::{NoteId, Project, TimebaseError, Track, TrackId};
+use std::collections::HashMap;
 use std::fmt;
 
 /// A MIDI event kind. Shared-sample ordering also accounts for sustain-on/off semantics.
@@ -26,6 +27,152 @@ pub struct ScheduledMidiEvent {
 impl ScheduledMidiEvent {
     pub(crate) fn sort_priority(self) -> u8 {
         midi_event_priority(self.kind, self.controller, self.velocity)
+    }
+}
+
+/// One decoded channel-voice message from a live MIDI input stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MidiInputMessage {
+    status: u8,
+    data1: u8,
+    data2: u8,
+    note_id: Option<NoteId>,
+}
+
+impl MidiInputMessage {
+    /// Converts supported note, controller, and pitch-bend messages for one instrument track.
+    pub fn scheduled_event(self, track_id: TrackId) -> Option<ScheduledMidiEvent> {
+        let channel_message = self.status & 0xF0;
+        let (kind, pitch, velocity, controller, pitch_bend) = match channel_message {
+            0x80 => (MidiEventKind::NoteOff, self.data1, self.data2, None, None),
+            0x90 if self.data2 == 0 => {
+                (MidiEventKind::NoteOff, self.data1, 0, None, None)
+            }
+            0x90 => (MidiEventKind::NoteOn, self.data1, self.data2, None, None),
+            0xB0 => (
+                MidiEventKind::ControllerChange,
+                self.data1,
+                self.data2,
+                Some(self.data1),
+                None,
+            ),
+            0xE0 => (
+                MidiEventKind::PitchBend,
+                0,
+                0,
+                None,
+                Some(u16::from(self.data1) | (u16::from(self.data2) << 7)),
+            ),
+            _ => return None,
+        };
+        Some(ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: None,
+            pitch,
+            velocity,
+            controller,
+            pitch_bend,
+            note_id: matches!(kind, MidiEventKind::NoteOn | MidiEventKind::NoteOff)
+                .then_some(self.note_id)
+                .flatten(),
+            kind,
+        })
+    }
+}
+
+/// Decodes channel-voice MIDI messages, including running status across packet boundaries.
+#[derive(Clone, Debug)]
+pub struct MidiInputDecoder {
+    running_status: Option<u8>,
+    data: [u8; 2],
+    data_len: usize,
+    active_notes: HashMap<(u8, u8), Vec<NoteId>>,
+    next_note_id: u64,
+}
+
+impl Default for MidiInputDecoder {
+    fn default() -> Self {
+        Self {
+            running_status: None,
+            data: [0; 2],
+            data_len: 0,
+            active_notes: HashMap::new(),
+            next_note_id: 1 << 30,
+        }
+    }
+}
+
+impl MidiInputDecoder {
+    /// Appends complete note, controller, and pitch-bend messages found in `bytes`.
+    pub fn push_bytes(&mut self, bytes: &[u8], output: &mut Vec<MidiInputMessage>) {
+        for byte in bytes.iter().copied() {
+            if byte >= 0xF8 {
+                continue;
+            }
+            if byte & 0x80 != 0 {
+                self.data_len = 0;
+                self.running_status = (byte < 0xF0).then_some(byte);
+                continue;
+            }
+            let Some(status) = self.running_status else {
+                continue;
+            };
+            let expected = match status & 0xF0 {
+                0xC0 | 0xD0 => 1,
+                0x80 | 0x90 | 0xA0 | 0xB0 | 0xE0 => 2,
+                _ => {
+                    self.running_status = None;
+                    self.data_len = 0;
+                    continue;
+                }
+            };
+            self.data[self.data_len] = byte;
+            self.data_len += 1;
+            if self.data_len == expected {
+                let data1 = self.data[0];
+                let data2 = if expected == 2 { self.data[1] } else { 0 };
+                let note_id = match status & 0xF0 {
+                    0x90 if data2 > 0 => {
+                        let note_id = self.next_note_id();
+                        self.active_notes
+                            .entry((status & 0x0F, data1))
+                            .or_default()
+                            .push(note_id);
+                        Some(note_id)
+                    }
+                    0x80 | 0x90 => {
+                        let key = (status & 0x0F, data1);
+                        let note_id = if let Some(note_id) =
+                            self.active_notes.get_mut(&key).and_then(Vec::pop)
+                        {
+                            note_id
+                        } else {
+                            self.next_note_id()
+                        };
+                        Some(note_id)
+                    }
+                    _ => None,
+                };
+                output.push(MidiInputMessage {
+                    status,
+                    data1,
+                    data2,
+                    note_id,
+                });
+                self.data_len = 0;
+            }
+        }
+    }
+
+    fn next_note_id(&mut self) -> NoteId {
+        let value = self.next_note_id.clamp(1 << 30, i32::MAX as u64);
+        self.next_note_id = if value == i32::MAX as u64 {
+            1 << 30
+        } else {
+            value + 1
+        };
+        NoteId::from_value(value).expect("generated live MIDI note identifiers are nonzero")
     }
 }
 
@@ -671,5 +818,51 @@ fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -
         MidiEventKind::ControllerChange => 0,
         MidiEventKind::NoteOff => 1,
         MidiEventKind::NoteOn => 3,
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::{MidiEventKind, MidiInputDecoder};
+    use aaadaw_core::TrackId;
+
+    #[test]
+    fn live_midi_decoder_handles_running_status_and_packet_boundaries() {
+        let mut decoder = MidiInputDecoder::default();
+        let mut messages = Vec::new();
+        decoder.push_bytes(&[0x92, 60], &mut messages);
+        assert!(messages.is_empty());
+        decoder.push_bytes(&[100, 60, 0, 0xF8, 64, 0, 67, 90], &mut messages);
+
+        assert_eq!(messages.len(), 4);
+        let track_id = TrackId::from_value(7).unwrap();
+        let first = messages[0].scheduled_event(track_id).unwrap();
+        assert_eq!(first.kind, MidiEventKind::NoteOn);
+        assert_eq!((first.pitch, first.velocity), (60, 100));
+        let second = messages[1].scheduled_event(track_id).unwrap();
+        assert_eq!(second.kind, MidiEventKind::NoteOff);
+        assert_eq!((second.pitch, second.velocity), (60, 0));
+        let third = messages[3].scheduled_event(track_id).unwrap();
+        assert_eq!(third.kind, MidiEventKind::NoteOn);
+        assert_eq!((third.pitch, third.velocity), (67, 90));
+        let note_on = messages[0].scheduled_event(track_id).unwrap();
+        assert_eq!(note_on.note_id, second.note_id);
+        assert!(note_on.note_id.unwrap().value() <= i32::MAX as u64);
+    }
+
+    #[test]
+    fn live_midi_decoder_maps_controllers_and_pitch_bend() {
+        let mut decoder = MidiInputDecoder::default();
+        let mut messages = Vec::new();
+        decoder.push_bytes(&[0xB0, 7, 100, 0xE0, 0, 64], &mut messages);
+        let track_id = TrackId::from_value(9).unwrap();
+
+        let controller = messages[0].scheduled_event(track_id).unwrap();
+        assert_eq!(controller.kind, MidiEventKind::ControllerChange);
+        assert_eq!(controller.controller, Some(7));
+        assert_eq!(controller.velocity, 100);
+        let bend = messages[1].scheduled_event(track_id).unwrap();
+        assert_eq!(bend.kind, MidiEventKind::PitchBend);
+        assert_eq!(bend.pitch_bend, Some(8192));
     }
 }

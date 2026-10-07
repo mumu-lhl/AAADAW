@@ -832,6 +832,28 @@ impl RunningAudioPlayback {
         self.master_output_safety.set_ceiling(ceiling)
     }
 
+    #[cfg(all(target_os = "android", feature = "cpal-backend"))]
+    pub fn take_midi_input_sender(&mut self) -> Option<aaadaw_engine::CpalMidiInputSender> {
+        match &mut self.output {
+            DeviceAudioOutput::Cpal(output) => output.take_midi_input_sender(),
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => None,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(_) => None,
+        }
+    }
+
+    #[cfg(all(target_os = "android", feature = "cpal-backend"))]
+    pub fn take_midi_output_receiver(&mut self) -> Option<aaadaw_engine::CpalMidiOutputReceiver> {
+        match &mut self.output {
+            DeviceAudioOutput::Cpal(output) => output.take_midi_output_receiver(),
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => None,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(_) => None,
+        }
+    }
+
     pub fn backend(&self) -> PlaybackBackend {
         match self.output {
             #[cfg(feature = "jack-backend")]

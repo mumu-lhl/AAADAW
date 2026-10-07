@@ -1,4 +1,6 @@
 use crate::AudioRenderGraph;
+#[cfg(target_os = "android")]
+use crate::{MidiEventKind, ScheduledMidiEvent, MIDI_INPUT_EVENTS_PER_BLOCK};
 use crate::cpal_common::is_supported_pcm_format;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
@@ -14,6 +16,40 @@ use std::time::{Duration, Instant};
 const COMMAND_CAPACITY: usize = 16;
 const RETIRED_GRAPH_CAPACITY: usize = 1;
 const PREFERRED_CALLBACK_FRAMES: u32 = 512;
+#[cfg(target_os = "android")]
+const MIDI_QUEUE_CAPACITY: usize = 4096;
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AndroidMidiOutputMessage {
+    pub status: u8,
+    pub data1: u8,
+    pub data2: u8,
+    pub sample_offset: usize,
+    pub sample_rate: u32,
+}
+
+#[cfg(target_os = "android")]
+pub struct CpalMidiInputSender(Producer<ScheduledMidiEvent>);
+
+#[cfg(target_os = "android")]
+impl CpalMidiInputSender {
+    pub fn send(&mut self, event: ScheduledMidiEvent) -> Result<(), ScheduledMidiEvent> {
+        self.0.push(event).map_err(|error| match error {
+            PushError::Full(event) => event,
+        })
+    }
+}
+
+#[cfg(target_os = "android")]
+pub struct CpalMidiOutputReceiver(Consumer<AndroidMidiOutputMessage>);
+
+#[cfg(target_os = "android")]
+impl CpalMidiOutputReceiver {
+    pub fn try_receive(&mut self) -> Option<AndroidMidiOutputMessage> {
+        self.0.pop().ok()
+    }
+}
 
 fn callback_buffer_size(
     supported: &SupportedBufferSize,
@@ -92,9 +128,49 @@ struct Callback {
     returned_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
     counters: Arc<Counters>,
     shutting_down: bool,
+    #[cfg(target_os = "android")]
+    midi_input: Consumer<ScheduledMidiEvent>,
+    #[cfg(target_os = "android")]
+    midi_input_scratch: Vec<Option<ScheduledMidiEvent>>,
+    #[cfg(target_os = "android")]
+    midi_output: Producer<AndroidMidiOutputMessage>,
+    #[cfg(target_os = "android")]
+    midi_output_scratch: Vec<Option<ScheduledMidiEvent>>,
+    #[cfg(target_os = "android")]
+    sample_rate: u32,
 }
 
 impl Callback {
+    #[cfg(target_os = "android")]
+    fn send_midi_panic(&mut self) {
+        const RESET_MESSAGES: [(u8, u8, u8); 4] = [
+            (0xB0, 64, 0),
+            (0xB0, 120, 0),
+            (0xB0, 123, 0),
+            (0xE0, 0, 64),
+        ];
+        for channel in 0..16 {
+            for (status, data1, data2) in RESET_MESSAGES {
+                if self
+                    .midi_output
+                    .push(AndroidMidiOutputMessage {
+                        status: status + channel,
+                        data1,
+                        data2,
+                        sample_offset: 0,
+                        sample_rate: self.sample_rate,
+                    })
+                    .is_err()
+                {
+                    self.counters
+                        .callback_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+    }
+
     fn apply_commands(&mut self) {
         self.flush_retired();
         while let Ok(command) = self.commands.pop() {
@@ -112,6 +188,8 @@ impl Callback {
                             .fetch_add(failures as u64, Ordering::Relaxed);
                         graph.transport_mut().stop();
                     }
+                    #[cfg(target_os = "android")]
+                    self.send_midi_panic();
                 }
                 Command::PanicMidi => {
                     if let Some(graph) = &mut self.graph {
@@ -120,6 +198,8 @@ impl Callback {
                             .callback_errors
                             .fetch_add(failures as u64, Ordering::Relaxed);
                     }
+                    #[cfg(target_os = "android")]
+                    self.send_midi_panic();
                 }
                 Command::ReplaceGraph { mut graph, playing } => {
                     if playing {
@@ -154,6 +234,8 @@ impl Callback {
                     }
                     self.shutting_down = true;
                     self.counters.shutdown.store(true, Ordering::Release);
+                    #[cfg(target_os = "android")]
+                    self.send_midi_panic();
                     break;
                 }
             }
@@ -192,8 +274,67 @@ impl Callback {
             return;
         }
         let frames = output.len() / 2;
-        match graph.render_into(&mut self.scratch[..frames]) {
+        #[cfg(target_os = "android")]
+        let render_result = {
+            let mut input_count = 0;
+            while input_count < self.midi_input_scratch.len() {
+                match self.midi_input.pop() {
+                    Ok(event) => {
+                        self.midi_input_scratch[input_count] = Some(event);
+                        input_count += 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+            for event in &mut self.midi_output_scratch {
+                *event = None;
+            }
+            graph.render_with_midi_input(
+                &mut self.midi_output_scratch,
+                &self.midi_input_scratch[..input_count],
+                &mut self.scratch[..frames],
+            )
+        };
+        #[cfg(not(target_os = "android"))]
+        let render_result = graph.render_into(&mut self.scratch[..frames]);
+        match render_result {
             Ok(stats) => {
+                #[cfg(target_os = "android")]
+                for event in self
+                    .midi_output_scratch
+                    .iter()
+                    .take(stats.midi_event_count)
+                    .flatten()
+                {
+                    let (status, data1, data2) = match event.kind {
+                        MidiEventKind::NoteOn => (0x90, event.pitch, event.velocity),
+                        MidiEventKind::NoteOff => (0x80, event.pitch, event.velocity),
+                        MidiEventKind::ControllerChange => (
+                            0xB0,
+                            event.controller.unwrap_or(event.pitch),
+                            event.velocity,
+                        ),
+                        MidiEventKind::PitchBend => {
+                            let bend = event.pitch_bend.unwrap_or(8192);
+                            (0xE0, bend as u8 & 0x7F, (bend >> 7) as u8 & 0x7F)
+                        }
+                    };
+                    if self
+                        .midi_output
+                        .push(AndroidMidiOutputMessage {
+                            status,
+                            data1,
+                            data2,
+                            sample_offset: event.sample_offset,
+                            sample_rate: self.sample_rate,
+                        })
+                        .is_err()
+                    {
+                        self.counters
+                            .callback_errors
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 convert_stereo_output(output, &self.scratch[..frames]);
                 self.counters
                     .underrun_samples
@@ -339,6 +480,10 @@ pub struct CpalAudioOutput {
     max_block_frames: usize,
     replacement_pending: bool,
     returned_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
+    #[cfg(target_os = "android")]
+    midi_input_sender: Option<CpalMidiInputSender>,
+    #[cfg(target_os = "android")]
+    midi_output_receiver: Option<CpalMidiOutputReceiver>,
 }
 
 fn build_stream<T>(
@@ -405,6 +550,12 @@ impl CpalAudioOutput {
         config.buffer_size = buffer_size;
         let (commands, command_reader) = RingBuffer::new(COMMAND_CAPACITY);
         let (retired_writer, retired) = RingBuffer::new(RETIRED_GRAPH_CAPACITY);
+        #[cfg(target_os = "android")]
+        let midi_event_capacity = graph.midi_event_capacity();
+        #[cfg(target_os = "android")]
+        let (midi_input_sender, midi_input) = RingBuffer::new(MIDI_QUEUE_CAPACITY);
+        #[cfg(target_os = "android")]
+        let (midi_output, midi_output_receiver) = RingBuffer::new(MIDI_QUEUE_CAPACITY);
         let counters = Arc::new(Counters::default());
         let callback_counters = Arc::clone(&counters);
         let returned_graphs = Arc::new(Mutex::new(Vec::new()));
@@ -417,6 +568,16 @@ impl CpalAudioOutput {
             counters: Arc::clone(&counters),
             shutting_down: false,
             returned_graphs: Arc::clone(&returned_graphs),
+            #[cfg(target_os = "android")]
+            midi_input,
+            #[cfg(target_os = "android")]
+            midi_input_scratch: vec![None; MIDI_INPUT_EVENTS_PER_BLOCK],
+            #[cfg(target_os = "android")]
+            midi_output,
+            #[cfg(target_os = "android")]
+            midi_output_scratch: vec![None; midi_event_capacity],
+            #[cfg(target_os = "android")]
+            sample_rate: project_rate,
         };
         let stream = match sample_format {
             SampleFormat::F32 => build_stream::<f32>(&device, config, callback, callback_counters),
@@ -447,7 +608,21 @@ impl CpalAudioOutput {
             max_block_frames,
             replacement_pending: false,
             returned_graphs,
+            #[cfg(target_os = "android")]
+            midi_input_sender: Some(CpalMidiInputSender(midi_input_sender)),
+            #[cfg(target_os = "android")]
+            midi_output_receiver: Some(CpalMidiOutputReceiver(midi_output_receiver)),
         })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn take_midi_input_sender(&mut self) -> Option<CpalMidiInputSender> {
+        self.midi_input_sender.take()
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn take_midi_output_receiver(&mut self) -> Option<CpalMidiOutputReceiver> {
+        self.midi_output_receiver.take()
     }
 
     pub fn play(&mut self) -> Result<(), CpalOutputError> {

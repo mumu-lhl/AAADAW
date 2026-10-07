@@ -312,6 +312,40 @@ fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
         any(target_os = "windows", target_os = "macos", target_os = "android")
     )))]
     let cpal_input: Element<'_, Message> = text("").into();
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    let android_midi = {
+        let description = column![
+            text("External MIDI").size(13),
+            text(format!(
+                "Inputs: {} · Outputs: {}",
+                app.android_midi_input_ports, app.android_midi_output_ports
+            ))
+            .size(11),
+            text("USB and paired Bluetooth MIDI 1.0 devices. Input is monitored through the selected instrument track while playback is open; MIDI recording is not available yet.")
+                .size(10),
+        ]
+        .width(Length::Fill)
+        .spacing(tokens::SPACING_XS);
+        let refresh = button("Refresh MIDI devices")
+            .height(Length::Fixed(48.0))
+            .on_press(Message::RefreshAndroidMidiDevices);
+        let layout: Element<'_, Message> = if compact {
+            column![description, refresh.width(Length::Fill)]
+                .spacing(tokens::SPACING_SM)
+                .into()
+        } else {
+            row![description, refresh]
+                .spacing(tokens::SPACING_SM)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        column![layout, text(app.android_midi_feedback.clone()).size(10)]
+            .spacing(tokens::SPACING_XS)
+            .width(Length::Fill)
+            .into()
+    };
+    #[cfg(not(all(feature = "audio-device", target_os = "android")))]
+    let android_midi: Element<'_, Message> = text("").into();
     let master_description = column![
         text("Master sample-peak ceiling").size(13),
         text("Always active · default -1 dBFS").size(10),
@@ -373,6 +407,7 @@ fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
         text("Audio output and recording").size(17),
         cpal_output,
         cpal_input,
+        android_midi,
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
         ceiling_control,
         recording_control,

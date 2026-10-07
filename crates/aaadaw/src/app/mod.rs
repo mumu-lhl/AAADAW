@@ -264,6 +264,12 @@ struct App {
     audio_settings: audio_config::AudioSettings,
     audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_input_ports: usize,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_output_ports: usize,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_feedback: String,
     #[cfg(all(
         feature = "cpal-backend",
         any(target_os = "windows", target_os = "macos", target_os = "android")
@@ -1059,6 +1065,16 @@ impl App {
         let background_ticks = if self.import_busy
             || playback_active
             || recording_active
+            || {
+                #[cfg(all(feature = "audio-device", target_os = "android"))]
+                {
+                    self.settings_category == SettingsCategory::Audio
+                }
+                #[cfg(not(all(feature = "audio-device", target_os = "android")))]
+                {
+                    false
+                }
+            }
             || fx_automation_finishing
             || self.offline_render_busy
             || !self.offline_job_queue.is_empty()
@@ -1892,6 +1908,13 @@ impl App {
                         self.refresh_cpal_input_devices(),
                     ]);
                 }
+                #[cfg(all(feature = "audio-device", target_os = "android"))]
+                if category == SettingsCategory::Audio {
+                    self.android_midi_feedback.clear();
+                    if let Err(error) = crate::android_platform::refresh_midi_devices() {
+                        self.android_midi_feedback = format!("MIDI scan failed: {error}");
+                    }
+                }
             }
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
                 self.set_master_output_ceiling_dbfs(ceiling_dbfs);
@@ -1910,6 +1933,13 @@ impl App {
                 self.audio_recording_offset_query = Some(value);
             }
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::RefreshAndroidMidiDevices => {
+                self.android_midi_feedback = match crate::android_platform::refresh_midi_devices() {
+                    Ok(()) => "Scanning USB and paired Bluetooth MIDI devices…".to_owned(),
+                    Err(error) => format!("MIDI scan failed: {error}"),
+                };
+            }
             #[cfg(all(
                 feature = "cpal-backend",
                 any(target_os = "windows", target_os = "macos", target_os = "android")
@@ -2634,6 +2664,19 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                #[cfg(all(feature = "audio-device", target_os = "android"))]
+                if self.settings_category == SettingsCategory::Audio {
+                    match crate::android_platform::midi_port_counts() {
+                        Ok((inputs, outputs)) => {
+                            self.android_midi_input_ports = inputs;
+                            self.android_midi_output_ports = outputs;
+                        }
+                        Err(error) => {
+                            self.android_midi_feedback =
+                                format!("MIDI status unavailable: {error}");
+                        }
+                    }
+                }
                 let offline_queue_task = self.resume_offline_job_queue();
                 if self
                     .track_mix_commit_at
@@ -3074,6 +3117,8 @@ impl App {
                 }
             }
         }
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        crate::android_platform::set_midi_input_target_track(self.selected_midi_input_track_id());
         task
     }
 
@@ -3979,6 +4024,11 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn close_playback(&mut self) -> Task<Message> {
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        {
+            crate::android_platform::set_midi_input_sender(None);
+            crate::android_platform::set_midi_output_receiver(None);
+        }
         self.standby_monitor_track = None;
         self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
         self.reset_track_meters();
@@ -4260,6 +4310,12 @@ impl App {
             let _ = playback.stop();
         }
         self.playback = Some(playback);
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        if let Some(playback) = self.playback.as_mut() {
+            crate::android_platform::set_midi_input_target_track(self.selected_midi_input_track_id());
+            crate::android_platform::set_midi_input_sender(playback.take_midi_input_sender());
+            crate::android_platform::set_midi_output_receiver(playback.take_midi_output_receiver());
+        }
         let retired_helper_ids = self
             .clap_instrument_helper_owners
             .keys()
@@ -5677,6 +5733,16 @@ impl App {
                 .iter()
                 .any(|track| track.id() == *track_id)
         })
+    }
+
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    fn selected_midi_input_track_id(&self) -> Option<TrackId> {
+        let track_id = self.selected_track_id()?;
+        self.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id && track.instrument().is_some())
+            .map(|track| track.id())
     }
 
     fn begin_track_name_edit(&mut self, track_id: TrackId) -> Task<Message> {

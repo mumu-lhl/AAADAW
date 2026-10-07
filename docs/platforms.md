@@ -115,8 +115,14 @@ gradle assembleDebug
 The APK targets ARM64 phones/tablets and x86_64 emulators. Import an Android ARM64 `.clap` library
 through Settings to copy it into app-private storage. Android scans and hosts
 these plugins in-process; plugin code can crash the app, so install only trusted
-libraries. Android plugin editor windows are not supported. External Android
-MIDI device input/output is not implemented yet.
+libraries. Android plugin editor windows are not supported.
+
+Android's MIDI manager opens USB and paired Bluetooth MIDI 1.0 ports. While an
+audio output is open, input reaches the selected instrument track and scheduled
+project MIDI is sent to connected output ports. The current track model is
+channel-agnostic, so events use MIDI channel 1; live input is not recorded into
+MIDI clips. Refresh the External MIDI section in Audio settings after connecting
+or pairing a device. Attached-device MIDI behavior still needs validation.
 
 GitHub Actions builds ARM64 and x86_64 native libraries, assembles the APK, and
 launches it on an API 35 x86_64 emulator, including relaunch, larger font scale,

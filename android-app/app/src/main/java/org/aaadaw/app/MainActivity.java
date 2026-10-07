@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.net.Uri;
+import android.os.Bundle;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -13,6 +14,24 @@ import java.io.OutputStream;
 
 public final class MainActivity extends NativeActivity {
     private static final int MICROPHONE_REQUEST = 7319;
+    private static final int BLUETOOTH_MIDI_REQUEST = 7320;
+    private AndroidMidiBridge midiBridge;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        midiBridge = new AndroidMidiBridge(this);
+        midiBridge.start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (midiBridge != null) {
+            midiBridge.close();
+            midiBridge = null;
+        }
+        super.onDestroy();
+    }
 
     public boolean copyLocalFileToUri(String uriValue, String localPath) {
         Uri uri = Uri.parse(uriValue);
@@ -57,10 +76,47 @@ public final class MainActivity extends NativeActivity {
             boolean granted = grantResults.length > 0
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             nativeMicrophonePermissionResult(granted);
+        } else if (requestCode == BLUETOOTH_MIDI_REQUEST) {
+            if (midiBridge != null) {
+                midiBridge.start();
+            }
         }
     }
 
     private native void nativeMicrophonePermissionResult(boolean granted);
+
+    public void refreshAndroidMidi() {
+        if (Build.VERSION.SDK_INT >= 31
+                && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                        != PackageManager.PERMISSION_GRANTED) {
+            runOnUiThread(() -> requestPermissions(
+                    new String[] {Manifest.permission.BLUETOOTH_CONNECT},
+                    BLUETOOTH_MIDI_REQUEST));
+            return;
+        }
+        if (midiBridge != null) {
+            midiBridge.start();
+        }
+    }
+
+    public String androidMidiPortSummary() {
+        int[] counts = midiBridge == null ? new int[] {0, 0} : midiBridge.portCounts();
+        return counts[0] + "," + counts[1];
+    }
+
+    public byte[] drainAndroidMidiInput() {
+        return midiBridge == null ? new byte[0] : midiBridge.drainInputPackets();
+    }
+
+    public long androidMidiDroppedInputPackets() {
+        return midiBridge == null ? 0 : midiBridge.droppedInputPackets();
+    }
+
+    public void sendAndroidMidi(byte[] bytes, long delayNanos) {
+        if (midiBridge != null) {
+            midiBridge.send(bytes, System.nanoTime() + Math.max(0, delayNanos));
+        }
+    }
 
     public void setRecordingServiceEnabled(boolean enabled) {
         setAudioServiceMode(AudioService.ACTION_RECORDING, enabled);

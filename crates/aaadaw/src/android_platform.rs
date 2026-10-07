@@ -1,11 +1,17 @@
 use android_activity::AndroidApp;
+use aaadaw_core::TrackId;
+use aaadaw_engine::{
+    AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver, MidiInputDecoder,
+};
 use jni::JavaVM;
-use jni::objects::{Global, JObject, JValue};
+use jni::objects::{Global, JByteArray, JObject, JString, JValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::sync::{Mutex, OnceLock, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static ANDROID_APP: OnceLock<RwLock<Option<AndroidApp>>> = OnceLock::new();
 static APP_DATA_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
@@ -14,6 +20,9 @@ static MICROPHONE_PERMISSION_RESULT: OnceLock<Mutex<Option<tokio::sync::oneshot:
     OnceLock::new();
 static RECORDING_SERVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PLAYBACK_SERVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static MIDI_INPUT_TARGET_TRACK: AtomicU64 = AtomicU64::new(0);
+static MIDI_INPUT_COMMANDS: OnceLock<Sender<Option<CpalMidiInputSender>>> = OnceLock::new();
+static MIDI_OUTPUT_COMMANDS: OnceLock<Sender<Option<CpalMidiOutputReceiver>>> = OnceLock::new();
 
 pub(crate) fn initialize(app: AndroidApp) {
     if let Some(path) = app.internal_data_path() {
@@ -34,6 +43,200 @@ pub(crate) fn initialize(app: AndroidApp) {
     *slot
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(app);
+    start_midi_workers();
+}
+
+fn start_midi_workers() {
+    let (input_commands, input_receiver) = mpsc::channel();
+    if MIDI_INPUT_COMMANDS.set(input_commands).is_ok() {
+        let _ = thread::Builder::new()
+            .name("aaadaw-android-midi-input".to_owned())
+            .spawn(move || midi_input_worker(input_receiver));
+    }
+    let (output_commands, output_receiver) = mpsc::channel();
+    if MIDI_OUTPUT_COMMANDS.set(output_commands).is_ok() {
+        let _ = thread::Builder::new()
+            .name("aaadaw-android-midi-output".to_owned())
+            .spawn(move || midi_output_worker(output_receiver));
+    }
+}
+
+fn midi_input_worker(commands: mpsc::Receiver<Option<CpalMidiInputSender>>) {
+    let mut sender = None;
+    let mut decoder = MidiInputDecoder::default();
+    let mut messages = Vec::with_capacity(64);
+    loop {
+        loop {
+            match commands.try_recv() {
+                Ok(next) => {
+                    sender = next;
+                    decoder = MidiInputDecoder::default();
+                    if sender.is_some() {
+                        let _ = drain_midi_input_packets();
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
+        if let Some(sender) = &mut sender
+            && let Ok(packets) = drain_midi_input_packets()
+        {
+            for packet in packets {
+                messages.clear();
+                decoder.push_bytes(&packet, &mut messages);
+                for message in messages.drain(..) {
+                    let track_value = MIDI_INPUT_TARGET_TRACK.load(Ordering::Acquire);
+                    let Some(track_id) = TrackId::from_value(track_value) else {
+                        continue;
+                    };
+                    if let Some(event) = message.scheduled_event(track_id) {
+                        let _ = sender.send(event);
+                    }
+                }
+            }
+        }
+        thread::sleep(if sender.is_some() {
+            Duration::from_millis(2)
+        } else {
+            Duration::from_millis(100)
+        });
+    }
+}
+
+fn midi_output_worker(commands: mpsc::Receiver<Option<CpalMidiOutputReceiver>>) {
+    let mut receiver = None;
+    let mut batch = Vec::with_capacity(256);
+    loop {
+        loop {
+            match commands.try_recv() {
+                Ok(next) => receiver = next,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
+        if let Some(receiver) = &mut receiver {
+            batch.clear();
+            while batch.len() < batch.capacity()
+                && let Some(message) = receiver.try_receive()
+            {
+                batch.push(message);
+            }
+            if !batch.is_empty() {
+                send_android_midi_messages(&batch);
+            }
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+pub(crate) fn set_midi_input_sender(sender: Option<CpalMidiInputSender>) {
+    if let Some(commands) = MIDI_INPUT_COMMANDS.get() {
+        let _ = commands.send(sender);
+    }
+}
+
+pub(crate) fn set_midi_output_receiver(receiver: Option<CpalMidiOutputReceiver>) {
+    if let Some(commands) = MIDI_OUTPUT_COMMANDS.get() {
+        let _ = commands.send(receiver);
+    }
+}
+
+pub(crate) fn set_midi_input_target_track(track_id: Option<TrackId>) {
+    MIDI_INPUT_TARGET_TRACK.store(track_id.map_or(0, TrackId::value), Ordering::Release);
+}
+
+pub(crate) fn refresh_midi_devices() -> Result<(), String> {
+    call_void_activity_method("refreshAndroidMidi")
+}
+
+pub(crate) fn midi_port_counts() -> Result<(usize, usize), String> {
+    let app = current_app()?;
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| -> jni::errors::Result<(usize, usize)> {
+        let raw_activity = app.activity_as_ptr().cast();
+        let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
+        let summary = env.call_method(
+            activity,
+            jni::jni_str!("androidMidiPortSummary"),
+            jni::jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?.l()?;
+        let summary = JString::from(summary);
+        let summary: String = env.get_string(&summary)?.into();
+        let (inputs, outputs) = summary.split_once(',').unwrap_or(("0", "0"));
+        Ok((inputs.parse().unwrap_or(0), outputs.parse().unwrap_or(0)))
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn drain_midi_input_packets() -> Result<Vec<Vec<u8>>, String> {
+    let app = current_app()?;
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let bytes = vm
+        .attach_current_thread(|env| -> jni::errors::Result<Vec<u8>> {
+            let raw_activity = app.activity_as_ptr().cast();
+            let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
+            let packed = env.call_method(
+                activity,
+                jni::jni_str!("drainAndroidMidiInput"),
+                jni::jni_sig!("()[B"),
+                &[],
+            )?.l()?;
+            env.convert_byte_array(&JByteArray::from(packed))
+        })
+        .map_err(|error| error.to_string())?;
+    let mut packets = Vec::new();
+    let mut offset = 0;
+    while offset + 2 <= bytes.len() {
+        let length = (usize::from(bytes[offset]) << 8) | usize::from(bytes[offset + 1]);
+        offset += 2;
+        let Some(end) = offset.checked_add(length) else {
+            break;
+        };
+        if end > bytes.len() {
+            break;
+        }
+        packets.push(bytes[offset..end].to_vec());
+        offset = end;
+    }
+    Ok(packets)
+}
+
+fn send_android_midi_messages(messages: &[AndroidMidiOutputMessage]) {
+    let Ok(app) = current_app() else {
+        return;
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    if let Err(error) = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let raw_activity = app.activity_as_ptr().cast();
+        let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
+        for message in messages {
+            let bytes = env.byte_array_from_slice(&[
+                message.status,
+                message.data1,
+                message.data2,
+            ])?;
+            let delay = (message.sample_offset as u128)
+                .saturating_mul(1_000_000_000)
+                .checked_div(u128::from(message.sample_rate.max(1)))
+                .unwrap_or(0)
+                .min(u128::from(i64::MAX)) as i64;
+            let args = [
+                JValue::Object(bytes.as_ref()),
+                JValue::Long(delay),
+            ];
+            env.call_method(
+                activity,
+                jni::jni_str!("sendAndroidMidi"),
+                jni::jni_sig!("([BJ)V"),
+                &args,
+            )?;
+        }
+        Ok(())
+    }) {
+        tracing::warn!(error = %error, "Could not forward Android MIDI output");
+    }
 }
 
 pub(crate) fn app_data_directory() -> Option<PathBuf> {
@@ -283,6 +486,12 @@ fn call_void_activity_method(method: &str) -> Result<(), String> {
             "stopPlaybackService" => env.call_method(
                 activity,
                 jni::jni_str!("stopPlaybackService"),
+                jni::jni_sig!("()V"),
+                &[],
+            )?,
+            "refreshAndroidMidi" => env.call_method(
+                activity,
+                jni::jni_str!("refreshAndroidMidi"),
                 jni::jni_sig!("()V"),
                 &[],
             )?,
