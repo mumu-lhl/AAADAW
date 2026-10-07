@@ -367,6 +367,8 @@ struct App {
     #[cfg(feature = "audio-device")]
     playback_graph_dirty: bool,
     #[cfg(feature = "audio-device")]
+    playback_position_dirty: bool,
+    #[cfg(feature = "audio-device")]
     playback_busy: bool,
     #[cfg(feature = "audio-device")]
     playback_playing: bool,
@@ -2966,6 +2968,12 @@ impl App {
     }
 
     fn handle_timeline_view_event(&mut self, event: timeline::TimelineEvent) {
+        #[cfg(feature = "audio-device")]
+        let edit_cursor_tick = match &event {
+            timeline::TimelineEvent::SelectEmpty(tick)
+            | timeline::TimelineEvent::SetEditCursor(tick) => Some(*tick),
+            _ => None,
+        };
         let previous_view_state = matches!(
             &event,
             timeline::TimelineEvent::ToggleVolumeAutomation(_)
@@ -2974,6 +2982,18 @@ impl App {
         )
         .then(|| self.timeline.arrangement_view_state(&self.project));
         self.timeline.handle(event);
+        #[cfg(feature = "audio-device")]
+        if let Some(tick) = edit_cursor_tick
+            && !self.playback_playing
+            && !self.playback_paused
+            && !self.playback_busy
+            && let Ok(sample) = self.project.sample_at_tick(tick)
+        {
+            self.playhead_sample = sample;
+            self.playback_start_sample = sample;
+            self.seek_sample_query = sample.to_string();
+            self.playback_position_dirty = self.playback.is_some();
+        }
         if previous_view_state
             .is_some_and(|previous| previous != self.timeline.arrangement_view_state(&self.project))
         {
@@ -3635,7 +3655,7 @@ impl App {
                 ));
             }
         }
-        if self.playback.is_some() && self.playback_graph_dirty {
+        if self.playback.is_some() && (self.playback_graph_dirty || self.playback_position_dirty) {
             return self.prepare_playback(self.playhead_sample, true);
         }
         if let Some(playback) = self.playback.as_mut() {
@@ -3797,6 +3817,7 @@ impl App {
         }
         self.playback_playing = false;
         self.playback_paused = false;
+        self.playback_position_dirty = false;
         self.playhead_sample = 0;
         self.playback_start_sample = 0;
         self.seek_sample_query = "0".to_owned();
@@ -3924,6 +3945,7 @@ impl App {
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
                     self.playback_graph_dirty = false;
+                    self.playback_position_dirty = false;
                     self.reset_track_meters();
                     if let Err(error) = play_result {
                         self.playback_playing = false;
@@ -4004,6 +4026,7 @@ impl App {
         }
         self.reset_track_meters();
         self.playback_graph_dirty = false;
+        self.playback_position_dirty = false;
         self.playback_playing = start_when_ready && play_error.is_none();
         self.playback_paused = false;
         if start_when_ready {
