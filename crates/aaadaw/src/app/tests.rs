@@ -2565,7 +2565,7 @@ fn missing_clap_instrument_is_skipped_without_failing_playback_preparation() {
 }
 
 #[test]
-fn midi_items_append_after_existing_items_and_require_a_track() {
+fn midi_items_follow_the_edit_cursor_and_require_a_track() {
     let mut app = App::default();
     let _ = app.update(Message::AddMidiItem);
     assert!(app.project.midi_items().is_empty());
@@ -2576,11 +2576,74 @@ fn midi_items_append_after_existing_items_and_require_a_track() {
 
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
+    app.timeline.edit_cursor_tick = 9_600;
     let _ = app.update(Message::AddMidiItem);
     assert_eq!(app.project.midi_items()[0].start_tick(), 0);
-    assert_eq!(app.project.midi_items()[1].start_tick(), 3_840);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 9_600);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
+fn midi_item_is_inserted_on_the_selected_track_at_the_edit_cursor() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "MIDI 2".to_owned(),
+        })
+        .expect("second track should be created");
+    let selected_track = app.project.tracks()[1].id();
+    app.timeline.selected_track = Some(selected_track);
+    app.timeline.edit_cursor_tick = 9_600;
+
+    let _ = app.update(Message::AddMidiItem);
+
+    let midi_item = &app.project.midi_items()[0];
+    assert_eq!(midi_item.track_id(), selected_track);
+    assert_eq!(midi_item.start_tick(), 9_600);
+    assert_eq!(midi_item.length_ticks(), 3_840);
+}
+
+#[test]
+fn midi_item_uses_the_active_time_selection_range() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    app.timeline.edit_cursor_tick = 9_600;
+    app.timeline.time_selection = Some(super::super::timeline::TimeSelection {
+        start_tick: 4_800,
+        end_tick: 7_200,
+    });
+
+    let _ = app.update(Message::AddMidiItem);
+
+    let midi_item = &app.project.midi_items()[0];
+    assert_eq!(midi_item.start_tick(), 9_600);
+    assert_eq!(midi_item.length_ticks(), 2_400);
+}
+
+#[test]
+fn midi_items_cannot_be_inserted_on_bus_tracks() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    app.project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Bus 1".to_owned(),
+        })
+        .expect("bus should be created");
+    let bus_id = app.project.tracks()[1].id();
+    app.timeline.selected_track = Some(bus_id);
+
+    assert!(!commands::is_enabled(&app, CommandId::AddMidiItem));
+    let _ = app.update(Message::AddMidiItem);
+
+    assert!(app.project.midi_items().is_empty());
+    assert_eq!(
+        app.status,
+        "Select a regular track before creating a MIDI item"
+    );
 }
 
 #[test]

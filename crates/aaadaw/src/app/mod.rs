@@ -3,9 +3,8 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementWorker, AudioAssetSourceStatusEntry,
     AudioItemImportWorker, AudioWaveformResult, AudioWaveformWorker, ClapPluginScanReport,
     WavExportOptions, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
-    create_four_beat_midi_item, default_clap_search_paths, delete_midi_note, duplicate_audio_item,
-    move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
-    set_audio_item_start_sample,
+    default_clap_search_paths, delete_midi_note, duplicate_audio_item, move_midi_item_by_beat,
+    move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth, set_audio_item_start_sample,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_app::{AudioCaptureControl, AudioRecordingWorker, RunningAudioInput};
@@ -2294,8 +2293,7 @@ impl App {
                 }
             }
             Message::AddMidiItem => {
-                let action = create_four_beat_midi_item(&self.project);
-                self.apply_edit(action, "Four-beat MIDI item created");
+                self.add_midi_item();
             }
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
@@ -4503,6 +4501,45 @@ impl App {
         if was_empty && self.revision != previous_revision {
             self.timeline.selected_track = self.project.tracks().first().map(|track| track.id());
         }
+    }
+
+    fn add_midi_item(&mut self) {
+        let Some(track_id) = self.selected_track_id() else {
+            self.status = if self.project.tracks().is_empty() {
+                "Edit failed: add a track before creating a MIDI item".to_owned()
+            } else {
+                "Select a regular track before creating a MIDI item".to_owned()
+            };
+            return;
+        };
+        let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+        else {
+            return;
+        };
+        if track.is_bus() {
+            self.status = "Select a regular track before creating a MIDI item".to_owned();
+            return;
+        }
+
+        let start_tick = self.timeline.edit_cursor_tick;
+        let length_ticks = self
+            .timeline
+            .time_selection
+            .map_or(u64::from(self.project.settings().ppq()) * 4, |selection| {
+                selection.end_tick - selection.start_tick
+            });
+        self.apply_action(
+            DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks,
+            },
+            "MIDI item created",
+        );
     }
 
     fn add_bus_track(&mut self) {
