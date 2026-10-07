@@ -18,7 +18,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 100.0;
+// Compact TCP layouts shorten horizontal content but keep controls at a shared vertical minimum.
+pub(crate) const TIMELINE_ROW_HEIGHT: f32 = 128.0;
 pub(crate) const FX_AUTOMATION_LANE_HEIGHT: f32 = 24.0;
 const MIN_FX_AUTOMATION_LANE_HEIGHT: f32 = 20.0;
 const MAX_FX_AUTOMATION_LANE_HEIGHT: f32 = 192.0;
@@ -3685,17 +3686,41 @@ mod tests {
         let mut heights = HashMap::new();
         heights.insert((track_id, 0, 5), 40.0);
 
-        let first = fx_automation_band_at_y(track_id, 120.0, &lanes, &heights).unwrap();
+        let first = fx_automation_band_at_y(track_id, TIMELINE_ROW_HEIGHT + 20.0, &lanes, &heights)
+            .unwrap();
         assert_eq!(first.target, (track_id, 0, 5));
         assert_eq!(first.top, TIMELINE_ROW_HEIGHT);
         assert_eq!(first.height, 40.0);
-        assert!(fx_automation_band_at_y(track_id, 139.0, &lanes, &heights).is_some());
-        assert!(fx_automation_band_at_y(track_id, 140.0, &lanes, &heights).is_some());
-        assert!(fx_automation_band_at_y(track_id, 163.9, &lanes, &heights).is_some());
+        assert!(
+            fx_automation_band_at_y(track_id, TIMELINE_ROW_HEIGHT + 39.0, &lanes, &heights)
+                .is_some()
+        );
+        assert!(
+            fx_automation_band_at_y(track_id, TIMELINE_ROW_HEIGHT + 40.0, &lanes, &heights)
+                .is_some()
+        );
+        assert!(
+            fx_automation_band_at_y(track_id, TIMELINE_ROW_HEIGHT + 63.9, &lanes, &heights)
+                .is_some()
+        );
 
-        let resize = fx_automation_lane_resize_target(track_id, 139.0, &lanes, &heights).unwrap();
+        let resize = fx_automation_lane_resize_target(
+            track_id,
+            TIMELINE_ROW_HEIGHT + 39.0,
+            &lanes,
+            &heights,
+        )
+        .unwrap();
         assert_eq!(resize.target, (track_id, 0, 5));
-        assert!(fx_automation_lane_resize_target(track_id, 145.0, &lanes, &heights).is_none());
+        assert!(
+            fx_automation_lane_resize_target(
+                track_id,
+                TIMELINE_ROW_HEIGHT + 45.0,
+                &lanes,
+                &heights
+            )
+            .is_none()
+        );
 
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
@@ -3860,6 +3885,24 @@ mod tests {
         assert_eq!(cache.items[1].start_tick, 1920);
         assert_eq!(cache.items[1].end_tick, 5760);
         assert!(matches!(cache.items[1].kind, ItemKind::Midi));
+    }
+
+    #[test]
+    fn track_rows_reserve_the_tcp_control_panel_height() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        let row = timeline.row_layout(0).unwrap();
+        assert_eq!(row.base_height, TIMELINE_ROW_HEIGHT);
+        assert_eq!(row.height, row.base_height);
+        assert!(row.base_height >= 128.0);
     }
 
     #[test]
