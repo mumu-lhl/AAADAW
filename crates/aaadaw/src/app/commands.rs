@@ -1290,7 +1290,15 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ToggleOfflineJobsPanel => true,
         CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
-        CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
+        CommandKind::AddMidiItem => {
+            !project_edit_busy(app)
+                && app.timeline.selected_track.is_some_and(|selected_track| {
+                    app.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.id() == selected_track && !track.is_bus())
+                })
+        }
         CommandKind::DuplicateSelectedItem => {
             !project_edit_busy(app)
                 && !app.timeline.selected_items.is_empty()
