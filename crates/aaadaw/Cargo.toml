@@ -11,6 +11,8 @@ audio-device = ["aaadaw-app/audio-device"]
 jack-backend = ["audio-device", "aaadaw-app/jack-backend"]
 pipewire-backend = ["audio-device", "aaadaw-app/pipewire-backend"]
 wasapi-backend = ["audio-device", "aaadaw-app/wasapi-backend"]
+coreaudio-backend = ["audio-device", "aaadaw-app/coreaudio-backend"]
+cpal-backend = ["audio-device", "aaadaw-app/cpal-backend"]
 
 [dependencies]
 aaadaw-core = { path = "../aaadaw-core" }

@@ -10,7 +10,7 @@ const MAX_RECORDING_OFFSET_US: i32 = 5_000_000;
 pub(super) enum PlaybackBackendSetting {
     Jack,
     PipeWire,
-    Wasapi,
+    Cpal,
 }
 
 impl PlaybackBackendSetting {
@@ -18,7 +18,7 @@ impl PlaybackBackendSetting {
         match value {
             "JACK" => Some(Self::Jack),
             "PipeWire" => Some(Self::PipeWire),
-            "WASAPI" => Some(Self::Wasapi),
+            "WASAPI" | "CoreAudio" => Some(Self::Cpal),
             _ => None,
         }
     }
@@ -27,7 +27,16 @@ impl PlaybackBackendSetting {
         match self {
             Self::Jack => "JACK",
             Self::PipeWire => "PipeWire",
-            Self::Wasapi => "WASAPI",
+            Self::Cpal => {
+                #[cfg(target_os = "macos")]
+                {
+                    "CoreAudio"
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    "WASAPI"
+                }
+            }
         }
     }
 }
@@ -72,8 +81,8 @@ pub(super) struct AudioSettings {
     pub(super) master_output_ceiling: MasterOutputCeiling,
     pub(super) recording_offset_us: i32,
     pub(super) playback_backend: Option<PlaybackBackendSetting>,
-    pub(super) wasapi_output_device_id: Option<String>,
-    pub(super) wasapi_input_device_id: Option<String>,
+    pub(super) cpal_output_device_id: Option<String>,
+    pub(super) cpal_input_device_id: Option<String>,
 }
 
 pub(super) fn load() -> Result<AudioSettings, String> {
@@ -103,8 +112,8 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
     let mut found_ceiling = false;
     let mut found_recording_offset = false;
     let mut found_playback_backend = false;
-    let mut found_wasapi_output_device = false;
-    let mut found_wasapi_input_device = false;
+    let mut found_cpal_output_device = false;
+    let mut found_cpal_input_device = false;
     for (line_number, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -138,25 +147,25 @@ fn parse(contents: &str) -> Result<AudioSettings, String> {
                 settings.playback_backend = PlaybackBackendSetting::parse(value);
                 found_playback_backend = true;
             }
-            "wasapi_output_device" if !found_wasapi_output_device => {
+            "cpal_output_device" | "wasapi_output_device" if !found_cpal_output_device => {
                 if value.len() > 4096 {
                     return Err(format!(
-                        "WASAPI output device ID is too long on line {}",
+                        "system audio output device ID is too long on line {}",
                         line_number + 1
                     ));
                 }
-                settings.wasapi_output_device_id = (!value.is_empty()).then(|| value.to_owned());
-                found_wasapi_output_device = true;
+                settings.cpal_output_device_id = (!value.is_empty()).then(|| value.to_owned());
+                found_cpal_output_device = true;
             }
-            "wasapi_input_device" if !found_wasapi_input_device => {
+            "cpal_input_device" | "wasapi_input_device" if !found_cpal_input_device => {
                 if value.len() > 4096 {
                     return Err(format!(
-                        "WASAPI input device ID is too long on line {}",
+                        "system audio input device ID is too long on line {}",
                         line_number + 1
                     ));
                 }
-                settings.wasapi_input_device_id = (!value.is_empty()).then(|| value.to_owned());
-                found_wasapi_input_device = true;
+                settings.cpal_input_device_id = (!value.is_empty()).then(|| value.to_owned());
+                found_cpal_input_device = true;
             }
             _ => return Err(format!("invalid audio config line {}", line_number + 1)),
         }
@@ -183,11 +192,11 @@ fn save_to(path: &Path, settings: &AudioSettings) -> io::Result<()> {
             playback_backend.as_config_value()
         )?;
     }
-    if let Some(device_id) = &settings.wasapi_output_device_id {
-        writeln!(&mut contents, "wasapi_output_device={device_id}")?;
+    if let Some(device_id) = &settings.cpal_output_device_id {
+        writeln!(&mut contents, "cpal_output_device={device_id}")?;
     }
-    if let Some(device_id) = &settings.wasapi_input_device_id {
-        writeln!(&mut contents, "wasapi_input_device={device_id}")?;
+    if let Some(device_id) = &settings.cpal_input_device_id {
+        writeln!(&mut contents, "cpal_input_device={device_id}")?;
     }
     write_atomic(path, &contents)
 }
@@ -277,8 +286,8 @@ mod tests {
             master_output_ceiling: MasterOutputCeiling::new(-6).unwrap(),
             recording_offset_us: -125_500,
             playback_backend: Some(PlaybackBackendSetting::PipeWire),
-            wasapi_output_device_id: Some("wasapi:device/endpoint-01".to_owned()),
-            wasapi_input_device_id: Some("wasapi:device/endpoint-02".to_owned()),
+            cpal_output_device_id: Some("cpal:device/endpoint-01".to_owned()),
+            cpal_input_device_id: Some("cpal:device/endpoint-02".to_owned()),
         };
         let path = std::env::temp_dir().join(format!(
             "aaadaw-audio-{}-{}.conf",
@@ -316,9 +325,26 @@ mod tests {
     }
 
     #[test]
-    fn unknown_saved_backend_falls_back_without_invalidating_other_audio_settings() {
+    fn coreaudio_name_parses_as_cpal_backend_across_platforms() {
         let settings = parse(
             "master_output_ceiling_dbfs=-6\nrecording_placement_offset_ms=1.250\nplayback_backend=CoreAudio\n",
+        )
+        .unwrap();
+        assert_eq!(
+            settings.master_output_ceiling,
+            MasterOutputCeiling::new(-6).unwrap()
+        );
+        assert_eq!(settings.recording_offset_us, 1_250);
+        assert_eq!(
+            settings.playback_backend,
+            Some(PlaybackBackendSetting::Cpal)
+        );
+    }
+
+    #[test]
+    fn unknown_saved_backend_is_ignored_without_invalidating_other_settings() {
+        let settings = parse(
+            "master_output_ceiling_dbfs=-6\nrecording_placement_offset_ms=1.250\nplayback_backend=FutureBackend\n",
         )
         .unwrap();
         assert_eq!(
@@ -330,14 +356,43 @@ mod tests {
     }
 
     #[test]
-    fn saved_wasapi_output_device_id_round_trips_and_old_settings_default_to_system_device() {
-        let id = "wasapi:\\\\?\\SWD#MMDEVAPI#endpoint";
+    fn cpal_backend_setting_round_trips_with_the_native_platform_name() {
         let settings = AudioSettings {
-            wasapi_output_device_id: Some(id.to_owned()),
+            playback_backend: Some(PlaybackBackendSetting::Cpal),
             ..AudioSettings::default()
         };
         let path = std::env::temp_dir().join(format!(
-            "aaadaw-wasapi-audio-{}-{}.conf",
+            "aaadaw-cpal-backend-{}-{}.conf",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        save_to(&path, &settings).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        #[cfg(target_os = "macos")]
+        assert!(contents.contains("playback_backend=CoreAudio\n"));
+        #[cfg(not(target_os = "macos"))]
+        assert!(contents.contains("playback_backend=WASAPI\n"));
+        assert_eq!(parse(&contents).unwrap(), settings);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_wasapi_device_keys_remain_readable() {
+        let settings =
+            parse("wasapi_output_device=output-id\nwasapi_input_device=input-id\n").unwrap();
+        assert_eq!(settings.cpal_output_device_id.as_deref(), Some("output-id"));
+        assert_eq!(settings.cpal_input_device_id.as_deref(), Some("input-id"));
+    }
+
+    #[test]
+    fn saved_cpal_output_device_id_round_trips_and_old_settings_default_to_system_device() {
+        let id = "cpal:\\\\?\\SWD#MMDEVAPI#endpoint";
+        let settings = AudioSettings {
+            cpal_output_device_id: Some(id.to_owned()),
+            ..AudioSettings::default()
+        };
+        let path = std::env::temp_dir().join(format!(
+            "aaadaw-cpal-audio-{}-{}.conf",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -354,14 +409,14 @@ mod tests {
     }
 
     #[test]
-    fn saved_wasapi_input_device_id_round_trips_and_old_settings_default_to_system_device() {
-        let id = "wasapi:\\\\?\\SWD#MMDEVAPI#input-endpoint";
+    fn saved_cpal_input_device_id_round_trips_and_old_settings_default_to_system_device() {
+        let id = "cpal:\\\\?\\SWD#MMDEVAPI#input-endpoint";
         let settings = AudioSettings {
-            wasapi_input_device_id: Some(id.to_owned()),
+            cpal_input_device_id: Some(id.to_owned()),
             ..AudioSettings::default()
         };
         let path = std::env::temp_dir().join(format!(
-            "aaadaw-wasapi-input-audio-{}-{}.conf",
+            "aaadaw-cpal-input-audio-{}-{}.conf",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));

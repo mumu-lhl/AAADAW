@@ -225,7 +225,7 @@
 
 ### 平台扩展
 
-- [ ] 完成 macOS 桌面音频设备与打包适配，并把平台能力纳入 CI/验收矩阵。
+- [x] 完成 macOS CoreAudio 输入/输出设备枚举与选择、Apple Silicon CI、unsigned `.app` 版本冒烟包，并记录真机/签名验收边界（[Issue #214](https://github.com/mumu-lhl/AAADAW/issues/214)，[平台说明](docs/platforms.md)）。
 - [ ] 建立 Android 应用壳与 SAF 虚拟文件系统，打通 `.aaadaw` 打开/保存。
 - [ ] 接入 AAudio/Oboe 与 Android MIDI；实现前台录音服务、锁屏保活和设备权限/生命周期处理。
 - [ ] 适配触控交互、虚拟修饰键条和触控 Hitbox；评估大小核调度与 Performance Hint，必须以设备测量支撑。

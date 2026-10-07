@@ -1,8 +1,9 @@
 # Desktop development and build notes
 
-AAADAW currently verifies Linux and Windows builds in GitHub Actions. It also
-builds unsigned Ubuntu 24.04 x86_64 `.deb` and Windows x86_64 MSI validation
-packages, plus portable archives. These artifacts are not signed public
+AAADAW currently verifies Linux, Windows, and Apple Silicon macOS builds in
+GitHub Actions. It also builds unsigned Ubuntu 24.04 x86_64 `.deb`, Windows
+x86_64 MSI, and macOS arm64 `.app` validation packages, plus Linux/Windows
+portable archives. These artifacts are not signed public
 releases and do not bundle audio services or drivers. Device-driver behavior
 and audio latency still need validation on real hardware (see Issue #7 for
 Linux capture).
@@ -53,11 +54,38 @@ The WASAPI feature enables device playback and recording when a Windows audio
 device is available. CI tests policy and device-enumeration failure behavior;
 it cannot validate a physical device or its driver.
 
+## macOS
+
+Use a current stable Rust toolchain. The CoreAudio backend is provided by CPAL
+and uses the system's native output and input devices:
+
+```sh
+cargo check --workspace --all-targets --features aaadaw/coreaudio-backend
+cargo run -p aaadaw --features aaadaw/coreaudio-backend
+cargo build --release -p aaadaw --features aaadaw/coreaudio-backend
+```
+
+Audio Settings lists available input and output devices. The selected device is
+saved by CPAL device ID; choosing **System default** explicitly clears the
+saved ID. If a saved device is disconnected or unavailable, AAADAW reports that
+state and does not silently switch to another device. Close and reopen playback
+to apply an output change; an active recording keeps its connected input. Mono
+inputs, including a built-in microphone that exposes only one channel, are
+recorded centered to both project channels. macOS requests microphone
+permission when recording first needs input.
+
+The `macos-15` Apple Silicon CI job compiles all targets with CoreAudio and
+tests device-enumeration recovery and backend policy. The native installer job
+assembles an unsigned `AAADAW.app`, validates its `Info.plist`, launches the
+bundled executable for `--version`, and uploads a zip artifact. CI does not
+exercise physical CoreAudio devices, microphone permission prompts, playback
+quality, or latency. The bundle is unsigned and not notarized; Gatekeeper-ready
+distribution remains a release task.
+
 ## Packaging status
 
-Release builds above are unpackaged executables. CI also creates the validation
-packages described in [native installer notes](native-installers.md). There is
-no code-signing, automatic update, or bundle of native audio services. Keep the
-chosen backend feature and its required system libraries explicit when
-distributing a binary; see [the roadmap](../ROADMAP.md) for remaining release
-gates.
+CI creates the validation packages described in [native installer notes](native-installers.md)
+and the unsigned macOS app bundle above. There is no code-signing, notarization,
+automatic update, or bundle of native audio services. Keep the chosen backend
+feature and its required system libraries explicit when distributing a binary;
+see [the roadmap](../ROADMAP.md) for remaining release gates.

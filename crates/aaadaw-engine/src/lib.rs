@@ -9,6 +9,21 @@ mod clap_gui;
 mod clap_helper_process;
 mod clap_instrument;
 mod clap_ipc;
+#[cfg(any(
+    all(feature = "cpal-backend", target_os = "windows"),
+    all(feature = "cpal-backend", target_os = "macos")
+))]
+mod cpal_common;
+#[cfg(any(
+    all(feature = "cpal-backend", target_os = "windows"),
+    all(feature = "cpal-backend", target_os = "macos")
+))]
+mod cpal_input;
+#[cfg(any(
+    all(feature = "cpal-backend", target_os = "windows"),
+    all(feature = "cpal-backend", target_os = "macos")
+))]
+mod cpal_output;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
 #[cfg(feature = "jack-backend")]
@@ -22,12 +37,6 @@ mod pipewire_input;
 mod pipewire_output;
 mod stream;
 mod transport;
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-mod wasapi_common;
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-mod wasapi_input;
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-mod wasapi_output;
 
 pub use capture::{
     AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, AudioInputMonitorGate,
@@ -49,6 +58,22 @@ pub use clap_ipc::{
     ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion,
     ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError, run_clap_ipc_instrument_helper,
 };
+#[cfg(any(
+    all(feature = "cpal-backend", target_os = "windows"),
+    all(feature = "cpal-backend", target_os = "macos")
+))]
+pub use cpal_input::{
+    CpalAudioInput, CpalInputDeviceInfo, CpalInputError,
+    enumerate_input_devices as enumerate_cpal_input_devices,
+};
+#[cfg(any(
+    all(feature = "cpal-backend", target_os = "windows"),
+    all(feature = "cpal-backend", target_os = "macos")
+))]
+pub use cpal_output::{
+    CpalAudioOutput, CpalOutputDeviceInfo, CpalOutputError, CpalOutputStats,
+    enumerate_output_devices as enumerate_cpal_output_devices,
+};
 #[cfg(feature = "jack-backend")]
 pub use jack_input::{JackAudioInput, JackInputError};
 #[cfg(feature = "jack-backend")]
@@ -69,16 +94,6 @@ pub use stream::{
     stereo_pcm_stream,
 };
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-pub use wasapi_input::{
-    WasapiAudioInput, WasapiInputDeviceInfo, WasapiInputError,
-    enumerate_input_devices as enumerate_wasapi_input_devices,
-};
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-pub use wasapi_output::{
-    WasapiAudioOutput, WasapiOutputDeviceInfo, WasapiOutputError, WasapiOutputStats,
-    enumerate_output_devices as enumerate_wasapi_output_devices,
-};
 
 use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
 use std::cell::Cell;

@@ -1,5 +1,5 @@
 use crate::AudioRenderGraph;
-use crate::wasapi_common::is_supported_pcm_format;
+use crate::cpal_common::is_supported_pcm_format;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -18,13 +18,13 @@ const PREFERRED_CALLBACK_FRAMES: u32 = 512;
 fn callback_buffer_size(
     supported: &SupportedBufferSize,
     graph_capacity: usize,
-) -> Result<BufferSize, WasapiOutputError> {
+) -> Result<BufferSize, CpalOutputError> {
     match supported {
         SupportedBufferSize::Range { min, max } => {
             let capacity = u32::try_from(graph_capacity).unwrap_or(u32::MAX);
             let largest_supported = (*max).min(capacity);
             if largest_supported < *min {
-                return Err(WasapiOutputError::DeviceBlockTooLarge {
+                return Err(CpalOutputError::DeviceBlockTooLarge {
                     device: *min as usize,
                     maximum: graph_capacity,
                 });
@@ -33,7 +33,7 @@ fn callback_buffer_size(
                 PREFERRED_CALLBACK_FRAMES.clamp(*min, largest_supported),
             ))
         }
-        SupportedBufferSize::Unknown => Err(WasapiOutputError::UnknownBufferSize),
+        SupportedBufferSize::Unknown => Err(CpalOutputError::UnknownBufferSize),
     }
 }
 
@@ -236,7 +236,7 @@ impl Drop for Callback {
 }
 
 #[derive(Debug)]
-pub enum WasapiOutputError {
+pub enum CpalOutputError {
     DeviceUnavailable,
     SelectedDeviceUnavailable(String),
     InvalidDeviceId(String),
@@ -260,23 +260,28 @@ pub enum WasapiOutputError {
     ShutdownTimedOut,
 }
 
-impl fmt::Display for WasapiOutputError {
+impl fmt::Display for CpalOutputError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeviceUnavailable => f.write_str("Windows has no default playback device"),
+            Self::DeviceUnavailable => {
+                f.write_str("no default system audio output device is available")
+            }
             Self::SelectedDeviceUnavailable(id) => {
-                write!(f, "selected WASAPI output device is unavailable ({id})")
+                write!(
+                    f,
+                    "selected system audio output device is unavailable ({id})"
+                )
             }
             Self::InvalidDeviceId(id) => {
-                write!(f, "saved WASAPI output device ID is invalid ({id})")
+                write!(f, "saved system audio output device ID is invalid ({id})")
             }
-            Self::Cpal(error) => write!(f, "WASAPI output error: {error}"),
+            Self::Cpal(error) => write!(f, "System audio output error: {error}"),
             Self::NoStereoConfig {
                 sample_rate,
                 is_default_device,
             } => write!(
                 f,
-                "{} WASAPI device has no stereo PCM configuration supporting {sample_rate} Hz",
+                "{} system audio device has no stereo PCM configuration supporting {sample_rate} Hz",
                 if *is_default_device {
                     "default"
                 } else {
@@ -285,37 +290,37 @@ impl fmt::Display for WasapiOutputError {
             ),
             Self::UnsupportedSampleFormat(format) => write!(
                 f,
-                "WASAPI sample format {format:?} is not supported for output"
+                "system audio sample format {format:?} is not supported for output"
             ),
             Self::SampleRateMismatch { project, device } => write!(
                 f,
-                "project sample rate {project} Hz does not match WASAPI rate {device} Hz"
+                "project sample rate {project} Hz does not match system audio rate {device} Hz"
             ),
             Self::UnknownBufferSize => {
-                f.write_str("WASAPI did not report a supported output buffer size")
+                f.write_str("system audio did not report a supported output buffer size")
             }
             Self::DeviceBlockTooLarge { device, maximum } => write!(
                 f,
-                "WASAPI callback block {device} exceeds render capacity {maximum}"
+                "system audio callback block {device} exceeds render capacity {maximum}"
             ),
-            Self::ControlQueueFull => f.write_str("WASAPI transport command queue is full"),
+            Self::ControlQueueFull => f.write_str("system audio transport command queue is full"),
             Self::GraphReplacementInFlight => {
-                f.write_str("WASAPI graph replacement is still in flight")
+                f.write_str("system audio graph replacement is still in flight")
             }
             Self::ShutdownTimedOut => {
-                f.write_str("WASAPI output callback did not acknowledge shutdown")
+                f.write_str("system audio output callback did not acknowledge shutdown")
             }
         }
     }
 }
-impl StdError for WasapiOutputError {}
-impl From<cpal::Error> for WasapiOutputError {
+impl StdError for CpalOutputError {}
+impl From<cpal::Error> for CpalOutputError {
     fn from(error: cpal::Error) -> Self {
         Self::Cpal(error)
     }
 }
 
-pub struct WasapiOutputStats {
+pub struct CpalOutputStats {
     pub rendered_blocks: u64,
     pub underrun_samples: u64,
     pub master_guarded_samples: u64,
@@ -325,7 +330,7 @@ pub struct WasapiOutputStats {
     pub device_lost: bool,
 }
 
-pub struct WasapiAudioOutput {
+pub struct CpalAudioOutput {
     stream: Option<cpal::Stream>,
     commands: Producer<Command>,
     retired: Consumer<Box<AudioRenderGraph>>,
@@ -353,15 +358,15 @@ where
     )
 }
 
-impl WasapiAudioOutput {
+impl CpalAudioOutput {
     pub fn open(
         graph: AudioRenderGraph,
         selected_device_id: Option<&str>,
-    ) -> Result<Self, WasapiOutputError> {
+    ) -> Result<Self, CpalOutputError> {
         let host = cpal::default_host();
         let device = match selected_device_id {
             Some(id) => {
-                let parsed = parse_wasapi_device_id(id)?;
+                let parsed = parse_cpal_device_id(id)?;
                 let device = host
                     .output_devices()?
                     .find(|device| device.id().is_ok_and(|device_id| device_id == parsed));
@@ -369,7 +374,7 @@ impl WasapiAudioOutput {
             }
             None => host
                 .default_output_device()
-                .ok_or(WasapiOutputError::DeviceUnavailable)?,
+                .ok_or(CpalOutputError::DeviceUnavailable)?,
         };
         let is_default_device = selected_device_id.is_none();
         let project_rate = graph.sample_rate();
@@ -391,7 +396,7 @@ impl WasapiAudioOutput {
                     .map(|buffer_size| (range, buffer_size))
             })
             .min_by_key(|(range, _)| u8::from(range.sample_format() != SampleFormat::F32))
-            .ok_or(WasapiOutputError::NoStereoConfig {
+            .ok_or(CpalOutputError::NoStereoConfig {
                 sample_rate: project_rate,
                 is_default_device,
             })?;
@@ -430,7 +435,7 @@ impl WasapiAudioOutput {
             }
             SampleFormat::U32 => build_stream::<u32>(&device, config, callback, callback_counters),
             SampleFormat::U64 => build_stream::<u64>(&device, config, callback, callback_counters),
-            unsupported => return Err(WasapiOutputError::UnsupportedSampleFormat(unsupported)),
+            unsupported => return Err(CpalOutputError::UnsupportedSampleFormat(unsupported)),
         }?;
         stream.play()?;
         Ok(Self {
@@ -445,31 +450,31 @@ impl WasapiAudioOutput {
         })
     }
 
-    pub fn play(&mut self) -> Result<(), WasapiOutputError> {
+    pub fn play(&mut self) -> Result<(), CpalOutputError> {
         self.enqueue(Command::Play)
     }
-    pub fn stop(&mut self) -> Result<(), WasapiOutputError> {
+    pub fn stop(&mut self) -> Result<(), CpalOutputError> {
         self.enqueue(Command::Stop)
     }
-    pub fn panic_midi(&mut self) -> Result<(), WasapiOutputError> {
+    pub fn panic_midi(&mut self) -> Result<(), CpalOutputError> {
         self.enqueue(Command::PanicMidi)
     }
     pub fn replace_graph(
         &mut self,
         graph: AudioRenderGraph,
         playing: bool,
-    ) -> Result<(), WasapiOutputError> {
+    ) -> Result<(), CpalOutputError> {
         if self.replacement_pending {
-            return Err(WasapiOutputError::GraphReplacementInFlight);
+            return Err(CpalOutputError::GraphReplacementInFlight);
         }
         if graph.sample_rate() != self.sample_rate {
-            return Err(WasapiOutputError::SampleRateMismatch {
+            return Err(CpalOutputError::SampleRateMismatch {
                 project: graph.sample_rate(),
                 device: self.sample_rate,
             });
         }
         if graph.max_block_frames() < self.max_block_frames {
-            return Err(WasapiOutputError::DeviceBlockTooLarge {
+            return Err(CpalOutputError::DeviceBlockTooLarge {
                 device: self.max_block_frames,
                 maximum: graph.max_block_frames(),
             });
@@ -497,7 +502,7 @@ impl WasapiAudioOutput {
         }
         graphs
     }
-    pub fn shutdown(&mut self) -> Result<Vec<AudioRenderGraph>, WasapiOutputError> {
+    pub fn shutdown(&mut self) -> Result<Vec<AudioRenderGraph>, CpalOutputError> {
         if self.counters.device_lost.load(Ordering::Acquire) {
             return Ok(self.shutdown_after_device_loss());
         }
@@ -511,7 +516,7 @@ impl WasapiAudioOutput {
                 return Ok(self.shutdown_after_device_loss());
             }
             if Instant::now() >= deadline {
-                return Err(WasapiOutputError::ShutdownTimedOut);
+                return Err(CpalOutputError::ShutdownTimedOut);
             }
             thread::sleep(Duration::from_millis(1));
         }
@@ -549,8 +554,8 @@ impl WasapiAudioOutput {
         self.counters.shutdown.store(true, Ordering::Release);
         graphs
     }
-    pub fn stats(&self) -> WasapiOutputStats {
-        WasapiOutputStats {
+    pub fn stats(&self) -> CpalOutputStats {
+        CpalOutputStats {
             rendered_blocks: self.counters.rendered_blocks.load(Ordering::Relaxed),
             underrun_samples: self.counters.underrun_samples.load(Ordering::Relaxed),
             master_guarded_samples: self.counters.master_guarded_samples.load(Ordering::Relaxed),
@@ -563,32 +568,32 @@ impl WasapiAudioOutput {
             device_lost: self.counters.device_lost.load(Ordering::Acquire),
         }
     }
-    fn enqueue(&mut self, command: Command) -> Result<(), WasapiOutputError> {
+    fn enqueue(&mut self, command: Command) -> Result<(), CpalOutputError> {
         self.commands
             .push(command)
-            .map_err(|_| WasapiOutputError::ControlQueueFull)
+            .map_err(|_| CpalOutputError::ControlQueueFull)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WasapiOutputDeviceInfo {
+pub struct CpalOutputDeviceInfo {
     pub id: String,
     pub name: String,
 }
 
-fn parse_wasapi_device_id(id: &str) -> Result<cpal::DeviceId, WasapiOutputError> {
-    cpal::DeviceId::from_str(id).map_err(|_| WasapiOutputError::InvalidDeviceId(id.to_owned()))
+fn parse_cpal_device_id(id: &str) -> Result<cpal::DeviceId, CpalOutputError> {
+    cpal::DeviceId::from_str(id).map_err(|_| CpalOutputError::InvalidDeviceId(id.to_owned()))
 }
 
-fn require_selected_output_device<T>(id: &str, device: Option<T>) -> Result<T, WasapiOutputError> {
-    device.ok_or_else(|| WasapiOutputError::SelectedDeviceUnavailable(id.to_owned()))
+fn require_selected_output_device<T>(id: &str, device: Option<T>) -> Result<T, CpalOutputError> {
+    device.ok_or_else(|| CpalOutputError::SelectedDeviceUnavailable(id.to_owned()))
 }
 
-pub fn enumerate_output_devices() -> Result<Vec<WasapiOutputDeviceInfo>, WasapiOutputError> {
+pub fn enumerate_output_devices() -> Result<Vec<CpalOutputDeviceInfo>, CpalOutputError> {
     let host = cpal::default_host();
     host.output_devices()?
         .map(|device| {
-            Ok(WasapiOutputDeviceInfo {
+            Ok(CpalOutputDeviceInfo {
                 id: device.id()?.to_string(),
                 name: device.description()?.name().to_owned(),
             })
@@ -596,7 +601,7 @@ pub fn enumerate_output_devices() -> Result<Vec<WasapiOutputDeviceInfo>, WasapiO
         .collect()
 }
 
-impl Drop for WasapiAudioOutput {
+impl Drop for CpalAudioOutput {
     fn drop(&mut self) {
         if self.stream.is_some() {
             let _ = self.shutdown();
@@ -614,23 +619,33 @@ mod tests {
     use aaadaw_core::{DawAction, Project};
     use cpal::FrameCount;
 
+    fn fixture_device_id(id: &str) -> String {
+        let host = if cfg!(target_os = "windows") {
+            "wasapi"
+        } else {
+            "coreaudio"
+        };
+        format!("{host}:{id}")
+    }
+
     #[test]
-    fn persisted_wasapi_device_ids_parse_and_invalid_ids_are_reported() {
-        assert!(parse_wasapi_device_id("wasapi:mock-endpoint").is_ok());
+    fn persisted_cpal_device_ids_parse_and_invalid_ids_are_reported() {
+        assert!(parse_cpal_device_id(&fixture_device_id("mock-endpoint")).is_ok());
         assert!(matches!(
-            parse_wasapi_device_id("not-a-device-id"),
-            Err(WasapiOutputError::InvalidDeviceId(_))
+            parse_cpal_device_id("not-a-device-id"),
+            Err(CpalOutputError::InvalidDeviceId(_))
         ));
     }
 
     #[test]
     fn missing_selected_device_is_an_error_instead_of_default_device_fallback() {
+        let disconnected_id = fixture_device_id("disconnected");
         assert!(matches!(
-            require_selected_output_device::<()>("wasapi:disconnected", None),
-            Err(WasapiOutputError::SelectedDeviceUnavailable(id)) if id == "wasapi:disconnected"
+            require_selected_output_device::<()>(&disconnected_id, None),
+            Err(CpalOutputError::SelectedDeviceUnavailable(id)) if id == disconnected_id
         ));
         assert_eq!(
-            require_selected_output_device("wasapi:present", Some(17)).unwrap(),
+            require_selected_output_device("cpal:present", Some(17)).unwrap(),
             17
         );
     }
@@ -731,11 +746,11 @@ mod tests {
         );
         assert!(matches!(
             callback_buffer_size(&range, 64),
-            Err(WasapiOutputError::DeviceBlockTooLarge { .. })
+            Err(CpalOutputError::DeviceBlockTooLarge { .. })
         ));
         assert!(matches!(
             callback_buffer_size(&SupportedBufferSize::Unknown, 2_048),
-            Err(WasapiOutputError::UnknownBufferSize)
+            Err(CpalOutputError::UnknownBufferSize)
         ));
     }
 
@@ -861,7 +876,7 @@ mod tests {
         let counters = Arc::new(Counters::default());
         counters.device_lost.store(true, Ordering::Release);
         let returned_graphs = Arc::new(Mutex::new(vec![graph]));
-        let mut output = WasapiAudioOutput {
+        let mut output = CpalAudioOutput {
             stream: None,
             commands: RingBuffer::new(COMMAND_CAPACITY).0,
             retired,

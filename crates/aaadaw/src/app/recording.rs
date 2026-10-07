@@ -47,7 +47,7 @@ impl App {
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
-        let wasapi_input_device_id = self.audio_settings.wasapi_input_device_id.clone();
+        let cpal_input_device_id = self.audio_settings.cpal_input_device_id.clone();
         if self.playback.is_none() {
             self.recording_starting = true;
             self.recording_cancel_requested = false;
@@ -134,7 +134,7 @@ impl App {
                         Some(monitor_producer),
                         control.clone(),
                         sample_rate,
-                        wasapi_input_device_id.as_deref(),
+                        cpal_input_device_id.as_deref(),
                     )
                 };
                 match input {
@@ -248,7 +248,7 @@ impl App {
         };
         let backend = self.selected_playback_backend();
         let sample_rate = self.project.settings().sample_rate();
-        let wasapi_input_device_id = self.audio_settings.wasapi_input_device_id.clone();
+        let cpal_input_device_id = self.audio_settings.cpal_input_device_id.clone();
         self.standby_monitor_track = Some(track_id);
         self.standby_monitor_starting = true;
         self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
@@ -265,7 +265,7 @@ impl App {
                     Some(monitor_producer),
                     control.clone(),
                     sample_rate,
-                    wasapi_input_device_id.as_deref(),
+                    cpal_input_device_id.as_deref(),
                 )
                 .map(|input| StandbyAudioInput::new(input, consumer, control))
             }),

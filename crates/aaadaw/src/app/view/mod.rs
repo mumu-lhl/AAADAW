@@ -3,13 +3,13 @@ use super::{App, Message};
     all(feature = "jack-backend", feature = "pipewire-backend"),
     all(
         feature = "jack-backend",
-        feature = "wasapi-backend",
-        target_os = "windows"
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
     ),
     all(
         feature = "pipewire-backend",
-        feature = "wasapi-backend",
-        target_os = "windows"
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
     )
 ))]
 use aaadaw_app::PlaybackBackend;
@@ -301,7 +301,7 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         .iter()
         .any(|track| track.is_record_armed());
     let playback_state = if !playback_available {
-        "WASAPI output is available on Windows only".to_owned()
+        "Native audio output is unavailable in this build".to_owned()
     } else if app.recording.is_some() {
         format!(
             "Recording · {:.2}s",
@@ -412,13 +412,13 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         ),
         all(
             feature = "pipewire-backend",
-            feature = "wasapi-backend",
-            target_os = "windows"
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
         )
     ))]
     let controls = {
@@ -445,16 +445,19 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
             )
             .on_press(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
         );
-        #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+        #[cfg(all(
+            feature = "cpal-backend",
+            any(target_os = "windows", target_os = "macos")
+        ))]
         let controls = controls.push(
             button(
-                if app.selected_playback_backend() == PlaybackBackend::Wasapi {
-                    "● WASAPI"
+                if app.selected_playback_backend() == PlaybackBackend::Cpal {
+                    format!("● {}", PlaybackBackend::Cpal.name())
                 } else {
-                    "WASAPI"
+                    PlaybackBackend::Cpal.name().to_owned()
                 },
             )
-            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Wasapi)),
+            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Cpal)),
         );
         controls
     };

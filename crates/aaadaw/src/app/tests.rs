@@ -49,58 +49,64 @@ fn unavailable_recording_input_reports_failure_without_inserting_an_item() {
     assert!(app.status.contains(&input_error));
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
 #[test]
-fn wasapi_output_enumeration_failures_are_visible_and_clear_loading_state() {
+fn cpal_output_enumeration_failures_are_visible_and_clear_loading_state() {
     let mut app = App::default();
-    app.wasapi_output_devices_loading = true;
-    app.wasapi_output_devices
-        .push(aaadaw_engine::WasapiOutputDeviceInfo {
-            id: "wasapi:stale".to_owned(),
+    app.cpal_output_devices_loading = true;
+    app.cpal_output_devices
+        .push(aaadaw_engine::CpalOutputDeviceInfo {
+            id: "cpal:stale".to_owned(),
             name: "Stale output".to_owned(),
         });
 
-    app.finish_wasapi_output_device_enumeration(Err("endpoint service stopped".to_owned()));
+    app.finish_cpal_output_device_enumeration(Err("endpoint service stopped".to_owned()));
 
-    assert!(!app.wasapi_output_devices_loading);
-    assert!(app.wasapi_output_devices.is_empty());
+    assert!(!app.cpal_output_devices_loading);
+    assert!(app.cpal_output_devices.is_empty());
     assert_eq!(
-        app.wasapi_output_devices_error.as_deref(),
+        app.cpal_output_devices_error.as_deref(),
         Some("endpoint service stopped")
     );
     assert_eq!(
         app.audio_settings_feedback,
-        "WASAPI output devices could not be listed: endpoint service stopped"
+        "System audio output devices could not be listed: endpoint service stopped"
     );
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
 #[test]
-fn wasapi_input_enumeration_failures_are_visible_and_clear_loading_state() {
+fn cpal_input_enumeration_failures_are_visible_and_clear_loading_state() {
     let mut app = App::default();
-    app.wasapi_input_devices_loading = true;
-    app.audio_settings.wasapi_input_device_id = Some("wasapi:stored-input".to_owned());
-    app.wasapi_input_devices
-        .push(aaadaw_engine::WasapiInputDeviceInfo {
-            id: "wasapi:stale-input".to_owned(),
+    app.cpal_input_devices_loading = true;
+    app.audio_settings.cpal_input_device_id = Some("cpal:stored-input".to_owned());
+    app.cpal_input_devices
+        .push(aaadaw_engine::CpalInputDeviceInfo {
+            id: "cpal:stale-input".to_owned(),
             name: "Stale input".to_owned(),
         });
 
-    app.finish_wasapi_input_device_enumeration(Err("endpoint service stopped".to_owned()));
+    app.finish_cpal_input_device_enumeration(Err("endpoint service stopped".to_owned()));
 
-    assert!(!app.wasapi_input_devices_loading);
-    assert!(app.wasapi_input_devices.is_empty());
+    assert!(!app.cpal_input_devices_loading);
+    assert!(app.cpal_input_devices.is_empty());
     assert_eq!(
-        app.wasapi_input_devices_error.as_deref(),
+        app.cpal_input_devices_error.as_deref(),
         Some("endpoint service stopped")
     );
     assert_eq!(
-        app.audio_settings.wasapi_input_device_id.as_deref(),
-        Some("wasapi:stored-input")
+        app.audio_settings.cpal_input_device_id.as_deref(),
+        Some("cpal:stored-input")
     );
     assert_eq!(
         app.audio_settings_feedback,
-        "WASAPI input devices could not be listed: endpoint service stopped"
+        "System audio input devices could not be listed: endpoint service stopped"
     );
 }
 
@@ -111,7 +117,7 @@ fn saved_playback_backend_restores_only_when_available_in_this_build() {
     app.restore_playback_backend(Some(super::audio_config::PlaybackBackendSetting::PipeWire));
     assert_eq!(app.selected_playback_backend(), PlaybackBackend::PipeWire);
 
-    app.restore_playback_backend(Some(super::audio_config::PlaybackBackendSetting::Wasapi));
+    app.restore_playback_backend(Some(super::audio_config::PlaybackBackendSetting::Cpal));
     assert_eq!(app.selected_playback_backend(), PlaybackBackend::PipeWire);
 }
 

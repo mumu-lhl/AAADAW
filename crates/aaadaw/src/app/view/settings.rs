@@ -177,18 +177,30 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
             app.audio_settings.recording_offset_us,
         )
     });
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    let wasapi_output = wasapi_output_settings(app);
-    #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
-    let wasapi_output: Element<'_, Message> = text("").into();
-    #[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-    let wasapi_input = wasapi_input_settings(app);
-    #[cfg(not(all(feature = "wasapi-backend", target_os = "windows")))]
-    let wasapi_input: Element<'_, Message> = text("").into();
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    let cpal_output = cpal_output_settings(app);
+    #[cfg(not(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    )))]
+    let cpal_output: Element<'_, Message> = text("").into();
+    #[cfg(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    ))]
+    let cpal_input = cpal_input_settings(app);
+    #[cfg(not(all(
+        feature = "cpal-backend",
+        any(target_os = "windows", target_os = "macos")
+    )))]
+    let cpal_input: Element<'_, Message> = text("").into();
     column![
         text("Audio output and recording").size(17),
-        wasapi_output,
-        wasapi_input,
+        cpal_output,
+        cpal_input,
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
         row![
             column![
@@ -231,24 +243,27 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-fn wasapi_output_settings(app: &App) -> Element<'_, Message> {
-    let saved_id = app.audio_settings.wasapi_output_device_id.as_deref();
-    let enumeration_feedback = if app.wasapi_output_devices_loading {
-        "Listing WASAPI output devices…".to_owned()
-    } else if let Some(error) = &app.wasapi_output_devices_error {
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn cpal_output_settings(app: &App) -> Element<'_, Message> {
+    let saved_id = app.audio_settings.cpal_output_device_id.as_deref();
+    let enumeration_feedback = if app.cpal_output_devices_loading {
+        "Listing audio output devices…".to_owned()
+    } else if let Some(error) = &app.cpal_output_devices_error {
         format!("Output device list unavailable: {error}")
-    } else if saved_id.is_some_and(|id| {
-        !app.wasapi_output_devices
-            .iter()
-            .any(|device| device.id == id)
-    }) {
+    } else if app.cpal_output_devices.is_empty() {
+        "No audio output devices were found. Connect a device and refresh the list.".to_owned()
+    } else if saved_id
+        .is_some_and(|id| !app.cpal_output_devices.iter().any(|device| device.id == id))
+    {
         "The saved endpoint is unavailable. Playback will not switch outputs automatically; choose System default or another endpoint.".to_owned()
     } else {
         "Close and reopen playback to apply an endpoint change.".to_owned()
     };
-    let choices = wasapi_device_choices(
-        app.wasapi_output_devices
+    let choices = cpal_device_choices(
+        app.cpal_output_devices
             .iter()
             .map(|device| (device.id.as_str(), device.name.as_str())),
         saved_id,
@@ -258,37 +273,40 @@ fn wasapi_output_settings(app: &App) -> Element<'_, Message> {
         .iter()
         .find(|choice| choice.id.as_deref() == saved_id)
         .cloned();
-    wasapi_device_settings(
-        "WASAPI output endpoint",
-        "Select a Windows playback endpoint. System default is an explicit choice.",
+    cpal_device_settings(
+        "System audio output device",
+        "Select an audio output device. System default is an explicit choice.",
         "Output device",
         choices,
         selected,
-        app.wasapi_output_devices_loading,
+        app.cpal_output_devices_loading,
         enumeration_feedback,
-        Message::RefreshWasapiOutputDevices,
-        Message::SelectWasapiOutputDevice,
+        Message::RefreshCpalOutputDevices,
+        Message::SelectCpalOutputDevice,
     )
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-fn wasapi_input_settings(app: &App) -> Element<'_, Message> {
-    let saved_id = app.audio_settings.wasapi_input_device_id.as_deref();
-    let enumeration_feedback = if app.wasapi_input_devices_loading {
-        "Listing WASAPI input devices…".to_owned()
-    } else if let Some(error) = &app.wasapi_input_devices_error {
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn cpal_input_settings(app: &App) -> Element<'_, Message> {
+    let saved_id = app.audio_settings.cpal_input_device_id.as_deref();
+    let enumeration_feedback = if app.cpal_input_devices_loading {
+        "Listing audio input devices…".to_owned()
+    } else if let Some(error) = &app.cpal_input_devices_error {
         format!("Input device list unavailable: {error}")
-    } else if saved_id.is_some_and(|id| {
-        !app.wasapi_input_devices
-            .iter()
-            .any(|device| device.id == id)
-    }) {
+    } else if app.cpal_input_devices.is_empty() {
+        "No audio input devices were found. Connect a device and refresh the list.".to_owned()
+    } else if saved_id
+        .is_some_and(|id| !app.cpal_input_devices.iter().any(|device| device.id == id))
+    {
         "The saved endpoint is unavailable. Recording will not switch inputs automatically; choose System default or another endpoint.".to_owned()
     } else {
         "The selection applies to the next input connection; active recording keeps its current input.".to_owned()
     };
-    let choices = wasapi_device_choices(
-        app.wasapi_input_devices
+    let choices = cpal_device_choices(
+        app.cpal_input_devices
             .iter()
             .map(|device| (device.id.as_str(), device.name.as_str())),
         saved_id,
@@ -298,29 +316,32 @@ fn wasapi_input_settings(app: &App) -> Element<'_, Message> {
         .iter()
         .find(|choice| choice.id.as_deref() == saved_id)
         .cloned();
-    wasapi_device_settings(
-        "WASAPI input endpoint",
-        "Select a Windows recording endpoint. System default is an explicit choice.",
+    cpal_device_settings(
+        "System audio input device",
+        "Select an audio input device. System default is an explicit choice.",
         "Input device",
         choices,
         selected,
-        app.wasapi_input_devices_loading,
+        app.cpal_input_devices_loading,
         enumeration_feedback,
-        Message::RefreshWasapiInputDevices,
-        Message::SelectWasapiInputDevice,
+        Message::RefreshCpalInputDevices,
+        Message::SelectCpalInputDevice,
     )
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
-fn wasapi_device_choices<'a>(
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn cpal_device_choices<'a>(
     devices: impl Iterator<Item = (&'a str, &'a str)>,
     saved_id: Option<&str>,
     kind: &str,
-) -> Vec<super::super::WasapiDeviceChoice> {
-    use super::super::WasapiDeviceChoice;
+) -> Vec<super::super::CpalDeviceChoice> {
+    use super::super::CpalDeviceChoice;
 
     let devices = devices.collect::<Vec<_>>();
-    let mut choices = vec![WasapiDeviceChoice {
+    let mut choices = vec![CpalDeviceChoice {
         id: None,
         label: "System default".to_owned(),
     }];
@@ -340,7 +361,7 @@ fn wasapi_device_choices<'a>(
         } else {
             base_label
         };
-        choices.push(WasapiDeviceChoice {
+        choices.push(CpalDeviceChoice {
             id: Some((*id).to_owned()),
             label,
         });
@@ -349,7 +370,7 @@ fn wasapi_device_choices<'a>(
         && !devices.iter().any(|(id, _)| *id == saved_id)
     {
         let suffix = saved_id.chars().rev().take(12).collect::<String>();
-        choices.push(WasapiDeviceChoice {
+        choices.push(CpalDeviceChoice {
             id: Some(saved_id.to_owned()),
             label: format!(
                 "Unavailable saved {kind} [{}]",
@@ -360,27 +381,30 @@ fn wasapi_device_choices<'a>(
     choices
 }
 
-#[cfg(all(feature = "wasapi-backend", target_os = "windows"))]
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos")
+))]
 #[allow(clippy::too_many_arguments)]
-fn wasapi_device_settings(
+fn cpal_device_settings(
     title: &'static str,
     description: &'static str,
     placeholder: &'static str,
-    choices: Vec<super::super::WasapiDeviceChoice>,
-    selected: Option<super::super::WasapiDeviceChoice>,
+    choices: Vec<super::super::CpalDeviceChoice>,
+    selected: Option<super::super::CpalDeviceChoice>,
     loading: bool,
     enumeration_feedback: String,
     refresh_message: Message,
     select_message: fn(Option<String>) -> Message,
 ) -> Element<'static, Message> {
-    use super::super::WasapiDeviceChoice;
+    use super::super::CpalDeviceChoice;
 
     column![
         row![
             column![text(title).size(13), text(description).size(10),]
                 .width(Length::Fill)
                 .spacing(tokens::SPACING_XS),
-            iced::widget::pick_list(choices, selected, move |choice: WasapiDeviceChoice| {
+            iced::widget::pick_list(choices, selected, move |choice: CpalDeviceChoice| {
                 select_message(choice.id)
             },)
             .placeholder(placeholder)
