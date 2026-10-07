@@ -3416,6 +3416,120 @@ fn piano_roll_paste_uses_the_shared_snap_grid_and_respects_snap_off() {
 }
 
 #[test]
+fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 960,
+            duration: 240,
+            velocity: 96,
+        },
+    ));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 64,
+            tick: 2_880,
+            duration: 480,
+            velocity: 96,
+        },
+    ));
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    assert_eq!(app.midi_editor_origin_tick, 720);
+    assert_eq!(app.midi_editor_high_pitch, 66);
+    assert!((app.midi_editor_pixels_per_beat - (884.0 / 3.0)).abs() < f32::EPSILON);
+
+    let window_id = app.midi_editor_window_id.unwrap();
+    let _ = app.update(Message::WindowResized(
+        window_id,
+        iced::Size::new(720.0, 420.0),
+    ));
+    let _ = app.update(Message::FitPianoRollToNotes(item_id));
+    assert!((app.midi_editor_pixels_per_beat - (604.0 / 3.0)).abs() < f32::EPSILON);
+
+    app.midi_editor_origin_tick = 1_000;
+    app.midi_editor_pixels_per_beat = 96.0;
+    let pointer_offset = 192.0_f64;
+    let tick_before = app.midi_editor_origin_tick as f64
+        + pointer_offset / f64::from(app.midi_editor_pixels_per_beat)
+            * f64::from(app.project.settings().ppq());
+    let _ = app.update(Message::PianoRollZoomAt(2.0, pointer_offset as f32));
+    let tick_after = app.midi_editor_origin_tick as f64
+        + pointer_offset / f64::from(app.midi_editor_pixels_per_beat)
+            * f64::from(app.project.settings().ppq());
+    assert!((tick_before - tick_after).abs() < 1.0);
+
+    let _ = app.update(Message::PianoRollPanPixels(96.0));
+    assert_eq!(app.midi_editor_origin_tick, 2_440);
+}
+
+#[test]
+fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 100_000,
+        })
+        .expect("long MIDI item should be editable");
+    for note in [
+        MidiNoteData {
+            pitch: 12,
+            tick: 0,
+            duration: 960,
+            velocity: 96,
+        },
+        MidiNoteData {
+            pitch: 110,
+            tick: 40_000,
+            duration: 960,
+            velocity: 96,
+        },
+    ] {
+        let _ = app.update(Message::AddMidiNoteAt(item_id, note));
+    }
+
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    assert!(app.midi_editor_pixels_per_beat < 24.0);
+    assert_eq!(app.midi_editor_high_pitch, 112);
+    assert_eq!(app.midi_editor_pitch_rows, 103);
+    assert!(app.midi_editor_pitch_row_height >= 2.0);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn piano_roll_playhead_matches_arrangement_and_follow_keeps_it_in_view() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let playhead_tick = 12_000;
+    app.midi_editor_pixels_per_beat = 96.0;
+    app.playhead_sample = app.project.sample_at_tick(playhead_tick).unwrap();
+    app.playback_playing = true;
+    app.midi_editor_follow_playhead = true;
+
+    let item = &app.project.midi_items()[0];
+    assert_eq!(app.midi_editor_playhead_tick(item), Some(playhead_tick));
+
+    app.follow_midi_editor_playhead();
+
+    assert_eq!(app.midi_editor_origin_tick, playhead_tick - 6_630);
+}
+
+#[test]
 fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
