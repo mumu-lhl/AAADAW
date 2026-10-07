@@ -1,5 +1,6 @@
 use super::super::{App, Message};
 use aaadaw_app::ClapPluginDescriptor;
+use aaadaw_core::TrackId;
 use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -20,10 +21,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         })
         .unwrap_or("Track no longer exists");
     let query = app.plugin_picker_search.trim().to_lowercase();
-    let plugins = app
+    let searched_plugins = app
         .clap_plugin_scan
         .plugins
         .iter()
+        .filter(|plugin| matches_query(plugin, &query))
+        .collect::<Vec<_>>();
+    let plugins = searched_plugins
+        .iter()
+        .copied()
         .filter(|plugin| {
             if picking_instrument {
                 plugin.is_instrument()
@@ -31,8 +37,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 plugin.is_audio_effect()
             }
         })
-        .filter(|plugin| matches_query(plugin, &query))
         .collect::<Vec<_>>();
+    let counts = plugin_counts(&app.clap_plugin_scan.plugins);
+    let matching_counts = plugin_counts(searched_plugins.iter().copied());
 
     let current_instrument = target_track_id
         .and_then(|track_id| {
@@ -88,32 +95,83 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .push(rule::horizontal(1));
     }
     if plugins.is_empty() {
-        let empty_text = if app.clap_plugin_scan_busy {
-            "Scanning configured CLAP paths…"
+        if app.clap_plugin_scan_busy {
+            entries = entries
+                .push(container(text("Scanning configured CLAP paths…").size(12)).padding([12, 4]));
+        } else if !app.clap_plugin_scan.plugins.is_empty() && !query.is_empty() {
+            let mut no_match = column![].spacing(8);
+            if !picking_instrument && (matching_counts.instruments > 0 || matching_counts.other > 0)
+            {
+                no_match = no_match.push(
+                    text(format!(
+                        "No audio effects match ‘{}’. The search matches {} instrument(s) and {} other plug-in(s); only plug-ins advertising the audio-effect feature can be added here.",
+                        query, matching_counts.instruments, matching_counts.other
+                    ))
+                    .size(12),
+                );
+                if matching_counts.instruments > 0
+                    && let Some(track_id) = app.plugin_picker_track_id
+                {
+                    no_match = no_match.push(instrument_picker_button(track_id));
+                }
+            } else {
+                no_match = no_match.push(
+                    text(format!(
+                        "No {} match ‘{}’.",
+                        picker_type(picking_instrument),
+                        query
+                    ))
+                    .size(12),
+                );
+            }
+            entries = entries.push(
+                no_match
+                    .push(
+                        button("Clear search")
+                            .style(button::secondary)
+                            .on_press(Message::PluginPickerSearchChanged(String::new())),
+                    )
+                    .padding([12, 4]),
+            );
         } else if app.clap_plugin_scan.plugins.is_empty() {
-            if picking_instrument {
-                "No scanned instruments are available. Scan a CLAP path in Settings."
-            } else {
-                "No scanned plugins are available. Scan a CLAP path in Settings."
-            }
-        } else if !app.clap_plugin_scan.plugins.iter().any(|plugin| {
-            if picking_instrument {
-                plugin.is_instrument()
-            } else {
-                plugin.is_audio_effect()
-            }
-        }) {
-            if picking_instrument {
-                "No scanned CLAP instruments are available."
-            } else {
-                "No scanned CLAP effects are available."
-            }
+            entries = entries.push(
+                column![
+                    text(if picking_instrument {
+                        "No CLAP instruments have been discovered. Add a search path or rescan in Settings."
+                    } else {
+                        "No CLAP audio effects have been discovered. Add a search path or rescan in Settings."
+                    })
+                    .size(12),
+                    button("Open CLAP plugin settings")
+                        .style(button::secondary)
+                        .on_press(Message::OpenClapPluginSettings),
+                ]
+                .spacing(8)
+                .padding([12, 4]),
+            );
         } else if picking_instrument {
-            "No scanned instruments match this search."
+            entries = entries.push(
+                container(text("No scanned CLAP instruments are available.").size(12))
+                    .padding([12, 4]),
+            );
         } else {
-            "No scanned plugins match this search."
-        };
-        entries = entries.push(container(text(empty_text).size(12)).padding([12, 4]));
+            let explanation = format!(
+                "No audio effects are available. {} instrument(s) and {} other plug-in(s) were discovered; only CLAP plug-ins advertising the audio-effect feature can be inserted into an FX chain.",
+                counts.instruments, counts.other
+            );
+            let mut guidance = column![text(explanation).size(12)].spacing(8);
+            if counts.instruments > 0
+                && let Some(track_id) = app.plugin_picker_track_id
+            {
+                guidance = guidance.push(instrument_picker_button(track_id));
+            }
+            guidance = guidance.push(
+                button("Open CLAP plugin settings")
+                    .style(button::secondary)
+                    .on_press(Message::OpenClapPluginSettings),
+            );
+            entries = entries.push(guidance.padding([12, 4]));
+        }
     }
 
     let scan_state = if app.clap_plugin_scan_busy && app.clap_plugin_scan_is_cached {
@@ -152,12 +210,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         )
         .on_input(Message::PluginPickerSearchChanged)
         .padding([6, 8]),
-        text(format!("{} · {} shown", scan_state, plugins.len())).size(10),
+        text(format!("{scan_state} · {} shown", plugins.len())).size(10),
         rule::horizontal(1),
         scrollable(container(entries).padding(iced::Padding::default().right(8.0)))
             .height(Length::Fill),
         row![
-            text(format!("{} discovered", app.clap_plugin_scan.plugins.len())),
+            text(format!(
+                "{} discovered · {} instruments · {} effects · {} other",
+                app.clap_plugin_scan.plugins.len(),
+                counts.instruments,
+                counts.effects,
+                counts.other
+            ))
+            .size(10),
             iced::widget::Space::new().width(Length::Fill),
             button("Cancel")
                 .style(button::secondary)
@@ -197,5 +262,76 @@ fn plugin_kind(plugin: &ClapPluginDescriptor) -> &'static str {
         (true, false) => "Instrument",
         (false, true) => "Effect",
         (false, false) => "Other",
+    }
+}
+
+fn picker_type(picking_instrument: bool) -> &'static str {
+    if picking_instrument {
+        "instruments"
+    } else {
+        "audio effects"
+    }
+}
+
+fn instrument_picker_button(track_id: TrackId) -> Element<'static, Message> {
+    button("Choose an instrument for this track")
+        .style(button::primary)
+        .on_press(Message::OpenTrackInstrumentPicker(track_id))
+        .into()
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PluginCounts {
+    instruments: usize,
+    effects: usize,
+    other: usize,
+}
+
+fn plugin_counts<'a>(plugins: impl IntoIterator<Item = &'a ClapPluginDescriptor>) -> PluginCounts {
+    let mut counts = PluginCounts::default();
+    for plugin in plugins {
+        let (instrument, effect) = (plugin.is_instrument(), plugin.is_audio_effect());
+        counts.instruments += usize::from(instrument);
+        counts.effects += usize::from(effect);
+        counts.other += usize::from(!instrument && !effect);
+    }
+    counts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn plugin(name: &str, features: &[&str]) -> ClapPluginDescriptor {
+        ClapPluginDescriptor {
+            entry_path: PathBuf::from(format!("/plugins/{name}.clap")),
+            plugin_id: format!("org.example.{name}"),
+            name: name.to_owned(),
+            vendor: None,
+            features: features
+                .iter()
+                .map(|feature| (*feature).to_owned())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn counts_instruments_effects_and_other_without_treating_instruments_as_effects() {
+        let plugins = vec![
+            plugin("synth", &["instrument"]),
+            plugin("effect", &["audio-effect"]),
+            plugin("hybrid", &["instrument", "audio-effect"]),
+            plugin("other", &["utility"]),
+        ];
+
+        assert_eq!(
+            plugin_counts(&plugins),
+            PluginCounts {
+                instruments: 2,
+                effects: 2,
+                other: 1,
+            }
+        );
     }
 }
