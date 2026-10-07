@@ -4357,10 +4357,10 @@ impl App {
         }
         self.playback = Some(playback);
         #[cfg(all(feature = "audio-device", target_os = "android"))]
+        let midi_input_target_track = self.selected_midi_input_track_id();
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
         if let Some(playback) = self.playback.as_mut() {
-            crate::android_platform::set_midi_input_target_track(
-                self.selected_midi_input_track_id(),
-            );
+            crate::android_platform::set_midi_input_target_track(midi_input_target_track);
             crate::android_platform::set_midi_input_sender(playback.take_midi_input_sender());
             crate::android_platform::set_midi_output_receiver(playback.take_midi_output_receiver());
         }

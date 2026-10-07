@@ -313,7 +313,7 @@ fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
     )))]
     let cpal_input: Element<'_, Message> = text("").into();
     #[cfg(all(feature = "audio-device", target_os = "android"))]
-    let android_midi = {
+    let android_midi: Element<'_, Message> = {
         let description = column![
             text("External MIDI").size(13),
             text(format!(

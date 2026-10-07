@@ -186,7 +186,7 @@ pub(crate) fn midi_port_counts() -> Result<(usize, usize), String> {
                 &[],
             )?
             .l()?;
-        let summary = JString::from(summary);
+        let summary = env.cast_local::<JString>(summary)?;
         let summary: String = env.get_string(&summary)?.into();
         let (inputs, outputs) = summary.split_once(',').unwrap_or(("0", "0"));
         Ok((inputs.parse().unwrap_or(0), outputs.parse().unwrap_or(0)))
@@ -209,7 +209,8 @@ fn drain_midi_input_packets() -> Result<Vec<Vec<u8>>, String> {
                     &[],
                 )?
                 .l()?;
-            env.convert_byte_array(&JByteArray::from(packed))
+            let packed = env.cast_local::<JByteArray>(packed)?;
+            env.convert_byte_array(&packed)
         })
         .map_err(|error| error.to_string())?;
     let mut packets = Vec::new();
@@ -244,7 +245,7 @@ fn send_android_midi_messages(messages: &[AndroidMidiOutputMessage]) {
                 .saturating_mul(1_000_000_000)
                 .checked_div(u128::from(message.sample_rate.max(1)))
                 .unwrap_or(0)
-                .min(u128::from(i64::MAX)) as i64;
+                .min(i64::MAX as u128) as i64;
             let args = [JValue::Object(bytes.as_ref()), JValue::Long(delay)];
             env.call_method(
                 activity,
