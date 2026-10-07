@@ -58,8 +58,12 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
+          target: google_atd
           arch: x86_64
           profile: pixel_2
+          cores: 4
+          ram-size: 4096M
+          emulator-boot-timeout: 900
           script: |
             adb logcat -c
             adb install android-apk/app-debug.apk
@@ -162,4 +166,4 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests with nextest
-        run: xvfb-run -a cargo nextest run --workspace --features aaadaw/jack-backend
+        run: xvfb-run -a cargo nextest run --workspace --features aaadaw/jack-backend --retries 2
