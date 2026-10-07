@@ -118,6 +118,7 @@ pub struct AudioItemSnapshot {
 pub struct MidiItemSnapshot {
     pub id: u64,
     pub track_id: u64,
+    pub name: String,
     pub start_tick: u64,
     pub length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,

@@ -632,6 +632,7 @@ fn duplicate_midi_item_to_track(
     let duplicate = MidiItem {
         id: ItemId::from_raw(ids.next_item_id),
         track_id,
+        name: original.name.clone(),
         start_tick,
         length_ticks: item_end - start_tick,
         notes: Arc::new(notes),
@@ -899,6 +900,7 @@ impl Project {
                 .map(|item| MidiItemSnapshot {
                     id: item.id.value(),
                     track_id: item.track_id.value(),
+                    name: item.name.clone(),
                     start_tick: item.start_tick,
                     length_ticks: item.length_ticks,
                     notes: item
@@ -1103,6 +1105,8 @@ impl Project {
         for item in snapshot.midi_items {
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
+                || item.name.trim().is_empty()
+                || item.name.chars().count() > 128
                 || item.length_ticks == 0
                 || item.start_tick.checked_add(item.length_ticks).is_none()
             {
@@ -1142,6 +1146,7 @@ impl Project {
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
+                name: item.name,
                 start_tick: item.start_tick,
                 length_ticks: item.length_ticks,
                 notes: Arc::new(notes),
@@ -1874,6 +1879,7 @@ impl Project {
                 let item = MidiItem {
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
+                    name: "MIDI".to_owned(),
                     start_tick,
                     length_ticks,
                     notes: Arc::new(Vec::new()),
@@ -1885,6 +1891,22 @@ impl Project {
                     index: state.midi_items.len(),
                     item,
                 }
+            }
+            DawAction::SetMidiItemName { item_id, name } => {
+                if name.trim().is_empty() || name.chars().count() > 128 {
+                    return Err(ActionError::InvalidMidiItemName);
+                }
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                let after = MidiItem {
+                    name,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
             }
             DawAction::EditMidiItem {
                 item_id,
@@ -2030,6 +2052,7 @@ impl Project {
                     after.push(MidiItem {
                         id: segment_id,
                         track_id: original.track_id,
+                        name: original.name.clone(),
                         start_tick: segment_start,
                         length_ticks: segment_end - segment_start,
                         notes: Arc::new(notes),

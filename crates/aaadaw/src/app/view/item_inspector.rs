@@ -123,9 +123,25 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
         .iter()
         .find(|item| item.id() == item_id)
     {
+        let edited_name = app
+            .midi_item_name_edits
+            .get(&item_id)
+            .map_or(item.name(), String::as_str);
+        let has_name_error = app.midi_item_name_errors.contains_key(&item_id);
+        let name_input = text_input("MIDI item name", edited_name)
+            .on_input(move |name| Message::MidiItemNameChanged(item_id, name))
+            .on_submit(Message::CommitMidiItemName(item_id))
+            .style(move |theme, status| {
+                let mut style = text_input::default(theme, status);
+                if has_name_error {
+                    style.border.color = iced::Color::from_rgb8(237, 77, 68);
+                }
+                style
+            })
+            .width(Length::Fill);
         let mut item_actions = row![
             text(format!(
-                "MIDI Item · tick {} · length {}",
+                "Tick {} · length {}",
                 item.start_tick(),
                 item.length_ticks()
             ))
@@ -180,9 +196,13 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
                 .into()
             })
             .collect::<Vec<Element<'_, Message>>>();
-        column![item_actions, column(notes).spacing(4)]
-            .spacing(6)
-            .into()
+        column![
+            row![text("Name"), name_input].spacing(8),
+            item_actions,
+            column(notes).spacing(4)
+        ]
+        .spacing(6)
+        .into()
     } else {
         column![text("Selected Item no longer exists.")].into()
     }

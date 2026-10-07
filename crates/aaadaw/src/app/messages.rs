@@ -230,6 +230,8 @@ pub(crate) enum Message {
     AddMidiItem,
     AddMidiNote(ItemId),
     DeleteMidiItem(ItemId),
+    MidiItemNameChanged(ItemId, String),
+    CommitMidiItemName(ItemId),
     NudgeMidiItem(ItemId, i8),
     NudgeMidiNote(ItemId, NoteId, i8),
     AdjustMidiNotePitch(ItemId, NoteId, i8),
