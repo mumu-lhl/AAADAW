@@ -63,12 +63,7 @@ jobs:
           script: |
             adb install android-apk/app-debug.apk
             adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
-            attempt=0
-            while [ "$attempt" -lt 30 ]; do
-              if adb shell pidof org.aaadaw.app >/dev/null; then break; fi
-              sleep 1
-              attempt=$((attempt + 1))
-            done
+            timeout 40s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell pidof org.aaadaw.app >/dev/null; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1'
             adb shell pidof org.aaadaw.app
             adb shell input keyevent 3
             adb shell monkey -p org.aaadaw.app 1
