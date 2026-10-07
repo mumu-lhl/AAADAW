@@ -255,6 +255,10 @@ pub(crate) enum TimelineEvent {
     EndItemTrim,
     CancelItemTrim,
     SelectTrack(TrackId),
+    SelectTrackWithModifiers {
+        track_id: TrackId,
+        modifiers: keyboard::Modifiers,
+    },
     OpenTrackContextMenu(TrackId),
     ToggleTrackContextMenu(TrackId),
     CloseTrackContextMenu,
@@ -681,6 +685,7 @@ pub(crate) struct TimelineState {
     pub(crate) vertical_scroll: f32,
     pub(crate) viewport_height: f32,
     pub(crate) selected_track: Option<TrackId>,
+    pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
     pub(crate) time_selection: Option<TimeSelection>,
@@ -700,6 +705,7 @@ pub(crate) struct TimelineState {
     waveform_geometry_cache: Arc<Mutex<CachedWaveformGeometry>>,
     pan_fractional_tick: f64,
     selection_anchor: Option<ItemId>,
+    track_selection_anchor: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
     item_trim_preview: Option<ItemTrimPreview>,
     pub(crate) volume_automation_tracks: HashSet<TrackId>,
@@ -851,6 +857,7 @@ impl Default for TimelineState {
             vertical_scroll: 0.0,
             viewport_height: 480.0,
             selected_track: None,
+            selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
             time_selection: None,
@@ -870,6 +877,7 @@ impl Default for TimelineState {
             waveform_geometry_cache: Arc::default(),
             pan_fractional_tick: 0.0,
             selection_anchor: None,
+            track_selection_anchor: None,
             drag_preview: None,
             item_trim_preview: None,
             volume_automation_tracks: HashSet::new(),
@@ -903,6 +911,9 @@ impl TimelineState {
         self.context_automation_position = None;
         self.fx_chain_snapshot.clear();
         self.fx_lane_snapshot.clear();
+        self.selected_track = None;
+        self.selected_tracks.clear();
+        self.track_selection_anchor = None;
         self.rebuild(project);
 
         if let Some(view_state) = view_state {
@@ -1049,11 +1060,24 @@ impl TimelineState {
         if self.cache.snap_grid_ticks.is_none() {
             self.snap_enabled = false;
         }
+        self.selected_tracks
+            .retain(|track_id| self.cache.track_ids.contains(track_id));
         if self
             .selected_track
             .is_some_and(|track_id| !self.cache.track_ids.contains(&track_id))
         {
-            self.selected_track = None;
+            self.selected_track = self
+                .cache
+                .track_ids
+                .iter()
+                .copied()
+                .find(|track_id| self.selected_tracks.contains(track_id));
+        }
+        if self
+            .track_selection_anchor
+            .is_some_and(|track_id| !self.cache.track_ids.contains(&track_id))
+        {
+            self.track_selection_anchor = None;
         }
         self.selected_items
             .retain(|item_id| self.cache.item_indices.contains_key(item_id));
@@ -1541,10 +1565,14 @@ impl TimelineState {
             TimelineEvent::EndItemTrim | TimelineEvent::CancelItemTrim => {
                 self.item_trim_preview = None;
             }
-            TimelineEvent::SelectTrack(track_id) => self.selected_track = Some(track_id),
+            TimelineEvent::SelectTrack(track_id) => self.select_track_only(track_id),
+            TimelineEvent::SelectTrackWithModifiers {
+                track_id,
+                modifiers,
+            } => self.select_track_with_modifiers(track_id, modifiers),
             TimelineEvent::OpenTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
-                    self.selected_track = Some(track_id);
+                    self.select_track_only(track_id);
                     self.context_track = Some(track_id);
                 }
             }
@@ -1553,7 +1581,7 @@ impl TimelineState {
                     if self.context_track == Some(track_id) {
                         self.context_track = None;
                     } else {
-                        self.selected_track = Some(track_id);
+                        self.select_track_only(track_id);
                         self.context_track = Some(track_id);
                     }
                 }
@@ -1563,6 +1591,69 @@ impl TimelineState {
                 self.panes.resize(split, ratio.clamp(0.22, 0.58));
             }
             TimelineEvent::ResizeSplit { .. } => {}
+        }
+    }
+
+    pub(crate) fn is_track_selected(&self, track_id: TrackId) -> bool {
+        self.selected_tracks.contains(&track_id) || self.selected_track == Some(track_id)
+    }
+
+    pub(crate) fn select_track_only(&mut self, track_id: TrackId) {
+        if !self.cache.track_ids.contains(&track_id) {
+            return;
+        }
+        self.selected_track = Some(track_id);
+        self.selected_tracks.clear();
+        self.selected_tracks.insert(track_id);
+        self.track_selection_anchor = Some(track_id);
+    }
+
+    fn select_track_with_modifiers(&mut self, track_id: TrackId, modifiers: keyboard::Modifiers) {
+        let Some(index) = self.cache.track_ids.iter().position(|id| *id == track_id) else {
+            return;
+        };
+        let additive = modifiers.command() || modifiers.control();
+        if modifiers.shift() {
+            let anchor = self
+                .track_selection_anchor
+                .or(self.selected_track)
+                .filter(|anchor| self.cache.track_ids.contains(anchor))
+                .unwrap_or(track_id);
+            let anchor_index = self
+                .cache
+                .track_ids
+                .iter()
+                .position(|id| *id == anchor)
+                .unwrap_or(index);
+            if !additive {
+                self.selected_tracks.clear();
+            }
+            for selected in &self.cache.track_ids[anchor_index.min(index)..=anchor_index.max(index)]
+            {
+                self.selected_tracks.insert(*selected);
+            }
+            self.track_selection_anchor.get_or_insert(anchor);
+            self.selected_track = Some(track_id);
+        } else if additive {
+            if !self.selected_tracks.remove(&track_id) {
+                self.selected_tracks.insert(track_id);
+            }
+            self.track_selection_anchor = Some(track_id);
+            self.selected_track = if self.selected_tracks.contains(&track_id) {
+                Some(track_id)
+            } else {
+                self.cache
+                    .track_ids
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|selected| self.selected_tracks.contains(selected))
+            };
+        } else {
+            self.selected_tracks.clear();
+            self.selected_tracks.insert(track_id);
+            self.selected_track = Some(track_id);
+            self.track_selection_anchor = Some(track_id);
         }
     }
 
@@ -4669,6 +4760,84 @@ mod tests {
         assert_eq!(row.base_height, TIMELINE_ROW_HEIGHT);
         assert_eq!(row.height, row.base_height);
         assert!(row.base_height >= 128.0);
+    }
+
+    #[test]
+    fn track_selection_supports_additive_and_range_selection_with_a_primary_track() {
+        let mut project = Project::new();
+        for index in 0..4 {
+            project
+                .apply(aaadaw_core::DawAction::CreateTrack {
+                    index,
+                    name: format!("Track {index}"),
+                })
+                .unwrap();
+        }
+        let tracks = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[0],
+            modifiers: keyboard::Modifiers::NONE,
+        });
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[2],
+            modifiers: keyboard::Modifiers::SHIFT,
+        });
+        assert_eq!(timeline.selected_track, Some(tracks[2]));
+        assert_eq!(
+            timeline.selected_tracks,
+            HashSet::from([tracks[0], tracks[1], tracks[2]])
+        );
+
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[3],
+            modifiers: keyboard::Modifiers::CTRL,
+        });
+        assert_eq!(timeline.selected_track, Some(tracks[3]));
+        assert_eq!(timeline.selected_tracks.len(), 4);
+        assert!(timeline.is_track_selected(tracks[1]));
+
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[3],
+            modifiers: keyboard::Modifiers::COMMAND,
+        });
+        assert_eq!(timeline.selected_track, Some(tracks[2]));
+        assert!(!timeline.is_track_selected(tracks[3]));
+
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[2],
+            modifiers: keyboard::Modifiers::CTRL,
+        });
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[0],
+            modifiers: keyboard::Modifiers::CTRL,
+        });
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[1],
+            modifiers: keyboard::Modifiers::SHIFT,
+        });
+        assert_eq!(timeline.selected_track, Some(tracks[1]));
+        assert_eq!(
+            timeline.selected_tracks,
+            HashSet::from([tracks[0], tracks[1]])
+        );
+
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[0],
+            modifiers: keyboard::Modifiers::CTRL,
+        });
+        timeline.handle(TimelineEvent::SelectTrackWithModifiers {
+            track_id: tracks[1],
+            modifiers: keyboard::Modifiers::CTRL,
+        });
+        assert!(timeline.selected_tracks.is_empty());
+        assert_eq!(timeline.selected_track, None);
     }
 
     #[test]
