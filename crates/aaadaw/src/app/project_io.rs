@@ -64,6 +64,12 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     #[cfg(not(feature = "audio-device"))]
     let plugin_state_warning = None;
     let revision = app.revision;
+    let saved_track_ids = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect();
     let snapshot = app.project.snapshot();
     let arrangement_view_state = app.timeline.arrangement_view_state(&app.project);
     let reuse_session_lock =
@@ -97,6 +103,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
                 revision,
                 result,
                 plugin_state_warning,
+                saved_track_ids,
                 SharedProjectSessionLock::new(lock),
             )
         },

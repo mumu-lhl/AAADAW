@@ -296,6 +296,7 @@ pub(crate) enum Message {
         u64,
         Result<(), String>,
         Option<String>,
+        HashSet<TrackId>,
         SharedProjectSessionLock,
     ),
     CancelOfflineRender,

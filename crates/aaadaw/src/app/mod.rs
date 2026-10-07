@@ -2758,7 +2758,14 @@ impl App {
                     }
                 }
             }
-            Message::ProjectSaved(path, revision, result, plugin_state_warning, shared_lock) => {
+            Message::ProjectSaved(
+                path,
+                revision,
+                result,
+                plugin_state_warning,
+                saved_track_ids,
+                shared_lock,
+            ) => {
                 self.io_busy = false;
                 let mut continue_transition = false;
                 match result {
@@ -2769,14 +2776,7 @@ impl App {
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.saved_revision = revision;
-                        if self.revision == revision {
-                            self.saved_track_ids = self
-                                .project
-                                .tracks()
-                                .iter()
-                                .map(|track| track.id())
-                                .collect();
-                        }
+                        self.saved_track_ids = saved_track_ids;
                         continue_transition =
                             self.revision == revision && self.pending_project_transition.is_some();
                         self.status = if self.revision == revision {
