@@ -69,8 +69,10 @@ Audio Settings lists available input and output devices. The selected device is
 saved by CPAL device ID; choosing **System default** explicitly clears the
 saved ID. If a saved device is disconnected or unavailable, AAADAW reports that
 state and does not silently switch to another device. Close and reopen playback
-to apply an output change; an active recording keeps its connected input. macOS
-requests microphone permission when recording first needs input.
+to apply an output change; an active recording keeps its connected input. Mono
+inputs, including a built-in microphone that exposes only one channel, are
+recorded centered to both project channels. macOS requests microphone
+permission when recording first needs input.
 
 The `macos-15` Apple Silicon CI job compiles all targets with CoreAudio and
 tests device-enumeration recovery and backend policy. The native installer job

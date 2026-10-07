@@ -25,7 +25,7 @@ jobs:
       - name: Test CoreAudio device enumeration recovery
         run: cargo nextest run -p aaadaw --features coreaudio-backend -E 'test(cpal_output_enumeration_failures_are_visible_and_clear_loading_state) | test(cpal_input_enumeration_failures_are_visible_and_clear_loading_state) | test(cpal_backend_setting_round_trips_with_the_native_platform_name) | test(coreaudio_name_parses_as_cpal_backend_across_platforms) | test(unknown_saved_backend_is_ignored_without_invalidating_other_settings) | test(legacy_wasapi_device_keys_remain_readable)'
       - name: Test CPAL backend policies
-        run: cargo nextest run -p aaadaw-engine --features coreaudio-backend -E 'test(persisted_cpal_) | test(missing_selected_device_) | test(input_config_requires_)'
+        run: cargo nextest run -p aaadaw-engine --features coreaudio-backend -E 'test(persisted_cpal_) | test(missing_selected_device_) | test(input_config_accepts_mono_or_stereo_) | test(mono_input_is_copied_)'
 
   windows:
     name: Check Windows workspace

@@ -20,7 +20,7 @@ fn supports_project_input_config(
     maximum_rate: u32,
     project_rate: u32,
 ) -> bool {
-    channels == 2
+    matches!(channels, 1 | 2)
         && is_supported_pcm_format(format)
         && minimum_rate <= project_rate
         && project_rate <= maximum_rate
@@ -66,6 +66,7 @@ impl CaptureClock {
 
 fn capture_interleaved<T>(
     samples: &[T],
+    input_channels: u16,
     first_frame: u64,
     producer: &mut AudioCaptureProducer,
     control: &AudioCaptureControl,
@@ -73,7 +74,7 @@ fn capture_interleaved<T>(
     T: Copy,
     f32: FromSample<T>,
 {
-    if samples.len() % 2 != 0 {
+    if !matches!(input_channels, 1 | 2) || samples.len() % usize::from(input_channels) != 0 {
         control.fail_if_enabled();
         return;
     }
@@ -81,16 +82,27 @@ fn capture_interleaved<T>(
         control.fail_timing_if_enabled();
         return;
     }
-    producer.push_frames_at(
-        first_frame,
-        samples
-            .chunks_exact(2)
-            .map(|frame| [f32::from_sample(frame[0]), f32::from_sample(frame[1])]),
-    );
+    if input_channels == 1 {
+        producer.push_frames_at(
+            first_frame,
+            samples.iter().map(|sample| {
+                let sample = f32::from_sample(*sample);
+                [sample, sample]
+            }),
+        );
+    } else {
+        producer.push_frames_at(
+            first_frame,
+            samples
+                .chunks_exact(2)
+                .map(|frame| [f32::from_sample(frame[0]), f32::from_sample(frame[1])]),
+        );
+    }
 }
 
 fn capture_input<T>(
     samples: &[T],
+    input_channels: u16,
     info: &InputCallbackInfo,
     sample_rate: u32,
     clock: &mut CaptureClock,
@@ -105,17 +117,17 @@ fn capture_input<T>(
     if !control.is_enabled() {
         return;
     }
-    if samples.len() % 2 != 0 {
+    if !matches!(input_channels, 1 | 2) || samples.len() % usize::from(input_channels) != 0 {
         control.fail_if_enabled();
         return;
     }
-    let frame_count = samples.len() / 2;
+    let frame_count = samples.len() / usize::from(input_channels);
     let Some(first_frame) = clock.first_frame(info.timestamp().capture, frame_count, sample_rate)
     else {
         control.fail_timing_if_enabled();
         return;
     };
-    capture_interleaved(samples, first_frame, producer, control);
+    capture_interleaved(samples, input_channels, first_frame, producer, control);
 }
 
 fn build_input_stream<T>(
@@ -130,12 +142,14 @@ where
     f32: FromSample<T>,
 {
     let error_control = control.clone();
+    let input_channels = config.channels;
     let mut clock = CaptureClock::default();
     device.build_input_stream(
         config,
         move |samples: &[T], info: &InputCallbackInfo| {
             capture_input(
                 samples,
+                input_channels,
                 info,
                 sample_rate,
                 &mut clock,
@@ -148,14 +162,14 @@ where
     )
 }
 
-/// Errors encountered while opening a system stereo capture device.
+/// Errors encountered while opening a system audio capture device.
 #[derive(Debug)]
 pub enum CpalInputError {
     DeviceUnavailable,
     SelectedDeviceUnavailable(String),
     InvalidDeviceId(String),
     Cpal(cpal::Error),
-    NoStereoConfig {
+    NoCompatibleConfig {
         sample_rate: u32,
         is_default_device: bool,
     },
@@ -180,12 +194,12 @@ impl fmt::Display for CpalInputError {
                 )
             }
             Self::Cpal(error) => write!(formatter, "System audio input error: {error}"),
-            Self::NoStereoConfig {
+            Self::NoCompatibleConfig {
                 sample_rate,
                 is_default_device,
             } => write!(
                 formatter,
-                "{} system audio input has no stereo PCM configuration supporting {sample_rate} Hz",
+                "{} system audio input has no mono or stereo PCM configuration supporting {sample_rate} Hz",
                 if *is_default_device {
                     "default"
                 } else {
@@ -203,7 +217,7 @@ impl StdError for CpalInputError {
             Self::DeviceUnavailable
             | Self::SelectedDeviceUnavailable(_)
             | Self::InvalidDeviceId(_)
-            | Self::NoStereoConfig { .. } => None,
+            | Self::NoCompatibleConfig { .. } => None,
         }
     }
 }
@@ -214,14 +228,14 @@ impl From<cpal::Error> for CpalInputError {
     }
 }
 
-/// A CPAL stream capturing stereo audio from a system audio input device.
+/// A CPAL stream capturing mono or stereo audio from a system input device.
 pub struct CpalAudioInput {
     stream: Option<cpal::Stream>,
     sample_rate: u32,
 }
 
 impl CpalAudioInput {
-    /// Opens a shared-mode stereo input at the project's sample rate.
+    /// Opens a mono or stereo input at the project's sample rate; mono is copied to both project channels.
     pub fn open(
         producer: AudioCaptureProducer,
         control: AudioCaptureControl,
@@ -257,7 +271,7 @@ impl CpalAudioInput {
                 (range, buffer_size)
             })
             .min_by_key(|(range, _)| u8::from(range.sample_format() != SampleFormat::F32))
-            .ok_or(CpalInputError::NoStereoConfig {
+            .ok_or(CpalInputError::NoCompatibleConfig {
                 sample_rate: project_sample_rate,
                 is_default_device,
             })?;
@@ -310,7 +324,7 @@ impl CpalAudioInput {
                 build_input_stream::<u64>(&device, config, project_sample_rate, producer, control)
             }
             _unsupported => {
-                return Err(CpalInputError::NoStereoConfig {
+                return Err(CpalInputError::NoCompatibleConfig {
                     sample_rate: project_sample_rate,
                     is_default_device,
                 });
@@ -429,7 +443,7 @@ mod tests {
     use cpal::{BufferSize, SampleFormat, StreamInstant, SupportedBufferSize};
 
     #[test]
-    fn input_config_requires_stereo_pcm_at_the_project_rate() {
+    fn input_config_accepts_mono_or_stereo_pcm_at_the_project_rate() {
         assert!(supports_project_input_config(
             2,
             SampleFormat::F32,
@@ -444,8 +458,15 @@ mod tests {
             48_000,
             44_100
         ));
-        assert!(!supports_project_input_config(
+        assert!(supports_project_input_config(
             1,
+            SampleFormat::F32,
+            44_100,
+            96_000,
+            48_000
+        ));
+        assert!(!supports_project_input_config(
+            3,
             SampleFormat::F32,
             44_100,
             96_000,
@@ -522,6 +543,7 @@ mod tests {
         control.start();
         capture_interleaved(
             &[16_384_i16, -16_384, i16::MAX, i16::MIN],
+            2,
             100,
             &mut producer,
             &control,
@@ -535,10 +557,22 @@ mod tests {
     }
 
     #[test]
+    fn mono_input_is_copied_to_both_project_channels() {
+        let (mut producer, mut consumer, control) = audio_capture_stream(4);
+        control.start();
+        capture_interleaved(&[16_384_i16, -16_384], 1, 200, &mut producer, &control);
+
+        let mut output = [[0.0_f32; 2]; 2];
+        let block = consumer.pop_timed_frames(&mut output).unwrap();
+        assert_eq!((block.first_frame, block.frame_count), (200, 2));
+        assert_eq!(output, [[0.5, 0.5], [-0.5, -0.5]]);
+    }
+
+    #[test]
     fn invalid_input_blocks_fail_an_armed_take() {
         let (mut producer, _consumer, control) = audio_capture_stream(4);
         control.start();
-        capture_interleaved(&[0.0_f32; 3], 0, &mut producer, &control);
+        capture_interleaved(&[0.0_f32; 3], 2, 0, &mut producer, &control);
         assert!(control.has_failed());
     }
 }
