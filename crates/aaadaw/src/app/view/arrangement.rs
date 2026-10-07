@@ -1,5 +1,5 @@
 use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
-use super::super::{App, Message};
+use super::super::{App, Message, TrackDraftField};
 use crate::timeline::{
     self, ArrangementPane, TCP_SCROLL_ID, TIMELINE_ROW_HEIGHT, TIMELINE_SCROLL_ID, TimelineEvent,
 };
@@ -745,6 +745,9 @@ pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
 
 pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
+    let has_error = app
+        .track_draft_errors
+        .contains_key(&(track_id, TrackDraftField::Name));
     let edited_name = app
         .track_name_edits
         .get(&track_id)
@@ -753,9 +756,23 @@ pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a
         .id(super::super::messages::track_name_input_id(track_id))
         .on_input(move |name| Message::TrackNameChanged(track_id, name))
         .on_submit(Message::CommitTrackName(track_id))
+        .style(track_draft_input_style(has_error))
         .padding([2, 4])
         .width(Length::Fill)
         .into()
+}
+
+fn track_draft_input_style(
+    has_error: bool,
+) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
+    move |theme, status| {
+        let mut style = text_input::default(theme, status);
+        if has_error {
+            style.border.color = iced::Color::from_rgb8(237, 77, 68);
+            style.border.width = 1.5;
+        }
+        style
+    }
 }
 
 pub(super) fn track_selection_background(selected: bool) -> iced::Color {
@@ -935,9 +952,13 @@ pub(super) fn track_mix_controls<'a>(
     } else {
         pan_slider
     };
+    let volume_has_error = app
+        .track_draft_errors
+        .contains_key(&(track_id, TrackDraftField::Volume));
     let volume_value = text_input("dB", &volume_text)
         .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
         .on_submit(Message::CommitTrackVolumeText(track_id))
+        .style(track_draft_input_style(volume_has_error))
         .padding(if touch { 10_u16 } else { 4_u16 })
         .width(Length::Fixed(48.0));
     let volume_controls = if compact {
@@ -970,9 +991,13 @@ pub(super) fn track_mix_controls<'a>(
         .spacing(2)
         .align_y(Alignment::Center)
     };
+    let pan_has_error = app
+        .track_draft_errors
+        .contains_key(&(track_id, TrackDraftField::Pan));
     let pan_value = text_input("-1 to 1", &pan_text)
         .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
         .on_submit(Message::CommitTrackPanText(track_id))
+        .style(track_draft_input_style(pan_has_error))
         .padding(if touch { 10_u16 } else { 4_u16 })
         .width(Length::Fixed(48.0));
     let pan_controls = row![

@@ -59,6 +59,9 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
+    if !app.commit_pending_track_drafts() {
+        return Task::none();
+    }
     #[cfg(feature = "audio-device")]
     let plugin_state_warning = app.persist_clap_plugin_states().err();
     #[cfg(not(feature = "audio-device"))]

@@ -1869,6 +1869,7 @@ struct PendingTimeSelectionDrag {
     mode: TimeSelectionDragMode,
     anchor_tick: u64,
     fixed_tick: u64,
+    deselect_items_on_click: bool,
     pointer_start_x: f32,
     pointer_start_y: f32,
     is_dragging: bool,
@@ -2240,12 +2241,23 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 let position = cursor.position_in(bounds)?;
                 let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let Some((track_index, row_y)) = row_at_y(self.row_layout, position.y) else {
-                    return Some(
-                        shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::SetEditCursor(raw_tick),
-                        ))
-                        .and_capture(),
-                    );
+                    state.pending_item_drag = None;
+                    state.pending_item_trim = None;
+                    state.pending_time_selection_drag = Some(PendingTimeSelectionDrag {
+                        mode: TimeSelectionDragMode::Create,
+                        anchor_tick: raw_tick,
+                        fixed_tick: snap_tick_to_grid(
+                            raw_tick,
+                            self.cache.snap_grid_ticks,
+                            self.snap_enabled,
+                            state.modifiers.shift(),
+                        ),
+                        deselect_items_on_click: false,
+                        pointer_start_x: position.x,
+                        pointer_start_y: position.y,
+                        is_dragging: false,
+                    });
+                    return Some(shader::Action::capture());
                 };
                 let tick = snap_tick_to_grid(
                     raw_tick,
@@ -2429,6 +2441,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         mode,
                         anchor_tick: tick,
                         fixed_tick,
+                        deselect_items_on_click: false,
                         pointer_start_x: position.x,
                         pointer_start_y: position.y,
                         is_dragging: false,
@@ -2467,6 +2480,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.snap_enabled,
                             state.modifiers.shift(),
                         ),
+                        deselect_items_on_click: true,
                         pointer_start_x: position.x,
                         pointer_start_y: position.y,
                         is_dragging: false,
@@ -2653,11 +2667,14 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     }
                 } else if let Some(drag) = state.pending_time_selection_drag.take() {
                     if drag.mode == TimeSelectionDragMode::Create && !drag.is_dragging {
+                        let event = if drag.deselect_items_on_click {
+                            TimelineEvent::SelectEmpty(drag.anchor_tick)
+                        } else {
+                            TimelineEvent::SetEditCursor(drag.anchor_tick)
+                        };
                         Some(
-                            shader::Action::publish(crate::app::Message::Timeline(
-                                TimelineEvent::SelectEmpty(drag.anchor_tick),
-                            ))
-                            .and_capture(),
+                            shader::Action::publish(crate::app::Message::Timeline(event))
+                                .and_capture(),
                         )
                     } else {
                         Some(shader::Action::capture())
@@ -3441,13 +3458,22 @@ mod tests {
         };
         let program = timeline.program(&project, None);
         let mut interaction = super::TimelineInteractionState::default();
-        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
         let cursor = mouse::Cursor::Available(Point::new(100.0, 100.0));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("blank timeline press should start a positioning gesture");
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         let action = iced::widget::shader::Program::update(
             &program,
             &mut interaction,
-            &event,
+            &release,
             bounds,
             cursor,
         )
@@ -3460,6 +3486,104 @@ mod tests {
                 440
             )))
         ));
+    }
+
+    #[test]
+    fn drag_below_track_rows_creates_a_time_selection() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = timeline.program(&project, None);
+        let mut interaction = super::TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 100.0)),
+        )
+        .expect("blank timeline press should start a time selection gesture");
+        assert_eq!(action.into_inner().2, iced::event::Status::Captured);
+        assert!(interaction.pending_time_selection_drag.is_some());
+
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(200.0, 100.0),
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(200.0, 100.0)),
+        )
+        .expect("dragging in the blank timeline should update the time selection");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(
+            matches!(
+                message,
+                Some(crate::app::Message::Timeline(
+                    TimelineEvent::SetTimeSelection {
+                        start_tick: 480,
+                        end_tick: 720,
+                    }
+                ))
+            ),
+            "unexpected blank-area drag event: {message:?}"
+        );
+    }
+
+    #[test]
+    fn drag_below_populated_track_rows_creates_a_time_selection() {
+        let (project, _, _) = project_with_items();
+        let mut timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let mut interaction = super::TimelineInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 400.0)),
+        )
+        .expect("space below populated track rows should start a selection gesture");
+
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(200.0, 400.0),
+        });
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(200.0, 400.0)),
+        )
+        .expect("space below populated track rows should support time selection");
+        let (message, _, _) = action.into_inner();
+        assert!(
+            matches!(
+                message,
+                Some(crate::app::Message::Timeline(
+                    TimelineEvent::SetTimeSelection {
+                        start_tick: 480,
+                        end_tick: 720,
+                    }
+                ))
+            ),
+            "unexpected populated-area drag event: {message:?}"
+        );
     }
 
     fn project_with_items() -> (Project, [aaadaw_core::TrackId; 3], [aaadaw_core::ItemId; 3]) {
@@ -4453,6 +4577,33 @@ mod tests {
     }
 
     #[test]
+    fn setting_edit_cursor_preserves_item_and_time_selection() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(items[1]),
+            additive: false,
+            range: false,
+        });
+        timeline.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        });
+        let selected_items = timeline.selected_items.clone();
+        let selected_track = timeline.selected_track;
+        let selection = timeline.time_selection;
+
+        timeline.handle(TimelineEvent::SetEditCursor(1_200));
+
+        assert_eq!(timeline.edit_cursor_tick, 1_200);
+        assert_eq!(timeline.selected_items, selected_items);
+        assert_eq!(timeline.selected_item, Some(items[1]));
+        assert_eq!(timeline.selected_track, selected_track);
+        assert_eq!(timeline.time_selection, selection);
+    }
+
+    #[test]
     fn time_selection_snaps_to_selected_grid_and_shift_bypasses_snap() {
         let (project, _, _) = project_with_items();
         let mut timeline = TimelineState::default();
@@ -4505,6 +4656,7 @@ mod tests {
             fixed_tick: selection.end_tick,
             pointer_start_x: 0.0,
             pointer_start_y: 0.0,
+            deselect_items_on_click: false,
             is_dragging: true,
         };
         assert_eq!(resize_start.range_at(120), (120, 960));

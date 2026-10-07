@@ -215,6 +215,8 @@ struct App {
     track_name_edits: HashMap<TrackId, String>,
     track_volume_edits: HashMap<TrackId, String>,
     track_pan_edits: HashMap<TrackId, String>,
+    active_track_draft: Option<(TrackId, TrackDraftField)>,
+    track_draft_errors: HashMap<(TrackId, TrackDraftField), String>,
     track_mix_gesture: Option<TrackMixGesture>,
     track_mix_commit_at: Option<Instant>,
     track_peak_levels: HashMap<TrackId, [f32; 2]>,
@@ -542,6 +544,23 @@ enum FxAutomationHistoryAction {
 enum TrackMixParameter {
     Volume,
     Pan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum TrackDraftField {
+    Name,
+    Volume,
+    Pan,
+}
+
+impl TrackDraftField {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Name => "track name",
+            Self::Volume => "track volume",
+            Self::Pan => "track pan",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2138,7 +2157,7 @@ impl App {
                     self.pending_project_transition = None;
                 } else if self.offline_jobs_panel_open {
                     self.offline_jobs_panel_open = false;
-                } else if self.active_menu.take().is_none() {
+                } else if self.active_menu.take().is_none() && !self.cancel_active_track_draft() {
                     if self.timeline.context_item.take().is_some()
                         || self.timeline.context_track.take().is_some()
                     {
@@ -2406,6 +2425,7 @@ impl App {
             Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
             Message::TrackNameChanged(track_id, name) => {
                 self.track_name_edits.insert(track_id, name);
+                self.begin_track_draft(track_id, TrackDraftField::Name);
             }
             Message::CommitTrackName(track_id) => self.commit_track_name(track_id),
             Message::ToggleMute(track_id) => {
@@ -2498,9 +2518,11 @@ impl App {
             }
             Message::TrackVolumeTextChanged(track_id, value) => {
                 self.track_volume_edits.insert(track_id, value);
+                self.begin_track_draft(track_id, TrackDraftField::Volume);
             }
             Message::TrackPanTextChanged(track_id, value) => {
                 self.track_pan_edits.insert(track_id, value);
+                self.begin_track_draft(track_id, TrackDraftField::Pan);
             }
             Message::CommitTrackVolumeText(track_id) => {
                 self.commit_track_volume_text(track_id);
@@ -2829,9 +2851,7 @@ impl App {
                             scroll_arrangement_to(timeline::TCP_SCROLL_ID, 0.0),
                             scroll_arrangement_to(timeline::TIMELINE_SCROLL_ID, 0.0),
                         ]);
-                        self.track_name_edits.clear();
-                        self.track_volume_edits.clear();
-                        self.track_pan_edits.clear();
+                        self.clear_track_draft_state();
                         self.track_mix_gesture = None;
                         self.track_mix_commit_at = None;
                         self.audio_item_start_edits.clear();
@@ -3170,6 +3190,9 @@ impl App {
 
     fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+            || !self.track_name_edits.is_empty()
+            || !self.track_volume_edits.is_empty()
+            || !self.track_pan_edits.is_empty()
     }
 
     fn handle_timeline_view_event(&mut self, event: timeline::TimelineEvent) {
@@ -3247,9 +3270,7 @@ impl App {
         self.timeline.origin_tick = 0;
         self.timeline.edit_cursor_tick = 0;
         self.timeline.vertical_scroll = 0.0;
-        self.track_name_edits.clear();
-        self.track_volume_edits.clear();
-        self.track_pan_edits.clear();
+        self.clear_track_draft_state();
         self.track_mix_gesture = None;
         self.track_mix_commit_at = None;
         self.audio_item_start_edits.clear();
@@ -4755,10 +4776,18 @@ impl App {
     fn preview_track_mix(&mut self, track_id: TrackId, parameter: TrackMixParameter, value: f32) {
         match parameter {
             TrackMixParameter::Volume => {
-                self.track_volume_edits.remove(&track_id);
+                let discarded_draft = self.track_volume_edits.remove(&track_id).is_some();
+                self.clear_track_draft(track_id, TrackDraftField::Volume);
+                if discarded_draft {
+                    self.status = "Track volume draft discarded by slider adjustment".to_owned();
+                }
             }
             TrackMixParameter::Pan => {
-                self.track_pan_edits.remove(&track_id);
+                let discarded_draft = self.track_pan_edits.remove(&track_id).is_some();
+                self.clear_track_draft(track_id, TrackDraftField::Pan);
+                if discarded_draft {
+                    self.status = "Track pan draft discarded by slider adjustment".to_owned();
+                }
             }
         }
         let Some(track) = self
@@ -4878,21 +4907,159 @@ impl App {
         }
     }
 
+    fn begin_track_draft(&mut self, track_id: TrackId, field: TrackDraftField) {
+        self.active_track_draft = Some((track_id, field));
+        self.track_draft_errors.remove(&(track_id, field));
+        self.status = "Track field edit pending: Enter applies, Escape discards; blur keeps the draft and Save commits valid edits".to_owned();
+    }
+
+    fn clear_track_draft(&mut self, track_id: TrackId, field: TrackDraftField) {
+        self.track_draft_errors.remove(&(track_id, field));
+        if self.active_track_draft == Some((track_id, field)) {
+            self.active_track_draft = None;
+        }
+    }
+
+    fn cancel_active_track_draft(&mut self) -> bool {
+        let Some((track_id, field)) = self.active_track_draft.take() else {
+            return false;
+        };
+        match field {
+            TrackDraftField::Name => {
+                self.track_name_edits.remove(&track_id);
+            }
+            TrackDraftField::Volume => {
+                self.track_volume_edits.remove(&track_id);
+            }
+            TrackDraftField::Pan => {
+                self.track_pan_edits.remove(&track_id);
+            }
+        }
+        self.track_draft_errors.remove(&(track_id, field));
+        self.status = "Track field draft discarded".to_owned();
+        true
+    }
+
+    fn clear_track_draft_state(&mut self) {
+        self.track_name_edits.clear();
+        self.track_volume_edits.clear();
+        self.track_pan_edits.clear();
+        self.active_track_draft = None;
+        self.track_draft_errors.clear();
+    }
+
+    fn clear_track_drafts(&mut self, track_id: TrackId) {
+        self.track_name_edits.remove(&track_id);
+        self.track_volume_edits.remove(&track_id);
+        self.track_pan_edits.remove(&track_id);
+        self.track_draft_errors
+            .retain(|(edited_track_id, _), _| *edited_track_id != track_id);
+        if self
+            .active_track_draft
+            .is_some_and(|(edited_track_id, _)| edited_track_id == track_id)
+        {
+            self.active_track_draft = None;
+        }
+    }
+
+    pub(super) fn commit_pending_track_drafts(&mut self) -> bool {
+        let mut actions = Vec::new();
+        let mut first_error = None;
+
+        for track in self.project.tracks() {
+            let track_id = track.id();
+            if let Some(text) = self.track_name_edits.get(&track_id) {
+                match parse_track_name_draft(text) {
+                    Ok(name) if name != track.name() => {
+                        actions.push(DawAction::SetTrackName { track_id, name });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        first_error = Some((track_id, TrackDraftField::Name, error));
+                        break;
+                    }
+                }
+            }
+            if let Some(text) = self.track_volume_edits.get(&track_id) {
+                match parse_track_volume_draft(text) {
+                    Ok(volume_db) if (volume_db - track.volume_db()).abs() >= f32::EPSILON => {
+                        actions.push(DawAction::SetTrackVolume {
+                            track_id,
+                            volume_db,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        first_error = Some((track_id, TrackDraftField::Volume, error));
+                        break;
+                    }
+                }
+            }
+            if let Some(text) = self.track_pan_edits.get(&track_id) {
+                match parse_track_pan_draft(text) {
+                    Ok(pan) if (pan - track.pan()).abs() >= f32::EPSILON => {
+                        actions.push(DawAction::SetTrackPan { track_id, pan });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        first_error = Some((track_id, TrackDraftField::Pan, error));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some((track_id, field, error)) = first_error {
+            self.track_draft_errors
+                .insert((track_id, field), error.to_owned());
+            let track_name = self
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)
+                .map_or("track", |track| track.name());
+            self.status = format!(
+                "Cannot save: {track_name} {} — {error}; correct it or press Escape to discard",
+                field.label()
+            );
+            return false;
+        }
+
+        if !actions.is_empty() {
+            let previous_revision = self.revision;
+            let action = if actions.len() == 1 {
+                actions.pop().expect("one pending track edit action exists")
+            } else {
+                DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                }
+            };
+            self.apply_action(action, "Track field edits applied");
+            if self.revision == previous_revision {
+                return false;
+            }
+        }
+        self.clear_track_draft_state();
+        true
+    }
+
     fn commit_track_volume_text(&mut self, track_id: TrackId) {
         let Some(text) = self.track_volume_edits.get(&track_id).cloned() else {
             return;
         };
-        let Ok(value) = text.trim().parse::<f32>() else {
-            self.status = "Enter a valid volume in dB".to_owned();
-            return;
+        let value = match parse_track_volume_draft(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                self.track_draft_errors
+                    .insert((track_id, TrackDraftField::Volume), error.to_owned());
+                self.status = error.to_owned();
+                return;
+            }
         };
-        if !value.is_finite() {
-            self.status = "Enter a finite volume in dB".to_owned();
-            return;
-        }
-        let value = value.clamp(-60.0, 6.0);
         self.cancel_track_mix_gesture();
         self.track_volume_edits.remove(&track_id);
+        self.clear_track_draft(track_id, TrackDraftField::Volume);
         if self
             .project
             .tracks()
@@ -4915,17 +5082,18 @@ impl App {
         let Some(text) = self.track_pan_edits.get(&track_id).cloned() else {
             return;
         };
-        let Ok(value) = text.trim().parse::<f32>() else {
-            self.status = "Enter a pan value from -1.0 to 1.0".to_owned();
-            return;
+        let value = match parse_track_pan_draft(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                self.track_draft_errors
+                    .insert((track_id, TrackDraftField::Pan), error.to_owned());
+                self.status = error.to_owned();
+                return;
+            }
         };
-        if !value.is_finite() {
-            self.status = "Enter a finite pan value".to_owned();
-            return;
-        }
-        let value = value.clamp(-1.0, 1.0);
         self.cancel_track_mix_gesture();
         self.track_pan_edits.remove(&track_id);
+        self.clear_track_draft(track_id, TrackDraftField::Pan);
         if self
             .project
             .tracks()
@@ -4946,7 +5114,11 @@ impl App {
 
     fn reset_track_volume(&mut self, track_id: TrackId, double_click: bool) {
         self.clear_track_mix_for_reset(track_id, TrackMixParameter::Volume, double_click);
-        self.track_volume_edits.remove(&track_id);
+        let discarded_draft = self.track_volume_edits.remove(&track_id).is_some();
+        self.clear_track_draft(track_id, TrackDraftField::Volume);
+        if discarded_draft {
+            self.status = "Track volume draft discarded by reset".to_owned();
+        }
         if self
             .project
             .tracks()
@@ -4968,7 +5140,11 @@ impl App {
 
     fn reset_track_pan(&mut self, track_id: TrackId, double_click: bool) {
         self.clear_track_mix_for_reset(track_id, TrackMixParameter::Pan, double_click);
-        self.track_pan_edits.remove(&track_id);
+        let discarded_draft = self.track_pan_edits.remove(&track_id).is_some();
+        self.clear_track_draft(track_id, TrackDraftField::Pan);
+        if discarded_draft {
+            self.status = "Track pan draft discarded by reset".to_owned();
+        }
         if self
             .project
             .tracks()
@@ -5220,9 +5396,7 @@ impl App {
         {
             self.cancel_track_mix_gesture();
         }
-        self.track_name_edits.remove(&track_id);
-        self.track_volume_edits.remove(&track_id);
-        self.track_pan_edits.remove(&track_id);
+        self.clear_track_drafts(track_id);
         self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
     }
 
@@ -5230,11 +5404,15 @@ impl App {
         let Some(name) = self.track_name_edits.get(&track_id).cloned() else {
             return;
         };
-        let name = name.trim().to_owned();
-        if name.is_empty() {
-            self.status = "Track name must not be empty".to_owned();
-            return;
-        }
+        let name = match parse_track_name_draft(&name) {
+            Ok(name) => name,
+            Err(error) => {
+                self.track_draft_errors
+                    .insert((track_id, TrackDraftField::Name), error.to_owned());
+                self.status = error.to_owned();
+                return;
+            }
+        };
         let Some(current_name) = self
             .project
             .tracks()
@@ -5243,10 +5421,12 @@ impl App {
             .map(|track| track.name().to_owned())
         else {
             self.track_name_edits.remove(&track_id);
+            self.clear_track_draft(track_id, TrackDraftField::Name);
             self.status = "Track no longer exists".to_owned();
             return;
         };
         self.track_name_edits.remove(&track_id);
+        self.clear_track_draft(track_id, TrackDraftField::Name);
         if name == current_name {
             self.status = "Track name unchanged".to_owned();
             return;
@@ -5804,6 +5984,7 @@ impl App {
         };
         self.track_name_edits
             .insert(track_id, track.name().to_owned());
+        self.begin_track_draft(track_id, TrackDraftField::Name);
         self.timeline.selected_track = Some(track_id);
         let input_id = messages::track_name_input_id(track_id);
         Task::batch([
@@ -6153,6 +6334,37 @@ impl App {
     fn open_project_command(&mut self) -> Task<Message> {
         self.begin_project_transition(PendingProjectTransition::OpenProject)
     }
+}
+
+fn parse_track_name_draft(text: &str) -> Result<String, &'static str> {
+    let name = text.trim();
+    if name.is_empty() {
+        Err("Track name must not be empty")
+    } else {
+        Ok(name.to_owned())
+    }
+}
+
+fn parse_track_volume_draft(text: &str) -> Result<f32, &'static str> {
+    let value = text
+        .trim()
+        .parse::<f32>()
+        .map_err(|_| "Enter a valid volume in dB")?;
+    if !value.is_finite() {
+        return Err("Enter a finite volume in dB");
+    }
+    Ok(value.clamp(-60.0, 6.0))
+}
+
+fn parse_track_pan_draft(text: &str) -> Result<f32, &'static str> {
+    let value = text
+        .trim()
+        .parse::<f32>()
+        .map_err(|_| "Enter a pan value from -1.0 to 1.0")?;
+    if !value.is_finite() {
+        return Err("Enter a finite pan value");
+    }
+    Ok(value.clamp(-1.0, 1.0))
 }
 
 fn snap_tick_up(tick: u64, grid_ticks: u64) -> u64 {

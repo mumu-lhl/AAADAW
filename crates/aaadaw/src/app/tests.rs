@@ -2236,6 +2236,117 @@ fn track_controls_and_undo_change_project_only_through_actions() {
 }
 
 #[test]
+fn save_commits_pending_track_field_edits_as_one_undoable_action() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("track-fields.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project_path = Some(path.clone());
+    app.project_path_query = path.to_string_lossy().into_owned();
+    app.saved_revision = app.revision;
+    let original_revision = app.revision;
+
+    let _ = app.update(Message::TrackNameChanged(track_id, "Lead Vox".to_owned()));
+    let _ = app.update(Message::TrackVolumeTextChanged(track_id, "-6.0".to_owned()));
+    let _ = app.update(Message::TrackPanTextChanged(track_id, "0.5".to_owned()));
+    assert!(
+        app.is_dirty(),
+        "uncommitted field edits must mark the project dirty"
+    );
+
+    let _ = app.update(Message::SaveProject);
+
+    let track = &app.project.tracks()[0];
+    assert_eq!(track.name(), "Lead Vox");
+    assert_eq!(track.volume_db(), -6.0);
+    assert_eq!(track.pan(), 0.5);
+    assert!(app.track_name_edits.is_empty());
+    assert!(app.track_volume_edits.is_empty());
+    assert!(app.track_pan_edits.is_empty());
+    assert_eq!(app.revision, original_revision + 1);
+
+    let revision = app.revision;
+    let _ = app.update(Message::ProjectSaved(
+        path,
+        revision,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+    assert!(!app.is_dirty());
+
+    let _ = app.update(Message::Undo);
+    let track = &app.project.tracks()[0];
+    assert_eq!(track.name(), "Audio 1");
+    assert_eq!(track.volume_db(), 0.0);
+    assert_eq!(track.pan(), 0.0);
+}
+
+#[test]
+fn save_rejects_invalid_track_draft_without_applying_other_pending_fields() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("invalid-track-fields.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project_path = Some(path.clone());
+    app.project_path_query = path.to_string_lossy().into_owned();
+    app.saved_revision = app.revision;
+    let original_revision = app.revision;
+
+    let _ = app.update(Message::TrackNameChanged(track_id, "Lead Vox".to_owned()));
+    let _ = app.update(Message::TrackVolumeTextChanged(
+        track_id,
+        "too loud".to_owned(),
+    ));
+    let _ = app.update(Message::SaveProject);
+
+    assert_eq!(app.project.tracks()[0].name(), "Audio 1");
+    assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
+    assert_eq!(app.revision, original_revision);
+    assert!(!app.io_busy);
+    assert!(app.is_dirty());
+    assert_eq!(app.track_name_edits.get(&track_id).unwrap(), "Lead Vox");
+    assert_eq!(app.track_volume_edits.get(&track_id).unwrap(), "too loud");
+    assert!(
+        app.track_draft_errors
+            .contains_key(&(track_id, super::TrackDraftField::Volume))
+    );
+}
+
+#[test]
+fn escape_cancels_the_active_track_field_draft() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.saved_revision = app.revision;
+    let original_revision = app.revision;
+
+    let _ = app.update(Message::TrackPanTextChanged(track_id, "0.75".to_owned()));
+    assert!(app.is_dirty());
+    let _ = app.update(Message::Escape);
+
+    assert!(app.track_pan_edits.is_empty());
+    assert_eq!(app.project.tracks()[0].pan(), 0.0);
+    assert_eq!(app.revision, original_revision);
+    assert!(!app.is_dirty());
+}
+
+#[test]
+fn track_mix_slider_reports_when_it_discards_a_text_draft() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+
+    let _ = app.update(Message::TrackVolumeTextChanged(track_id, "-9".to_owned()));
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -3.0));
+
+    assert!(!app.track_volume_edits.contains_key(&track_id));
+    assert!(app.status.contains("draft discarded by slider adjustment"));
+}
+
+#[test]
 fn item_drag_obeys_project_busy_and_jack_edit_guards() {
     assert_eq!(
         super::item_drag_edit_guard_status(false, false, false, false, true, false),
