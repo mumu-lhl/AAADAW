@@ -1747,7 +1747,7 @@ struct TimelineProgram<'a> {
 #[derive(Default)]
 struct TimelineInteractionState {
     modifiers: keyboard::Modifiers,
-    pan_last_x: Option<f32>,
+    middle_drag: Option<MiddleDragState>,
     pending_item_drag: Option<PendingItemDrag>,
     pending_item_trim: Option<PendingItemTrim>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
@@ -1777,6 +1777,56 @@ struct FxAutomationTarget {
     track_index: usize,
     chain_index: usize,
     parameter_id: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MiddleDragAxis {
+    HorizontalPan,
+    VerticalZoom,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MiddleDragState {
+    start: Point,
+    last: Point,
+    axis: Option<MiddleDragAxis>,
+}
+
+impl MiddleDragState {
+    fn new(position: Point) -> Self {
+        Self {
+            start: position,
+            last: position,
+            axis: None,
+        }
+    }
+
+    fn update(&mut self, position: Point) -> Option<TimelineEvent> {
+        let delta_x = position.x - self.start.x;
+        let delta_y = position.y - self.start.y;
+        if self.axis.is_none() && delta_x.hypot(delta_y) >= 3.0 {
+            self.axis = Some(if delta_x.abs() >= delta_y.abs() {
+                MiddleDragAxis::HorizontalPan
+            } else {
+                MiddleDragAxis::VerticalZoom
+            });
+        }
+        let event = match self.axis? {
+            MiddleDragAxis::HorizontalPan => {
+                let delta = position.x - self.last.x;
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::PanByPixels(delta))
+            }
+            MiddleDragAxis::VerticalZoom => {
+                let delta = position.y - self.last.y;
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::ZoomAt {
+                    factor: 1.12_f32.powf(-delta / 24.0),
+                    anchor_x: self.start.x,
+                })
+            }
+        };
+        self.last = position;
+        event
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1974,7 +2024,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
                 if let Some(position) = cursor.position_in(bounds) {
-                    state.pan_last_x = Some(position.x);
+                    state.middle_drag = Some(MiddleDragState::new(position));
                     Some(shader::Action::capture())
                 } else {
                     None
@@ -2052,14 +2102,19 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 Some(shader::Action::publish(crate::app::Message::Timeline(event)).and_capture())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
-                if state.pan_last_x.take().is_some() {
+                if state.middle_drag.take().is_some() {
                     Some(shader::Action::capture())
                 } else {
                     None
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(drag) = state.pending_fx_lane_resize {
+                if let Some(middle_drag) = &mut state.middle_drag {
+                    let local_position = Point::new(position.x - bounds.x, position.y - bounds.y);
+                    middle_drag.update(local_position).map(|event| {
+                        shader::Action::publish(crate::app::Message::Timeline(event)).and_capture()
+                    })
+                } else if let Some(drag) = state.pending_fx_lane_resize {
                     let height = drag.initial_height + (position.y - bounds.y - drag.start_y);
                     Some(
                         shader::Action::publish(crate::app::Message::Timeline(
@@ -2074,16 +2129,6 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     )
                 } else if state.pending_automation_point.is_some() {
                     Some(shader::Action::capture())
-                } else if let Some(last_x) = state.pan_last_x {
-                    let local_x = position.x - bounds.x;
-                    state.pan_last_x = Some(local_x);
-                    let delta_x = local_x - last_x;
-                    Some(
-                        shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::PanByPixels(delta_x),
-                        ))
-                        .and_capture(),
-                    )
                 } else if let Some(mut trim) = state.pending_item_trim {
                     let local_x = position.x - bounds.x;
                     let local_y = position.y - bounds.y;
@@ -3307,7 +3352,7 @@ fn media_label(media_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT,
+        FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState,
         PendingTimeSelectionDrag, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
         TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineState,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at, row_at_y,
@@ -3315,6 +3360,7 @@ mod tests {
     };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TempoCurve, TimeSignature};
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
+    use iced::Point;
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
     use std::sync::Arc;
@@ -4120,6 +4166,23 @@ mod tests {
         });
         let after = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
         assert!(before.abs_diff(after) <= 1);
+    }
+
+    #[test]
+    fn middle_drag_zooms_vertically_and_pans_horizontally() {
+        let mut zoom = MiddleDragState::new(Point::new(120.0, 80.0));
+        let Some(TimelineEvent::ZoomAt { factor, anchor_x }) = zoom.update(Point::new(121.0, 48.0))
+        else {
+            panic!("vertical middle drag should zoom");
+        };
+        assert!(factor > 1.0);
+        assert_eq!(anchor_x, 120.0);
+
+        let mut pan = MiddleDragState::new(Point::new(120.0, 80.0));
+        let Some(TimelineEvent::PanByPixels(delta_x)) = pan.update(Point::new(160.0, 81.0)) else {
+            panic!("horizontal middle drag should pan");
+        };
+        assert_eq!(delta_x, 40.0);
     }
 
     #[test]
