@@ -4,6 +4,10 @@ use aaadaw_core::TempoCurve;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
+const PROJECT_TICK_COLUMN_WIDTH: f32 = 104.0;
+const MUSICAL_POSITION_COLUMN_WIDTH: f32 = 104.0;
+const BPM_COLUMN_WIDTH: f32 = 78.0;
+
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     if app.time_map_tab == TimeMapTab::Meter {
         return meter_view(app);
@@ -31,11 +35,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         let mut entry = row![
             text_input("Start tick", &point.tick)
                 .on_input(move |value| Message::TempoPointTickChanged(index, value))
-                .width(Length::Fixed(112.0)),
-            text(musical_position).size(10).width(Length::Fixed(68.0)),
+                .width(Length::Fixed(PROJECT_TICK_COLUMN_WIDTH)),
+            text(musical_position)
+                .size(10)
+                .width(Length::Fixed(MUSICAL_POSITION_COLUMN_WIDTH)),
             text_input("BPM", &point.bpm)
                 .on_input(move |value| Message::TempoPointBpmChanged(index, value))
-                .width(Length::Fixed(90.0)),
+                .width(Length::Fixed(BPM_COLUMN_WIDTH)),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center);
@@ -64,9 +70,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SPACING_SM),
         text("Enter project tick positions and BPM. Each curve controls the ramp to the next point; edits are undoable and saved with the project.").size(11),
         row![
-            text("Project tick").width(Length::Fixed(112.0)),
-            text("Bar.Beat.Tick").width(Length::Fixed(68.0)),
-            text("BPM").width(Length::Fixed(90.0)),
+            text("Project tick").width(Length::Fixed(PROJECT_TICK_COLUMN_WIDTH)),
+            text("Bar.Beat.Tick").width(Length::Fixed(MUSICAL_POSITION_COLUMN_WIDTH)),
+            text("BPM").width(Length::Fixed(BPM_COLUMN_WIDTH)),
             text("Curve"),
         ]
         .spacing(tokens::SPACING_SM),
@@ -115,8 +121,10 @@ fn meter_view(app: &App) -> Element<'_, Message> {
             row![
                 text_input("Project tick", &point.tick)
                     .on_input(move |value| Message::MeterPointTickChanged(index, value))
-                    .width(Length::Fixed(112.0)),
-                text(musical_position).size(10).width(Length::Fixed(68.0)),
+                    .width(Length::Fixed(PROJECT_TICK_COLUMN_WIDTH)),
+                text(musical_position)
+                    .size(10)
+                    .width(Length::Fixed(MUSICAL_POSITION_COLUMN_WIDTH)),
                 text_input("Beats", &point.numerator)
                     .on_input(move |value| Message::MeterPointNumeratorChanged(index, value))
                     .width(Length::Fixed(70.0)),
@@ -140,8 +148,8 @@ fn meter_view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SPACING_SM),
         text("Meter changes must start on a bar line. Edits apply atomically and share project Undo/Redo.").size(11),
         row![
-            text("Project tick").width(Length::Fixed(112.0)),
-            text("Bar.Beat.Tick").width(Length::Fixed(68.0)),
+            text("Project tick").width(Length::Fixed(PROJECT_TICK_COLUMN_WIDTH)),
+            text("Bar.Beat.Tick").width(Length::Fixed(MUSICAL_POSITION_COLUMN_WIDTH)),
             text("Numerator").width(Length::Fixed(70.0)),
             text("/"),
             text("Denominator").width(Length::Fixed(82.0)),
