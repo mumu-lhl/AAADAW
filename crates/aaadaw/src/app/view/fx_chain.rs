@@ -1,6 +1,8 @@
 use super::super::{App, Message};
 use aaadaw_core::TrackFxPlugin;
-use iced::widget::{button, column, container, row, rule, scrollable, slider, text, text_input};
+use iced::widget::{
+    button, column, container, mouse_area, row, rule, scrollable, slider, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -37,6 +39,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         let enabled = plugin.is_enabled();
         plugin_rows = plugin_rows.push(
             row![
+                mouse_area(text("⋮⋮").size(13))
+                    .on_press(Message::BeginFxChainPluginDrag(index))
+                    .on_enter(Message::HoverFxChainPluginDragTarget(index))
+                    .on_exit(Message::LeaveFxChainPluginDragTarget(index)),
                 button(if enabled { "On" } else { "Byp" })
                     .style(if enabled {
                         button::success
