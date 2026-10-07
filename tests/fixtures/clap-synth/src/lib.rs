@@ -202,7 +202,7 @@ impl PluginGuiImpl for MainThread<'_> {
                     window,
                     AtomEnum::WM_NAME,
                     AtomEnum::STRING,
-                    b"AAADAW CLAP fd fixture",
+                    format!("AAADAW CLAP fd fixture {}", std::process::id()).as_bytes(),
                 )
                 .map_err(|_| PluginError::Message("X11 window naming failed"))?
                 .check()

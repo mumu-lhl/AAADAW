@@ -344,7 +344,10 @@ fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
         .request_gui(true, 0)
         .expect("GUI request uses its own bounded control field");
     wait_for_gui_request(&process, sequence, 1);
-    let (x11, window) = find_fd_fixture_window();
+    let helper_pid = process
+        .process_id()
+        .expect("helper process should still be running");
+    let (x11, window) = find_fd_fixture_window(helper_pid);
     x11.send_event(
         false,
         window,
@@ -442,9 +445,10 @@ fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
 }
 
 #[cfg(target_os = "linux")]
-fn find_fd_fixture_window() -> (RustConnection, u32) {
+fn find_fd_fixture_window(helper_pid: u32) -> (RustConnection, u32) {
     let (connection, screen_index) = x11rb::connect(None).expect("test client connects to Xvfb");
     let screen = &connection.setup().roots[screen_index];
+    let expected_name = format!("AAADAW CLAP fd fixture {helper_pid}");
     let children = connection
         .query_tree(screen.root)
         .unwrap()
@@ -458,7 +462,7 @@ fn find_fd_fixture_window() -> (RustConnection, u32) {
                 .get_property(false, *window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 64)
                 .unwrap()
                 .reply()
-                .is_ok_and(|property| property.value == b"AAADAW CLAP fd fixture")
+                .is_ok_and(|property| property.value == expected_name.as_bytes())
         })
         .expect("fixture editor should publish its X11 window name");
     (connection, window)
