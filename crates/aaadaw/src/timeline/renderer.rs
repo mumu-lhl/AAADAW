@@ -24,6 +24,7 @@ const AUDIO_WAVEFORM: u32 = 11;
 const AUTOMATION_SEGMENT: u32 = 12;
 const AUTOMATION_POINT: u32 = 13;
 const FX_LANE_DIVIDER: u32 = 14;
+const ITEM_MARQUEE: u32 = 15;
 
 #[derive(Debug)]
 pub(super) struct AutomationLane {
@@ -41,6 +42,14 @@ pub(super) struct AutomationPointPreview {
     pub(super) track_index: u32,
     pub(super) tick: u64,
     pub(super) y: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct ItemSelectionPreview {
+    pub(super) start_tick: u64,
+    pub(super) end_tick: u64,
+    pub(super) top: f32,
+    pub(super) bottom: f32,
 }
 
 #[derive(Debug)]
@@ -66,6 +75,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) grid_lines: Vec<(u64, bool)>,
     pub(super) automation_lanes: Vec<AutomationLane>,
     pub(super) automation_point_preview: Option<AutomationPointPreview>,
+    pub(super) item_selection_preview: Option<ItemSelectionPreview>,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -581,6 +591,7 @@ impl Primitive for TimelinePrimitive {
                 + 3
                 + self.selected_items.len()
                 + usize::from(self.item_trim_preview.is_some())
+                + usize::from(self.item_selection_preview.is_some())
                 + if self.time_selection.is_some() { 3 } else { 0 },
         );
         if let Some(selection) = self.time_selection {
@@ -606,6 +617,18 @@ impl Primitive for TimelinePrimitive {
                     kind: TIME_SELECTION_EDGE,
                 }));
             }
+        }
+        if let Some(selection) = self.item_selection_preview {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: selection.start_tick,
+                end_tick: selection.end_tick,
+                y: selection.top,
+                height: (selection.bottom - selection.top).max(3.0),
+                color: [103, 173, 218, 180],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: ITEM_MARQUEE,
+            }));
         }
         if let Some(preview) = self.drag_preview
             && let Some(target_track_index) = preview.target_track_index

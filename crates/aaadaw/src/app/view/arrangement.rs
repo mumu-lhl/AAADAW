@@ -55,6 +55,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             |grid| Message::Timeline(TimelineEvent::SetSnapGrid(grid)),
         )
         .width(Length::Fixed(120.0)),
+        text("RMB drag: select · Shift-drag: ignore Snap").size(10),
         text("Zoom · MMB drag ↑↓").size(10),
         button("−")
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {
