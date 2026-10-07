@@ -40,6 +40,8 @@ pub(crate) enum CommandId {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    StopPlayback,
+    #[cfg(feature = "audio-device")]
     PanicMidi,
     Macro(u64),
 }
@@ -83,6 +85,8 @@ enum CommandKind {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    StopPlayback,
+    #[cfg(feature = "audio-device")]
     PanicMidi,
 }
 
@@ -105,6 +109,7 @@ enum Shortcut {
     Unmodified(char),
     Delete,
     Space,
+    ShiftSpace,
 }
 
 impl Shortcut {
@@ -117,6 +122,7 @@ impl Shortcut {
             Self::Unmodified(key) => key.to_ascii_uppercase().to_string(),
             Self::Delete => "Delete/Backspace".to_owned(),
             Self::Space => "Space".to_owned(),
+            Self::ShiftSpace => "Shift+Space".to_owned(),
         }
     }
 
@@ -127,6 +133,9 @@ impl Shortcut {
         }
         if value.eq_ignore_ascii_case("space") {
             return Ok(Some(Self::Space));
+        }
+        if value.eq_ignore_ascii_case("shift+space") {
+            return Ok(Some(Self::ShiftSpace));
         }
         if value.eq_ignore_ascii_case("delete")
             || value.eq_ignore_ascii_case("backspace")
@@ -144,7 +153,7 @@ impl Shortcut {
         let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
         if !(2..=3).contains(&parts.len()) {
             return Err(format!(
-                "Use a letter, Delete, {}+letter, {}+Shift+letter, or Space",
+                "Use a letter, Delete, {}+letter, {}+Shift+letter, Space, or Shift+Space",
                 shortcut_modifier_name(),
                 shortcut_modifier_name()
             ));
@@ -156,7 +165,7 @@ impl Shortcut {
         let shifted = parts.len() == 3 && parts[1].eq_ignore_ascii_case("shift");
         if !has_mod || (parts.len() == 3 && !shifted) {
             return Err(format!(
-                "Use {}+key, {}+Shift+key, or Space",
+                "Use {}+key, {}+Shift+key, Space, or Shift+Space",
                 shortcut_modifier_name(),
                 shortcut_modifier_name()
             ));
@@ -193,6 +202,7 @@ impl Shortcut {
                     && matches!(key, Key::Named(Named::Delete | Named::Backspace))
             }
             Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
+            Self::ShiftSpace => modifiers == Modifiers::SHIFT && *key == Key::Named(Named::Space),
         }
     }
 }
@@ -207,6 +217,8 @@ const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Delete];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Unmodified('s')];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
+#[cfg(feature = "audio-device")]
+const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::ShiftSpace];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -526,9 +538,20 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::TogglePlayback,
         menu: None,
         category: "Transport",
-        label: "Play/stop",
-        aliases: &["play", "stop", "toggle playback"],
+        label: "Play/Pause",
+        aliases: &["play", "pause", "toggle playback"],
         shortcuts: PLAYBACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    #[cfg(feature = "audio-device")]
+    CommandDefinition {
+        kind: CommandKind::StopPlayback,
+        menu: None,
+        category: "Transport",
+        label: "Stop playback",
+        aliases: &["stop", "stop transport"],
+        shortcuts: STOP_PLAYBACK_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -928,7 +951,9 @@ pub(super) fn from_shortcut(
 }
 
 pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
-    let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
+    let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::SHIFT {
+        "Shift+Space".to_owned()
+    } else if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
         "Space".to_owned()
     } else if key.eq_ignore_ascii_case("delete") && modifiers == Modifiers::NONE {
         "Delete".to_owned()
@@ -992,7 +1017,7 @@ fn modifier_name_for_platform(is_macos: bool) -> &'static str {
 pub(super) fn shortcut_capture_help() -> String {
     let modifier = shortcut_modifier_name();
     format!(
-        "Select a binding, then press a letter, Delete, {modifier}+letter, {modifier}+Shift+letter, or Space."
+        "Select a binding, then press a letter, Delete, {modifier}+letter, {modifier}+Shift+letter, Space, or Shift+Space."
     )
 }
 
@@ -1044,6 +1069,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => "transport.toggle-playback",
+        #[cfg(feature = "audio-device")]
+        CommandKind::StopPlayback => "transport.stop-playback",
         #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => "transport.panic-midi",
     }
@@ -1158,6 +1185,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         #[cfg(feature = "audio-device")]
         CommandId::TogglePlayback => Message::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandId::StopPlayback => Message::StopPlayback,
         #[cfg(feature = "audio-device")]
         CommandId::PanicMidi => Message::PanicMidi,
         CommandId::Macro(_) => unreachable!("macros are dispatched before built-in commands"),
@@ -1364,6 +1393,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => true,
         #[cfg(feature = "audio-device")]
+        CommandKind::StopPlayback => true,
+        #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => app.playback.is_some(),
     }
 }
@@ -1411,6 +1442,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandKind::StopPlayback => CommandId::StopPlayback,
         #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => CommandId::PanicMidi,
     }
@@ -1483,8 +1516,12 @@ mod shortcut_label_tests {
         assert_eq!(
             shortcut_capture_help(),
             format!(
-                "Select a binding, then press a letter, Delete, {current_modifier}+letter, {current_modifier}+Shift+letter, or Space."
+                "Select a binding, then press a letter, Delete, {current_modifier}+letter, {current_modifier}+Shift+letter, Space, or Shift+Space."
             )
+        );
+        assert_eq!(
+            capture_binding("Space", Modifiers::SHIFT).unwrap(),
+            "Shift+Space"
         );
     }
 }
