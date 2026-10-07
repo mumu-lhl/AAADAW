@@ -1953,6 +1953,47 @@ fn stopped_or_paused_open_playback_does_not_lock_project_editing() {
     );
 }
 
+#[cfg(feature = "audio-device")]
+#[test]
+fn stopped_edit_cursor_sets_next_playback_position_without_seeking_active_transport() {
+    let mut app = App::default();
+    let stopped_tick = 1_920;
+    let stopped_sample = app.project.sample_at_tick(stopped_tick).unwrap();
+
+    let _ = app.update(Message::Timeline(
+        super::timeline::TimelineEvent::SelectEmpty(stopped_tick),
+    ));
+
+    assert_eq!(app.timeline.edit_cursor_tick, stopped_tick);
+    assert_eq!(app.playhead_sample, stopped_sample);
+    assert_eq!(app.playback_start_sample, stopped_sample);
+
+    app.playback_paused = true;
+    app.playhead_sample = 12_345;
+    app.playback_start_sample = 6_789;
+    let paused_tick = 2_880;
+    let _ = app.update(Message::Timeline(
+        super::timeline::TimelineEvent::SetEditCursor(paused_tick),
+    ));
+
+    assert_eq!(app.timeline.edit_cursor_tick, paused_tick);
+    assert_eq!(app.playhead_sample, 12_345);
+    assert_eq!(app.playback_start_sample, 6_789);
+
+    app.playback_paused = false;
+    app.playback_playing = true;
+    app.playhead_sample = 23_456;
+    app.playback_start_sample = 18_765;
+    let playing_tick = 3_840;
+    let _ = app.update(Message::Timeline(
+        super::timeline::TimelineEvent::SetEditCursor(playing_tick),
+    ));
+
+    assert_eq!(app.timeline.edit_cursor_tick, playing_tick);
+    assert_eq!(app.playhead_sample, 23_456);
+    assert_eq!(app.playback_start_sample, 18_765);
+}
+
 #[test]
 fn reimport_requires_a_saved_project_and_changed_embedded_source() {
     let mut app = App::default();
