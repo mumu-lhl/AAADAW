@@ -29,9 +29,14 @@ playback type. `MainActivity` streams local staged files to SAF URIs without loa
 large exports into memory. Import Android ARM64 `.clap` libraries through
 Settings; AAADAW scans and hosts imported plugins in-process. Native plugin code
 can crash the app, so import trusted libraries only. Android external MIDI
-input/output is not implemented yet. CI builds ARM64 and x86_64 APK libraries
-and launches the app on an API 35 emulator through relaunch, larger font scale,
-orientation changes, and screenshot capture. When an output stream is lost,
+editor windows are not supported. Android's MIDI manager opens USB and paired
+Bluetooth MIDI 1.0 ports. Refresh the External MIDI section in Audio settings
+after connecting or pairing a device. While audio is running, live input reaches
+the selected instrument and project MIDI is sent to connected outputs. The track
+model currently uses MIDI channel 1, and live input is not recorded into MIDI
+clips; attached-device behavior still needs validation. CI builds ARM64 and
+x86_64 APK libraries and launches the app on an API 35 emulator through relaunch,
+larger font scale, orientation changes, and screenshot capture. When an output stream is lost,
 AAADAW attempts to reopen it and resume from the last reported sample; if the
 route remains unavailable, playback stops safely. If an input route is lost
 while recording, AAADAW closes the old stream and tries to reopen the selected
