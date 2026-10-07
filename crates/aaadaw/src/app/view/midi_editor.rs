@@ -1202,17 +1202,31 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     * self.ticks_per_beat as f64)
                     .round() as i64;
                 let grid_ticks = (self.ticks_per_beat / 4).max(1) as i64;
-                drag.delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
+                let delta_tick = (ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks;
                 if drag.velocity {
                     drag.delta_velocity = velocity_delta(drag.start.y, point.y);
+                } else if drag.resize {
+                    drag.delta_tick = delta_tick;
                 } else {
-                    drag.delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+                    let delta_pitch = ((drag.start.y - point.y) / NOTE_ROW_HEIGHT).round() as i16;
+                    (drag.delta_tick, drag.delta_pitch) = bounded_note_move_delta(
+                        &drag.notes,
+                        self.item.length_ticks(),
+                        delta_tick,
+                        delta_pitch,
+                    );
                 }
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let drag = state.drag.take()?;
                 state.hovered_velocity_note = None;
+                let (move_delta_tick, move_delta_pitch) = bounded_note_move_delta(
+                    &drag.notes,
+                    self.item.length_ticks(),
+                    drag.delta_tick,
+                    drag.delta_pitch,
+                );
                 let edits = drag
                     .notes
                     .into_iter()
@@ -1226,9 +1240,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             .max(1) as u64;
                         } else {
                             data.tick =
-                                (i128::from(data.tick) + i128::from(drag.delta_tick)).max(0) as u64;
-                            data.pitch =
-                                (i16::from(data.pitch) + drag.delta_pitch).clamp(0, 127) as u8;
+                                (i128::from(data.tick) + i128::from(move_delta_tick)) as u64;
+                            data.pitch = (i16::from(data.pitch) + move_delta_pitch) as u8;
                         }
                         (note_id, data)
                     })
@@ -1564,6 +1577,43 @@ fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
         duration: note.duration(),
         velocity: note.velocity(),
     }
+}
+
+fn bounded_note_move_delta(
+    notes: &[(NoteId, MidiNoteData)],
+    item_length_ticks: u64,
+    delta_tick: i64,
+    delta_pitch: i16,
+) -> (i64, i16) {
+    let Some(min_tick) = notes.iter().map(|(_, note)| note.tick).min() else {
+        return (delta_tick, delta_pitch);
+    };
+    let max_end_tick = notes
+        .iter()
+        .map(|(_, note)| note.tick.saturating_add(note.duration))
+        .max()
+        .unwrap_or_default();
+    let min_delta_tick = -i128::from(min_tick);
+    let max_delta_tick = i128::from(item_length_ticks.saturating_sub(max_end_tick));
+    let delta_tick = i128::from(delta_tick)
+        .clamp(min_delta_tick, max_delta_tick)
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+
+    let min_pitch = notes
+        .iter()
+        .map(|(_, note)| note.pitch)
+        .min()
+        .unwrap_or_default();
+    let max_pitch = notes
+        .iter()
+        .map(|(_, note)| note.pitch)
+        .max()
+        .unwrap_or_default();
+    let min_delta_pitch = -i16::from(min_pitch);
+    let max_delta_pitch = 127 - i16::from(max_pitch);
+    let delta_pitch = delta_pitch.clamp(min_delta_pitch, max_delta_pitch);
+
+    (delta_tick, delta_pitch)
 }
 
 fn velocity_note_at_x(
@@ -2612,6 +2662,145 @@ mod tests {
         assert_eq!(apply_velocity_delta(70, delta), 90);
         assert_eq!(apply_velocity_delta(120, delta), 127);
         assert_eq!(apply_velocity_delta(10, -20), 1);
+    }
+
+    #[test]
+    fn group_note_move_clamps_one_shared_delta_at_item_and_pitch_bounds() {
+        let notes = vec![
+            (
+                NoteId::from_value(1).unwrap(),
+                MidiNoteData {
+                    pitch: 5,
+                    tick: 20,
+                    duration: 10,
+                    velocity: 90,
+                },
+            ),
+            (
+                NoteId::from_value(2).unwrap(),
+                MidiNoteData {
+                    pitch: 100,
+                    tick: 50,
+                    duration: 20,
+                    velocity: 80,
+                },
+            ),
+        ];
+
+        assert_eq!(bounded_note_move_delta(&notes, 100, -40, -20), (-20, -5));
+        assert_eq!(bounded_note_move_delta(&notes, 100, 50, 50), (30, 27));
+    }
+
+    #[test]
+    fn group_note_drag_preview_matches_the_boundary_clamped_edit() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 2_000,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    MidiNoteData {
+                        pitch: 0,
+                        tick: 500,
+                        duration: 100,
+                        velocity: 90,
+                    },
+                    MidiNoteData {
+                        pitch: 5,
+                        tick: 1_000,
+                        duration: 100,
+                        velocity: 80,
+                    },
+                ],
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+        let selected = item
+            .notes()
+            .iter()
+            .map(|note| note.id())
+            .collect::<HashSet<_>>();
+        let roll = PianoRoll {
+            project: &project,
+            item,
+            item_id,
+            selected: &selected,
+            origin_tick: 0,
+            high_pitch: 35,
+            pixels_per_beat: 960.0,
+            ticks_per_beat: 960,
+            region: RollRegion::Pitch,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                2_000.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let start = Point::new(
+            KEY_WIDTH + 1_000.0,
+            HEADER_HEIGHT + 30.0 * NOTE_ROW_HEIGHT + NOTE_ROW_HEIGHT / 2.0,
+        );
+        let mut interaction = Interaction::default();
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("selected note should start a group drag");
+
+        let moved = Point::new(start.x - 720.0, start.y + NOTE_ROW_HEIGHT);
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved { position: moved }),
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .expect("group drag should update its preview");
+        let preview = interaction.drag.as_ref().expect("drag remains active");
+        assert_eq!((preview.delta_tick, preview.delta_pitch), (-500, 0));
+
+        let action = roll
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(moved),
+            )
+            .expect("group drag should submit an edit");
+        let (message, _, _) = action.into_inner();
+        let Message::EditMidiNotes(changed_item, edits) = message.unwrap() else {
+            panic!("group drag should submit MIDI note edits");
+        };
+        assert_eq!(changed_item, item_id);
+        let edits = edits.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(edits.keys().copied().collect::<HashSet<_>>(), selected);
+        let original_notes = item
+            .notes()
+            .iter()
+            .map(|note| (note.id(), note))
+            .collect::<HashMap<_, _>>();
+        for (note_id, edit) in edits {
+            let original = original_notes[&note_id];
+            assert_eq!(edit.tick, original.tick().saturating_sub(500));
+            assert_eq!(edit.pitch, original.pitch());
+        }
     }
 
     #[test]
