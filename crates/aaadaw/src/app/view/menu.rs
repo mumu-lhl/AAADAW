@@ -118,6 +118,14 @@ pub(super) const fn bar_bottom() -> f32 {
 }
 
 pub(super) fn dropdown(app: &App, menu: MainMenu) -> Element<'_, Message> {
+    dropdown_with_max_width(app, menu, f32::INFINITY)
+}
+
+pub(super) fn mobile_dropdown(app: &App, menu: MainMenu, max_width: f32) -> Element<'_, Message> {
+    dropdown_with_max_width(app, menu, max_width)
+}
+
+fn dropdown_with_max_width(app: &App, menu: MainMenu, max_width: f32) -> Element<'_, Message> {
     let contents = if menu == MainMenu::Actions {
         actions_menu(app, commands::for_actions_menu(app))
     } else {
@@ -126,7 +134,8 @@ pub(super) fn dropdown(app: &App, menu: MainMenu) -> Element<'_, Message> {
     let popup_width = MENU_LAYOUT
         .iter()
         .find(|layout| layout.menu == menu)
-        .map_or(244.0, |layout| layout.popup_width);
+        .map_or(244.0, |layout| layout.popup_width)
+        .min(max_width);
     container(contents)
         .width(Length::Fixed(popup_width))
         .padding(tokens::PANEL_PADDING)
@@ -160,6 +169,14 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
 }
 
 pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
+    offline_jobs_panel_with_width(app, 420.0)
+}
+
+pub(super) fn mobile_offline_jobs_panel(app: &App, max_width: f32) -> Element<'_, Message> {
+    offline_jobs_panel_with_width(app, max_width)
+}
+
+fn offline_jobs_panel_with_width(app: &App, width: f32) -> Element<'_, Message> {
     let visible_rows = 2
         + usize::from(app.active_offline_job.is_some())
         + app
@@ -213,7 +230,7 @@ pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
         jobs = jobs.push(text(result).size(9));
     }
     container(scrollable(jobs).height(Length::Fixed(panel_height)))
-        .width(Length::Fixed(420.0))
+        .width(Length::Fixed(width))
         .padding(tokens::PANEL_PADDING)
         .style(|_| container::Style {
             background: Some(Color::from_rgb8(37, 41, 44).into()),

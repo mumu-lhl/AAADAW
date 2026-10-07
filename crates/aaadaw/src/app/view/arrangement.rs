@@ -101,6 +101,117 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
+    let track_choices = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| -> Element<'_, Message> {
+            let selected = app.timeline.selected_track == Some(track.id());
+            button(text(track.name()).size(13))
+                .padding([16, 12])
+                .style(if selected {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(Message::Timeline(TimelineEvent::SelectTrack(track.id())))
+                .into()
+        });
+    let track_selector = scrollable(row(track_choices).spacing(super::tokens::SPACING_XS))
+        .direction(iced::widget::scrollable::Direction::Horizontal(
+            iced::widget::scrollable::Scrollbar::default(),
+        ))
+        .height(Length::Shrink);
+
+    let selected_track = app
+        .timeline
+        .selected_track
+        .and_then(|id| app.project.tracks().iter().find(|track| track.id() == id));
+    let selected_controls: Element<'_, Message> = if app.timeline.selected_item.is_some() {
+        super::item_inspector::view(app)
+    } else if let Some(track) = selected_track {
+        let (volume, pan) = track_mix_controls(app, track, TrackMixLayout::TouchCompact);
+        container(
+            column![
+                row![
+                    text(track.name()).size(15).width(Length::Fill),
+                    track_peak_meter(app, track),
+                ]
+                .align_y(Alignment::Center),
+                volume,
+                pan,
+            ]
+            .spacing(super::tokens::SPACING_XS),
+        )
+        .width(Length::Fill)
+        .padding(super::tokens::PANEL_PADDING)
+        .into()
+    } else {
+        container(text("Select a track to show its controls").size(13))
+            .width(Length::Fill)
+            .padding(super::tokens::PANEL_PADDING)
+            .into()
+    };
+
+    let toolbar = scrollable(
+        row![
+            button("+ Track").padding([16, 14]).on_press_maybe(
+                commands::is_enabled(app, CommandId::AddTrack)
+                    .then_some(Message::ExecuteCommand(CommandId::AddTrack)),
+            ),
+            button("+ MIDI").padding([16, 14]).on_press_maybe(
+                commands::is_enabled(app, CommandId::AddMidiItem)
+                    .then_some(Message::ExecuteCommand(CommandId::AddMidiItem)),
+            ),
+            button(if app.timeline.snap_enabled {
+                "Snap on"
+            } else {
+                "Snap off"
+            })
+            .padding([16, 14])
+            .style(if app.timeline.snap_enabled {
+                button::warning
+            } else {
+                button::secondary
+            })
+            .on_press_maybe(
+                app.timeline
+                    .has_snap_grid()
+                    .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+            ),
+            button("−")
+                .padding([16, 18])
+                .on_press(Message::Timeline(TimelineEvent::ZoomAt {
+                    factor: 0.8,
+                    anchor_x: 180.0,
+                })),
+            button("+")
+                .padding([16, 18])
+                .on_press(Message::Timeline(TimelineEvent::ZoomAt {
+                    factor: 1.25,
+                    anchor_x: 180.0,
+                })),
+        ]
+        .spacing(super::tokens::SPACING_XS),
+    )
+    .direction(iced::widget::scrollable::Direction::Horizontal(
+        iced::widget::scrollable::Scrollbar::default(),
+    ))
+    .height(Length::Shrink);
+
+    column![
+        toolbar,
+        track_selector,
+        selected_controls,
+        timeline_content(app)
+    ]
+    .spacing(super::tokens::SPACING_SM)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
 fn track_controls(app: &App) -> Element<'_, Message> {
     let rows = app
         .project
@@ -541,7 +652,12 @@ fn track_row_layout<'a>(
         .spacing(3)
         .align_y(Alignment::Center)
     };
-    let (volume_controls, pan_controls) = track_mix_controls(app, track, compact);
+    let mix_layout = if compact {
+        TrackMixLayout::Compact
+    } else {
+        TrackMixLayout::Normal
+    };
+    let (volume_controls, pan_controls) = track_mix_controls(app, track, mix_layout);
     let selected = app.timeline.selected_track == Some(track_id);
     let meter = track_peak_meter(app, track);
     let row = container(column![heading, volume_controls, meter, pan_controls].spacing(2))
@@ -649,12 +765,22 @@ pub(super) fn track_selection_background(selected: bool) -> iced::Color {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum TrackMixLayout {
+    Compact,
+    Normal,
+    TouchCompact,
+}
+
 pub(super) fn track_mix_controls<'a>(
     app: &'a App,
     track: &'a Track,
-    compact: bool,
+    layout: TrackMixLayout,
 ) -> (Element<'a, Message>, Element<'a, Message>) {
+    let compact = !matches!(layout, TrackMixLayout::Normal);
+    let touch = matches!(layout, TrackMixLayout::TouchCompact);
     let track_id = track.id();
+    let toggle_padding: [u16; 2] = if touch { [16, 14] } else { [2, 8] };
     let mute_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleMute,
@@ -671,7 +797,7 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding([2, 8]);
+        .padding(toggle_padding);
     let solo_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleSolo,
@@ -688,7 +814,7 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding([2, 8]);
+        .padding(toggle_padding);
     let record_arm_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleRecordArm,
@@ -711,7 +837,7 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding([2, 8]);
+        .padding(toggle_padding);
     #[cfg(feature = "audio-device")]
     let monitor_enabled = app
         .playback
@@ -742,7 +868,11 @@ pub(super) fn track_mix_controls<'a>(
             iced::widget::button::secondary(theme, status)
         }
     })
-    .padding([2, 6]);
+    .padding(if touch {
+        [14_u16, 10_u16]
+    } else {
+        [2_u16, 6_u16]
+    });
     #[cfg(not(feature = "audio-device"))]
     let input_monitor = text("").size(10);
     let mix_gesture = app
@@ -775,6 +905,14 @@ pub(super) fn track_mix_controls<'a>(
         volume_slider.into(),
         Message::ResetTrackVolumeByDoubleClick(track_id),
     );
+    let volume: Element<'_, Message> = if touch {
+        container(volume)
+            .height(Length::Fixed(48.0))
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        volume
+    };
     let pan_slider = slider(-1.0..=1.0, pan, move |value| {
         Message::PreviewTrackPan(track_id, value)
     })
@@ -782,9 +920,22 @@ pub(super) fn track_mix_controls<'a>(
     .shift_step(0.001_f32)
     .on_release(Message::CommitTrackPan(track_id))
     .width(Length::Fill);
+    let pan_slider = reset_on_double_click(
+        pan_slider.into(),
+        Message::ResetTrackPanByDoubleClick(track_id),
+    );
+    let pan_slider: Element<'_, Message> = if touch {
+        container(pan_slider)
+            .height(Length::Fixed(48.0))
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        pan_slider
+    };
     let volume_value = text_input("dB", &volume_text)
         .on_input(move |value| Message::TrackVolumeTextChanged(track_id, value))
         .on_submit(Message::CommitTrackVolumeText(track_id))
+        .padding(if touch { 10_u16 } else { 4_u16 })
         .width(Length::Fixed(48.0));
     let volume_controls = if compact {
         let controls = row![mute, solo, record_arm];
@@ -819,18 +970,20 @@ pub(super) fn track_mix_controls<'a>(
     let pan_value = text_input("-1 to 1", &pan_text)
         .on_input(move |value| Message::TrackPanTextChanged(track_id, value))
         .on_submit(Message::CommitTrackPanText(track_id))
+        .padding(if touch { 10_u16 } else { 4_u16 })
         .width(Length::Fixed(48.0));
     let pan_controls = row![
         text(format!("Pan {}", pan_label(pan))).size(11),
-        reset_on_double_click(
-            pan_slider.into(),
-            Message::ResetTrackPanByDoubleClick(track_id),
-        ),
+        pan_slider,
         pan_value,
         button("C")
             .style(iced::widget::button::secondary)
             .on_press(Message::ResetTrackPan(track_id))
-            .padding([2, 5]),
+            .padding(if touch {
+                [12_u16, 12_u16]
+            } else {
+                [2_u16, 5_u16]
+            }),
     ]
     .spacing(3)
     .align_y(Alignment::Center);

@@ -21,3 +21,4 @@ license = "MIT OR Apache-2.0"
 # dependency versions and applies only the upstream lru requirement update.
 [patch.crates-io]
 cryoglyph = { path = "vendor/cryoglyph" }
+iced_winit = { path = "vendor/iced_winit" }

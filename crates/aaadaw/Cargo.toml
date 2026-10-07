@@ -20,7 +20,6 @@ aaadaw-app = { path = "../aaadaw-app" }
 aaadaw-media = { path = "../aaadaw-media" }
 aaadaw-storage = { path = "../aaadaw-storage" }
 aaadaw-engine = { path = "../aaadaw-engine" }
-rfd = "0.15.4"
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "canvas", "advanced", "x11", "wayland", "tokio", "linux-theme-detection"] }
 bytemuck = { version = "1.24", features = ["derive"] }
 x11rb = "0.13.2"
@@ -28,11 +27,21 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.27.0"
 rmcp = { version = "3.5.0", default-features = false, features = ["server", "transport-io"] }
+iced_winit = { version = "0.14.1", default-features = false, features = ["x11", "wayland"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 directories = "6.0.0"
 tracing = "0.1"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6.1", features = ["native-activity"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.15.4"
 
 [package.metadata.deb]
 maintainer = "AAADAW contributors"

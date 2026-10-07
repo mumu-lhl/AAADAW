@@ -1,6 +1,6 @@
 use super::super::commands::{self, CommandId};
 use super::arrangement::{
-    stereo_peak_meter, track_fx_button, track_mix_controls, track_name_input,
+    TrackMixLayout, stereo_peak_meter, track_fx_button, track_mix_controls, track_name_input,
     track_output_selector, track_peak_meter, track_selection_background,
 };
 use super::tokens;
@@ -63,7 +63,7 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     ]
     .spacing(tokens::SPACING_XS)
     .align_y(Alignment::Center);
-    let (volume, pan) = track_mix_controls(app, track, true);
+    let (volume, pan) = track_mix_controls(app, track, TrackMixLayout::Compact);
     let content = column![
         header,
         rule::horizontal(1),

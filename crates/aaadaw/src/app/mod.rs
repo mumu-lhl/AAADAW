@@ -880,7 +880,7 @@ impl App {
         let mut app = Self::default();
         let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(1280.0, 800.0),
-            min_size: Some(iced::Size::new(900.0, 620.0)),
+            min_size: Some(iced::Size::new(360.0, 480.0)),
             ..iced::window::Settings::default()
         });
         app.main_window_id = Some(main_window_id);

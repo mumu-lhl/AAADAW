@@ -1,0 +1,20 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="false"
+        android:hasCode="false"
+        android:label="AAADAW"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:label="AAADAW"
+            android:screenOrientation="unspecified">
+            <meta-data android:name="android.app.lib_name" android:value="aaadaw" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -14,6 +14,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 impl App {
+    #[cfg(target_os = "android")]
+    pub(super) fn pick_path(&mut self, _target: PathPickerTarget) -> Task<Message> {
+        self.active_menu = None;
+        self.status = "Android document access is not available in this build".to_owned();
+        Task::none()
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(super) fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
         if self.path_picker_busy {
             self.status = "A file dialog is already open".to_owned();

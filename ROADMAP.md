@@ -226,7 +226,9 @@
 ### 平台扩展
 
 - [x] 完成 macOS CoreAudio 输入/输出设备枚举与选择、Apple Silicon CI、unsigned `.app` 版本冒烟包，并记录真机/签名验收边界（[Issue #214](https://github.com/mumu-lhl/AAADAW/issues/214)，[平台说明](docs/platforms.md)）。
-- [ ] 建立 Android 应用壳与 SAF 虚拟文件系统，打通 `.aaadaw` 打开/保存。
+- [x] 为小于 720 dp 的窗口提供单栏触控布局：菜单可横向浏览，Arrange 改为时间线优先，轨道控制与选中 Item 的 Inspector 共用空间，Transport 收敛为常用操作；桌面窄窗可预览此布局。
+- [x] 建立 Android NativeActivity/APK 启动壳，接通 Iced/winit 原生 event loop；APK 尚未在 Android SDK/设备上验证（[`android-app/`](android-app/)、[`平台支持说明`](docs/platforms.md)）。
+- [ ] 建立 SAF 虚拟文件系统与项目 staging，打通 `.aaadaw` 打开/保存（[Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)）。
 - [ ] 接入 AAudio/Oboe 与 Android MIDI；实现前台录音服务、锁屏保活和设备权限/生命周期处理。
 - [ ] 适配触控交互、虚拟修饰键条和触控 Hitbox；评估大小核调度与 Performance Hint，必须以设备测量支撑。
 

@@ -169,7 +169,7 @@ Settings 窗口采用左侧类别栏和右侧设置面板。点击“Keyboard Sh
 
 ## Responsive / Dense Layout Behavior
 
-窗口是可缩放的桌面窗口，不按手机断点设计；但每个主要面板必须在缩小后仍有确定的退化规则。
+桌面仍是主工作模式。小屏设备使用独立的紧凑触控 profile；不得把桌面窗口简单缩小后当作手机界面。
 
 - 主窗口优先保障 Arrange 的可用时间宽度，其次保障 TCP 的轨道身份和核心控制；辅助面板可自动变为 tabs 或隐藏，Transport 保持可见。
 - TCP 和 Mixer strip 提供 compact/normal/expanded 密度。compact 状态隐藏重复文字与低频控制，依然保留 name、selection、M/S/Arm、Meter 和主要增益入口。
@@ -178,6 +178,17 @@ Settings 窗口采用左侧类别栏和右侧设置面板。点击“Keyboard Sh
 - Mixer strip 变窄时保留可操作的 fader、meter 和 mute/solo 状态；FX 与 Sends 显示为短标签/状态标记，详情由面板打开。
 - resize 不改变工程数据、track order、选择或 Transport 状态。分隔线需有可发现的拖动反馈，并支持恢复默认布局。
 - 开发时至少检查默认窗口、窄窗口和高 DPI/系统缩放场景；不以单一桌面分辨率调 CSS/布局。
+
+### Android 小屏触控 profile
+
+- 逻辑宽度低于 720 dp 时使用单栏 shell：菜单横向滚动，Arrange/Mixer 作为明确的工作区切换，Transport 固定在底部。
+- 手机 Arrange 以时间线为主画布。轨道选择横向滚动；当前轨道的 Mute/Solo/Arm、音量和声像放在时间线前方，不要求用户维护 TCP 与时间区的并排分隔器。选中 Item 后，同一区域切换为 Item Inspector。
+- 手机 Mixer 保留横向 channel strip 浏览。轨道名称、Meter、主推子及 Mute/Solo/Arm 状态始终可见；推子和状态按钮使用触控尺寸。
+- 高频按钮的最小可触目标为 48 dp；M/S/R 不能只靠颜色表达状态。拖动控件仍提供可访问的精确输入或菜单操作。
+- 手机 Transport 只常驻 Play/Pause、Stop、Record、BPM 和当前定位。设备详情、Seek、MIDI Panic 与诊断放入可展开菜单，不挤占时间线宽度。
+- Media、设置、插件和时间地图使用单面板导航；返回主编辑器后恢复工程、选中轨道、光标和播放状态。
+- Android 触控手势应调用现有 Action 和 Timeline 消息。虚拟修饰键仅显示已有且可执行的编辑模式；不得把尚未实现的模式做成可点击假控件。
+- 屏幕旋转、系统栏 inset、软键盘出现与前后台切换不得丢失工程状态或触发意外全局快捷键。
 
 ## Iced Widget Strategy
 

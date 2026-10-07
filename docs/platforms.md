@@ -82,6 +82,23 @@ exercise physical CoreAudio devices, microphone permission prompts, playback
 quality, or latency. The bundle is unsigned and not notarized; Gatekeeper-ready
 distribution remains a release task.
 
+## Android
+
+Android support is an early, source-level shell. `aaadaw` exports the
+`android_main` entry point and seeds Iced's winit runner with the current
+`AndroidApp`; the event-loop bridge is a small local `iced_winit` patch. The
+Android package metadata and manifest live in `android-app/`. The shared Iced
+UI has a compact single-column layout below 720 logical pixels, with a
+touch-sized transport and time-line-first Arrange view.
+
+This shell is not a usable Android DAW yet. SAF document access and project
+staging ([Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)), an AAudio/Oboe playback and capture backend, Android MIDI, microphone
+permission handling, foreground recording service behavior, and device
+lifecycle validation remain open. The Android NDK and a device/emulator are
+needed to build and validate the APK; the current CI matrix does not cover
+Android. See the Android platform issue linked from the roadmap before treating
+Android as supported.
+
 ## Packaging status
 
 CI creates the validation packages described in [native installer notes](native-installers.md)
