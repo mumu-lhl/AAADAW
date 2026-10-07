@@ -107,6 +107,7 @@ impl App {
                 .get(create_index)
                 .map(|track| track.id())
             else {
+                self.remove_recreated_recording_tracks(&recreated_track_ids);
                 self.status = "Could not restore a missing recorded track".to_owned();
                 return Task::none();
             };

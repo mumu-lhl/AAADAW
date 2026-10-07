@@ -847,7 +847,7 @@ impl App {
         Task::none()
     }
 
-    fn remove_recreated_recording_tracks(&mut self, track_ids: &[aaadaw_core::TrackId]) {
+    pub(super) fn remove_recreated_recording_tracks(&mut self, track_ids: &[aaadaw_core::TrackId]) {
         if track_ids.is_empty() {
             return;
         }
