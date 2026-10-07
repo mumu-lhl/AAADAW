@@ -11,6 +11,7 @@ use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 const KEY_WIDTH: f32 = MIDI_EDITOR_KEY_WIDTH;
 const HEADER_HEIGHT: f32 = 28.0;
@@ -1323,18 +1324,33 @@ enum RollRegion {
 struct Interaction {
     modifiers: keyboard::Modifiers,
     drag: Option<NoteDrag>,
+    empty_drag: Option<EmptySpaceGesture>,
+    last_empty_click: Option<(Instant, Point)>,
     hovered_velocity_note: Option<NoteId>,
+}
+
+#[derive(Clone, Copy)]
+struct EmptySpaceGesture {
+    start: Point,
+    current: Point,
+    additive: bool,
+    marquee: bool,
 }
 
 #[derive(Clone)]
 struct NoteDrag {
     start: Point,
+    anchor_note_id: NoteId,
     notes: Vec<(NoteId, MidiNoteData)>,
     resize: bool,
     delta_tick: i64,
     delta_pitch: i16,
     velocity: bool,
     delta_velocity: i16,
+    copy: bool,
+    moved: bool,
+    click_selection: Option<HashSet<NoteId>>,
+    original_selection: HashSet<NoteId>,
 }
 
 impl canvas::Program<Message> for PianoRoll<'_> {
@@ -1347,10 +1363,21 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
-        if let Some(action) =
-            cancel_canvas_drag_on_escape(event, &mut state.drag, None::<&mut Option<()>>)
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
+            && matches!(
+                key.as_ref(),
+                keyboard::Key::Named(keyboard::key::Named::Escape)
+            )
+            && (state.drag.is_some() || state.empty_drag.is_some())
         {
-            return Some(action);
+            let original_selection = state.drag.take().map(|drag| drag.original_selection);
+            state.empty_drag = None;
+            state.last_empty_click = None;
+            return Some(
+                original_selection.map_or_else(canvas::Action::capture, |selected| {
+                    canvas::Action::publish(Message::SelectMidiNotes(selected))
+                }),
+            );
         }
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
@@ -1416,6 +1443,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 if self.region == RollRegion::Pitch && position.y < HEADER_HEIGHT {
+                    state.last_empty_click = None;
                     if position.x < KEY_WIDTH {
                         return Some(canvas::Action::capture());
                     }
@@ -1449,6 +1477,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     return Some(canvas::Action::capture());
                 }
                 if self.region == RollRegion::Velocity {
+                    state.last_empty_click = None;
                     let lane_y = point.y;
                     let Some(note_id) =
                         velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
@@ -1476,12 +1505,17 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         .collect();
                     state.drag = Some(NoteDrag {
                         start: Point::new(point.x, lane_y),
+                        anchor_note_id: note.id(),
                         notes,
                         resize: false,
                         delta_tick: 0,
                         delta_pitch: 0,
                         velocity: true,
                         delta_velocity: 0,
+                        copy: false,
+                        moved: false,
+                        click_selection: None,
+                        original_selection: self.selected.clone(),
                     });
                     return Some(
                         canvas::Action::publish(Message::SelectMidiNotes(note_ids)).and_capture(),
@@ -1489,35 +1523,50 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 }
                 let mapping = self.mapping();
                 let Some((note, resize)) = self.note_at_point(point) else {
-                    let pitch = mapping.pitch_at_y(point.y);
-                    let tick =
-                        mapping.snap_tick(mapping.tick_at_x(point.x), state.modifiers.shift());
-                    let data = MidiNoteData {
-                        pitch,
-                        tick,
-                        duration: mapping.grid_ticks(),
-                        velocity: 96,
-                    };
-                    if data.tick.saturating_add(data.duration) > self.item.length_ticks() {
+                    let now = Instant::now();
+                    let double_click = state.last_empty_click.take().is_some_and(
+                        |(previous_time, previous_point)| {
+                            now.duration_since(previous_time) <= Duration::from_millis(450)
+                                && (point.x - previous_point.x).hypot(point.y - previous_point.y)
+                                    <= 5.0
+                        },
+                    );
+                    if double_click {
+                        let data = MidiNoteData {
+                            pitch: mapping.pitch_at_y(point.y),
+                            tick: mapping
+                                .snap_tick(mapping.tick_at_x(point.x), state.modifiers.shift()),
+                            duration: mapping.grid_ticks(),
+                            velocity: 96,
+                        };
+                        if data.tick.saturating_add(data.duration) <= self.item.length_ticks() {
+                            return Some(canvas::Action::publish(Message::AddMidiNoteAt(
+                                self.item_id,
+                                data,
+                            )));
+                        }
                         return Some(canvas::Action::capture());
                     }
-                    return Some(canvas::Action::publish(Message::AddMidiNoteAt(
-                        self.item_id,
-                        data,
-                    )));
+                    state.last_empty_click = Some((now, point));
+                    state.empty_drag = Some(EmptySpaceGesture {
+                        start: point,
+                        current: point,
+                        additive: state.modifiers.command() || state.modifiers.control(),
+                        marquee: false,
+                    });
+                    return Some(canvas::Action::capture());
                 };
-                let selected = selection_after_click(
-                    self.selected,
-                    note.id(),
-                    state.modifiers.command() || state.modifiers.control(),
-                );
-                if state.modifiers.command() || state.modifiers.control() {
-                    return Some(
-                        canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture(),
-                    );
-                }
-                let note_ids = if resize {
+                state.last_empty_click = None;
+                let copy = state.modifiers.command() || state.modifiers.control();
+                let selected = if copy {
+                    selection_after_click(self.selected, note.id(), true)
+                } else {
+                    selection_after_click(self.selected, note.id(), false)
+                };
+                let note_ids = if resize || (copy && !self.selected.contains(&note.id())) {
                     HashSet::from([note.id()])
+                } else if copy {
+                    self.selected.clone()
                 } else {
                     selected.clone()
                 };
@@ -1530,14 +1579,23 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .collect();
                 state.drag = Some(NoteDrag {
                     start: point,
+                    anchor_note_id: note.id(),
                     notes,
                     resize,
                     delta_tick: 0,
                     delta_pitch: 0,
                     velocity: false,
                     delta_velocity: 0,
+                    copy,
+                    moved: false,
+                    click_selection: copy.then_some(selected.clone()),
+                    original_selection: self.selected.clone(),
                 });
-                Some(canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture())
+                Some(if copy {
+                    canvas::Action::capture()
+                } else {
+                    canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture()
+                })
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 let position = cursor.position_in(bounds)?;
@@ -1555,6 +1613,16 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             0.0
                         },
                 );
+                if let Some(gesture) = &mut state.empty_drag {
+                    gesture.current = point;
+                    if !gesture.marquee
+                        && (point.x - gesture.start.x).hypot(point.y - gesture.start.y) >= 3.0
+                    {
+                        gesture.marquee = true;
+                        state.last_empty_click = None;
+                    }
+                    return Some(canvas::Action::request_redraw());
+                }
                 if state.drag.is_none() {
                     let hovered = if self.region == RollRegion::Velocity {
                         velocity_note_at_x(self.item.notes(), self.mapping(), point.x)
@@ -1569,10 +1637,59 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
+                drag.moved |= (point.x - drag.start.x).hypot(point.y - drag.start.y) >= 3.0;
                 self.update_drag(drag, point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(mut gesture) = state.empty_drag.take() {
+                    let Some(position) = cursor.position_in(bounds) else {
+                        state.last_empty_click = None;
+                        return Some(canvas::Action::capture());
+                    };
+                    gesture.current = self.roll_point(position);
+                    gesture.marquee |= (gesture.current.x - gesture.start.x)
+                        .hypot(gesture.current.y - gesture.start.y)
+                        >= 3.0;
+                    if gesture.marquee {
+                        let left = gesture.start.x.min(gesture.current.x);
+                        let right = gesture.start.x.max(gesture.current.x);
+                        let top = gesture.start.y.min(gesture.current.y);
+                        let bottom = gesture.start.y.max(gesture.current.y);
+                        let mapping = self.mapping();
+                        let mut selected = if gesture.additive {
+                            self.selected.clone()
+                        } else {
+                            HashSet::new()
+                        };
+                        for note in self.item.notes() {
+                            let x = mapping.x_at_tick(note.tick());
+                            let note_right = x + note_width_pixels(
+                                note.duration(),
+                                self.ticks_per_beat,
+                                self.pixels_per_beat,
+                            );
+                            let y = mapping.y_at_pitch(note.pitch());
+                            let note_bottom = y + self.pitch_row_height;
+                            if x <= right && note_right >= left && y <= bottom && note_bottom >= top
+                            {
+                                selected.insert(note.id());
+                            }
+                        }
+                        return Some(canvas::Action::publish(Message::SelectMidiNotes(selected)));
+                    }
+                    let mapping = self.mapping();
+                    let tick = mapping
+                        .snap_tick(
+                            mapping.tick_at_x(gesture.current.x),
+                            state.modifiers.shift(),
+                        )
+                        .min(self.item.length_ticks());
+                    return Some(canvas::Action::publish(Message::SetPianoRollCursor(
+                        self.item_id,
+                        tick,
+                    )));
+                }
                 let mut drag = state.drag.take()?;
                 if let Some(position) = cursor.position_in(bounds) {
                     self.update_drag(
@@ -1605,6 +1722,17 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     Some(canvas::Action::publish(Message::MidiEditorFeedback(
                         "Resize rejected: note would extend beyond the MIDI item".to_owned(),
                     )))
+                } else if drag.copy && !drag.moved {
+                    Some(canvas::Action::publish(Message::SelectMidiNotes(
+                        drag.click_selection.unwrap_or_else(|| {
+                            selection_after_click(self.selected, drag.anchor_note_id, true)
+                        }),
+                    )))
+                } else if drag.copy {
+                    Some(canvas::Action::publish(Message::CopyDragMidiNotes(
+                        self.item_id,
+                        edits.into_iter().map(|(_, data)| data).collect(),
+                    )))
                 } else if edits.iter().any(|(id, data)| {
                     self.item
                         .notes()
@@ -1625,7 +1753,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     Some(canvas::Action::capture())
                 }
             }
-            Event::Window(iced::window::Event::RedrawRequested(_)) if state.drag.is_some() => {
+            Event::Window(iced::window::Event::RedrawRequested(_))
+                if state.drag.is_some() || state.empty_drag.is_some() =>
+            {
                 Some(canvas::Action::request_redraw())
             }
             _ => None,
@@ -1813,11 +1943,26 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     Size::new(preview_width, (self.pitch_row_height - 4.0).max(1.0)),
                     if invalid_target {
                         Color::from_rgba8(230, 70, 65, 0.72)
+                    } else if drag.copy {
+                        Color::from_rgba8(117, 196, 143, 0.72)
                     } else {
                         Color::from_rgba8(214, 205, 111, 0.45)
                     },
                 );
             }
+        }
+        if let Some(gesture) = state.empty_drag.filter(|gesture| gesture.marquee) {
+            frame.fill_rectangle(
+                Point::new(
+                    KEY_WIDTH + gesture.start.x.min(gesture.current.x),
+                    HEADER_HEIGHT + gesture.start.y.min(gesture.current.y),
+                ),
+                Size::new(
+                    (gesture.start.x - gesture.current.x).abs(),
+                    (gesture.start.y - gesture.current.y).abs(),
+                ),
+                Color::from_rgba8(100, 170, 190, 0.24),
+            );
         }
         let cursor_x = grid_left + mapping.x_at_tick(self.snap.cursor_tick);
         if (grid_left..=bounds.width).contains(&cursor_x) {
@@ -2415,12 +2560,17 @@ mod tests {
         let (_project, _, note_id) = project_with_note(960, note);
         let drag = NoteDrag {
             start: Point::ORIGIN,
+            anchor_note_id: note_id,
             notes: vec![(note_id, note)],
             resize: true,
             delta_tick: 240,
             delta_pitch: 0,
             velocity: false,
             delta_velocity: 0,
+            copy: false,
+            moved: true,
+            click_selection: None,
+            original_selection: HashSet::from([note_id]),
         };
         let preview = note_drag_preview_data(&drag, note, 960);
         assert_eq!(preview.tick, note.tick);
@@ -2595,12 +2745,17 @@ mod tests {
         let mut roll_state = Interaction {
             drag: Some(NoteDrag {
                 start: Point::ORIGIN,
+                anchor_note_id: note_id,
                 notes: vec![(note_id, note)],
                 resize: false,
                 delta_tick: 120,
                 delta_pitch: 0,
                 velocity: false,
                 delta_velocity: 0,
+                copy: false,
+                moved: true,
+                click_selection: None,
+                original_selection: HashSet::from([note_id]),
             }),
             ..Interaction::default()
         };
@@ -3168,6 +3323,284 @@ mod tests {
         assert!(matches!(
             action.into_inner().0,
             Some(Message::SetPianoRollCursor(changed_item, 320)) if changed_item == item_id
+        ));
+    }
+
+    #[test]
+    fn piano_roll_blank_click_positions_cursor_and_double_click_inserts_note() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, _) = project_with_note(3_840, note);
+        let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            project: &project,
+            item: &project.midi_items()[0],
+            item_id,
+            selected: &HashSet::new(),
+            origin_tick: 0,
+            high_pitch: 60,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap {
+                enabled: false,
+                ..MidiSnap::default()
+            },
+            region: RollRegion::Pitch,
+            playhead_tick: None,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                400.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let point = Point::new(KEY_WIDTH + 48.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = Interaction::default();
+        assert_eq!(
+            roll.update(
+                &mut interaction,
+                &press,
+                bounds,
+                mouse::Cursor::Available(point),
+            )
+            .unwrap()
+            .into_inner()
+            .2,
+            iced::event::Status::Captured
+        );
+        let action = roll
+            .update(
+                &mut interaction,
+                &release,
+                bounds,
+                mouse::Cursor::Available(point),
+            )
+            .expect("blank click release should position the edit cursor");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::SetPianoRollCursor(changed_item, 480)) if changed_item == item_id
+        ));
+
+        interaction.last_empty_click = Some((
+            Instant::now() - Duration::from_millis(100),
+            roll.roll_point(point),
+        ));
+        let action = roll
+            .update(
+                &mut interaction,
+                &press,
+                bounds,
+                mouse::Cursor::Available(point),
+            )
+            .expect("second blank click should insert a note");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::AddMidiNoteAt(changed_item, data))
+                if changed_item == item_id && data.tick == 480 && data.pitch == 60
+        ));
+    }
+
+    #[test]
+    fn piano_roll_blank_drag_marquees_notes_and_escape_cancels() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 480,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, note_id) = project_with_note(3_840, note);
+        let selected = HashSet::new();
+        let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            project: &project,
+            item: &project.midi_items()[0],
+            item_id,
+            selected: &selected,
+            origin_tick: 0,
+            high_pitch: 60,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap::default(),
+            region: RollRegion::Pitch,
+            playhead_tick: None,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                400.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let start = Point::new(KEY_WIDTH + 40.0, HEADER_HEIGHT);
+        let end = Point::new(KEY_WIDTH + 90.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT);
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: end });
+        let mut interaction = Interaction::default();
+        roll.update(
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("empty-space press should begin a potential marquee");
+        roll.update(
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(end),
+        )
+        .expect("marquee drag should show its preview");
+        assert!(interaction.empty_drag.unwrap().marquee);
+        let action = roll
+            .update(
+                &mut interaction,
+                &release,
+                bounds,
+                mouse::Cursor::Available(end),
+            )
+            .expect("marquee release should select notes");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::SelectMidiNotes(notes)) if notes == HashSet::from([note_id])
+        ));
+
+        roll.update(
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("a new blank press should begin another gesture");
+        let escape = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        assert!(
+            roll.update(
+                &mut interaction,
+                &escape,
+                bounds,
+                mouse::Cursor::Available(start),
+            )
+            .is_some()
+        );
+        assert!(interaction.empty_drag.is_none());
+    }
+
+    #[test]
+    fn command_drag_on_selected_note_previews_and_emits_a_copy() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 480,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, note_id) = project_with_note(3_840, note);
+        let selected = HashSet::from([note_id]);
+        let roll = PianoRoll {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            project: &project,
+            item: &project.midi_items()[0],
+            item_id,
+            selected: &selected,
+            origin_tick: 0,
+            high_pitch: 60,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap::default(),
+            region: RollRegion::Pitch,
+            playhead_tick: None,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                400.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let start = Point::new(KEY_WIDTH + 50.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let end = Point::new(start.x + 24.0, start.y);
+        let mut click_interaction = Interaction::default();
+        roll.update(
+            &mut click_interaction,
+            &Event::Keyboard(keyboard::Event::ModifiersChanged(
+                keyboard::Modifiers::COMMAND,
+            )),
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        roll.update(
+            &mut click_interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("Command-click should begin a toggle gesture");
+        let click = roll
+            .update(
+                &mut click_interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(start),
+            )
+            .expect("Command-click release should toggle selection");
+        assert!(matches!(
+            click.into_inner().0,
+            Some(Message::SelectMidiNotes(notes)) if notes.is_empty()
+        ));
+
+        let mut interaction = Interaction::default();
+        roll.update(
+            &mut interaction,
+            &Event::Keyboard(keyboard::Event::ModifiersChanged(
+                keyboard::Modifiers::COMMAND,
+            )),
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("Command-drag should begin a note copy gesture");
+        assert!(interaction.drag.as_ref().unwrap().copy);
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved { position: end }),
+            bounds,
+            mouse::Cursor::Available(end),
+        )
+        .expect("copy drag should update its preview");
+        let action = roll
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(end),
+            )
+            .expect("copy drag release should submit a copy");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::CopyDragMidiNotes(changed_item, notes))
+                if changed_item == item_id && notes.len() == 1 && notes[0].tick == 720
         ));
     }
 
