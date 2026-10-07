@@ -1845,6 +1845,8 @@ impl App {
                 {
                     self.midi_editor_edit_cursor_tick = Some(tick.min(item.length_ticks()));
                     self.midi_note_clipboard.last_paste = None;
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_feedback = None;
                 }
             }
             Message::AddMidiNoteAt(item_id, data) => {
@@ -1856,6 +1858,44 @@ impl App {
                     },
                     "MIDI note added",
                 );
+            }
+            Message::CopyDragMidiNotes(item_id, notes) => {
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    return task;
+                };
+                if notes.is_empty() {
+                    return task;
+                }
+                let old_ids = item
+                    .notes()
+                    .iter()
+                    .map(|note| note.id())
+                    .collect::<HashSet<_>>();
+                let revision = self.revision;
+                self.midi_editor_feedback = None;
+                self.apply_action(
+                    DawAction::AddMidiNotes { item_id, notes },
+                    "MIDI notes copied",
+                );
+                if self.revision != revision
+                    && let Some(item) = self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                {
+                    self.midi_editor_selected_notes = item
+                        .notes()
+                        .iter()
+                        .map(|note| note.id())
+                        .filter(|id| !old_ids.contains(id))
+                        .collect();
+                }
             }
             Message::EditMidiNotes(item_id, edits) => {
                 self.midi_editor_feedback = None;

@@ -3519,6 +3519,55 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
 }
 
 #[test]
+fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let _ = app.update(Message::AddMidiNoteAt(
+        item_id,
+        MidiNoteData {
+            pitch: 60,
+            tick: 240,
+            duration: 240,
+            velocity: 90,
+        },
+    ));
+    let source_id = app.project.midi_items()[0].notes()[0].id();
+    let source = app.project.midi_items()[0].notes()[0].clone();
+    app.midi_editor_selected_notes = HashSet::from([source_id]);
+    let _ = app.update(Message::SetPianoRollCursor(item_id, 360));
+    assert!(app.midi_editor_selected_notes.is_empty());
+
+    let _ = app.update(Message::CopyDragMidiNotes(
+        item_id,
+        vec![MidiNoteData {
+            pitch: 61,
+            tick: 480,
+            duration: 240,
+            velocity: 90,
+        }],
+    ));
+
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[0], source);
+    assert_eq!(notes[1].pitch(), 61);
+    assert_eq!(notes[1].tick(), 480);
+    assert_ne!(notes[1].id(), source_id);
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([notes[1].id()])
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes(), &[source.clone()]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes().len(), 2);
+    assert_eq!(app.project.midi_items()[0].notes()[0], source);
+}
+
+#[test]
 fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

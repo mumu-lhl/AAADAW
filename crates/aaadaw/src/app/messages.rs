@@ -146,6 +146,7 @@ pub(crate) enum Message {
     DuplicateMidiNotes(ItemId),
     SetPianoRollCursor(ItemId, u64),
     AddMidiNoteAt(ItemId, MidiNoteData),
+    CopyDragMidiNotes(ItemId, Vec<MidiNoteData>),
     EditMidiNotes(ItemId, Vec<(NoteId, MidiNoteData)>),
     DeleteMidiNotes(ItemId, Vec<NoteId>),
     SetMidiControllers(ItemId, Vec<MidiControllerData>),
