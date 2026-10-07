@@ -285,6 +285,7 @@ pub(crate) enum Message {
         SharedProjectSessionLock,
     ),
     CancelOfflineRender,
+    RemoveQueuedOfflineJob(u64),
     OfflineRenderFinished(Result<PathBuf, String>),
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),

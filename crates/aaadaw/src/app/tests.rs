@@ -917,7 +917,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
 }
 
 #[test]
-fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
+fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("session.aaadaw")),
         ..App::default()
@@ -935,7 +935,7 @@ fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
         file_commands
             .iter()
             .find(|entry| entry.id == CommandId::ExportWav)
-            .is_some_and(|entry| !entry.enabled)
+            .is_some_and(|entry| entry.enabled)
     );
     assert!(
         file_commands

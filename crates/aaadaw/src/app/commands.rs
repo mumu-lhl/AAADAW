@@ -253,7 +253,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::CancelOfflineRender,
         menu: Some(MainMenu::File),
         category: "File",
-        label: "Cancel WAV render",
+        label: "Cancel active offline job",
         aliases: &["cancel render", "cancel export"],
         shortcuts: &[],
         destructive: false,
@@ -1228,9 +1228,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.project_path.is_some()
-                && !project_file_busy(app)
                 && !recording_busy(app)
-                && !app.offline_render_busy
+                && app.offline_job_submission_allowed()
         }
         CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => history_command_enabled(

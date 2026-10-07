@@ -19,7 +19,7 @@ const MENU_LAYOUT: [MenuLayout; 7] = [
     MenuLayout {
         menu: MainMenu::File,
         button_width: 48.0,
-        popup_width: 244.0,
+        popup_width: 360.0,
     },
     MenuLayout {
         menu: MainMenu::Edit,
@@ -153,10 +153,65 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
             contents = contents.push(wav_export_controls(app));
         }
     }
+    if menu == MainMenu::File
+        && (app.offline_render_busy
+            || !app.offline_job_queue.is_empty()
+            || !app.offline_job_history.is_empty())
+    {
+        contents = contents.push(offline_jobs_controls(app));
+    }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
     }
     contents.into()
+}
+
+fn offline_jobs_controls(app: &App) -> Element<'_, Message> {
+    let mut jobs =
+        column![rule::horizontal(1), text("Offline jobs").size(11)].spacing(tokens::ROW_GAP);
+    if let Some(active) = &app.active_offline_job {
+        jobs = jobs.push(
+            row![
+                text(format!("Active: {}", active.job.label())).size(10),
+                button("Cancel")
+                    .padding([1, 6])
+                    .on_press(Message::CancelOfflineRender),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    } else {
+        jobs = jobs.push(text("No active job").size(10));
+    }
+    jobs = jobs.push(
+        text(format!(
+            "Waiting: {} / {} ({} slots free)",
+            app.offline_job_queue.len(),
+            super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS,
+            app.offline_job_queue.remaining_capacity(),
+        ))
+        .size(10),
+    );
+    if app.offline_job_queue.is_empty() {
+        jobs = jobs.push(text("Queue is empty").size(10));
+    } else {
+        for (id, job) in app.offline_job_queue.iter() {
+            jobs = jobs.push(
+                row![
+                    text(format!("Queued: {}", job.label())).size(10),
+                    button("Remove")
+                        .padding([1, 6])
+                        .on_press(Message::RemoveQueuedOfflineJob(id.value())),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
+        }
+    }
+    for result in &app.offline_job_history {
+        jobs = jobs.push(text(result).size(9));
+    }
+    jobs.into()
 }
 
 fn wav_export_controls(app: &App) -> Element<'_, Message> {

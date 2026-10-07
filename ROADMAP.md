@@ -240,7 +240,7 @@
 - [x] 提供后台全工程 PCM24 WAV 渲染：显示帧进度、可取消、失败不替换目标文件，并通过 playback render graph 混合轨道/Master 与已启用 CLAP 链（[`docs/design/offline-wav-rendering.md`](docs/design/offline-wav-rendering.md)）。
 - [x] 冻结/解冻单条 CLAP 乐器轨道：保存可重开的原始 MIDI/乐器/FX 状态，以项目内渲染音频替代实时插件处理（[Issue #208](https://github.com/mumu-lhl/AAADAW/issues/208)，[PR #209](https://github.com/mumu-lhl/AAADAW/pull/209)）。
 - [x] WAV 导出支持 PCM16、PCM24 与 IEEE float32；整数输出可选 TPDF dither，float 保留 headroom 且不受 dither 影响（[Issue #210](https://github.com/mumu-lhl/AAADAW/issues/210)）。
-- [ ] 在多项导出需求明确后提供串行导出队列。
+- [x] 为全工程 WAV 导出与轨道 freeze 提供有界 FIFO 串行队列；可查看/取消活动任务、移除待处理项，并在 freeze 源状态变化或取消时丢弃结果与清理媒体（[Issue #212](https://github.com/mumu-lhl/AAADAW/issues/212)）。
 - [ ] 只有在基准证明静态调度成为瓶颈后，才实现动态 Work-Stealing DAG；必须保持音频线程无锁/无分配约束。
 - [ ] 在评估许可、延迟和音质后集成 Rubber Band 时伸缩能力。
 
