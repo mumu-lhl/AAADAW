@@ -257,6 +257,8 @@ struct App {
     midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
     midi_editor_pixels_per_beat: f32,
+    midi_editor_follow_playhead: bool,
+    midi_editor_window_size: iced::Size,
     midi_note_clipboard: MidiNoteClipboard,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
@@ -1072,7 +1074,7 @@ impl App {
             iced::window::close_events().map(Message::WindowClosed),
             iced::window::close_requests().map(Message::WindowCloseRequested),
             iced::window::resize_events()
-                .map(|(window_id, size)| Message::FxChainWindowResized(window_id, size)),
+                .map(|(window_id, size)| Message::WindowResized(window_id, size)),
             background_ticks,
             meter_ticks,
         ])
@@ -1453,7 +1455,7 @@ impl App {
                             | Message::RemoveSelectedFxPlugin
                             | Message::FxChainWindowNativeHandle(..)
                             | Message::FxChainWindowScaleFactor(..)
-                            | Message::FxChainWindowResized(..)
+                            | Message::WindowResized(..)
                             | Message::NudgeAudioItem(..)
                             | Message::BeginAudioItemStartSampleEdit(_)
                             | Message::AudioItemStartSampleChanged(..)
@@ -1840,15 +1842,50 @@ impl App {
                     .clamp(0, i128::from(u64::MAX))
                     as u64;
             }
+            Message::PianoRollPanPixels(delta) if delta.is_finite() => {
+                let ticks = (f64::from(delta) / f64::from(self.midi_editor_pixels_per_beat)
+                    * f64::from(self.project.settings().ppq()))
+                .round() as i128;
+                self.midi_editor_origin_tick = i128::from(self.midi_editor_origin_tick)
+                    .saturating_add(ticks)
+                    .clamp(0, i128::from(u64::MAX))
+                    as u64;
+            }
+            Message::PianoRollPanPixels(_) => {}
             Message::PianoRollZoom(factor) if factor.is_finite() && factor > 0.0 => {
                 self.midi_editor_pixels_per_beat =
                     (self.midi_editor_pixels_per_beat * factor).clamp(24.0, 300.0);
             }
             Message::PianoRollZoom(_) => {}
+            Message::PianoRollZoomAt(factor, anchor_x)
+                if factor.is_finite() && factor > 0.0 && anchor_x.is_finite() =>
+            {
+                let ppq = f64::from(self.project.settings().ppq());
+                let old_scale = f64::from(self.midi_editor_pixels_per_beat);
+                let anchor_tick =
+                    self.midi_editor_origin_tick as f64 + f64::from(anchor_x) / old_scale * ppq;
+                let new_scale = (self.midi_editor_pixels_per_beat * factor).clamp(24.0, 300.0);
+                let new_origin = anchor_tick - f64::from(anchor_x) / f64::from(new_scale) * ppq;
+                self.midi_editor_origin_tick =
+                    new_origin.round().clamp(0.0, u64::MAX as f64) as u64;
+                self.midi_editor_pixels_per_beat = new_scale;
+            }
+            Message::PianoRollZoomAt(_, _) => {}
             Message::PianoRollPitchScroll(delta) => {
                 self.midi_editor_high_pitch = (i16::from(self.midi_editor_high_pitch)
                     + i16::from(delta))
                 .clamp(35, 127) as u8;
+            }
+            Message::FitPianoRollToNotes(item_id) => {
+                self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
+            }
+            Message::TogglePianoRollFollowPlayhead => {
+                self.midi_editor_follow_playhead = !self.midi_editor_follow_playhead;
+                self.midi_editor_feedback = Some(if self.midi_editor_follow_playhead {
+                    "Follow playhead on".to_owned()
+                } else {
+                    "Follow playhead off".to_owned()
+                });
             }
             Message::OpenTrackInstrumentPicker(track_id) => {
                 task = self.open_track_instrument_picker(track_id)
@@ -1951,7 +1988,10 @@ impl App {
                     self.resize_fx_editor_host();
                 }
             }
-            Message::FxChainWindowResized(window_id, size) => {
+            Message::WindowResized(window_id, size) => {
+                if self.midi_editor_window_id == Some(window_id) {
+                    self.midi_editor_window_size = size;
+                }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.fx_chain_window_size = size;
                     self.resize_fx_editor_host();
@@ -2762,6 +2802,7 @@ impl App {
                         self.sync_fx_parameter_change(change);
                     }
                     self.update_playback_stats();
+                    self.follow_midi_editor_playhead();
                     let recording_failed = self
                         .recording
                         .as_ref()
@@ -3665,11 +3706,15 @@ impl App {
             return Task::none();
         }
         if let Some(window_id) = self.midi_editor_window_id {
-            if self.midi_editor_item_id != Some(item_id) {
+            let item_changed = self.midi_editor_item_id != Some(item_id);
+            if item_changed {
                 self.midi_editor_origin_tick = 0;
                 self.midi_editor_edit_cursor_tick = None;
             }
             self.midi_editor_item_id = Some(item_id);
+            if item_changed {
+                self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
+            }
             self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
             return iced::window::gain_focus(window_id);
@@ -3680,6 +3725,7 @@ impl App {
             ..iced::window::Settings::default()
         });
         self.midi_editor_window_id = Some(window_id);
+        self.midi_editor_window_size = iced::Size::new(1000.0, 620.0);
         self.midi_editor_item_id = Some(item_id);
         self.midi_editor_feedback = None;
         self.midi_editor_selected_notes.clear();
@@ -3687,7 +3733,89 @@ impl App {
         self.midi_editor_edit_cursor_tick = None;
         self.midi_editor_high_pitch = 84;
         self.midi_editor_pixels_per_beat = 96.0;
+        self.fit_midi_editor_to_item(item_id, self.midi_editor_window_size.width);
         task.discard()
+    }
+
+    fn fit_midi_editor_to_item(&mut self, item_id: ItemId, window_width: f32) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let ppq = u64::from(self.project.settings().ppq());
+        let first_tick = item
+            .notes()
+            .iter()
+            .map(|note| note.tick())
+            .min()
+            .unwrap_or(0);
+        let last_tick = item
+            .notes()
+            .iter()
+            .map(|note| note.tick().saturating_add(note.duration()))
+            .max()
+            .unwrap_or(ppq.saturating_mul(4));
+        let margin = ppq / 4;
+        let origin_tick = first_tick.saturating_sub(margin);
+        let visible_ticks = last_tick
+            .saturating_add(margin)
+            .saturating_sub(origin_tick)
+            .max(ppq);
+        let content_width = (window_width - 84.0 - 32.0).max(120.0);
+        let beats = visible_ticks as f32 / ppq.max(1) as f32;
+        self.midi_editor_origin_tick = origin_tick;
+        self.midi_editor_pixels_per_beat = (content_width / beats).clamp(24.0, 300.0);
+        self.midi_editor_high_pitch = item
+            .notes()
+            .iter()
+            .map(|note| note.pitch())
+            .max()
+            .map_or(84, |pitch| pitch.saturating_add(2).min(127));
+    }
+
+    fn midi_editor_playhead_tick(&self, item: &aaadaw_core::MidiItem) -> Option<u64> {
+        #[cfg(feature = "audio-device")]
+        {
+            self.project
+                .tick_at_sample(self.playhead_sample)
+                .ok()
+                .and_then(|tick| tick.checked_sub(item.start_tick()))
+        }
+        #[cfg(not(feature = "audio-device"))]
+        {
+            let _ = item;
+            None
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn follow_midi_editor_playhead(&mut self) {
+        if !self.midi_editor_follow_playhead || !self.playback_playing {
+            return;
+        }
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let Some(playhead_tick) = self.midi_editor_playhead_tick(item) else {
+            return;
+        };
+        let visible_pixels = (self.midi_editor_window_size.width - 116.0).max(120.0);
+        let visible_ticks = (visible_pixels / self.midi_editor_pixels_per_beat
+            * self.project.settings().ppq() as f32) as u64;
+        self.midi_editor_origin_tick =
+            playhead_tick.saturating_sub(visible_ticks.saturating_mul(3) / 4);
     }
 
     fn clear_shortcut_binding(&mut self, action_id: String) {
