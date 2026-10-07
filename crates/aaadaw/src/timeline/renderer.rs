@@ -698,6 +698,8 @@ impl Primitive for TimelinePrimitive {
                     }),
                 color: if trim.is_some_and(|trim| !trim.valid) {
                     [218, 80, 71, 255]
+                } else if preview.is_some_and(|preview| preview.copy) {
+                    [117, 196, 143, 190]
                 } else {
                     [245, 185, 92, 255]
                 },
