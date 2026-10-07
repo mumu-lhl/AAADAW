@@ -555,17 +555,25 @@ fn track_row_layout<'a>(
                 .find(|candidate| candidate.id() == output_id)
         })
         .map_or_else(|| "Master".to_owned(), |output| output.name().to_owned());
-    let is_selected = app.timeline.selected_track == Some(track_id);
+    let is_selected = app.timeline.is_track_selected(track_id);
+    let is_primary = app.timeline.selected_track == Some(track_id);
     let automation_visible = is_volume_automation_visible(app, track);
     let fx_button = track_fx_button(track);
-    let selection_button = button(if is_selected { "●" } else { "○" })
-        .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
-        .style(if is_selected {
-            iced::widget::button::warning
-        } else {
-            iced::widget::button::secondary
-        })
-        .padding([2, 4]);
+    let selection_button = text(if is_primary {
+        "●"
+    } else if is_selected {
+        "◉"
+    } else {
+        "○"
+    })
+    .size(13)
+    .color(if is_primary {
+        iced::Color::from_rgb8(240, 190, 105)
+    } else if is_selected {
+        iced::Color::from_rgb8(112, 190, 150)
+    } else {
+        iced::Color::from_rgb8(142, 153, 159)
+    });
     let name_input = track_name_input(app, track);
     let context_button = button(if has_edit { "✓" } else { "⋯" })
         .on_press(if has_edit {
@@ -608,7 +616,7 @@ fn track_row_layout<'a>(
         .align_y(Alignment::Center)
     };
     let (volume_controls, pan_controls) = track_mix_controls(app, track, compact);
-    let selected = app.timeline.selected_track == Some(track_id);
+    let selected = app.timeline.is_track_selected(track_id);
     let meter = track_peak_meter(app, track);
     let row = container(column![heading, volume_controls, meter, pan_controls].spacing(2))
         .padding([5, 4])
@@ -619,7 +627,10 @@ fn track_row_layout<'a>(
             ..container::Style::default()
         });
     mouse_area(row)
-        .on_press(Message::Timeline(TimelineEvent::SelectTrack(track_id)))
+        .on_press(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+            track_id,
+            modifiers: app.keyboard_modifiers,
+        }))
         .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
             track_id,
         )))

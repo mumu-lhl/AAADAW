@@ -227,6 +227,7 @@ struct App {
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
+    keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
     render_window_id: Option<iced::window::Id>,
@@ -2243,6 +2244,11 @@ impl App {
                 modifiers,
             } => self.capture_shortcut_key(action_id, &key, modifiers),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if let iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) =
+                    &event
+                {
+                    self.keyboard_modifiers = *modifiers;
+                }
                 let message = plugin_window_escape_message(
                     &event,
                     status,
@@ -2949,6 +2955,7 @@ impl App {
                             .replace_project(&self.project, arrangement_view_state.as_ref());
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
+                        self.timeline.selected_tracks.clear();
                         self.timeline.time_selection = None;
                         self.timeline.origin_tick = 0;
                         self.timeline.edit_cursor_tick = 0;
@@ -3341,6 +3348,7 @@ impl App {
         self.saved_revision = 0;
         self.timeline.replace_project(&self.project, None);
         self.timeline.selected_track = None;
+        self.timeline.selected_tracks.clear();
         self.timeline.selected_item = None;
         self.timeline.selected_items.clear();
         self.timeline.time_selection = None;
@@ -4712,8 +4720,11 @@ impl App {
             },
             "Track created",
         );
-        if was_empty && self.revision != previous_revision {
-            self.timeline.selected_track = self.project.tracks().first().map(|track| track.id());
+        if was_empty
+            && self.revision != previous_revision
+            && let Some(track_id) = self.project.tracks().first().map(|track| track.id())
+        {
+            self.timeline.select_track_only(track_id);
         }
     }
 
@@ -4774,13 +4785,15 @@ impl App {
             },
             "Bus track created",
         );
-        if self.revision != previous_revision {
-            self.timeline.selected_track = self
+        if self.revision != previous_revision
+            && let Some(track_id) = self
                 .project
                 .tracks()
                 .last()
                 .map(|track| track.id())
-                .or(track_id);
+                .or(track_id)
+        {
+            self.timeline.select_track_only(track_id);
         }
     }
 
@@ -6212,7 +6225,7 @@ impl App {
         self.track_name_edits
             .insert(track_id, track.name().to_owned());
         self.begin_track_draft(track_id, TrackDraftField::Name);
-        self.timeline.selected_track = Some(track_id);
+        self.timeline.select_track_only(track_id);
         let input_id = messages::track_name_input_id(track_id);
         Task::batch([
             iced::widget::operation::focus(input_id.clone()),

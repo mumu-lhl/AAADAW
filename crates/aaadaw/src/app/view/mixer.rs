@@ -45,17 +45,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
 fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
-    let selected = app.timeline.selected_track == Some(track_id);
-    let selection = button(if selected { "●" } else { "○" })
-        .on_press(Message::Timeline(
-            crate::timeline::TimelineEvent::SelectTrack(track_id),
-        ))
-        .style(if selected {
-            button::warning
-        } else {
-            button::secondary
-        })
-        .padding([2, 4]);
+    let selected = app.timeline.is_track_selected(track_id);
+    let primary = app.timeline.selected_track == Some(track_id);
+    let selection = button(if primary {
+        "●"
+    } else if selected {
+        "◉"
+    } else {
+        "○"
+    })
+    .on_press(Message::Timeline(
+        crate::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id,
+            modifiers: app.keyboard_modifiers,
+        },
+    ))
+    .style(if primary {
+        button::warning
+    } else if selected {
+        button::success
+    } else {
+        button::secondary
+    })
+    .padding([2, 4]);
     let header = row![
         selection,
         track_name_input(app, track),
