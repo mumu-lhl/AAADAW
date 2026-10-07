@@ -839,7 +839,7 @@ pub(super) fn track_mix_controls<'a>(
     (volume_controls.into(), pan_controls.into())
 }
 
-struct DoubleClickResetState {
+struct SliderInteractionState {
     previous_click: Option<mouse::Click>,
     press_position: Option<iced::Point>,
     left_pressed: bool,
@@ -921,11 +921,11 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
     }
 
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<DoubleClickResetState>()
+        tree::Tag::of::<SliderInteractionState>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(DoubleClickResetState {
+        tree::State::new(SliderInteractionState {
             previous_click: None,
             press_position: None,
             left_pressed: false,
@@ -964,7 +964,7 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<DoubleClickResetState>();
+        let state = tree.state.downcast_mut::<SliderInteractionState>();
         if state.cancelled {
             match event {
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -974,7 +974,7 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
                     shell.capture_event();
                     return;
                 }
-                iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                iced::Event::Mouse(_) => {
                     shell.capture_event();
                     return;
                 }
@@ -996,9 +996,10 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Right))
-                if state.left_pressed && cursor.is_over(layout.bounds()) =>
+                if state.left_pressed =>
             {
                 state.cancelled = true;
+                state.previous_click = None;
                 shell.publish(self.cancel_message.clone());
                 shell.capture_event();
                 return;
@@ -1112,7 +1113,7 @@ fn pan_label(pan: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoubleClickResetState, invalidate_click_after_drag, record_left_click};
+    use super::{SliderInteractionState, invalidate_click_after_drag, record_left_click};
     use iced::{Point, advanced::mouse};
 
     #[test]
@@ -1131,9 +1132,11 @@ mod tests {
     #[test]
     fn dragging_invalidates_the_previous_click_for_double_click_detection() {
         let start = Point::new(12.0, 8.0);
-        let mut state = DoubleClickResetState {
+        let mut state = SliderInteractionState {
             previous_click: Some(mouse::Click::new(start, mouse::Button::Left, None)),
             press_position: Some(start),
+            left_pressed: false,
+            cancelled: false,
         };
 
         invalidate_click_after_drag(&mut state, Point::new(18.0, 8.0));
