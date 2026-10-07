@@ -261,15 +261,13 @@ impl PluginGuiImpl for MainThread<'_> {
             self.glib_signal.borrow_mut().take();
         }
         #[cfg(target_os = "linux")]
-        if let Some((connection, _)) = self.editor.borrow().as_ref() {
-            if let Some(posix_fd) = self.host_posix_fd {
-                if posix_fd
-                    .unregister_fd(&self.host, connection.stream().as_raw_fd())
-                    .is_err()
-                {
-                    self.gain.store(0, Ordering::Relaxed);
-                }
-            }
+        if let Some((connection, _)) = self.editor.borrow().as_ref()
+            && let Some(posix_fd) = self.host_posix_fd
+            && posix_fd
+                .unregister_fd(&self.host, connection.stream().as_raw_fd())
+                .is_err()
+        {
+            self.gain.store(0, Ordering::Relaxed);
         }
         #[cfg(target_os = "linux")]
         if let Some((connection, window)) = self.editor.borrow_mut().take() {
