@@ -879,6 +879,25 @@ fn invalidate_click_after_drag(state: &mut SliderInteractionState, position: ice
     }
 }
 
+fn forward_left_release_after_cancel(
+    state: &mut SliderInteractionState,
+    event: &iced::Event,
+) -> bool {
+    if !state.cancelled
+        || !matches!(
+            event,
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left))
+        )
+    {
+        return false;
+    }
+
+    state.left_pressed = false;
+    state.cancelled = false;
+    state.press_position = None;
+    true
+}
+
 impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
     fn size(&self) -> iced::Size<Length> {
         self.content.as_widget().size()
@@ -965,15 +984,8 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
         viewport: &iced::Rectangle,
     ) {
         let state = tree.state.downcast_mut::<SliderInteractionState>();
-        if state.cancelled {
+        if state.cancelled && !forward_left_release_after_cancel(state, event) {
             match event {
-                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    state.left_pressed = false;
-                    state.cancelled = false;
-                    state.press_position = None;
-                    shell.capture_event();
-                    return;
-                }
                 iced::Event::Mouse(
                     iced::mouse::Event::ButtonPressed(mouse::Button::Right)
                     | iced::mouse::Event::ButtonReleased(mouse::Button::Right),
@@ -1117,8 +1129,11 @@ fn pan_label(pan: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SliderInteractionState, invalidate_click_after_drag, record_left_click};
-    use iced::{Point, advanced::mouse};
+    use super::{
+        SliderInteractionState, forward_left_release_after_cancel, invalidate_click_after_drag,
+        record_left_click,
+    };
+    use iced::{Event, Point, advanced::mouse};
 
     #[test]
     fn consecutive_left_clicks_are_detected_as_double_click() {
@@ -1146,5 +1161,25 @@ mod tests {
         invalidate_click_after_drag(&mut state, Point::new(18.0, 8.0));
 
         assert!(state.previous_click.is_none());
+    }
+
+    #[test]
+    fn cancelled_slider_forwards_left_release_to_clear_the_child_widget_state() {
+        let mut state = SliderInteractionState {
+            previous_click: None,
+            press_position: Some(Point::new(12.0, 8.0)),
+            left_pressed: true,
+            cancelled: true,
+        };
+
+        let should_forward = forward_left_release_after_cancel(
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        );
+
+        assert!(should_forward);
+        assert!(!state.left_pressed);
+        assert!(!state.cancelled);
+        assert!(state.press_position.is_none());
     }
 }
