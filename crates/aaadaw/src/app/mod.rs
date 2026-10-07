@@ -210,6 +210,7 @@ struct App {
     main_workspace: MainWorkspace,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    saved_track_ids: HashSet<TrackId>,
     pending_project_transition: Option<PendingProjectTransition>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
@@ -2675,6 +2676,12 @@ impl App {
                         self.pending_project_transition = None;
                         self.project_lock = Some(project_lock);
                         self.project = project;
+                        self.saved_track_ids = self
+                            .project
+                            .tracks()
+                            .iter()
+                            .map(|track| track.id())
+                            .collect();
                         self.refresh_tempo_map_edits();
                         self.refresh_meter_map_edits();
                         self.tempo_map_feedback.clear();
@@ -2762,6 +2769,14 @@ impl App {
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.saved_revision = revision;
+                        if self.revision == revision {
+                            self.saved_track_ids = self
+                                .project
+                                .tracks()
+                                .iter()
+                                .map(|track| track.id())
+                                .collect();
+                        }
                         continue_transition =
                             self.revision == revision && self.pending_project_transition.is_some();
                         self.status = if self.revision == revision {
@@ -3071,6 +3086,7 @@ impl App {
         self.midi_note_clipboard.source_item_id = None;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
+        self.saved_track_ids.clear();
         self.project_lock = None;
         self.project_path_query.clear();
         self.revision = 0;

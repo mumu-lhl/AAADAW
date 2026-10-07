@@ -24,6 +24,78 @@ static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "audio-device")]
 #[test]
+fn dirty_saved_project_can_start_recording_without_saving_again() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    save_project_file(project_path.clone(), app.project.snapshot(), false)
+        .expect("project should be saved before recording");
+    let saved_revision = app.revision;
+    let _ = app.update(Message::ProjectSaved(
+        project_path,
+        saved_revision,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+    let _ = app.update(Message::ToggleRecordArm(track_id));
+
+    assert!(
+        app.is_dirty(),
+        "arming the track should dirty the saved project"
+    );
+
+    let _ = app.update(Message::StartRecording);
+
+    assert!(
+        app.recording_starting,
+        "recording was rejected: {}",
+        app.status
+    );
+    assert!(app.playback_busy);
+    assert_eq!(app.status, "Preparing playback at sample 0…");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn unsaved_track_cannot_start_recoverable_recording() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    save_project_file(project_path.clone(), app.project.snapshot(), false)
+        .expect("project should be saved before recording");
+    let saved_revision = app.revision;
+    let _ = app.update(Message::ProjectSaved(
+        project_path,
+        saved_revision,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+
+    let _ = app.update(Message::AddTrack);
+    let unsaved_track_id = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .find(|track_id| !app.saved_track_ids.contains(track_id))
+        .expect("new track should not be in the saved snapshot");
+    let _ = app.update(Message::ToggleRecordArm(unsaved_track_id));
+    let _ = app.update(Message::StartRecording);
+
+    assert!(!app.recording_starting);
+    assert_eq!(
+        app.status,
+        "Save the project before recording on a new track"
+    );
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
 fn unavailable_recording_input_reports_failure_without_inserting_an_item() {
     let mut app = App::default();
     app.project

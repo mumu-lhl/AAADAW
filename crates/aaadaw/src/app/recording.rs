@@ -24,10 +24,6 @@ impl App {
             self.status = "Wait for the current operation to finish before recording".to_owned();
             return Task::none();
         }
-        if self.is_dirty() {
-            self.status = "Save the project before recording".to_owned();
-            return Task::none();
-        }
         let Some(project_path) = self.project_path.clone() else {
             self.status = "Save the project before recording".to_owned();
             return Task::none();
@@ -41,6 +37,13 @@ impl App {
             .collect::<Vec<_>>();
         if tracks.is_empty() {
             self.status = "Arm at least one track before recording".to_owned();
+            return Task::none();
+        }
+        if tracks
+            .iter()
+            .any(|track_id| !self.saved_track_ids.contains(track_id))
+        {
+            self.status = "Save the project before recording on a new track".to_owned();
             return Task::none();
         }
         let recovery_track_ids = tracks.iter().map(|track| track.value()).collect();
