@@ -220,7 +220,7 @@
 - [x] 通过 AAADAW helper 子进程加载 CLAP entry；版本化请求、输入/输出上限和超时保护隔离扫描崩溃，缓存失败项并由显式重扫重试（[Issue #182](https://github.com/mumu-lhl/AAADAW/issues/182)，[ADR 0005](docs/adr/0005-clap-midi-instrument-path.md)）。
 - [x] 完成单个 CLAP 乐器的隔离播放：以固定上限的共享内存音频/MIDI 协议运行监督 helper，覆盖崩溃、卡死、重启、状态往返、版本不匹配和健康轨道连续播放（[Issue #200](https://github.com/mumu-lhl/AAADAW/issues/200)，[PR #203](https://github.com/mumu-lhl/AAADAW/pull/203)，[`研究记录`](docs/research/2026-10-05-clap-instrument-helper-process.md)）。
 - [x] 在 helper 中实现隔离乐器的独立原生浮动 GUI 窗口，并管理每个实例的打开、关闭和重开生命周期；Linux GLib/CLAP 回调事件服务边界及 fixture 验证范围已记录（[Issue #204](https://github.com/mumu-lhl/AAADAW/issues/204)，[PR #205](https://github.com/mumu-lhl/AAADAW/pull/205)）。
-- [ ] 完成 Linux 隔离 CLAP editor 的事件集成兼容性垂直切片：GLib source 与 CLAP POSIX fd 支持均在 helper 主线程服务；Xvfb 下验证 X11 重绘/输入/用户关闭及音频连续性，并清楚记录未运行任意 toolkit event loop 的限制（[Issue #206](https://github.com/mumu-lhl/AAADAW/issues/206)）。
+- [x] 完成 Linux 隔离 CLAP editor 的事件集成兼容性垂直切片：GLib source 与 CLAP POSIX fd 支持均在 helper 主线程服务；Xvfb 下验证 X11 重绘/输入/用户关闭及音频连续性，并清楚记录未运行任意 toolkit event loop 的限制（[Issue #206](https://github.com/mumu-lhl/AAADAW/issues/206)，[PR #207](https://github.com/mumu-lhl/AAADAW/pull/207)）。
 - [ ] 在许可审查通过后，通过 `cxx` 增加 VST3 桥接；VST3 SDK/分发合规是独立发布门槛。
 
 ### 平台扩展
@@ -237,7 +237,9 @@
 - [x] 限制所有活动 AudioItem 的 PCM 队列总内存，保证回调块缓冲并让播放头之前已结束的 Item 使用最小队列（[Issue #194](https://github.com/mumu-lhl/AAADAW/issues/194)）。
 - [x] 为重复短嵌入素材复用有界解码 PCM，长素材和外部链接回退到流式解码（[Issue #196](https://github.com/mumu-lhl/AAADAW/issues/196)）。
 - [x] 验证流式素材欠载后的恢复：让 feeder 在后台丢弃落后于播放头的 PCM，并阻止队列中竞态写入的过期帧延迟播放（[Issue #198](https://github.com/mumu-lhl/AAADAW/issues/198)）。
-- [ ] 实现 Track Freeze、后台离线渲染、导出队列和明确的抖动（Dither）/浮点输出策略。
+- [x] 提供后台全工程 PCM24 WAV 渲染：显示帧进度、可取消、失败不替换目标文件，并通过 playback render graph 混合轨道/Master 与已启用 CLAP 链（[`docs/design/offline-wav-rendering.md`](docs/design/offline-wav-rendering.md)）。
+- [ ] 冻结/解冻单条 CLAP 乐器轨道：保存可重开的原始 MIDI/乐器/FX 状态，以项目内渲染音频替代实时插件处理（[Issue #208](https://github.com/mumu-lhl/AAADAW/issues/208)）。
+- [ ] 定义 WAV 导出的 Dither/浮点输出策略，并在多项导出需求明确后提供串行导出队列。
 - [ ] 只有在基准证明静态调度成为瓶颈后，才实现动态 Work-Stealing DAG；必须保持音频线程无锁/无分配约束。
 - [ ] 在评估许可、延迟和音质后集成 Rubber Band 时伸缩能力。
 
