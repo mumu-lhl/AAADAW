@@ -4374,6 +4374,76 @@ fn failed_recording_import_keeps_recovery_sources_for_retry() {
 }
 
 #[test]
+fn failed_recovery_placement_removes_recreated_tracks() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Saved track".to_owned(),
+        })
+        .expect("saved track should be created");
+    save_project_file(project_path.clone(), project.snapshot(), false)
+        .expect("project should be saved");
+    let invalid_track_id = {
+        let index = project.tracks().len();
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: "Missing track".to_owned(),
+            })
+            .expect("temporary track should be created");
+        let track_id = project.tracks()[index].id();
+        project
+            .apply(DawAction::DeleteTrack { track_id })
+            .expect("temporary track should be removed");
+        track_id
+    };
+    project
+        .apply(DawAction::CreateTrack {
+            index: project.tracks().len(),
+            name: "Restored track".to_owned(),
+        })
+        .expect("recreated track should be created");
+    let recreated_track_id = project.tracks()[1].id();
+    let mut app = App {
+        project,
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    app.record_import_tracks = Some(super::RecordImportTarget {
+        track_ids: vec![invalid_track_id],
+        recreated_track_ids: vec![recreated_track_id],
+        source_paths: vec![directory.path().join("recovered.wav")],
+        next_segment_index: 0,
+        next_start_sample: 0,
+        imported_actions: Vec::new(),
+        project_path,
+        sample_rate: app.project.settings().sample_rate(),
+        recovery_manifest_path: directory.path().join("recording.recovery.json"),
+        project_generation: app.project_generation,
+        recovery_discarded_frames: 0,
+        recovery_discarded_tail_bytes: 0,
+        recovery_start_sample_is_estimate: false,
+    });
+    app.import_busy = true;
+
+    let _ = app.finish_audio_import(Ok(DawAction::InsertAudioItem {
+        track_id: invalid_track_id,
+        media_ref: "asset://failed-recovery-placement".to_owned(),
+        start_sample: 0,
+        source_offset_samples: 0,
+        length_samples: 48_000,
+    }));
+
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].name(), "Saved track");
+    assert!(app.project.audio_items().is_empty());
+    assert!(app.status.contains("Action failed"));
+}
+
+#[test]
 fn save_as_target_overrides_the_current_project_path() {
     let current = std::path::Path::new("/projects/current.aaadaw");
     let selected = std::path::PathBuf::from("/projects/dialog.aaadaw");

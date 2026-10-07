@@ -740,7 +740,9 @@ impl App {
                     completed_recording_manifest = Some((
                         target.recovery_manifest_path.clone(),
                         target.project_generation,
+                        target.project_path.clone(),
                         media_refs,
+                        target.recreated_track_ids.clone(),
                     ));
                     (
                         Ok(DawAction::BatchTransaction {
@@ -795,17 +797,35 @@ impl App {
                         "Audio imported at the edit cursor"
                     },
                 );
-                if self.revision != previous_revision
-                    && let Some((manifest_path, project_generation, media_refs)) =
-                        completed_recording_manifest
+                if let Some((
+                    manifest_path,
+                    project_generation,
+                    project_path,
+                    media_refs,
+                    recreated_track_ids,
+                )) = completed_recording_manifest
                 {
-                    self.pending_recording_cleanup
-                        .push(super::PendingRecordingCleanup {
-                            manifest_path: manifest_path.clone(),
-                            project_generation,
-                            saved_revision: self.revision,
-                            media_refs,
-                        });
+                    if self.revision != previous_revision {
+                        self.pending_recording_cleanup
+                            .push(super::PendingRecordingCleanup {
+                                manifest_path,
+                                project_generation,
+                                saved_revision: self.revision,
+                                media_refs,
+                            });
+                    } else {
+                        let placement_error = self.status.clone();
+                        let cleanup_error =
+                            aaadaw_app::cleanup_unplaced_audio_assets(&project_path, &media_refs)
+                                .err();
+                        self.remove_recreated_recording_tracks(&recreated_track_ids);
+                        self.status = match cleanup_error {
+                            Some(error) => {
+                                format!("{placement_error}; unplaced audio cleanup failed: {error}")
+                            }
+                            None => placement_error,
+                        };
+                    }
                 }
                 if let Some(media_ref) = new_media_ref {
                     self.audio_asset_source_statuses.insert(
