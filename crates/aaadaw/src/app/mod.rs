@@ -2072,6 +2072,14 @@ impl App {
                     self.plugin_picker_window_id,
                 )
                 .or_else(|| {
+                    midi_editor_shortcut_event(
+                        event.clone(),
+                        status,
+                        window_id,
+                        self.midi_editor_window_id,
+                    )
+                })
+                .or_else(|| {
                     keyboard_shortcut_event(
                         event,
                         status,
@@ -6492,6 +6500,18 @@ fn keyboard_shortcut_event(
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
         _ => None,
     }
+}
+
+fn midi_editor_shortcut_event(
+    event: iced::Event,
+    status: iced::event::Status,
+    window_id: iced::window::Id,
+    midi_editor_window_id: Option<iced::window::Id>,
+) -> Option<Message> {
+    if midi_editor_window_id != Some(window_id) {
+        return None;
+    }
+    keyboard_shortcut_event(event, status, window_id, Some(window_id), None, None)
 }
 
 #[cfg(test)]
