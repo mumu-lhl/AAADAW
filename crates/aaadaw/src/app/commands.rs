@@ -20,6 +20,7 @@ pub(crate) enum CommandId {
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
+    ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
     AddMidiItem,
@@ -66,6 +67,7 @@ enum CommandKind {
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
+    ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
     AddMidiItem,
@@ -253,7 +255,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::CancelOfflineRender,
         menu: Some(MainMenu::File),
         category: "File",
-        label: "Cancel WAV render",
+        label: "Cancel active offline job",
         aliases: &["cancel render", "cancel export"],
         shortcuts: &[],
         destructive: false,
@@ -302,6 +304,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleOfflineJobsPanel,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Toggle Offline Jobs",
+        aliases: &["show offline jobs", "hide offline jobs", "render queue"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::ShowArrangement,
@@ -623,6 +635,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
         CommandKind::Undo
             | CommandKind::Redo
             | CommandKind::ToggleMediaBrowserPanel
+            | CommandKind::ToggleOfflineJobsPanel
             | CommandKind::ShowArrangement
             | CommandKind::ShowMixer
             | CommandKind::AddMidiItem
@@ -977,6 +990,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
+        CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::AddMidiItem => "insert.midi-item",
@@ -1042,6 +1056,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
+        CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::AddMidiItem => Message::AddMidiItem,
@@ -1228,9 +1243,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.project_path.is_some()
-                && !project_file_busy(app)
                 && !recording_busy(app)
-                && !app.offline_render_busy
+                && app.offline_job_submission_allowed()
         }
         CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => history_command_enabled(
@@ -1242,6 +1256,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,
+        CommandKind::ToggleOfflineJobsPanel => true,
         CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
         CommandKind::AddMidiItem => !project_edit_busy(app) && !app.project.tracks().is_empty(),
         CommandKind::DuplicateSelectedItem => {
@@ -1339,6 +1354,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
+        CommandKind::ToggleOfflineJobsPanel => CommandId::ToggleOfflineJobsPanel,
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,

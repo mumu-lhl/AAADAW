@@ -917,7 +917,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
 }
 
 #[test]
-fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
+fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("session.aaadaw")),
         ..App::default()
@@ -935,7 +935,7 @@ fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
         file_commands
             .iter()
             .find(|entry| entry.id == CommandId::ExportWav)
-            .is_some_and(|entry| !entry.enabled)
+            .is_some_and(|entry| entry.enabled)
     );
     assert!(
         file_commands
@@ -1791,6 +1791,28 @@ fn view_menu_contains_the_media_browser_panel_and_no_workspace_pages() {
             .iter()
             .all(|entry| { !["Arrangement", "Media", "Project"].contains(&entry.label.as_str()) })
     );
+}
+
+#[test]
+fn offline_jobs_panel_is_available_from_view_menu_and_action_search() {
+    let mut app = App::default();
+    let toggle = CommandId::ToggleOfflineJobsPanel;
+    assert!(commands::is_enabled(&app, toggle));
+    assert!(
+        commands::for_menu(&app, MainMenu::View)
+            .iter()
+            .any(|entry| entry.id == toggle && entry.label == "Toggle Offline Jobs")
+    );
+    assert!(
+        commands::for_actions_menu(&app)
+            .iter()
+            .any(|entry| entry.id == toggle)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(toggle));
+    assert!(app.offline_jobs_panel_open);
+    let _ = app.update(Message::Escape);
+    assert!(!app.offline_jobs_panel_open);
 }
 
 #[test]

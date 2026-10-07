@@ -159,6 +159,73 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
     contents.into()
 }
 
+pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
+    let visible_rows = 2
+        + usize::from(app.active_offline_job.is_some())
+        + app
+            .offline_job_queue
+            .len()
+            .max(usize::from(app.offline_job_queue.is_empty()))
+        + app.offline_job_history.len();
+    let panel_height = (46.0 + visible_rows as f32 * 18.0).min(280.0);
+    let mut jobs =
+        column![rule::horizontal(1), text("Offline jobs").size(11)].spacing(tokens::ROW_GAP);
+    if let Some(active) = &app.active_offline_job {
+        jobs = jobs.push(
+            row![
+                text(format!("Active: {}", active.job.label())).size(10),
+                button("Cancel")
+                    .padding([1, 6])
+                    .on_press(Message::CancelOfflineRender),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    } else {
+        jobs = jobs.push(text("No active job").size(10));
+    }
+    jobs = jobs.push(
+        text(format!(
+            "Waiting: {} / {} ({} slots free)",
+            app.offline_job_queue.len(),
+            super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS,
+            app.offline_job_queue.remaining_capacity(),
+        ))
+        .size(10),
+    );
+    if app.offline_job_queue.is_empty() {
+        jobs = jobs.push(text("Queue is empty").size(10));
+    } else {
+        for (id, job) in app.offline_job_queue.iter() {
+            jobs = jobs.push(
+                row![
+                    text(format!("Queued: {}", job.label())).size(10),
+                    button("Remove")
+                        .padding([1, 6])
+                        .on_press(Message::RemoveQueuedOfflineJob(id.value())),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
+        }
+    }
+    for result in &app.offline_job_history {
+        jobs = jobs.push(text(result).size(9));
+    }
+    container(scrollable(jobs).height(Length::Fixed(panel_height)))
+        .width(Length::Fixed(420.0))
+        .padding(tokens::PANEL_PADDING)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(37, 41, 44).into()),
+            border: Border::default()
+                .color(Color::from_rgb8(83, 91, 96))
+                .width(1.0)
+                .rounded(2.0),
+            ..container::Style::default()
+        })
+        .into()
+}
+
 fn wav_export_controls(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     column![

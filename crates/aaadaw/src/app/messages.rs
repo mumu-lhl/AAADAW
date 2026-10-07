@@ -101,6 +101,7 @@ pub(crate) enum TimeMapTab {
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
     DismissMainMenu,
+    ToggleOfflineJobsPanel,
     Escape,
     NewProject,
     ShowMainWorkspace(MainWorkspace),
@@ -285,6 +286,7 @@ pub(crate) enum Message {
         SharedProjectSessionLock,
     ),
     CancelOfflineRender,
+    RemoveQueuedOfflineJob(u64),
     OfflineRenderFinished(Result<PathBuf, String>),
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),

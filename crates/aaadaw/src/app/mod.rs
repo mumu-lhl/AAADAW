@@ -30,7 +30,7 @@ use aaadaw_media::AudioWaveform;
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(feature = "audio-device")]
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -54,6 +54,7 @@ mod config_paths;
 mod keyboard_config;
 mod media;
 mod messages;
+mod offline_job_queue;
 mod project_io;
 #[cfg(feature = "audio-device")]
 mod recording;
@@ -287,6 +288,10 @@ struct App {
     audio_asset_management_status: String,
     offline_render_busy: bool,
     offline_render_is_freeze: bool,
+    active_offline_job: Option<offline_job_queue::QueuedOfflineJob<audio_export::OfflineRenderJob>>,
+    offline_job_queue: offline_job_queue::OfflineJobQueue<audio_export::OfflineRenderJob>,
+    offline_job_history: VecDeque<String>,
+    offline_jobs_panel_open: bool,
     wav_export_options: WavExportOptions,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
@@ -996,6 +1001,7 @@ impl App {
             || recording_active
             || fx_automation_finishing
             || self.offline_render_busy
+            || !self.offline_job_queue.is_empty()
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
             || self.track_mix_gesture.is_some()
@@ -1065,6 +1071,7 @@ impl App {
         if !matches!(
             &message,
             Message::ToggleMainMenu(_)
+                | Message::ToggleOfflineJobsPanel
                 | Message::DismissMainMenu
                 | Message::Escape
                 | Message::ActionQueryChanged(_)
@@ -1102,6 +1109,8 @@ impl App {
                 | Message::ExecuteCommand(commands::CommandId::OpenSettings)
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
+                | Message::ToggleOfflineJobsPanel
+                | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
                 | Message::WindowClosed(_)
                 | Message::WindowCloseRequested(_)
                 | Message::StartShortcutCapture(_)
@@ -1121,9 +1130,19 @@ impl App {
                 | Message::CancelOfflineRender
                 | Message::OfflineRenderFinished(_)
                 | Message::FreezeTrackFinished(_)
+                | Message::RemoveQueuedOfflineJob(_)
         );
+        let offline_queue_submission = self.offline_render_busy
+            && matches!(
+                &message,
+                Message::FreezeTrack(_)
+                    | Message::PickPath(PathPickerTarget::ExportWav)
+                    | Message::PathPicked(PathPickerTarget::ExportWav, _)
+                    | Message::RemoveQueuedOfflineJob(_)
+            );
         let allowed_during_io = standby_input_completion
             || window_safe_message
+            || offline_queue_submission
             || matches!(
                 &message,
                 Message::ProjectLoaded(..)
@@ -1374,6 +1393,7 @@ impl App {
         match message {
             Message::ToggleMainMenu(menu) => {
                 self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
+                self.offline_jobs_panel_open = false;
             }
             Message::ShowMainWorkspace(workspace) => {
                 self.main_workspace = workspace;
@@ -1942,9 +1962,17 @@ impl App {
                     task = self.update(message);
                 }
             }
-            Message::DismissMainMenu => self.active_menu = None,
+            Message::DismissMainMenu => {
+                self.active_menu = None;
+                self.offline_jobs_panel_open = false;
+            }
+            Message::ToggleOfflineJobsPanel => {
+                self.offline_jobs_panel_open = !self.offline_jobs_panel_open;
+            }
             Message::Escape => {
-                if self.active_menu.take().is_none() {
+                if self.offline_jobs_panel_open {
+                    self.offline_jobs_panel_open = false;
+                } else if self.active_menu.take().is_none() {
                     if self.timeline.context_item.take().is_some()
                         || self.timeline.context_track.take().is_some()
                     {
@@ -2462,9 +2490,12 @@ impl App {
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
             Message::CancelOfflineRender => self.cancel_offline_render(),
-            Message::OfflineRenderFinished(result) => self.finish_offline_render(result),
+            Message::RemoveQueuedOfflineJob(id) => self.remove_queued_offline_job(id),
+            Message::OfflineRenderFinished(result) => {
+                task = self.finish_offline_render(result);
+            }
             Message::FreezeTrack(track_id) => task = self.start_freeze_track(track_id),
-            Message::FreezeTrackFinished(result) => self.finish_freeze_track(result),
+            Message::FreezeTrackFinished(result) => task = self.finish_freeze_track(result),
             Message::UnfreezeTrack(track_id) => {
                 self.apply_action(DawAction::UnfreezeTrack { track_id }, "Track unfrozen")
             }
@@ -2495,6 +2526,7 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                let offline_queue_task = self.resume_offline_job_queue();
                 if self
                     .track_mix_commit_at
                     .is_some_and(|deadline| Instant::now() >= deadline)
@@ -2551,6 +2583,7 @@ impl App {
                         self.update_audio_asset_management(),
                     ]);
                 }
+                task = Task::batch([offline_queue_task, task]);
             }
             Message::MeterTick => {
                 #[cfg(feature = "audio-device")]
