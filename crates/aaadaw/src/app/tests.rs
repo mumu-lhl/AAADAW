@@ -1574,6 +1574,16 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
 }
 
 #[test]
+fn plugin_picker_settings_action_opens_the_clap_settings_category() {
+    let mut app = App::default();
+
+    let _ = app.update(Message::OpenClapPluginSettings);
+
+    assert_eq!(app.settings_category, super::SettingsCategory::ClapPlugins);
+    assert!(app.settings_window_id.is_some());
+}
+
+#[test]
 fn clap_plugin_scan_results_update_settings_without_mutating_project_state() {
     let mut app = App {
         clap_plugin_scan_busy: true,
