@@ -467,7 +467,7 @@ fn meter_map_editor_applies_bar_aligned_changes_as_one_undoable_map() {
 }
 
 #[test]
-fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
+fn new_project_is_in_file_menu_and_prompts_before_discarding_dirty_work() {
     let mut app = App::default();
     let new_project = commands::for_menu(&app, MainMenu::File)
         .into_iter()
@@ -478,13 +478,16 @@ fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
 
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
-    assert!(!commands::is_enabled(&app, CommandId::NewProject));
+    assert!(commands::is_enabled(&app, CommandId::NewProject));
     let _ = app.update(Message::NewProject);
     assert_eq!(app.project.tracks()[0].id(), track_id);
     assert_eq!(
-        app.status,
-        "Save the current project before creating a new one"
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::NewProject)
     );
+    assert_eq!(app.status, "Save changes to the current project?");
+    let _ = app.update(Message::DiscardProjectChanges);
+    assert!(app.project.tracks().is_empty());
 
     app.saved_revision = app.revision;
     app.project_path = Some(std::path::PathBuf::from("saved.aaadaw"));
@@ -496,6 +499,133 @@ fn new_project_is_in_file_menu_and_cannot_discard_dirty_work() {
     assert_eq!(app.revision, 0);
     assert_eq!(app.saved_revision, 0);
     assert_eq!(app.status, "New project created");
+}
+
+#[test]
+fn dirty_main_window_close_offers_save_discard_or_cancel_without_closing() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::WindowCloseRequested(window_id));
+
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseMainWindow(window_id))
+    );
+    assert!(app.is_dirty());
+
+    let _ = app.update(Message::CancelProjectTransition);
+    assert_eq!(app.pending_project_transition, None);
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn cancelling_open_picker_after_discard_choice_keeps_current_project() {
+    let mut app = App {
+        revision: 1,
+        ..App::default()
+    };
+    let _ = app.update(Message::OpenProject);
+    let _ = app.update(Message::DiscardProjectChanges);
+    assert!(app.path_picker_busy);
+    assert!(app.is_dirty());
+
+    let _ = app.path_picked(PathPickerTarget::OpenProject, Ok(None));
+
+    assert!(!app.path_picker_busy);
+    assert_eq!(app.pending_project_transition, None);
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn cancelling_save_picker_or_failing_save_does_not_continue_close() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        revision: 1,
+        ..App::default()
+    };
+    let _ = app.update(Message::WindowCloseRequested(window_id));
+    let _ = app.update(Message::SaveBeforeProjectTransition);
+    assert!(app.path_picker_busy);
+
+    let _ = app.path_picked(PathPickerTarget::SaveProject, Ok(None));
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseMainWindow(window_id))
+    );
+    assert!(app.is_dirty());
+
+    app.io_busy = true;
+    let _ = app.update(Message::ProjectSaved(
+        std::path::PathBuf::from("failed.aaadaw"),
+        1,
+        Err("permission denied".to_owned()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseMainWindow(window_id))
+    );
+    assert!(app.is_dirty());
+    assert!(app.main_window_id.is_some());
+}
+
+#[test]
+fn successful_save_continues_the_pending_transition() {
+    let window_id = iced::window::Id::unique();
+    let path = std::path::PathBuf::from("saved.aaadaw");
+    let mut app = App {
+        main_window_id: Some(window_id),
+        pending_project_transition: Some(super::PendingProjectTransition::CloseMainWindow(
+            window_id,
+        )),
+        io_busy: true,
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ProjectSaved(
+        path,
+        1,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+
+    assert_eq!(app.saved_revision, 1);
+    assert!(!app.is_dirty());
+    assert_eq!(app.pending_project_transition, None);
+}
+
+#[test]
+fn successful_save_continues_open_by_picking_a_project() {
+    let mut app = App {
+        pending_project_transition: Some(super::PendingProjectTransition::OpenProject),
+        io_busy: true,
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ProjectSaved(
+        std::path::PathBuf::from("saved.aaadaw"),
+        1,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+
+    assert!(!app.is_dirty());
+    assert!(app.path_picker_busy);
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
 }
 
 #[test]
@@ -4131,7 +4261,11 @@ fn dirty_project_open_command_does_not_open_picker() {
 
     assert!(!app.io_busy);
     assert!(!app.path_picker_busy);
-    assert_eq!(app.status, "Save current project before opening another");
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
+    assert_eq!(app.status, "Save changes to the current project?");
 }
 
 #[test]

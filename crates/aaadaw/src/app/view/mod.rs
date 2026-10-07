@@ -242,6 +242,60 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     } else {
         layered
     };
+    if let Some(transition) = app.pending_project_transition {
+        let description = match transition {
+            super::PendingProjectTransition::NewProject => {
+                "Creating a new project will replace the current project."
+            }
+            super::PendingProjectTransition::OpenProject => {
+                "Opening another project will replace the current project."
+            }
+            super::PendingProjectTransition::CloseMainWindow(_) => {
+                "Closing AAADAW will discard unsaved changes."
+            }
+        };
+        let dialog = container(
+            column![
+                text("Save changes before continuing?").size(18),
+                text(format!(
+                    "The current project has unsaved changes. {description}"
+                ))
+                .size(13),
+                row![
+                    button(text("Save")).on_press(Message::SaveBeforeProjectTransition),
+                    button(text("Don't Save"))
+                        .style(button::danger)
+                        .on_press(Message::DiscardProjectChanges),
+                    button(text("Cancel"))
+                        .style(button::secondary)
+                        .on_press(Message::CancelProjectTransition),
+                ]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP),
+        )
+        .width(Length::Fixed(480.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::DismissMainMenu);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)
         .into()

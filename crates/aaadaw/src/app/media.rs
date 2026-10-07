@@ -199,12 +199,19 @@ impl App {
                 }
             },
             Ok(None) => {
+                if matches!(target, PathPickerTarget::OpenProject) {
+                    self.pending_project_transition = None;
+                    self.status = "Open cancelled; current project was kept".to_owned();
+                }
                 if self.status == "Wait for the file dialog to finish" {
                     self.status.clear();
                 }
                 Task::none()
             }
             Err(error) => {
+                if matches!(target, PathPickerTarget::OpenProject) {
+                    self.pending_project_transition = None;
+                }
                 self.status = format!("File dialog failed: {error}");
                 Task::none()
             }
