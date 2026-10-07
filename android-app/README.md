@@ -26,6 +26,11 @@ large exports into memory. Import Android ARM64 `.clap` libraries through
 Settings; AAADAW scans and hosts imported plugins in-process. Native plugin code
 can crash the app, so import trusted libraries only. Android external MIDI
 input/output is not implemented yet. CI builds ARM64 and x86_64 APK libraries
-and launches the app on an API 35 emulator. Validate SAF providers, audio routes,
-background recording, MIDI devices, system bars, screen rotation, and font
-scaling on a physical ARM64 device before distributing a release build.
+and launches the app on an API 35 emulator through relaunch, larger font scale,
+orientation changes, and screenshot capture. When an output stream is lost,
+AAADAW attempts to reopen it and resume from the last reported sample; if the
+route remains unavailable, playback stops safely. Input failure finalizes the
+current take and requires recording to be started again. Validate SAF providers,
+audio-route recovery, background recording, MIDI devices, system bars, screen
+rotation, and font scaling on a physical ARM64 device before distributing a
+release build.

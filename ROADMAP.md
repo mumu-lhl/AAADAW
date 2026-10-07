@@ -227,9 +227,10 @@
 
 - [x] 完成 macOS CoreAudio 输入/输出设备枚举与选择、Apple Silicon CI、unsigned `.app` 版本冒烟包，并记录真机/签名验收边界（[Issue #214](https://github.com/mumu-lhl/AAADAW/issues/214)，[平台说明](docs/platforms.md)）。
 - [x] 为小于 720 dp 的窗口提供单栏触控布局：菜单可横向浏览，Arrange 改为时间线优先，轨道控制与选中 Item 的 Inspector 共用空间，Transport 收敛为常用操作；桌面窄窗可预览此布局。
-- [x] 建立 Android NativeActivity/APK 启动壳，接通 Iced/winit 原生 event loop；APK 尚未在 Android SDK/设备上验证（[`android-app/`](android-app/)、[`平台支持说明`](docs/platforms.md)）。
+- [x] 建立 Android NativeActivity/APK 启动壳，接通 Iced/winit 原生 event loop，并在 API 35 模拟器验证安装、启动、重启、字体缩放与旋转（[`android-app/`](android-app/)、[`平台支持说明`](docs/platforms.md)）。
 - [x] 通过 Android SAF 打开/保存 `.aaadaw` 工程、导入音频和选择 WAV 导出目标；工程在应用私有目录 staging，保存后同步回用户授权的文档 URI（[Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)）。
 - [x] 接入 CPAL Android AAudio 播放/录音，运行时请求麦克风权限，并在录音期间运行带通知的麦克风前台服务。
+- [x] 检测到播放输出流丢失时，关闭失效流并从当前播放位置重建输出、尝试继续播放；设备仍不可用时安全停止并报告状态。
 - [x] 为小屏触控提供单栏 Arrange、可横向浏览的菜单和轨道选择器、选中轨道/Item Inspector、常用 Transport 控件及放大的音量、声像和轨道按钮。
 - [x] 接入 Android ARM64 CLAP 插件导入、扫描和进程内乐器/效果宿主；通过 SAF 导入至应用私有目录，插件编辑器窗口暂不支持。
 - [ ] 接入 Android 外部 MIDI 设备输入和输出。

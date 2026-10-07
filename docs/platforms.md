@@ -91,7 +91,11 @@ app's private storage while open, and saved project/WAV files are copied back
 to the user-selected URI. Audio import is staged before it enters the project.
 The Android audio feature uses CPAL's AAudio backend for playback and capture;
 recording asks for microphone permission at runtime and starts a microphone
-foreground service with an ongoing notification.
+foreground service with an ongoing notification. If an output stream is lost
+while playing, AAADAW closes it and tries to reopen playback at the last
+reported sample. If no output is available, playback stops with an error. Input
+failure safely stops and finalizes the current take; it does not resume recording
+automatically.
 
 Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:
@@ -109,10 +113,11 @@ libraries. Android plugin editor windows are not supported. External Android
 MIDI device input/output is not implemented yet.
 
 GitHub Actions builds ARM64 and x86_64 native libraries, assembles the APK, and
-launches it on an API 35 x86_64 emulator. This checks packaging and activity
-startup. Physical-device checks remain open for SAF providers, audio-route
-changes, background recording, MIDI devices, system bars, screen rotation, and
-font scaling.
+launches it on an API 35 x86_64 emulator, including relaunch, larger font scale,
+orientation changes, and screenshot capture. This checks packaging and the
+small-screen shell, not physical audio routing or SAF-provider behavior.
+Physical-device checks remain open for SAF providers, route recovery, background
+recording, MIDI devices, system bars, and screen/font scaling.
 
 ## Packaging status
 
