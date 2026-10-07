@@ -96,7 +96,7 @@ impl SnapGrid {
         }
     }
 
-    fn tick_interval(self, ppq: u32) -> Option<u64> {
+    pub(crate) fn tick_interval(self, ppq: u32) -> Option<u64> {
         let (numerator, denominator) = self.ratio();
         let ticks = u64::from(ppq).checked_mul(numerator)?;
         (ticks % denominator == 0)
