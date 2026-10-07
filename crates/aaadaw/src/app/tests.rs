@@ -9,7 +9,7 @@ use super::project_io::{
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
-    shortcut_message,
+    midi_editor_shortcut_event, shortcut_message,
 };
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
@@ -1266,6 +1266,90 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
 }
 
 #[test]
+fn midi_editor_shortcuts_use_configured_commands_only_when_unconsumed() {
+    let midi_editor_window_id = iced::window::Id::unique();
+    let other_window_id = iced::window::Id::unique();
+    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Character("z".into()),
+        modified_key: Key::Character("z".into()),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyZ),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::COMMAND,
+        text: None,
+        repeat: false,
+    });
+
+    assert!(matches!(
+        midi_editor_shortcut_event(
+            event.clone(),
+            iced::event::Status::Ignored,
+            midi_editor_window_id,
+            Some(midi_editor_window_id),
+        ),
+        Some(Message::ShortcutPressed(key, modifiers))
+            if key == "z" && modifiers == Modifiers::COMMAND
+    ));
+    assert!(
+        midi_editor_shortcut_event(
+            event.clone(),
+            iced::event::Status::Captured,
+            midi_editor_window_id,
+            Some(midi_editor_window_id),
+        )
+        .is_none()
+    );
+    assert!(
+        midi_editor_shortcut_event(
+            event,
+            iced::event::Status::Ignored,
+            other_window_id,
+            Some(midi_editor_window_id),
+        )
+        .is_none()
+    );
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn midi_editor_stop_shortcut_reaches_the_transport_command() {
+    let midi_editor_window_id = iced::window::Id::unique();
+    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::Space),
+        modified_key: Key::Named(iced::keyboard::key::Named::Space),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Space),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    });
+
+    let shortcut = midi_editor_shortcut_event(
+        event.clone(),
+        iced::event::Status::Ignored,
+        midi_editor_window_id,
+        Some(midi_editor_window_id),
+    )
+    .expect("unconsumed Shift+Space from the MIDI window should reach shortcuts");
+    assert!(matches!(
+        &shortcut,
+        Message::ShortcutPressed(key, modifiers)
+            if key == " " && *modifiers == Modifiers::SHIFT
+    ));
+    let mut app = App::default();
+    let _ = app.update(shortcut);
+    assert!(app.status.contains("output is not open"));
+    assert!(
+        midi_editor_shortcut_event(
+            event,
+            iced::event::Status::Captured,
+            midi_editor_window_id,
+            Some(midi_editor_window_id),
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("session.aaadaw")),
@@ -1571,7 +1655,23 @@ fn documented_first_project_shortcuts_match_action_defaults() {
             .find(|entry| entry.id == "transport.toggle-playback")
             .expect("playback shortcut should exist in audio builds");
         assert_eq!(playback.default_binding, "Space");
+
+        let stop = shortcuts
+            .iter()
+            .find(|entry| entry.id == "transport.stop-playback")
+            .expect("stop shortcut should exist in audio builds");
+        assert_eq!(stop.default_binding, "Shift+Space");
     }
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn stop_shortcut_resolves_to_a_distinct_transport_command() {
+    let key = Key::Named(iced::keyboard::key::Named::Space);
+    assert_eq!(
+        commands::from_shortcut(&key, Modifiers::SHIFT, &HashMap::new(), &[]),
+        Some(CommandId::StopPlayback)
+    );
 }
 
 #[test]
