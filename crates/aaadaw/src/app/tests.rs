@@ -828,6 +828,85 @@ fn menus_and_media_browser_panel_stay_available_during_jobs() {
 }
 
 #[test]
+fn menus_and_context_targets_survive_keyboard_input_and_background_ticks() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Actions));
+    app.timeline.context_track = Some(track_id);
+    app.timeline.context_item = Some(item_id);
+    app.timeline.context_item_position = Some((20.0, 30.0));
+
+    let _ = app.update(Message::ActionQueryChanged(
+        "no matching command".to_owned(),
+    ));
+    assert_eq!(app.active_menu, Some(MainMenu::Actions));
+    assert_eq!(app.timeline.context_track, None);
+    assert_eq!(app.timeline.context_item, None);
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.active_menu, Some(MainMenu::Actions));
+    app.timeline.context_track = Some(track_id);
+    app.timeline.context_item = Some(item_id);
+    app.timeline.context_item_position = Some((20.0, 30.0));
+    let _ = app.update(Message::BackgroundTick);
+    let _ = app.update(Message::MeterTick);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("a".into()),
+            modified_key: Key::Character("a".into()),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyA),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: Some("a".into()),
+            repeat: false,
+        }),
+        iced::event::Status::Captured,
+        window_id,
+    ));
+    let _ = app.update(Message::ShortcutPressed(
+        "not-a-bound-shortcut".to_owned(),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::AudioImportFinished(
+        Err("import failed".to_owned()),
+    ));
+    #[cfg(feature = "audio-device")]
+    let _ = app.update(Message::RecordingStarted(SharedRecordingStart(
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Err(
+            "recording failed".to_owned()
+        )))),
+    )));
+
+    assert_eq!(app.active_menu, Some(MainMenu::Actions));
+    assert_eq!(app.timeline.context_track, Some(track_id));
+    assert_eq!(app.timeline.context_item, Some(item_id));
+    assert_eq!(app.timeline.context_item_position, Some((20.0, 30.0)));
+
+    let _ = app.update(Message::DismissMainMenu);
+    assert_eq!(app.active_menu, None);
+    assert_eq!(app.timeline.context_track, None);
+    assert_eq!(app.timeline.context_item, None);
+
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Actions));
+    let _ = app.update(Message::ActionQueryChanged("add track".to_owned()));
+    let _ = app.update(Message::RunActionQuery);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.active_menu, None);
+}
+
+#[test]
 fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection() {
     let mut app = App::default();
     let menus = [

@@ -1128,31 +1128,71 @@ impl App {
         {
             self.commit_track_mix_gesture();
         }
-        if !matches!(
+        let preserve_context_targets = matches!(
             &message,
-            Message::Timeline(
-                timeline::TimelineEvent::OpenTrackContextMenu(_)
-                    | timeline::TimelineEvent::ToggleTrackContextMenu(_)
-            ) | Message::Escape
-        ) {
+            Message::RuntimeKeyboardEvent(..)
+                | Message::ShortcutPressed(..)
+                | Message::BackgroundTick
+                | Message::MeterTick
+                | Message::AudioImportStarted(_)
+                | Message::AudioImportFinished(_)
+                | Message::AudioAssetManagementStarted(_)
+                | Message::AudioAssetManagementFinished(_)
+        ) || {
+            #[cfg(feature = "audio-device")]
+            {
+                matches!(
+                    &message,
+                    Message::PlaybackPrepared { .. }
+                        | Message::RecordingStarted(_)
+                        | Message::StandbyInputStarted(_, _, _)
+                        | Message::StandbyInputClosed
+                        | Message::RecordingInputDiscarded
+                        | Message::RecordingPositionSaved(_)
+                        | Message::RecordingClockAnchorReady(_)
+                        | Message::RecordingStopped(_)
+                )
+            }
+            #[cfg(not(feature = "audio-device"))]
+            {
+                false
+            }
+        };
+        let preserve_menu_state = preserve_context_targets
+            || matches!(
+                &message,
+                Message::ActionQueryChanged(_) | Message::RunActionQuery
+            );
+        if !preserve_context_targets
+            && !matches!(
+                &message,
+                Message::Timeline(
+                    timeline::TimelineEvent::OpenTrackContextMenu(_)
+                        | timeline::TimelineEvent::ToggleTrackContextMenu(_)
+                ) | Message::Escape
+            )
+        {
             self.timeline.context_track = None;
         }
-        if !matches!(
-            &message,
-            Message::Timeline(timeline::TimelineEvent::OpenItemContextMenu { .. })
-                | Message::Escape
-        ) {
+        if !preserve_context_targets
+            && !matches!(
+                &message,
+                Message::Timeline(timeline::TimelineEvent::OpenItemContextMenu { .. })
+                    | Message::Escape
+            )
+        {
             self.timeline.context_item = None;
             self.timeline.context_item_position = None;
         }
-        if !matches!(
-            &message,
-            Message::ToggleMainMenu(_)
-                | Message::ToggleOfflineJobsPanel
-                | Message::DismissMainMenu
-                | Message::Escape
-                | Message::ActionQueryChanged(_)
-        ) {
+        if !preserve_menu_state
+            && !matches!(
+                &message,
+                Message::ToggleMainMenu(_)
+                    | Message::ToggleOfflineJobsPanel
+                    | Message::DismissMainMenu
+                    | Message::Escape
+            )
+        {
             self.active_menu = None;
         }
         let window_safe_message = matches!(
