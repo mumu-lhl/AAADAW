@@ -391,35 +391,18 @@ fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
     );
 
     let root = x11.setup().roots[0].root;
-    x11.send_event(
-        false,
-        window,
-        EventMask::KEY_PRESS,
-        KeyPressEvent {
-            response_type: x11rb::protocol::xproto::KEY_PRESS_EVENT,
-            detail: 38,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: 0,
-            root_x: 0,
-            root_y: 0,
-            event_x: 12,
-            event_y: 12,
-            state: KeyButMask::default(),
-            same_screen: true,
-        },
-    )
-    .unwrap()
-    .check()
-    .unwrap();
+    send_fd_fixture_keypress(&x11, window, root);
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut resend_at = Instant::now() + Duration::from_millis(20);
     while Instant::now() < deadline {
         output = render_helper_block(&process, audio_sequence, &note_on);
         audio_sequence += 1;
         if (0.74..0.78).contains(&output[0][0]) {
             break;
+        }
+        if Instant::now() >= resend_at {
+            send_fd_fixture_keypress(&x11, window, root);
+            resend_at = Instant::now() + Duration::from_millis(20);
         }
         thread::sleep(Duration::from_millis(1));
     }
@@ -480,6 +463,33 @@ fn find_fd_fixture_window(helper_pid: u32) -> (RustConnection, u32) {
         })
         .expect("fixture editor should publish its X11 window name");
     (connection, window)
+}
+
+#[cfg(target_os = "linux")]
+fn send_fd_fixture_keypress(x11: &RustConnection, window: u32, root: u32) {
+    x11.send_event(
+        false,
+        window,
+        EventMask::KEY_PRESS,
+        KeyPressEvent {
+            response_type: x11rb::protocol::xproto::KEY_PRESS_EVENT,
+            detail: 38,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: window,
+            child: 0,
+            root_x: 0,
+            root_y: 0,
+            event_x: 12,
+            event_y: 12,
+            state: KeyButMask::default(),
+            same_screen: true,
+        },
+    )
+    .unwrap()
+    .check()
+    .unwrap();
 }
 
 #[cfg(target_os = "windows")]
