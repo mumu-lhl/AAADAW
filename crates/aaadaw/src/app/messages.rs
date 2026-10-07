@@ -3,7 +3,7 @@ use super::SharedPreparedPlayback;
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
-use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult};
+use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult, WavSampleFormat};
 use aaadaw_core::{
     DawAction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, Project,
     TrackId,
@@ -286,6 +286,8 @@ pub(crate) enum Message {
     ),
     CancelOfflineRender,
     OfflineRenderFinished(Result<PathBuf, String>),
+    SetWavSampleFormat(WavSampleFormat),
+    SetWavDither(bool),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),

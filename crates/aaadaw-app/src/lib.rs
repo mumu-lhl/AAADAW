@@ -49,10 +49,12 @@ pub use midi_editing::{
 pub use offline_render::{
     DEFAULT_EFFECT_TAIL_SECONDS, FrozenTrackRender, OfflineRenderError,
     project_render_length_samples, render_freeze_track_to_float32_wav, render_graph_to_pcm24_wav,
-    render_prepared_audio_to_pcm24_wav, render_project_file_to_pcm24_wav,
+    render_graph_to_wav, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    render_project_file_to_pcm24_wav, render_project_file_to_wav,
 };
 pub use wav_export::{
-    Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
+    Float32WavExport, Float32WavExportError, Pcm16WavExport, Pcm16WavExportError, Pcm24WavExport,
+    Pcm24WavExportError, WavExport, WavExportError, WavExportOptions, WavSampleFormat,
 };
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 

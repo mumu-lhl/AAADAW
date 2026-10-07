@@ -238,8 +238,9 @@
 - [x] 为重复短嵌入素材复用有界解码 PCM，长素材和外部链接回退到流式解码（[Issue #196](https://github.com/mumu-lhl/AAADAW/issues/196)）。
 - [x] 验证流式素材欠载后的恢复：让 feeder 在后台丢弃落后于播放头的 PCM，并阻止队列中竞态写入的过期帧延迟播放（[Issue #198](https://github.com/mumu-lhl/AAADAW/issues/198)）。
 - [x] 提供后台全工程 PCM24 WAV 渲染：显示帧进度、可取消、失败不替换目标文件，并通过 playback render graph 混合轨道/Master 与已启用 CLAP 链（[`docs/design/offline-wav-rendering.md`](docs/design/offline-wav-rendering.md)）。
-- [ ] 冻结/解冻单条 CLAP 乐器轨道：保存可重开的原始 MIDI/乐器/FX 状态，以项目内渲染音频替代实时插件处理（[Issue #208](https://github.com/mumu-lhl/AAADAW/issues/208)）。
-- [ ] 定义 WAV 导出的 Dither/浮点输出策略，并在多项导出需求明确后提供串行导出队列。
+- [x] 冻结/解冻单条 CLAP 乐器轨道：保存可重开的原始 MIDI/乐器/FX 状态，以项目内渲染音频替代实时插件处理（[Issue #208](https://github.com/mumu-lhl/AAADAW/issues/208)，[PR #209](https://github.com/mumu-lhl/AAADAW/pull/209)）。
+- [x] WAV 导出支持 PCM16、PCM24 与 IEEE float32；整数输出可选 TPDF dither，float 保留 headroom 且不受 dither 影响（[Issue #210](https://github.com/mumu-lhl/AAADAW/issues/210)）。
+- [ ] 在多项导出需求明确后提供串行导出队列。
 - [ ] 只有在基准证明静态调度成为瓶颈后，才实现动态 Work-Stealing DAG；必须保持音频线程无锁/无分配约束。
 - [ ] 在评估许可、延迟和音质后集成 Rubber Band 时伸缩能力。
 

@@ -958,6 +958,34 @@ fn wav_render_command_is_discoverable_and_cancellable_from_the_file_menu() {
 }
 
 #[test]
+fn wav_export_options_default_to_pcm24_and_dither_only_applies_to_integer_formats() {
+    let mut app = App::default();
+    assert_eq!(
+        app.wav_export_options,
+        aaadaw_app::WavExportOptions::default()
+    );
+    assert_eq!(
+        app.wav_export_options.sample_format,
+        aaadaw_app::WavSampleFormat::Pcm24
+    );
+    assert!(!app.wav_export_options.dither);
+
+    let _ = app.update(Message::SetWavDither(true));
+    assert!(app.wav_export_options.dither);
+    let _ = app.update(Message::SetWavSampleFormat(
+        aaadaw_app::WavSampleFormat::Float32,
+    ));
+    assert_eq!(
+        app.wav_export_options.sample_format,
+        aaadaw_app::WavSampleFormat::Float32
+    );
+    assert!(!app.wav_export_options.dither);
+
+    let _ = app.update(Message::SetWavDither(true));
+    assert!(!app.wav_export_options.dither);
+}
+
+#[test]
 fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
     assert_eq!(
         commands::capture_binding("x", Modifiers::COMMAND).unwrap(),

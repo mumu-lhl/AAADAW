@@ -1,7 +1,7 @@
 use crate::prepare_audio_playback;
 use crate::{
     Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
-    PreparedAudioPlayback,
+    PreparedAudioPlayback, WavExport, WavExportError, WavExportOptions,
 };
 use aaadaw_core::{ItemId, Project};
 use aaadaw_engine::{
@@ -39,6 +39,16 @@ impl OfflineWavWriter for Pcm24WavExport {
     }
 }
 
+impl OfflineWavWriter for WavExport {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        WavExport::write_frames(self, frames).map_err(OfflineRenderError::WavExport)
+    }
+
+    fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+        WavExport::finish(self).map_err(OfflineRenderError::WavExport)
+    }
+}
+
 impl OfflineWavWriter for Float32WavExport {
     fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
         Float32WavExport::write_frames(self, frames).map_err(OfflineRenderError::Float32Wav)
@@ -69,6 +79,7 @@ fn freeze_tail_frames(
 pub enum OfflineRenderError {
     Wav(Pcm24WavExportError),
     Float32Wav(Float32WavExportError),
+    WavExport(WavExportError),
     Graph(AudioGraphError),
     Cancelled,
     InputUnderrun { samples: usize },
@@ -88,6 +99,7 @@ impl std::fmt::Display for OfflineRenderError {
         match self {
             Self::Wav(error) => error.fmt(formatter),
             Self::Float32Wav(error) => error.fmt(formatter),
+            Self::WavExport(error) => error.fmt(formatter),
             Self::Graph(error) => write!(formatter, "offline render failed: {error}"),
             Self::Cancelled => formatter.write_str("offline render was cancelled"),
             Self::InputUnderrun { samples } => write!(
@@ -112,6 +124,7 @@ impl std::error::Error for OfflineRenderError {
         match self {
             Self::Wav(error) => Some(error),
             Self::Float32Wav(error) => Some(error),
+            Self::WavExport(error) => Some(error),
             Self::Graph(error) => Some(error),
             Self::Media(_)
             | Self::Cancelled
@@ -165,10 +178,30 @@ pub fn render_graph_to_pcm24_wav(
     sample_rate: u32,
     total_frames: u64,
     cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    render_graph_to_wav(
+        graph,
+        destination,
+        sample_rate,
+        total_frames,
+        WavExportOptions::default(),
+        cancelled,
+        report_progress,
+    )
+}
+
+pub fn render_graph_to_wav(
+    graph: &mut AudioRenderGraph,
+    destination: impl AsRef<Path>,
+    sample_rate: u32,
+    total_frames: u64,
+    options: WavExportOptions,
+    cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
-    let export = Pcm24WavExport::create(destination.as_ref(), sample_rate)
-        .map_err(OfflineRenderError::Wav)?;
+    let export = WavExport::create(destination.as_ref(), sample_rate, options)
+        .map_err(OfflineRenderError::WavExport)?;
     render_graph_with_waiter(
         graph,
         RenderRequest {
@@ -190,12 +223,38 @@ pub fn render_prepared_audio_to_pcm24_wav(
     destination: impl AsRef<Path>,
     total_frames: u64,
     cancelled: &AtomicBool,
-    mut report_progress: impl FnMut(u64, u64),
+    report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
-    let (_graph, result) = render_prepared_inner(
+    render_prepared_audio_to_wav(
         prepared,
         project,
         destination,
+        total_frames,
+        WavExportOptions::default(),
+        cancelled,
+        report_progress,
+    )
+}
+
+pub fn render_prepared_audio_to_wav(
+    prepared: PreparedAudioPlayback,
+    project: &Project,
+    destination: impl AsRef<Path>,
+    total_frames: u64,
+    options: WavExportOptions,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let export = WavExport::create(
+        destination.as_ref(),
+        project.settings().sample_rate(),
+        options,
+    )
+    .map_err(OfflineRenderError::WavExport)?;
+    let (_graph, result) = render_prepared_inner(
+        prepared,
+        project,
+        export,
         total_frames,
         cancelled,
         &mut report_progress,
@@ -206,7 +265,7 @@ pub fn render_prepared_audio_to_pcm24_wav(
 fn render_prepared_inner(
     prepared: PreparedAudioPlayback,
     project: &Project,
-    destination: impl AsRef<Path>,
+    export: impl OfflineWavWriter,
     total_frames: u64,
     cancelled: &AtomicBool,
     report_progress: &mut impl FnMut(u64, u64),
@@ -214,13 +273,6 @@ fn render_prepared_inner(
     let (mut graph, feeders) = prepared.into_parts();
     let feeders = RefCell::new(feeders.into_iter().map(Some).collect::<Vec<_>>());
     let item_ids: Vec<_> = project.audio_items().iter().map(|item| item.id()).collect();
-    let sample_rate = project.settings().sample_rate();
-    let export =
-        Pcm24WavExport::create(destination.as_ref(), sample_rate).map_err(OfflineRenderError::Wav);
-    let export = match export {
-        Ok(export) => export,
-        Err(error) => return (graph, Err(error)),
-    };
     let result = render_graph_with_waiter(
         &mut graph,
         RenderRequest {
@@ -292,12 +344,38 @@ pub fn render_project_file_to_pcm24_wav(
     destination: impl AsRef<Path>,
     master_ceiling: MasterOutputCeiling,
     cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    render_project_file_to_wav(
+        project_path,
+        project,
+        destination,
+        master_ceiling,
+        WavExportOptions::default(),
+        cancelled,
+        report_progress,
+    )
+}
+
+pub fn render_project_file_to_wav(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destination: impl AsRef<Path>,
+    master_ceiling: MasterOutputCeiling,
+    options: WavExportOptions,
+    cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
     let total_frames = project_render_length_samples(project, DEFAULT_EFFECT_TAIL_SECONDS)?;
+    let export = WavExport::create(
+        destination.as_ref(),
+        project.settings().sample_rate(),
+        options,
+    )
+    .map_err(OfflineRenderError::WavExport)?;
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     let prepared = prepare_audio_playback(project, &store, 16_384, 2_048)
@@ -430,7 +508,7 @@ pub fn render_project_file_to_pcm24_wav(
     let (mut graph, result) = render_prepared_inner(
         prepared,
         project,
-        destination,
+        export,
         total_frames,
         cancelled,
         &mut report_progress,

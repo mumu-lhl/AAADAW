@@ -2,7 +2,7 @@ use crate::timeline::{self, TimelineState};
 use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementWorker, AudioAssetSourceStatusEntry,
     AudioItemImportWorker, AudioWaveformResult, AudioWaveformWorker, ClapPluginScanReport,
-    add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
+    WavExportOptions, add_quarter_note, adjust_midi_note_pitch, adjust_midi_note_velocity,
     create_four_beat_midi_item, default_clap_search_paths, delete_midi_note, duplicate_audio_item,
     move_midi_item_by_beat, move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
     set_audio_item_start_sample,
@@ -287,6 +287,7 @@ struct App {
     audio_asset_management_status: String,
     offline_render_busy: bool,
     offline_render_is_freeze: bool,
+    wav_export_options: WavExportOptions,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
@@ -1803,6 +1804,16 @@ impl App {
             }
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
                 self.set_master_output_ceiling_dbfs(ceiling_dbfs);
+            }
+            Message::SetWavSampleFormat(format) => {
+                self.wav_export_options.sample_format = format;
+                if !format.is_integer() {
+                    self.wav_export_options.dither = false;
+                }
+            }
+            Message::SetWavDither(enabled) => {
+                self.wav_export_options.dither =
+                    enabled && self.wav_export_options.sample_format.is_integer();
             }
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);

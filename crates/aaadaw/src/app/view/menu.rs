@@ -1,6 +1,7 @@
 use super::super::commands::CommandEntry;
 use super::super::{App, MainMenu, Message, commands};
 use super::tokens;
+use aaadaw_app::WavSampleFormat;
 use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 
@@ -150,6 +151,52 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
     }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
+    }
+    if menu == MainMenu::File {
+        let options = app.wav_export_options;
+        contents = contents
+            .push(rule::horizontal(1))
+            .push(
+                row![
+                    text("WAV format").size(11),
+                    iced::widget::pick_list(
+                        &WavSampleFormat::ALL[..],
+                        Some(options.sample_format),
+                        Message::SetWavSampleFormat,
+                    )
+                    .text_size(11)
+                    .padding([2, 4])
+                    .width(Length::Fixed(130.0)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .push(
+                row![
+                    text("TPDF dither").size(11),
+                    button(if options.dither { "On" } else { "Off" })
+                        .padding([2, 8])
+                        .style(if options.dither {
+                            button::primary
+                        } else {
+                            button::secondary
+                        })
+                        .on_press_maybe(
+                            options
+                                .sample_format
+                                .is_integer()
+                                .then_some(Message::SetWavDither(!options.dither)),
+                        ),
+                    text(if options.sample_format.is_integer() {
+                        "integer output only"
+                    } else {
+                        "not used for float"
+                    })
+                    .size(10),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
     }
     contents.into()
 }
