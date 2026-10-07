@@ -73,7 +73,6 @@ impl MidiInputMessage {
         Some(ScheduledMidiEvent {
             sample_offset: 0,
             track_id,
-            note_id: None,
             pitch,
             velocity,
             controller,

@@ -864,10 +864,6 @@ impl MixerPlan {
 pub enum AudioGraphBuildError {
     MixerPlan(MixerPlanError),
     MidiSchedule(MidiScheduleError),
-    MidiInputEventBufferFull {
-        requested: usize,
-        maximum: usize,
-    },
     TrackStreamCountMismatch {
         tracks: usize,
         streams: usize,
@@ -1041,6 +1037,10 @@ pub enum AudioGraphError {
         maximum: usize,
     },
     MidiSchedule(MidiScheduleError),
+    MidiInputEventBufferFull {
+        requested: usize,
+        maximum: usize,
+    },
     InstrumentEventBufferFull {
         track_id: TrackId,
     },
