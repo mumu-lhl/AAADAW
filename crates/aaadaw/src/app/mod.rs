@@ -65,8 +65,8 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, Message, MidiEditorLane, PathPickerTarget, SettingsCategory,
-    TimeMapTab,
+    MainMenu, MainWorkspace, Message, MidiEditorLane, PathPickerTarget, PendingProjectTransition,
+    SettingsCategory, TimeMapTab,
 };
 
 pub(crate) fn run() -> iced::Result {
@@ -211,6 +211,7 @@ struct App {
     main_workspace: MainWorkspace,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    pending_project_transition: Option<PendingProjectTransition>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
     track_volume_edits: HashMap<TrackId, String>,
@@ -884,6 +885,7 @@ impl App {
         let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(1280.0, 800.0),
             min_size: Some(iced::Size::new(900.0, 620.0)),
+            exit_on_close_request: false,
             ..iced::window::Settings::default()
         });
         app.main_window_id = Some(main_window_id);
@@ -1526,10 +1528,12 @@ impl App {
                 }
             }
             Message::WindowCloseRequested(window_id) => {
-                if self.fx_chain_window_id == Some(window_id)
-                    || self.main_window_id == Some(window_id)
-                {
+                if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
+                } else if self.main_window_id == Some(window_id) {
+                    task = self.begin_project_transition(
+                        PendingProjectTransition::CloseMainWindow(window_id),
+                    );
                 }
             }
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
@@ -2025,7 +2029,9 @@ impl App {
                 self.offline_jobs_panel_open = !self.offline_jobs_panel_open;
             }
             Message::Escape => {
-                if self.offline_jobs_panel_open {
+                if self.pending_project_transition.is_some() {
+                    self.pending_project_transition = None;
+                } else if self.offline_jobs_panel_open {
                     self.offline_jobs_panel_open = false;
                 } else if self.active_menu.take().is_none() {
                     if self.timeline.context_item.take().is_some()
@@ -2038,7 +2044,9 @@ impl App {
                     }
                 }
             }
-            Message::NewProject => self.new_project(),
+            Message::NewProject => {
+                task = self.begin_project_transition(PendingProjectTransition::NewProject)
+            }
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::EndItemTrim) => self.finish_item_trim(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
@@ -2518,6 +2526,9 @@ impl App {
             Message::SaveActionMacro => self.save_action_macro(),
             Message::DeleteActionMacro(id) => self.delete_action_macro(id),
             Message::ShortcutPressed(key, modifiers) => {
+                if self.pending_project_transition.is_some() {
+                    return Task::none();
+                }
                 let key = match key.as_str() {
                     " " => iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
                     "Delete" => iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
@@ -2538,7 +2549,11 @@ impl App {
             Message::SaveShortcutBindings => self.save_shortcut_bindings(),
             Message::ResetShortcutBindings => self.reset_shortcut_bindings(),
             Message::RunActionQuery => task = self.run_action_query(),
-            Message::ExecuteCommand(command) => task = commands::dispatch(self, command),
+            Message::ExecuteCommand(command) => {
+                if self.pending_project_transition.is_none() {
+                    task = commands::dispatch(self, command);
+                }
+            }
             Message::ToggleMediaBrowserPanel => self.media_panel_dock.toggle(),
             Message::MediaPanelResized(split, ratio) => {
                 self.media_panel_dock.resize(split, ratio);
@@ -2558,6 +2573,15 @@ impl App {
             Message::OpenProject => task = self.open_project_command(),
             Message::SaveProject => {
                 task = self.save_project_command();
+            }
+            Message::SaveBeforeProjectTransition => {
+                task = self.save_before_project_transition();
+            }
+            Message::DiscardProjectChanges => {
+                task = self.discard_and_continue_project_transition();
+            }
+            Message::CancelProjectTransition => {
+                self.pending_project_transition = None;
             }
             Message::ImportAudio => task = self.start_audio_import(),
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
@@ -2650,6 +2674,7 @@ impl App {
                 let result = result.lock().ok().and_then(|mut result| result.take());
                 match result {
                     Some(Ok((project, arrangement_view_state, project_lock))) => {
+                        self.pending_project_transition = None;
                         self.project_lock = Some(project_lock);
                         self.project = project;
                         self.refresh_tempo_map_edits();
@@ -2710,14 +2735,27 @@ impl App {
                         ]);
                     }
                     Some(Err(error)) => {
+                        self.pending_project_transition = None;
+                        self.project_path_query = self
+                            .project_path
+                            .as_ref()
+                            .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
                         tracing::error!(error = %error, "project open failed");
                         self.status = format!("Open failed: {error}");
                     }
-                    None => self.status = "Project open result was unavailable".to_owned(),
+                    None => {
+                        self.pending_project_transition = None;
+                        self.project_path_query = self
+                            .project_path
+                            .as_ref()
+                            .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
+                        self.status = "Project open result was unavailable".to_owned();
+                    }
                 }
             }
             Message::ProjectSaved(path, revision, result, plugin_state_warning, shared_lock) => {
                 self.io_busy = false;
+                let mut continue_transition = false;
                 match result {
                     Ok(()) => {
                         if let Some(lock) = shared_lock.take() {
@@ -2726,6 +2764,8 @@ impl App {
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
                         self.saved_revision = revision;
+                        continue_transition =
+                            self.revision == revision && self.pending_project_transition.is_some();
                         self.status = if self.revision == revision {
                             format!("Saved {}", path.display())
                         } else {
@@ -2768,6 +2808,9 @@ impl App {
                         tracing::error!(error = %error, "project save failed");
                         self.status = format!("Save failed: {error}");
                     }
+                }
+                if continue_transition {
+                    task = Task::batch([task, self.continue_pending_project_transition()]);
                 }
             }
             Message::RecordingRecoveryScanned(path, result) => {
@@ -3010,10 +3053,6 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return;
         }
-        if self.is_dirty() {
-            self.status = "Save the current project before creating a new one".to_owned();
-            return;
-        }
         #[cfg(feature = "audio-device")]
         if self.playback.is_some() {
             self.status = format!(
@@ -3055,6 +3094,89 @@ impl App {
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
         self.status = "New project created".to_owned();
+    }
+
+    fn begin_project_transition(&mut self, transition: PendingProjectTransition) -> Task<Message> {
+        if self.pending_project_transition.is_some() {
+            return Task::none();
+        }
+        if self.io_busy
+            || self.path_picker_busy
+            || self.import_busy
+            || self.audio_asset_management_busy
+            || self.playback_busy()
+        {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        #[cfg(feature = "audio-device")]
+        if matches!(
+            transition,
+            PendingProjectTransition::NewProject | PendingProjectTransition::OpenProject
+        ) && self.playback.is_some()
+        {
+            self.status = format!(
+                "Close {} output before changing projects",
+                self.playback_name()
+            );
+            return Task::none();
+        }
+        self.pending_project_transition = Some(transition);
+        if self.is_dirty() {
+            self.status = "Save changes to the current project?".to_owned();
+            Task::none()
+        } else {
+            self.continue_pending_project_transition()
+        }
+    }
+
+    fn save_before_project_transition(&mut self) -> Task<Message> {
+        if self.pending_project_transition.is_none() {
+            return Task::none();
+        }
+        self.save_project_command()
+    }
+
+    fn discard_and_continue_project_transition(&mut self) -> Task<Message> {
+        match self.pending_project_transition {
+            Some(PendingProjectTransition::NewProject) => {
+                self.pending_project_transition = None;
+                self.saved_revision = self.revision;
+                self.new_project();
+                Task::none()
+            }
+            Some(PendingProjectTransition::OpenProject) => {
+                self.pick_path(PathPickerTarget::OpenProject)
+            }
+            Some(PendingProjectTransition::CloseMainWindow(window_id)) => {
+                self.pending_project_transition = None;
+                self.close_main_window(window_id)
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn continue_pending_project_transition(&mut self) -> Task<Message> {
+        match self.pending_project_transition {
+            Some(PendingProjectTransition::NewProject) => {
+                self.pending_project_transition = None;
+                self.new_project();
+                Task::none()
+            }
+            Some(PendingProjectTransition::OpenProject) => {
+                self.pick_path(PathPickerTarget::OpenProject)
+            }
+            Some(PendingProjectTransition::CloseMainWindow(window_id)) => {
+                self.pending_project_transition = None;
+                self.close_main_window(window_id)
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn close_main_window(&mut self, window_id: iced::window::Id) -> Task<Message> {
+        self.close_fx_editor_resources();
+        iced::window::close(window_id)
     }
 
     fn open_settings(&mut self) -> Task<Message> {
@@ -5722,23 +5844,7 @@ impl App {
     }
 
     fn open_project_command(&mut self) -> Task<Message> {
-        #[cfg(feature = "audio-device")]
-        if self.playback.is_some() {
-            self.status = format!(
-                "Close {} output before opening another project",
-                self.playback_name()
-            );
-            return Task::none();
-        }
-        if self.io_busy {
-            self.status = "Wait for current project operation to finish".to_owned();
-            return Task::none();
-        }
-        if self.is_dirty() {
-            self.status = "Save current project before opening another".to_owned();
-            return Task::none();
-        }
-        self.pick_path(PathPickerTarget::OpenProject)
+        self.begin_project_transition(PendingProjectTransition::OpenProject)
     }
 }
 

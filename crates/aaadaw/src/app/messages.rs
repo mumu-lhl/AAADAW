@@ -69,6 +69,13 @@ pub(crate) enum PathPickerTarget {
     AddClapPluginPath,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingProjectTransition {
+    NewProject,
+    OpenProject,
+    CloseMainWindow(iced::window::Id),
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsCategory {
     #[default]
@@ -265,6 +272,9 @@ pub(crate) enum Message {
     ExecuteCommand(CommandId),
     OpenProject,
     SaveProject,
+    SaveBeforeProjectTransition,
+    DiscardProjectChanges,
+    CancelProjectTransition,
     ImportAudio,
     AudioFilePathChanged(String),
     CancelAudioImport,

@@ -17,18 +17,24 @@ pub(super) fn open_project(app: &mut App) -> Task<Message> {
     }
     if app.io_busy {
         app.status = "Wait for current project operation to finish".to_owned();
+        app.pending_project_transition = None;
         return Task::none();
     }
-    if app.is_dirty() {
+    if app.is_dirty()
+        && app.pending_project_transition != Some(super::PendingProjectTransition::OpenProject)
+    {
         app.status = "Save current project before opening another".to_owned();
+        app.pending_project_transition = None;
         return Task::none();
     }
     let Some(path) = project_path_from_query(&app.project_path_query) else {
         app.status = "Enter a project file path first".to_owned();
+        app.pending_project_transition = None;
         return Task::none();
     };
     if app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some() {
         app.status = format!("{} is already open", path.display());
+        app.pending_project_transition = None;
         return Task::none();
     }
     app.io_busy = true;
