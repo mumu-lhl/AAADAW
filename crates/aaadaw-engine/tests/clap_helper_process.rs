@@ -439,8 +439,21 @@ fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
         0,
         "user window close reaches CLAP host"
     );
-    let output = render_helper_block(&process, audio_sequence, &[]);
-    assert!(output.iter().all(|frame| (0.74..0.78).contains(&frame[0])));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut output = [[0.0; 2]; 16];
+    while Instant::now() < deadline {
+        output = render_helper_block(&process, audio_sequence, &[]);
+        audio_sequence += 1;
+        if output.iter().all(|frame| (0.74..0.78).contains(&frame[0])) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        output.iter().all(|frame| (0.74..0.78).contains(&frame[0])),
+        "closing the editor must leave the instrument audio running; observed {}",
+        output[0][0]
+    );
     process.shutdown().unwrap();
     process.take_saved_state().unwrap();
 }
