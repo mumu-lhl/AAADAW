@@ -1,5 +1,8 @@
 use crate::prepare_audio_playback;
-use crate::{Pcm24WavExport, Pcm24WavExportError, PreparedAudioPlayback};
+use crate::{
+    Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
+    PreparedAudioPlayback,
+};
 use aaadaw_core::{ItemId, Project};
 use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
@@ -7,7 +10,7 @@ use aaadaw_engine::{
 };
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -19,6 +22,31 @@ pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
 pub struct FrozenTrackRender {
     pub start_sample: u64,
     pub length_samples: u64,
+}
+
+trait OfflineWavWriter {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError>;
+    fn finish(self) -> Result<PathBuf, OfflineRenderError>;
+}
+
+impl OfflineWavWriter for Pcm24WavExport {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        Pcm24WavExport::write_frames(self, frames).map_err(OfflineRenderError::Wav)
+    }
+
+    fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+        Pcm24WavExport::finish(self).map_err(OfflineRenderError::Wav)
+    }
+}
+
+impl OfflineWavWriter for Float32WavExport {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        Float32WavExport::write_frames(self, frames).map_err(OfflineRenderError::Float32Wav)
+    }
+
+    fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+        Float32WavExport::finish(self).map_err(OfflineRenderError::Float32Wav)
+    }
 }
 
 fn freeze_tail_frames(
@@ -40,6 +68,7 @@ fn freeze_tail_frames(
 #[derive(Debug)]
 pub enum OfflineRenderError {
     Wav(Pcm24WavExportError),
+    Float32Wav(Float32WavExportError),
     Graph(AudioGraphError),
     Cancelled,
     InputUnderrun { samples: usize },
@@ -49,8 +78,6 @@ pub enum OfflineRenderError {
 }
 
 struct RenderRequest<'a> {
-    destination: &'a Path,
-    sample_rate: u32,
     total_frames: u64,
     start_sample: u64,
     cancelled: &'a AtomicBool,
@@ -60,6 +87,7 @@ impl std::fmt::Display for OfflineRenderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Wav(error) => error.fmt(formatter),
+            Self::Float32Wav(error) => error.fmt(formatter),
             Self::Graph(error) => write!(formatter, "offline render failed: {error}"),
             Self::Cancelled => formatter.write_str("offline render was cancelled"),
             Self::InputUnderrun { samples } => write!(
@@ -83,6 +111,7 @@ impl std::error::Error for OfflineRenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Wav(error) => Some(error),
+            Self::Float32Wav(error) => Some(error),
             Self::Graph(error) => Some(error),
             Self::Media(_)
             | Self::Cancelled
@@ -138,15 +167,16 @@ pub fn render_graph_to_pcm24_wav(
     cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
+    let export = Pcm24WavExport::create(destination.as_ref(), sample_rate)
+        .map_err(OfflineRenderError::Wav)?;
     render_graph_with_waiter(
         graph,
         RenderRequest {
-            destination: destination.as_ref(),
-            sample_rate,
             total_frames,
             start_sample: 0,
             cancelled,
         },
+        export,
         |_, frames| Ok(frames),
         || Ok(()),
         &mut report_progress,
@@ -185,15 +215,20 @@ fn render_prepared_inner(
     let feeders = RefCell::new(feeders.into_iter().map(Some).collect::<Vec<_>>());
     let item_ids: Vec<_> = project.audio_items().iter().map(|item| item.id()).collect();
     let sample_rate = project.settings().sample_rate();
+    let export =
+        Pcm24WavExport::create(destination.as_ref(), sample_rate).map_err(OfflineRenderError::Wav);
+    let export = match export {
+        Ok(export) => export,
+        Err(error) => return (graph, Err(error)),
+    };
     let result = render_graph_with_waiter(
         &mut graph,
         RenderRequest {
-            destination: destination.as_ref(),
-            sample_rate,
             total_frames,
             start_sample: 0,
             cancelled,
         },
+        export,
         |graph, requested_frames| loop {
             let available_frames =
                 graph.audio_item_frames_available_for_next_block(requested_frames);
@@ -406,11 +441,11 @@ pub fn render_project_file_to_pcm24_wav(
     result
 }
 
-/// Renders one instrument track from its first MIDI item through its last item and a fixed tail.
-/// Track gain, pan, routing, mute, solo, and volume automation remain live after freezing, so they
-/// are neutralized in this temporary source render. The saved project and playback graph are never
-/// modified.
-pub fn render_freeze_track_to_pcm24_wav(
+/// Renders one instrument track to float WAV from its first MIDI item through its last item and
+/// the plugin tail. Float output preserves headroom because track and Master gain remain live
+/// after freezing. Track gain, pan, routing, mute, solo, and volume automation are neutralized in
+/// this temporary source render. The saved project and playback graph are never modified.
+pub fn render_freeze_track_to_float32_wav(
     project_path: impl AsRef<Path>,
     project: &Project,
     track_id: aaadaw_core::TrackId,
@@ -657,15 +692,28 @@ pub fn render_freeze_track_to_pcm24_wav(
         cleanup_uninstalled_processors(Vec::new(), Vec::new(), effect_owners, effect_processors);
         return Err(OfflineRenderError::Media(error.to_string()));
     }
+    let export = Float32WavExport::create(destination.as_ref(), sample_rate)
+        .map_err(OfflineRenderError::Float32Wav);
+    let export = match export {
+        Ok(export) => export,
+        Err(error) => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(error);
+        }
+    };
     let result = render_graph_with_waiter(
         prepared.graph_mut(),
         RenderRequest {
-            destination: destination.as_ref(),
-            sample_rate,
             total_frames,
             start_sample,
             cancelled,
         },
+        export,
         |_, frames| Ok(frames),
         || Ok(()),
         &mut report_progress,
@@ -758,22 +806,19 @@ fn deactivate_effects(
     }
 }
 
-fn render_graph_with_waiter(
+fn render_graph_with_waiter<W: OfflineWavWriter>(
     graph: &mut AudioRenderGraph,
     request: RenderRequest<'_>,
+    mut export: W,
     mut wait_for_input: impl FnMut(&mut AudioRenderGraph, usize) -> Result<usize, OfflineRenderError>,
     before_finish: impl FnOnce() -> Result<(), OfflineRenderError>,
     report_progress: &mut impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     let RenderRequest {
-        destination,
-        sample_rate,
         total_frames,
         start_sample,
         cancelled,
     } = request;
-    let mut export =
-        Pcm24WavExport::create(destination, sample_rate).map_err(OfflineRenderError::Wav)?;
     let block_capacity = graph.max_block_frames();
     debug_assert!(
         block_capacity > 0,
@@ -806,15 +851,13 @@ fn render_graph_with_waiter(
                 samples: stats.underrun_samples,
             });
         }
-        export
-            .write_frames(&output[..frames])
-            .map_err(OfflineRenderError::Wav)?;
+        export.write_frames(&output[..frames])?;
         rendered += frames as u64;
         report_progress(rendered, total_frames);
     }
 
     before_finish()?;
-    export.finish().map_err(OfflineRenderError::Wav)?;
+    export.finish()?;
     Ok(())
 }
 

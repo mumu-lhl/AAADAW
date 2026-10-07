@@ -44,7 +44,7 @@ impl App {
                     Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
                 let tempdir = tempfile::tempdir().map_err(|error| error.to_string())?;
                 let wav_path = tempdir.path().join("freeze.wav");
-                let render = aaadaw_app::render_freeze_track_to_pcm24_wav(
+                let render = aaadaw_app::render_freeze_track_to_float32_wav(
                     &project_path,
                     &project,
                     track_id,
