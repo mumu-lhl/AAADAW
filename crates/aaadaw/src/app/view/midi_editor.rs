@@ -161,11 +161,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Message::Timeline(TimelineEvent::SetSnapGrid(grid))
         },)
         .width(Length::Fixed(112.0)),
-        text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom · Click ruler: paste target")
-            .size(11),
+        text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom").size(11),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let gesture_hints = column![
+        text("Notes: click positions cursor · double-click inserts · empty-space drag selects · Ctrl/Cmd-click toggles · Shift-click ranges")
+            .size(10)
+            .width(Length::Fill),
+        text("Ctrl/Cmd-drag copies · Shift-drag bypasses Snap · Esc cancels · click ruler sets paste target")
+            .size(10)
+            .width(Length::Fill),
+    ]
+    .spacing(2);
     let midi_snap = MidiSnap {
         grid: app.timeline.snap_grid,
         enabled: app.timeline.snap_enabled,
@@ -291,6 +299,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     content
         .push(navigation_toolbar)
         .push(grid_toolbar)
+        .push(gesture_hints)
         .push(lane_toolbar)
         .push(pitch_canvas)
         .push(active_lane)
