@@ -232,11 +232,13 @@ pub(crate) enum TimelineEvent {
         target_track_index: Option<usize>,
         range: bool,
         ignore_snap: bool,
+        copy: bool,
     },
     UpdateItemDrag {
         pointer_delta_ticks: i128,
         target_track_index: Option<usize>,
         ignore_snap: bool,
+        copy: bool,
     },
     EndItemDrag,
     CancelItemDrag,
@@ -805,6 +807,7 @@ pub(crate) struct ItemDragPreview {
     pub(crate) track_delta: i32,
     pub(crate) target_track_index: Option<usize>,
     pub(crate) valid: bool,
+    pub(crate) copy: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1488,6 +1491,7 @@ impl TimelineState {
                 target_track_index,
                 range,
                 ignore_snap,
+                copy,
             } => {
                 self.select_item(Some(item_id), false, range, true);
                 self.update_item_drag(
@@ -1495,12 +1499,14 @@ impl TimelineState {
                     pointer_delta_ticks,
                     target_track_index,
                     ignore_snap,
+                    copy,
                 );
             }
             TimelineEvent::UpdateItemDrag {
                 pointer_delta_ticks,
                 target_track_index,
                 ignore_snap,
+                copy,
             } => {
                 if let Some(preview) = self.drag_preview {
                     self.update_item_drag(
@@ -1508,6 +1514,7 @@ impl TimelineState {
                         pointer_delta_ticks,
                         target_track_index,
                         ignore_snap,
+                        copy,
                     );
                 }
             }
@@ -1673,6 +1680,7 @@ impl TimelineState {
         pointer_delta_ticks: i128,
         target_track_index: Option<usize>,
         ignore_snap: bool,
+        copy: bool,
     ) {
         let Some(&anchor_index) = self.cache.item_indices.get(&anchor_item_id) else {
             self.drag_preview = None;
@@ -1716,6 +1724,7 @@ impl TimelineState {
             track_delta,
             target_track_index,
             valid,
+            copy,
         });
     }
 
@@ -2496,6 +2505,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                                     - i128::from(drag.pointer_start_tick),
                                 target_track_index: track_index_at_y(local_y, self.row_layout),
                                 ignore_snap: state.modifiers.shift(),
+                                copy: state.modifiers.command() || state.modifiers.control(),
                             }
                         } else {
                             TimelineEvent::BeginItemDrag {
@@ -2505,6 +2515,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                                 target_track_index: track_index_at_y(local_y, self.row_layout),
                                 range: false,
                                 ignore_snap: state.modifiers.shift(),
+                                copy: state.modifiers.command() || state.modifiers.control(),
                             }
                         };
                         Some(
@@ -5215,6 +5226,42 @@ mod tests {
             "unexpected Shift-drag event: {message:?}"
         );
 
+        let copy_modifiers = Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::COMMAND | keyboard::Modifiers::SHIFT,
+        ));
+        let mut copy_state = TimelineInteractionState::default();
+        let _ = iced::widget::shader::Program::update(
+            &program,
+            &mut copy_state,
+            &copy_modifiers,
+            bounds,
+            click,
+        );
+        let _ =
+            iced::widget::shader::Program::update(&program, &mut copy_state, &press, bounds, click);
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut copy_state,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(122.0, 20.0)),
+        )
+        .expect("Command-drag should start an item copy drag");
+        let (message, _, _) = action.into_inner();
+        assert!(
+            matches!(
+                message,
+                Some(crate::app::Message::Timeline(
+                    TimelineEvent::BeginItemDrag {
+                        copy: true,
+                        ignore_snap: true,
+                        ..
+                    }
+                ))
+            ),
+            "unexpected Command-drag event: {message:?}"
+        );
+
         let mut click_state = TimelineInteractionState::default();
         let _ = iced::widget::shader::Program::update(
             &program,
@@ -5532,6 +5579,7 @@ mod tests {
             target_track_index: Some(1),
             range: false,
             ignore_snap: false,
+            copy: false,
         });
         let preview = timeline.drag_preview().unwrap();
         assert_eq!(preview.delta_ticks, -40);
@@ -5543,6 +5591,7 @@ mod tests {
             pointer_delta_ticks: -2_000,
             target_track_index: Some(0),
             ignore_snap: false,
+            copy: false,
         });
         assert!(!timeline.drag_preview().unwrap().valid);
         timeline.handle(TimelineEvent::EndItemDrag);
@@ -5561,6 +5610,7 @@ mod tests {
             target_track_index: Some(0),
             range: false,
             ignore_snap: false,
+            copy: false,
         });
         assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
 
@@ -5589,6 +5639,7 @@ mod tests {
             target_track_index: Some(0),
             range: false,
             ignore_snap: true,
+            copy: false,
         });
         assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
     }

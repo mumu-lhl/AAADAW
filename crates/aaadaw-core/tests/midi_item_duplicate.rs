@@ -115,3 +115,63 @@ fn duplicate_midi_item_errors_do_not_change_project_or_history() {
         Err(ActionError::MidiItemNotFound { item_id })
     );
 }
+
+#[test]
+fn duplicate_midi_item_to_track_preserves_content_and_supports_undo_redo() {
+    let mut project = Project::new();
+    for name in ["Source", "Destination"] {
+        project
+            .apply(DawAction::CreateTrack {
+                index: project.tracks().len(),
+                name: name.to_owned(),
+            })
+            .unwrap();
+    }
+    let source_track = project.tracks()[0].id();
+    let destination_track = project.tracks()[1].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source_track,
+            start_tick: 480,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let source_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: source_id,
+            notes: vec![MidiNoteData {
+                pitch: 67,
+                tick: 240,
+                duration: 480,
+                velocity: 92,
+            }],
+        })
+        .unwrap();
+    let before_duplicate = project.snapshot();
+
+    project
+        .apply(DawAction::DuplicateMidiItemToTrack {
+            item_id: source_id,
+            track_id: destination_track,
+            start_tick: 2_400,
+        })
+        .expect("duplicate should be placed on the requested track and tick");
+    assert_eq!(project.midi_items().len(), 2);
+    let duplicate = &project.midi_items()[1];
+    assert_eq!(duplicate.track_id(), destination_track);
+    assert_eq!(duplicate.start_tick(), 2_400);
+    assert_eq!(duplicate.length_ticks(), 1_920);
+    assert_eq!(duplicate.notes()[0].pitch(), 67);
+    assert_eq!(duplicate.notes()[0].tick(), 240);
+    assert_ne!(
+        duplicate.notes()[0].id(),
+        project.midi_items()[0].notes()[0].id()
+    );
+    let after_duplicate = project.snapshot();
+
+    assert!(project.undo().unwrap());
+    assert_eq!(project.snapshot(), before_duplicate);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.snapshot(), after_duplicate);
+}

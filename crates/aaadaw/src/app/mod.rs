@@ -5389,6 +5389,34 @@ impl App {
             let target_start_tick = u64::try_from(i128::from(start_tick) + preview.delta_ticks)
                 .map_err(|_| "target position is outside the project".to_owned())?;
 
+            if preview.copy {
+                if let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                {
+                    let target_sample = self
+                        .project
+                        .sample_at_tick(target_start_tick)
+                        .map_err(|error| error.to_string())?;
+                    actions.push(DawAction::InsertAudioItem {
+                        track_id: target_track_id,
+                        media_ref: item.media_ref().to_owned(),
+                        start_sample: target_sample,
+                        source_offset_samples: item.source_offset_samples(),
+                        length_samples: item.length_samples(),
+                    });
+                } else {
+                    actions.push(DawAction::DuplicateMidiItemToTrack {
+                        item_id,
+                        track_id: target_track_id,
+                        start_tick: target_start_tick,
+                    });
+                }
+                continue;
+            }
+
             if let Some(item) = self
                 .project
                 .audio_items()
