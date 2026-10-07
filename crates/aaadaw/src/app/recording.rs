@@ -447,6 +447,12 @@ impl App {
                         }
                         self.playback_playing = true;
                         self.playback_paused = false;
+                        #[cfg(target_os = "android")]
+                        if let Err(error) = crate::android_platform::start_playback_service() {
+                            self.status = format!(
+                                "Recording is active, but Android playback background service could not start: {error}"
+                            );
+                        }
                     }
                     self.begin_recording(recording)
                 }

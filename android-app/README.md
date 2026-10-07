@@ -2,7 +2,8 @@
 
 This Gradle project packages the Rust `cdylib` as a NativeActivity APK. It
 supports SAF project open/save, audio import, WAV export, AAudio playback and
-recording, runtime microphone permission, a recording foreground service, and
+recording, runtime microphone permission, foreground services for playback and
+recording, and
 a compact touch layout for screens below 720 logical pixels. SAF documents are
 staged in app-private storage while open and copied back to the selected URI
 after save/render.
@@ -20,8 +21,11 @@ cd android-app
 gradle assembleDebug
 ```
 
-The manifest declares the NativeActivity, microphone permission, and recording
-service. `MainActivity` streams local staged files to SAF URIs without loading
+The manifest declares the NativeActivity, microphone permission, and audio
+foreground service types. The service keeps playback or recording active when
+the Activity moves to the background, and updates its notification for each
+active mode. Recording uses the microphone type; playback uses the media
+playback type. `MainActivity` streams local staged files to SAF URIs without loading
 large exports into memory. Import Android ARM64 `.clap` libraries through
 Settings; AAADAW scans and hosts imported plugins in-process. Native plugin code
 can crash the app, so import trusted libraries only. Android external MIDI

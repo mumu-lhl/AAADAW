@@ -3684,6 +3684,14 @@ impl App {
         if let Some(playback) = self.playback.as_mut() {
             return match playback.play() {
                 Ok(()) => {
+                    #[cfg(target_os = "android")]
+                    if let Err(error) = crate::android_platform::start_playback_service() {
+                        let _ = playback.stop();
+                        self.status = format!(
+                            "Could not keep Android playback active in background: {error}"
+                        );
+                        return Task::none();
+                    }
                     self.playback_playing = true;
                     self.playback_paused = false;
                     self.status = "Playback started".to_owned();
@@ -3694,6 +3702,8 @@ impl App {
                     Task::none()
                 }
                 Err(error) => {
+                    #[cfg(target_os = "android")]
+                    crate::android_platform::stop_playback_service();
                     tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
                     self.status = format!("{} play failed: {error}", self.playback_name());
                     Task::none()
@@ -3714,6 +3724,8 @@ impl App {
                 self.playback_playing = false;
                 self.playback_paused = true;
                 self.playhead_sample = playback.stats().playhead_sample;
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_playback_service();
                 self.status = "Playback paused".to_owned();
             }
             Err(error) => {
@@ -3840,6 +3852,8 @@ impl App {
         }
         self.playback_playing = false;
         self.playback_paused = false;
+        #[cfg(target_os = "android")]
+        crate::android_platform::stop_playback_service();
         self.playhead_sample = 0;
         self.playback_start_sample = 0;
         self.seek_sample_query = "0".to_owned();
@@ -3970,8 +3984,27 @@ impl App {
                     self.reset_track_meters();
                     if let Err(error) = play_result {
                         self.playback_playing = false;
+                        #[cfg(target_os = "android")]
+                        crate::android_platform::stop_playback_service();
                         self.status = format!("{} play failed: {error}", self.playback_name());
                         return;
+                    }
+                    #[cfg(target_os = "android")]
+                    if start_when_ready
+                        && let Err(error) = crate::android_platform::start_playback_service()
+                    {
+                        if let Some(playback) = self.playback.as_mut() {
+                            let _ = playback.stop();
+                        }
+                        self.playback_playing = false;
+                        self.status = format!(
+                            "Could not keep Android playback active in background: {error}"
+                        );
+                        return;
+                    }
+                    #[cfg(target_os = "android")]
+                    if !start_when_ready {
+                        crate::android_platform::stop_playback_service();
                     }
                     self.playback_playing = start_when_ready;
                     self.playback_paused = !start_when_ready && self.playback_paused;
@@ -4035,6 +4068,17 @@ impl App {
         } else {
             None
         };
+        #[cfg(target_os = "android")]
+        let service_error = if start_when_ready && play_error.is_none() {
+            crate::android_platform::start_playback_service().err()
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let service_error: Option<String> = None;
+        if service_error.is_some() {
+            let _ = playback.stop();
+        }
         self.playback = Some(playback);
         let retired_helper_ids = self
             .clap_instrument_helper_owners
@@ -4057,6 +4101,11 @@ impl App {
         if let Some(error) = play_error {
             tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
             self.status = format!("{} play failed: {error}", self.playback_name());
+            return;
+        }
+        if let Some(error) = service_error {
+            self.playback_playing = false;
+            self.status = format!("Could not keep Android playback active in background: {error}");
             return;
         }
         self.status = if start_when_ready {

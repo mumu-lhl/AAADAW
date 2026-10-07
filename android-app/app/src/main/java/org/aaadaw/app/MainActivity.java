@@ -62,16 +62,37 @@ public final class MainActivity extends NativeActivity {
 
     private native void nativeMicrophonePermissionResult(boolean granted);
 
-    public void startRecordingService() {
-        Intent intent = new Intent(this, RecordingService.class);
-        if (Build.VERSION.SDK_INT >= 26) {
+    public void setRecordingServiceEnabled(boolean enabled) {
+        setAudioServiceMode(AudioService.ACTION_RECORDING, enabled);
+    }
+
+    public void setPlaybackServiceEnabled(boolean enabled) {
+        setAudioServiceMode(AudioService.ACTION_PLAYBACK, enabled);
+    }
+
+    private void setAudioServiceMode(String mode, boolean enabled) {
+        Intent intent = new Intent(this, AudioService.class);
+        intent.setAction(enabled ? mode : mode + "_STOP");
+        if (enabled && Build.VERSION.SDK_INT >= 26) {
             startForegroundService(intent);
         } else {
             startService(intent);
         }
     }
 
+    public void startRecordingService() {
+        setRecordingServiceEnabled(true);
+    }
+
     public void stopRecordingService() {
-        stopService(new Intent(this, RecordingService.class));
+        setRecordingServiceEnabled(false);
+    }
+
+    public void startPlaybackService() {
+        setPlaybackServiceEnabled(true);
+    }
+
+    public void stopPlaybackService() {
+        setPlaybackServiceEnabled(false);
     }
 }

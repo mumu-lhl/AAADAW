@@ -3,6 +3,7 @@ use jni::JavaVM;
 use jni::objects::{Global, JObject, JValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,6 +12,8 @@ static APP_DATA_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
 static SAF_LINKS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
 static MICROPHONE_PERMISSION_RESULT: OnceLock<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>> =
     OnceLock::new();
+static RECORDING_SERVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PLAYBACK_SERVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn initialize(app: AndroidApp) {
     if let Some(path) = app.internal_data_path() {
@@ -196,11 +199,37 @@ pub(crate) fn request_microphone_permission()
 }
 
 pub(crate) fn start_recording_service() -> Result<(), String> {
-    call_void_activity_method("startRecordingService")
+    if RECORDING_SERVICE_ACTIVE.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    if let Err(error) = call_void_activity_method("startRecordingService") {
+        RECORDING_SERVICE_ACTIVE.store(false, Ordering::Release);
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub(crate) fn stop_recording_service() {
-    let _ = call_void_activity_method("stopRecordingService");
+    if RECORDING_SERVICE_ACTIVE.swap(false, Ordering::AcqRel) {
+        let _ = call_void_activity_method("stopRecordingService");
+    }
+}
+
+pub(crate) fn start_playback_service() -> Result<(), String> {
+    if PLAYBACK_SERVICE_ACTIVE.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    if let Err(error) = call_void_activity_method("startPlaybackService") {
+        PLAYBACK_SERVICE_ACTIVE.store(false, Ordering::Release);
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub(crate) fn stop_playback_service() {
+    if PLAYBACK_SERVICE_ACTIVE.swap(false, Ordering::AcqRel) {
+        let _ = call_void_activity_method("stopPlaybackService");
+    }
 }
 
 fn has_microphone_permission() -> Result<bool, String> {
@@ -242,6 +271,18 @@ fn call_void_activity_method(method: &str) -> Result<(), String> {
             "stopRecordingService" => env.call_method(
                 activity,
                 jni::jni_str!("stopRecordingService"),
+                jni::jni_sig!("()V"),
+                &[],
+            )?,
+            "startPlaybackService" => env.call_method(
+                activity,
+                jni::jni_str!("startPlaybackService"),
+                jni::jni_sig!("()V"),
+                &[],
+            )?,
+            "stopPlaybackService" => env.call_method(
+                activity,
+                jni::jni_str!("stopPlaybackService"),
                 jni::jni_sig!("()V"),
                 &[],
             )?,

@@ -91,11 +91,14 @@ app's private storage while open, and saved project/WAV files are copied back
 to the user-selected URI. Audio import is staged before it enters the project.
 The Android audio feature uses CPAL's AAudio backend for playback and capture;
 recording asks for microphone permission at runtime and starts a microphone
-foreground service with an ongoing notification. If an output stream is lost
-while playing, AAADAW closes it and tries to reopen playback at the last
-reported sample. If no output is available, playback stops with an error. Input
-failure safely stops and finalizes the current take; it does not resume recording
-automatically.
+foreground service with an ongoing notification. Playback starts a media
+playback foreground service, so Android can keep the audio stream alive when
+the Activity moves to the background. The shared service tracks recording and
+playback independently and stops only when both modes end. If an output stream
+is lost while playing, AAADAW closes it and tries to reopen playback at the
+last reported sample. If no output is available, playback stops with an error.
+Input failure safely stops and finalizes the current take; automatic input-route
+recovery remains unimplemented.
 
 Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:
