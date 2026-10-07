@@ -66,7 +66,7 @@ jobs:
           emulator-boot-timeout: 900
           script: |
             adb logcat -c
-            adb install android-apk/app-debug.apk
+            timeout 180s sh -c 'attempt=0; while [ "$attempt" -lt 12 ]; do if adb shell cmd package list packages >/dev/null 2>&1 && adb install android-apk/app-debug.apk; then exit 0; fi; adb wait-for-device; sleep 5; attempt=$((attempt + 1)); done; exit 1'
             adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
             timeout 40s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell pidof org.aaadaw.app >/dev/null; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1'
             adb shell pidof org.aaadaw.app || { adb logcat -d -v brief -t 400 | tail -n 300; exit 1; }
