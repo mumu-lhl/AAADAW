@@ -110,6 +110,7 @@ pub(crate) enum Message {
     DismissMainMenu,
     ToggleOfflineJobsPanel,
     Escape,
+    DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,
     ShowMainWorkspace(MainWorkspace),
     ToggleMediaBrowserPanel,
