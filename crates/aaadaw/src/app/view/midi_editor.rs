@@ -195,18 +195,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             ticks_per_beat,
         ),
     };
-    column![
-        edit_toolbar,
-        navigation_toolbar,
-        lane_toolbar,
-        scrollable(pitch_canvas).height(Length::Fill),
-        active_lane
-    ]
-    .spacing(ROW_GAP)
-    .padding(PANEL_PADDING)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    let mut content = column![edit_toolbar];
+    if let Some(feedback) = app.midi_editor_feedback.as_deref() {
+        content = content.push(text(feedback).size(12));
+    }
+    content
+        .push(navigation_toolbar)
+        .push(lane_toolbar)
+        .push(scrollable(pitch_canvas).height(Length::Fill))
+        .push(active_lane)
+        .spacing(ROW_GAP)
+        .padding(PANEL_PADDING)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn lane_button(
@@ -353,6 +355,55 @@ impl ControllerLane<'_> {
     }
 }
 
+fn controller_target_is_duplicate(
+    controllers: &[MidiControllerData],
+    moving_index: Option<usize>,
+    target: MidiControllerData,
+) -> bool {
+    controllers.iter().enumerate().any(|(index, point)| {
+        Some(index) != moving_index
+            && point.controller == target.controller
+            && point.tick == target.tick
+    })
+}
+
+fn pitch_bend_target_is_duplicate(
+    bends: &[MidiPitchBendData],
+    moving_index: Option<usize>,
+    target: MidiPitchBendData,
+) -> bool {
+    bends
+        .iter()
+        .enumerate()
+        .any(|(index, bend)| Some(index) != moving_index && bend.tick == target.tick)
+}
+
+fn is_escape_key(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            repeat: false,
+            ..
+        })
+    )
+}
+
+fn cancel_canvas_drag_on_escape<T, C>(
+    event: &Event,
+    drag: &mut Option<T>,
+    context_menu: Option<&mut Option<C>>,
+) -> Option<canvas::Action<Message>> {
+    if !is_escape_key(event) {
+        return None;
+    }
+    let mut cancelled = drag.take().is_some();
+    if let Some(context_menu) = context_menu {
+        cancelled |= context_menu.take().is_some();
+    }
+    cancelled.then(|| canvas::Action::request_redraw().and_capture())
+}
+
 impl canvas::Program<Message> for ControllerLane<'_> {
     type State = ControllerLaneInteraction;
 
@@ -363,6 +414,11 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        if let Some(action) =
+            cancel_canvas_drag_on_escape(event, &mut state.drag, Some(&mut state.context_menu))
+        {
+            return Some(action);
+        }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let point = cursor.position_in(bounds)?;
@@ -445,13 +501,12 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     controllers.push(drag.current);
                 }
                 let changed_index = drag.index.unwrap_or(controllers.len() - 1);
-                let duplicate_position = controllers.iter().enumerate().any(|(index, current)| {
-                    index != changed_index
-                        && current.controller == drag.current.controller
-                        && current.tick == drag.current.tick
-                });
+                let duplicate_position =
+                    controller_target_is_duplicate(&controllers, Some(changed_index), drag.current);
                 if duplicate_position {
-                    return Some(canvas::Action::capture());
+                    return Some(canvas::Action::publish(Message::MidiEditorFeedback(
+                        "CC points cannot share the same tick".to_owned(),
+                    )));
                 }
                 if drag.original == Some(drag.current) {
                     return Some(canvas::Action::capture());
@@ -539,6 +594,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             value = controller.value;
         }
         if let Some(drag) = &state.drag {
+            let invalid_target =
+                controller_target_is_duplicate(&drag.controllers, drag.index, drag.current);
             let current_x = mapping
                 .x_at_tick(drag.current.tick)
                 .clamp(0.0, bounds.width);
@@ -551,12 +608,20 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 &path,
                 canvas::Stroke::default()
                     .with_width(2.0)
-                    .with_color(Color::from_rgb8(111, 190, 150)),
+                    .with_color(if invalid_target {
+                        Color::from_rgb8(226, 92, 84)
+                    } else {
+                        Color::from_rgb8(111, 190, 150)
+                    }),
             );
             frame.fill_rectangle(
                 Point::new(current_x - 5.0, current_y - 5.0),
                 Size::new(10.0, 10.0),
-                Color::WHITE,
+                if invalid_target {
+                    Color::from_rgb8(255, 107, 92)
+                } else {
+                    Color::WHITE
+                },
             );
         } else {
             let y = controller_y(value, bounds.height);
@@ -665,6 +730,11 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        if let Some(action) =
+            cancel_canvas_drag_on_escape(event, &mut state.drag, Some(&mut state.context_menu))
+        {
+            return Some(action);
+        }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let point = cursor.position_in(bounds)?;
@@ -746,11 +816,14 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     bends.push(drag.current);
                 }
                 let changed_index = drag.index.unwrap_or(bends.len() - 1);
-                let duplicate_position = bends
-                    .iter()
-                    .enumerate()
-                    .any(|(index, bend)| index != changed_index && bend.tick == drag.current.tick);
+                let duplicate_position =
+                    pitch_bend_target_is_duplicate(&bends, Some(changed_index), drag.current);
                 if duplicate_position || drag.original == Some(drag.current) {
+                    if duplicate_position {
+                        return Some(canvas::Action::publish(Message::MidiEditorFeedback(
+                            "Pitch-bend points cannot share the same tick".to_owned(),
+                        )));
+                    }
                     return Some(canvas::Action::capture());
                 }
                 Some(canvas::Action::publish(Message::SetMidiPitchBends(
@@ -845,6 +918,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             value = bend.value;
         }
         if let Some(drag) = &state.drag {
+            let invalid_target =
+                pitch_bend_target_is_duplicate(&drag.bends, drag.index, drag.current);
             let x = mapping
                 .x_at_tick(drag.current.tick)
                 .clamp(0.0, bounds.width);
@@ -855,12 +930,20 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 &path,
                 canvas::Stroke::default()
                     .with_width(2.0)
-                    .with_color(Color::from_rgb8(128, 165, 226)),
+                    .with_color(if invalid_target {
+                        Color::from_rgb8(226, 92, 84)
+                    } else {
+                        Color::from_rgb8(128, 165, 226)
+                    }),
             );
             frame.fill_rectangle(
                 Point::new(x - 5.0, y - 5.0),
                 Size::new(10.0, 10.0),
-                Color::WHITE,
+                if invalid_target {
+                    Color::from_rgb8(255, 107, 92)
+                } else {
+                    Color::WHITE
+                },
             );
         } else {
             let y = pitch_bend_y(value, bounds.height);
@@ -1002,6 +1085,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        if let Some(action) =
+            cancel_canvas_drag_on_escape(event, &mut state.drag, None::<&mut Option<()>>)
+        {
+            return Some(action);
+        }
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             return None;
@@ -1107,16 +1195,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     );
                 }
                 let mapping = self.mapping();
-                let hit = self.item.notes().iter().rev().find(|note| {
-                    let left = mapping.x_at_tick(note.tick());
-                    let right = mapping.x_at_tick(note.tick().saturating_add(note.duration()));
-                    let top = mapping.y_at_pitch(note.pitch());
-                    point.x >= left
-                        && point.x <= right
-                        && point.y >= top
-                        && point.y < top + NOTE_ROW_HEIGHT
-                });
-                let Some(note) = hit else {
+                let Some((note, resize)) = self.note_at_point(point) else {
                     let pitch = mapping.pitch_at_y(point.y);
                     let tick = snap_tick(mapping.tick_at_x(point.x), mapping.grid_ticks());
                     let data = MidiNoteData {
@@ -1143,8 +1222,6 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         canvas::Action::publish(Message::SelectMidiNotes(selected)).and_capture(),
                     );
                 }
-                let resize =
-                    mapping.x_at_tick(note.tick().saturating_add(note.duration())) - point.x < 9.0;
                 let note_ids = if resize {
                     HashSet::from([note.id()])
                 } else {
@@ -1221,40 +1298,30 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let drag = state.drag.take()?;
                 state.hovered_velocity_note = None;
-                let (move_delta_tick, move_delta_pitch) = bounded_note_move_delta(
-                    &drag.notes,
-                    self.item.length_ticks(),
-                    drag.delta_tick,
-                    drag.delta_pitch,
-                );
                 let edits = drag
                     .notes
-                    .into_iter()
-                    .map(|(note_id, mut data)| {
-                        if drag.velocity {
-                            data.velocity =
-                                apply_velocity_delta(data.velocity, drag.delta_velocity);
-                        } else if drag.resize {
-                            data.duration = (i128::from(data.duration)
-                                + i128::from(drag.delta_tick))
-                            .max(1) as u64;
-                        } else {
-                            data.tick =
-                                (i128::from(data.tick) + i128::from(move_delta_tick)) as u64;
-                            data.pitch = (i16::from(data.pitch) + move_delta_pitch) as u8;
-                        }
-                        (note_id, data)
+                    .iter()
+                    .map(|(note_id, data)| {
+                        (
+                            *note_id,
+                            note_drag_preview_data(&drag, *data, self.item.length_ticks()),
+                        )
                     })
                     .collect::<Vec<_>>();
-                if edits.iter().all(|(id, data)| {
+                let invalid_target = edits.iter().any(|(id, data)| {
                     self.item
                         .notes()
                         .iter()
                         .find(|note| note.id() == *id)
                         .is_some_and(|_| {
-                            data.tick.saturating_add(data.duration) <= self.item.length_ticks()
+                            data.tick.saturating_add(data.duration) > self.item.length_ticks()
                         })
-                }) && edits.iter().any(|(id, data)| {
+                });
+                if invalid_target {
+                    Some(canvas::Action::publish(Message::MidiEditorFeedback(
+                        "Resize rejected: note would extend beyond the MIDI item".to_owned(),
+                    )))
+                } else if edits.iter().any(|(id, data)| {
                     self.item
                         .notes()
                         .iter()
@@ -1430,9 +1497,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             }
             let x = grid_left + mapping.x_at_tick(note.tick());
             let y = grid_top + mapping.y_at_pitch(note.pitch());
-            let width = (note.duration() as f32 / self.ticks_per_beat as f32
-                * self.pixels_per_beat)
-                .max(3.0);
+            let width =
+                note_width_pixels(note.duration(), self.ticks_per_beat, self.pixels_per_beat);
             let rect = canvas::Path::rectangle(
                 Point::new(x, y + 2.0),
                 Size::new(width, NOTE_ROW_HEIGHT - 4.0),
@@ -1448,14 +1514,22 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 .as_ref()
                 .filter(|drag| drag.notes.iter().any(|(id, _)| *id == note.id()))
             {
+                let preview =
+                    note_drag_preview_data(drag, note_data(note), self.item.length_ticks());
+                let preview_x = grid_left + mapping.x_at_tick(preview.tick);
+                let preview_y = grid_top + mapping.y_at_pitch(preview.pitch);
+                let preview_width =
+                    note_width_pixels(preview.duration, self.ticks_per_beat, self.pixels_per_beat);
+                let invalid_target =
+                    preview.tick.saturating_add(preview.duration) > self.item.length_ticks();
                 frame.fill_rectangle(
-                    Point::new(
-                        x + drag.delta_tick as f32 / self.ticks_per_beat as f32
-                            * self.pixels_per_beat,
-                        y + 2.0 - f32::from(drag.delta_pitch) * NOTE_ROW_HEIGHT,
-                    ),
-                    Size::new(width, NOTE_ROW_HEIGHT - 4.0),
-                    Color::from_rgba8(214, 205, 111, 0.45),
+                    Point::new(preview_x, preview_y + 2.0),
+                    Size::new(preview_width, NOTE_ROW_HEIGHT - 4.0),
+                    if invalid_target {
+                        Color::from_rgba8(230, 70, 65, 0.72)
+                    } else {
+                        Color::from_rgba8(214, 205, 111, 0.45)
+                    },
                 );
             }
         }
@@ -1468,6 +1542,18 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if cursor.is_over(bounds) {
+            if self.region == RollRegion::Pitch
+                && let Some(position) = cursor.position_in(bounds)
+            {
+                let point = Point::new(position.x - KEY_WIDTH, position.y - HEADER_HEIGHT);
+                if let Some((_, resize)) = self.note_at_point(point) {
+                    return if resize {
+                        mouse::Interaction::ResizingHorizontally
+                    } else {
+                        mouse::Interaction::Grab
+                    };
+                }
+            }
             mouse::Interaction::Crosshair
         } else {
             mouse::Interaction::default()
@@ -1485,6 +1571,22 @@ fn delete_key_message(
 }
 
 impl PianoRoll<'_> {
+    fn note_at_point(&self, point: Point) -> Option<(&aaadaw_core::MidiNote, bool)> {
+        let mapping = self.mapping();
+        self.item.notes().iter().rev().find_map(|note| {
+            let left = mapping.x_at_tick(note.tick());
+            let width =
+                note_width_pixels(note.duration(), self.ticks_per_beat, self.pixels_per_beat);
+            let right = left + width;
+            let top = mapping.y_at_pitch(note.pitch());
+            let hit = point.x >= left
+                && point.x <= right
+                && point.y >= top
+                && point.y < top + NOTE_ROW_HEIGHT;
+            hit.then_some((note, right - point.x <= resize_handle_width(width)))
+        })
+    }
+
     fn draw_velocity(
         &self,
         state: &Interaction,
@@ -1579,6 +1681,14 @@ fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
     }
 }
 
+fn note_width_pixels(duration_ticks: u64, ticks_per_beat: u64, pixels_per_beat: f32) -> f32 {
+    (duration_ticks as f32 / ticks_per_beat as f32 * pixels_per_beat).max(3.0)
+}
+
+fn resize_handle_width(note_width: f32) -> f32 {
+    (note_width / 2.0).clamp(1.0, 9.0)
+}
+
 fn bounded_note_move_delta(
     notes: &[(NoteId, MidiNoteData)],
     item_length_ticks: u64,
@@ -1614,6 +1724,28 @@ fn bounded_note_move_delta(
     let delta_pitch = delta_pitch.clamp(min_delta_pitch, max_delta_pitch);
 
     (delta_tick, delta_pitch)
+}
+
+fn note_drag_preview_data(
+    drag: &NoteDrag,
+    mut note: MidiNoteData,
+    item_length_ticks: u64,
+) -> MidiNoteData {
+    if drag.velocity {
+        note.velocity = apply_velocity_delta(note.velocity, drag.delta_velocity);
+    } else if drag.resize {
+        note.duration = (i128::from(note.duration) + i128::from(drag.delta_tick)).max(1) as u64;
+    } else {
+        let (delta_tick, delta_pitch) = bounded_note_move_delta(
+            &drag.notes,
+            item_length_ticks,
+            drag.delta_tick,
+            drag.delta_pitch,
+        );
+        note.tick = (i128::from(note.tick) + i128::from(delta_tick)) as u64;
+        note.pitch = (i16::from(note.pitch) + delta_pitch) as u8;
+    }
+    note
 }
 
 fn velocity_note_at_x(
@@ -1710,6 +1842,428 @@ fn pitch_name(pitch: u8) -> String {
 mod tests {
     use super::*;
     use iced::widget::canvas::Program;
+
+    fn project_with_note(item_length_ticks: u64, note: MidiNoteData) -> (Project, ItemId, NoteId) {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: item_length_ticks,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![note],
+            })
+            .unwrap();
+        let note_id = project.midi_items()[0].notes()[0].id();
+        (project, item_id, note_id)
+    }
+
+    #[test]
+    fn resizing_preview_keeps_the_note_start_and_marks_item_overflow() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 720,
+            duration: 240,
+            velocity: 96,
+        };
+        let (_project, _, note_id) = project_with_note(960, note);
+        let drag = NoteDrag {
+            start: Point::ORIGIN,
+            notes: vec![(note_id, note)],
+            resize: true,
+            delta_tick: 240,
+            delta_pitch: 0,
+            velocity: false,
+            delta_velocity: 0,
+        };
+        let preview = note_drag_preview_data(&drag, note, 960);
+        assert_eq!(preview.tick, note.tick);
+        assert_eq!(preview.duration, 480);
+        assert!(preview.tick + preview.duration > 960);
+    }
+
+    #[test]
+    fn short_notes_keep_a_move_area_beside_the_resize_handle() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 24,
+            velocity: 96,
+        };
+        let (project, item_id, _) = project_with_note(960, note);
+        let roll = PianoRoll {
+            project: &project,
+            item: &project.midi_items()[0],
+            item_id,
+            selected: &HashSet::new(),
+            origin_tick: 0,
+            high_pitch: 80,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            region: RollRegion::Pitch,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                300.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let y = HEADER_HEIGHT + f32::from(80 - note.pitch) * NOTE_ROW_HEIGHT + 9.0;
+        assert_eq!(note_width_pixels(note.duration, 960, 96.0), 3.0);
+        assert_eq!(
+            roll.mouse_interaction(
+                &Interaction::default(),
+                bounds,
+                mouse::Cursor::Available(Point::new(KEY_WIDTH + 0.75, y)),
+            ),
+            mouse::Interaction::Grab
+        );
+        assert_eq!(
+            roll.mouse_interaction(
+                &Interaction::default(),
+                bounds,
+                mouse::Cursor::Available(Point::new(KEY_WIDTH + 2.5, y)),
+            ),
+            mouse::Interaction::ResizingHorizontally
+        );
+    }
+
+    #[test]
+    fn note_resize_reports_an_invalid_release_and_edge_cursor_is_distinct() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 720,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, _) = project_with_note(960, note);
+        let item = &project.midi_items()[0];
+        let selected = HashSet::new();
+        let roll = PianoRoll {
+            project: &project,
+            item,
+            item_id,
+            selected: &selected,
+            origin_tick: 0,
+            high_pitch: 80,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            region: RollRegion::Pitch,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(
+                300.0,
+                HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
+            ),
+        );
+        let y = HEADER_HEIGHT + f32::from(80 - note.pitch) * NOTE_ROW_HEIGHT + 9.0;
+        let body = Point::new(KEY_WIDTH + 80.0, y);
+        let edge = Point::new(KEY_WIDTH + 95.0, y);
+        assert_eq!(
+            roll.mouse_interaction(
+                &Interaction::default(),
+                bounds,
+                mouse::Cursor::Available(body)
+            ),
+            mouse::Interaction::Grab
+        );
+        assert_eq!(
+            roll.mouse_interaction(
+                &Interaction::default(),
+                bounds,
+                mouse::Cursor::Available(edge)
+            ),
+            mouse::Interaction::ResizingHorizontally
+        );
+
+        let mut interaction = Interaction::default();
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(edge),
+        )
+        .expect("note edge should start resize");
+        let moved = Point::new(KEY_WIDTH + 120.0, y);
+        roll.update(
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved { position: moved }),
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .expect("resize should update its preview");
+        let preview = note_drag_preview_data(
+            interaction.drag.as_ref().unwrap(),
+            note,
+            item.length_ticks(),
+        );
+        assert!(preview.tick + preview.duration > item.length_ticks());
+        let action = roll
+            .update(
+                &mut interaction,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(moved),
+            )
+            .expect("invalid resize should explain the rejection");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::MidiEditorFeedback(message))
+                if message.contains("beyond the MIDI item")
+        ));
+    }
+
+    #[test]
+    fn escape_cancels_active_note_controller_and_pitch_bend_gestures() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 240,
+            velocity: 96,
+        };
+        let (project, item_id, note_id) = project_with_note(960, note);
+        let item = &project.midi_items()[0];
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 100.0));
+        let escape = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+
+        let mut roll_state = Interaction {
+            drag: Some(NoteDrag {
+                start: Point::ORIGIN,
+                notes: vec![(note_id, note)],
+                resize: false,
+                delta_tick: 120,
+                delta_pitch: 0,
+                velocity: false,
+                delta_velocity: 0,
+            }),
+            ..Interaction::default()
+        };
+        let roll = PianoRoll {
+            project: &project,
+            item,
+            item_id,
+            selected: &HashSet::from([note_id]),
+            origin_tick: 0,
+            high_pitch: 80,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            region: RollRegion::Pitch,
+        };
+        assert!(
+            roll.update(
+                &mut roll_state,
+                &escape,
+                bounds,
+                mouse::Cursor::Available(Point::ORIGIN),
+            )
+            .is_some()
+        );
+        assert!(roll_state.drag.is_none());
+
+        let lane = ControllerLane {
+            item,
+            item_id,
+            controller: 1,
+            lane_height: MODULATION_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut controller_state = ControllerLaneInteraction {
+            drag: Some(ControllerDrag {
+                controllers: Vec::new(),
+                index: None,
+                original: None,
+                current: MidiControllerData {
+                    controller: 1,
+                    tick: 0,
+                    value: 64,
+                },
+            }),
+            ..ControllerLaneInteraction::default()
+        };
+        assert!(
+            lane.update(
+                &mut controller_state,
+                &escape,
+                bounds,
+                mouse::Cursor::Available(Point::ORIGIN),
+            )
+            .is_some()
+        );
+        assert!(controller_state.drag.is_none());
+
+        let bend_lane = PitchBendLane {
+            item,
+            item_id,
+            lane_height: PITCH_BEND_LANE_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let mut bend_state = PitchBendLaneInteraction {
+            drag: Some(PitchBendDrag {
+                bends: Vec::new(),
+                index: None,
+                original: None,
+                current: MidiPitchBendData {
+                    tick: 0,
+                    value: 8192,
+                },
+            }),
+            ..PitchBendLaneInteraction::default()
+        };
+        assert!(
+            bend_lane
+                .update(
+                    &mut bend_state,
+                    &escape,
+                    bounds,
+                    mouse::Cursor::Available(Point::ORIGIN),
+                )
+                .is_some()
+        );
+        assert!(bend_state.drag.is_none());
+    }
+
+    #[test]
+    fn controller_and_pitch_bend_duplicate_targets_explain_rejection() {
+        let note = MidiNoteData {
+            pitch: 60,
+            tick: 0,
+            duration: 240,
+            velocity: 96,
+        };
+        let (mut project, item_id, _) = project_with_note(3_840, note);
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![
+                    MidiControllerData {
+                        controller: 1,
+                        tick: 0,
+                        value: 64,
+                    },
+                    MidiControllerData {
+                        controller: 1,
+                        tick: 960,
+                        value: 64,
+                    },
+                ],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![
+                    MidiPitchBendData {
+                        tick: 0,
+                        value: 8192,
+                    },
+                    MidiPitchBendData {
+                        tick: 960,
+                        value: 8192,
+                    },
+                ],
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 72.0));
+        let controller_lane = ControllerLane {
+            item,
+            item_id,
+            controller: 1,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let start = Point::new(0.0, controller_y(64, 72.0));
+        let target = Point::new(96.0, start.y);
+        let mut controller_state = ControllerLaneInteraction::default();
+        controller_lane.update(
+            &mut controller_state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        controller_lane.update(
+            &mut controller_state,
+            &Event::Mouse(mouse::Event::CursorMoved { position: target }),
+            bounds,
+            mouse::Cursor::Available(target),
+        );
+        let action = controller_lane
+            .update(
+                &mut controller_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(target),
+            )
+            .expect("duplicate controller target should report why it is rejected");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::MidiEditorFeedback(message)) if message.contains("same tick")
+        ));
+
+        let bend_lane = PitchBendLane {
+            item,
+            item_id,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+        };
+        let start = Point::new(0.0, pitch_bend_y(8192, 72.0));
+        let target = Point::new(96.0, start.y);
+        let mut bend_state = PitchBendLaneInteraction::default();
+        bend_lane.update(
+            &mut bend_state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        bend_lane.update(
+            &mut bend_state,
+            &Event::Mouse(mouse::Event::CursorMoved { position: target }),
+            bounds,
+            mouse::Cursor::Available(target),
+        );
+        let action = bend_lane
+            .update(
+                &mut bend_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(target),
+            )
+            .expect("duplicate pitch-bend target should report why it is rejected");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(Message::MidiEditorFeedback(message)) if message.contains("same tick")
+        ));
+    }
 
     #[test]
     fn delete_key_targets_selected_pitch_notes_and_has_no_arrangement_fallback() {

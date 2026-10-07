@@ -138,6 +138,7 @@ pub(crate) enum Message {
     OpenMidiEditor(ItemId),
     CloseMidiEditor,
     SelectMidiEditorLane(MidiEditorLane),
+    MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
