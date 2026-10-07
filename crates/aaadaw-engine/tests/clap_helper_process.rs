@@ -8,6 +8,14 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+#[cfg(target_os = "linux")]
+use x11rb::connection::Connection;
+#[cfg(target_os = "linux")]
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt, EventMask, ExposeEvent, KeyButMask, KeyPressEvent,
+};
+#[cfg(target_os = "linux")]
+use x11rb::rust_connection::RustConnection;
 
 const SAMPLE_RATE: u32 = 48_000;
 const BLOCK_FRAMES: usize = 16;
@@ -316,6 +324,149 @@ fn floating_editor_can_close_reopen_and_leave_instrument_audio_running() {
     assert!(output.iter().any(|frame| frame[0] > 0.0));
     process.shutdown().unwrap();
     process.take_saved_state().unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn clap_posix_fd_callbacks_run_on_helper_main_thread_while_audio_continues() {
+    let fixture = build_test_clap_plugin();
+    let mut process = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        None,
+    )
+    .expect("helper should load the dynamic CLAP fixture");
+    wait_for_gui_status(&process, 0);
+
+    let sequence = process
+        .request_gui(true, 0)
+        .expect("GUI request uses its own bounded control field");
+    wait_for_gui_request(&process, sequence, 1);
+    let helper_pid = process
+        .process_id()
+        .expect("helper process should still be running");
+    let (x11, window) = find_fd_fixture_window(helper_pid);
+    x11.send_event(
+        false,
+        window,
+        EventMask::EXPOSURE,
+        ExposeEvent {
+            response_type: x11rb::protocol::xproto::EXPOSE_EVENT,
+            sequence: 0,
+            window,
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 200,
+            count: 0,
+        },
+    )
+    .unwrap()
+    .check()
+    .unwrap();
+
+    let note_on = [midi_event(
+        ClapIpcMidiKind::NoteOn,
+        0,
+        60,
+        100,
+        ClapIpcMidiEvent::NO_CONTROLLER,
+    )];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut audio_sequence = 0;
+    let mut output = [[0.0; 2]; 16];
+    while Instant::now() < deadline {
+        output = render_helper_block(&process, audio_sequence, &note_on);
+        audio_sequence += 1;
+        if (0.49..0.53).contains(&output[0][0]) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        (0.49..0.53).contains(&output[0][0]),
+        "the X11 Expose event should reach the non-GLib plugin event handler"
+    );
+
+    let root = x11.setup().roots[0].root;
+    x11.send_event(
+        false,
+        window,
+        EventMask::KEY_PRESS,
+        KeyPressEvent {
+            response_type: x11rb::protocol::xproto::KEY_PRESS_EVENT,
+            detail: 38,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: window,
+            child: 0,
+            root_x: 0,
+            root_y: 0,
+            event_x: 12,
+            event_y: 12,
+            state: KeyButMask::default(),
+            same_screen: true,
+        },
+    )
+    .unwrap()
+    .check()
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        output = render_helper_block(&process, audio_sequence, &note_on);
+        audio_sequence += 1;
+        if (0.74..0.78).contains(&output[0][0]) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        (0.74..0.78).contains(&output[0][0]),
+        "X11 input should trigger the plugin's GLib-integrated event source; observed {}",
+        output[0][0]
+    );
+
+    x11.destroy_window(window).unwrap().check().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while process.gui_status() != 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        process.gui_status(),
+        0,
+        "user window close reaches CLAP host"
+    );
+    let output = render_helper_block(&process, audio_sequence, &[]);
+    assert!(output.iter().all(|frame| (0.74..0.78).contains(&frame[0])));
+    process.shutdown().unwrap();
+    process.take_saved_state().unwrap();
+}
+
+#[cfg(target_os = "linux")]
+fn find_fd_fixture_window(helper_pid: u32) -> (RustConnection, u32) {
+    let (connection, screen_index) = x11rb::connect(None).expect("test client connects to Xvfb");
+    let screen = &connection.setup().roots[screen_index];
+    let expected_name = format!("AAADAW CLAP fd fixture {helper_pid}");
+    let children = connection
+        .query_tree(screen.root)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .children;
+    let window = children
+        .into_iter()
+        .find(|window| {
+            connection
+                .get_property(false, *window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 64)
+                .unwrap()
+                .reply()
+                .is_ok_and(|property| property.value == expected_name.as_bytes())
+        })
+        .expect("fixture editor should publish its X11 window name");
+    (connection, window)
 }
 
 #[cfg(target_os = "windows")]

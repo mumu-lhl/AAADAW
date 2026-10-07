@@ -430,6 +430,8 @@ pub unsafe fn run_clap_ipc_instrument_helper(
         while !region.is_shutdown() && !region.is_faulted() {
             owner.service_main_thread_callback();
             pump_plugin_gui_events();
+            #[cfg(target_os = "linux")]
+            owner.service_posix_fd_callbacks();
             if let Some(status) = owner.service_gui_host_callbacks() {
                 region.publish_gui_status(status);
             }
@@ -486,7 +488,7 @@ pub unsafe fn run_clap_ipc_instrument_helper(
 #[cfg(target_os = "linux")]
 fn pump_plugin_gui_events() {
     let context = glib::MainContext::default();
-    while context.pending() {
+    if context.pending() {
         context.iteration(false);
     }
 }

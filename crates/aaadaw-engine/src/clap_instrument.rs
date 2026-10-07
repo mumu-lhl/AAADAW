@@ -11,6 +11,8 @@ use clack_extensions::gui::{
 };
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
+#[cfg(target_os = "linux")]
+use clack_extensions::posix_fd::{FdFlags, HostPosixFd, HostPosixFdImpl, PluginPosixFd};
 use clack_extensions::state::PluginState;
 use clack_host::events::Pckn;
 use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
@@ -18,6 +20,8 @@ use clack_host::events::event_types::{
     ParamGestureBeginEvent, ParamGestureEndEvent, ParamValueEvent,
 };
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents, TryPushError};
+#[cfg(target_os = "linux")]
+use clack_host::host::MainThreadHandler;
 use clack_host::plugin::features;
 use clack_host::prelude::{
     AudioPortBuffer, AudioPortBufferType, AudioPorts, HostError, HostExtensions, HostHandlers,
@@ -31,7 +35,11 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+#[cfg(target_os = "linux")]
+use std::{collections::HashMap, os::fd::RawFd};
 
 /// Parameter metadata exposed by a CLAP effect.
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +193,31 @@ struct IsolatedInstrumentHost;
 struct IsolatedInstrumentHostShared {
     gui_events: AtomicU32,
     callback_requested: AtomicBool,
+    #[cfg(target_os = "linux")]
+    posix_fd_reactor: Arc<PosixFdReactor>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct PosixFdReactor {
+    registrations: Mutex<HashMap<RawFd, (FdFlags, glib::SourceId)>>,
+    ready_events: Arc<Mutex<Vec<(RawFd, FdFlags)>>>,
+}
+
+#[cfg(target_os = "linux")]
+struct IsolatedInstrumentHostMainThread {
+    posix_fd_reactor: Arc<PosixFdReactor>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PosixFdReactor {
+    fn drop(&mut self) {
+        if let Ok(registrations) = self.registrations.get_mut() {
+            for (_, (_, source)) in registrations.drain() {
+                source.remove();
+            }
+        }
+    }
 }
 
 impl<'a> SharedHandler<'a> for IsolatedInstrumentHostShared {
@@ -225,13 +258,128 @@ impl HostGuiImpl for IsolatedInstrumentHostShared {
     }
 }
 
+#[cfg(target_os = "linux")]
+impl MainThreadHandler<'_> for IsolatedInstrumentHostMainThread {}
+
+#[cfg(target_os = "linux")]
+impl HostPosixFdImpl for IsolatedInstrumentHostMainThread {
+    fn register_fd(&self, fd: RawFd, flags: FdFlags) -> Result<(), HostError> {
+        if fd < 0 || flags.is_empty() {
+            return Err(HostError::Message("Invalid CLAP file descriptor watch"));
+        }
+        let mut registrations = self
+            .posix_fd_reactor
+            .registrations
+            .lock()
+            .map_err(|_| HostError::Message("CLAP file descriptor registry is unavailable"))?;
+        if registrations.contains_key(&fd) {
+            return Err(HostError::Message(
+                "CLAP file descriptor is already registered",
+            ));
+        }
+        let source = make_posix_fd_source(&self.posix_fd_reactor, fd, flags);
+        registrations.insert(fd, (flags, source));
+        Ok(())
+    }
+
+    fn modify_fd(&self, fd: RawFd, flags: FdFlags) -> Result<(), HostError> {
+        if flags.is_empty() {
+            return self.unregister_fd(fd);
+        }
+        let mut registrations = self
+            .posix_fd_reactor
+            .registrations
+            .lock()
+            .map_err(|_| HostError::Message("CLAP file descriptor registry is unavailable"))?;
+        if !registrations.contains_key(&fd) {
+            return Err(HostError::Message("CLAP file descriptor is not registered"));
+        }
+        let source = make_posix_fd_source(&self.posix_fd_reactor, fd, flags);
+        if let Some((_, old_source)) = registrations.insert(fd, (flags, source)) {
+            old_source.remove();
+        }
+        Ok(())
+    }
+
+    fn unregister_fd(&self, fd: RawFd) -> Result<(), HostError> {
+        let Some((_, source)) = self
+            .posix_fd_reactor
+            .registrations
+            .lock()
+            .map_err(|_| HostError::Message("CLAP file descriptor registry is unavailable"))?
+            .remove(&fd)
+        else {
+            return Err(HostError::Message("CLAP file descriptor is not registered"));
+        };
+        source.remove();
+        if let Ok(mut ready_events) = self.posix_fd_reactor.ready_events.lock() {
+            ready_events.retain(|(event_fd, _)| *event_fd != fd);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn make_posix_fd_source(reactor: &PosixFdReactor, fd: RawFd, flags: FdFlags) -> glib::SourceId {
+    use glib::ControlFlow;
+
+    let condition = io_condition_for_fd_flags(flags);
+    let ready_events = reactor.ready_events.clone();
+    glib::source::unix_fd_add_local(fd, condition, move |ready_fd, ready_condition| {
+        let ready_flags = fd_flags_for_io_condition(ready_condition);
+        if !ready_flags.is_empty()
+            && let Ok(mut events) = ready_events.lock()
+        {
+            events.push((ready_fd, ready_flags));
+        }
+        ControlFlow::Continue
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn io_condition_for_fd_flags(flags: FdFlags) -> glib::IOCondition {
+    let mut condition = glib::IOCondition::empty();
+    if flags.contains(FdFlags::READ) {
+        condition |= glib::IOCondition::IN | glib::IOCondition::PRI;
+    }
+    if flags.contains(FdFlags::WRITE) {
+        condition |= glib::IOCondition::OUT;
+    }
+    if flags.contains(FdFlags::ERROR) {
+        condition |= glib::IOCondition::ERR | glib::IOCondition::HUP | glib::IOCondition::NVAL;
+    }
+    condition
+}
+
+#[cfg(target_os = "linux")]
+fn fd_flags_for_io_condition(condition: glib::IOCondition) -> FdFlags {
+    let mut flags = FdFlags::empty();
+    if condition.intersects(glib::IOCondition::IN | glib::IOCondition::PRI) {
+        flags |= FdFlags::READ;
+    }
+    if condition.contains(glib::IOCondition::OUT) {
+        flags |= FdFlags::WRITE;
+    }
+    if condition
+        .intersects(glib::IOCondition::ERR | glib::IOCondition::HUP | glib::IOCondition::NVAL)
+    {
+        flags |= FdFlags::ERROR;
+    }
+    flags
+}
+
 impl HostHandlers for IsolatedInstrumentHost {
     type Shared<'a> = IsolatedInstrumentHostShared;
+    #[cfg(target_os = "linux")]
+    type MainThread<'a> = IsolatedInstrumentHostMainThread;
+    #[cfg(not(target_os = "linux"))]
     type MainThread<'a> = ();
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
         builder.register::<HostGui>();
+        #[cfg(target_os = "linux")]
+        builder.register::<HostPosixFd>();
     }
 }
 
@@ -522,6 +670,40 @@ impl ClapInstrumentOwner {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn service_posix_fd_callbacks(&mut self) {
+        let Some(instance) = self.instance.as_mut() else {
+            return;
+        };
+        let ready_events = instance.access_shared_handler(|shared| {
+            let Ok(mut ready_events) = shared.posix_fd_reactor.ready_events.lock() else {
+                return Vec::new();
+            };
+            let events = std::mem::take(&mut *ready_events);
+            let Ok(registrations) = shared.posix_fd_reactor.registrations.lock() else {
+                return Vec::new();
+            };
+            events
+                .into_iter()
+                .filter_map(|(fd, flags)| {
+                    registrations
+                        .get(&fd)
+                        .map(|(registered, _)| (fd, flags & *registered))
+                })
+                .filter(|(_, flags)| !flags.is_empty())
+                .collect::<Vec<_>>()
+        });
+        if ready_events.is_empty() {
+            return;
+        }
+        let plugin = instance.plugin_handle();
+        if let Some(posix_fd) = plugin.get_extension::<PluginPosixFd>() {
+            for (fd, flags) in ready_events {
+                posix_fd.on_fd(&plugin, fd, flags);
+            }
+        }
+    }
+
     /// Loads and activates a stereo-output CLAP instrument from a library entry file.
     ///
     /// Loading runs third-party native code in this process. Call this only after the user chooses
@@ -641,6 +823,11 @@ impl ClapInstrumentOwner {
         })?;
         let mut instance = PluginInstance::<IsolatedInstrumentHost>::new(
             |_| IsolatedInstrumentHostShared::default(),
+            #[cfg(target_os = "linux")]
+            |shared| IsolatedInstrumentHostMainThread {
+                posix_fd_reactor: shared.posix_fd_reactor.clone(),
+            },
+            #[cfg(not(target_os = "linux"))]
             |_| (),
             &entry,
             &c_plugin_id,

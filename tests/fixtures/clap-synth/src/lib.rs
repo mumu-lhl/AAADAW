@@ -4,6 +4,8 @@ use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
     PluginAudioPortsImpl,
 };
+#[cfg(target_os = "linux")]
+use clack_extensions::gui::HostGui;
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window,
 };
@@ -11,6 +13,8 @@ use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
     PluginNotePortsImpl,
 };
+#[cfg(target_os = "linux")]
+use clack_extensions::posix_fd::{FdFlags, HostPosixFd, PluginPosixFd, PluginPosixFdImpl};
 use clack_extensions::state::{PluginState, PluginStateImpl};
 use clack_plugin::entry::SinglePluginEntry;
 use clack_plugin::events::spaces::CoreEventSpace;
@@ -21,17 +25,37 @@ use clack_plugin::prelude::*;
 #[cfg(target_os = "linux")]
 use std::cell::RefCell;
 use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 #[cfg(target_os = "linux")]
 use x11rb::connection::Connection;
+#[cfg(target_os = "linux")]
+use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
 const PLUGIN_ID: &str = "test.dynamic-clap";
 
 struct TestSynth;
 struct Shared(Arc<AtomicU8>);
-struct MainThread {
+struct MainThread<'a> {
     gain: Arc<AtomicU8>,
+    #[cfg(target_os = "linux")]
+    host: HostMainThreadHandle<'a>,
+    #[cfg(not(target_os = "linux"))]
+    _host: std::marker::PhantomData<&'a ()>,
+    #[cfg(target_os = "linux")]
+    host_posix_fd: Option<HostPosixFd>,
+    #[cfg(target_os = "linux")]
+    host_gui: Option<HostGui>,
+    #[cfg(target_os = "linux")]
+    main_thread_id: std::thread::ThreadId,
+    #[cfg(target_os = "linux")]
+    glib_fd_source: RefCell<Option<glib::SourceId>>,
+    #[cfg(target_os = "linux")]
+    glib_signal: RefCell<Option<UnixStream>>,
     #[cfg(target_os = "linux")]
     editor: RefCell<Option<(x11rb::rust_connection::RustConnection, u32)>>,
 }
@@ -41,18 +65,20 @@ struct AudioProcessor {
 }
 
 impl PluginShared<'_> for Shared {}
-impl PluginMainThread<'_, Shared> for MainThread {}
+impl<'a> PluginMainThread<'a, Shared> for MainThread<'a> {}
 
 impl Plugin for TestSynth {
     type AudioProcessor<'a> = AudioProcessor;
     type Shared<'a> = Shared;
-    type MainThread<'a> = MainThread;
+    type MainThread<'a> = MainThread<'a>;
 
     fn declare_extensions(builder: &mut PluginExtensions<Self>, _shared: Option<&Shared>) {
         builder.register::<PluginAudioPorts>();
         builder.register::<PluginNotePorts>();
         builder.register::<PluginState>();
         builder.register::<PluginGui>();
+        #[cfg(target_os = "linux")]
+        builder.register::<PluginPosixFd>();
     }
 }
 
@@ -73,12 +99,26 @@ impl DefaultPluginFactory for TestSynth {
         Ok(MainThread {
             gain: Arc::clone(&shared.0),
             #[cfg(target_os = "linux")]
+            host: _host,
+            #[cfg(not(target_os = "linux"))]
+            _host: std::marker::PhantomData,
+            #[cfg(target_os = "linux")]
+            host_posix_fd: _host.get_extension::<HostPosixFd>(),
+            #[cfg(target_os = "linux")]
+            host_gui: _host.get_extension::<HostGui>(),
+            #[cfg(target_os = "linux")]
+            main_thread_id: std::thread::current().id(),
+            #[cfg(target_os = "linux")]
+            glib_fd_source: RefCell::new(None),
+            #[cfg(target_os = "linux")]
+            glib_signal: RefCell::new(None),
+            #[cfg(target_os = "linux")]
             editor: RefCell::new(None),
         })
     }
 }
 
-impl PluginAudioPortsImpl for MainThread {
+impl PluginAudioPortsImpl for MainThread<'_> {
     fn count(&self, is_input: bool) -> u32 {
         u32::from(!is_input)
     }
@@ -97,7 +137,7 @@ impl PluginAudioPortsImpl for MainThread {
     }
 }
 
-impl PluginGuiImpl for MainThread {
+impl PluginGuiImpl for MainThread<'_> {
     fn is_api_supported(&self, configuration: GuiConfiguration<'_>) -> bool {
         configuration.is_floating && configuration.api_type == GuiApiType::X11
     }
@@ -116,7 +156,9 @@ impl PluginGuiImpl for MainThread {
         #[cfg(target_os = "linux")]
         {
             use x11rb::connection::Connection;
-            use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
+            use x11rb::protocol::xproto::{
+                AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode, WindowClass,
+            };
             let (connection, screen_index) =
                 x11rb::connect(None).map_err(|_| PluginError::Message("X11 connect failed"))?;
             let screen = connection
@@ -144,12 +186,89 @@ impl PluginGuiImpl for MainThread {
                 .map_err(|_| PluginError::Message("X11 window creation failed"))?
                 .check()
                 .map_err(|_| PluginError::Message("X11 window creation failed"))?;
+            connection
+                .change_window_attributes(
+                    window,
+                    &x11rb::protocol::xproto::ChangeWindowAttributesAux::new().event_mask(
+                        EventMask::EXPOSURE | EventMask::KEY_PRESS | EventMask::STRUCTURE_NOTIFY,
+                    ),
+                )
+                .map_err(|_| PluginError::Message("X11 event selection failed"))?
+                .check()
+                .map_err(|_| PluginError::Message("X11 event selection failed"))?;
+            connection
+                .change_property8(
+                    PropMode::REPLACE,
+                    window,
+                    AtomEnum::WM_NAME,
+                    AtomEnum::STRING,
+                    format!("AAADAW CLAP fd fixture {}", std::process::id()).as_bytes(),
+                )
+                .map_err(|_| PluginError::Message("X11 window naming failed"))?
+                .check()
+                .map_err(|_| PluginError::Message("X11 window naming failed"))?;
+            let posix_fd = self
+                .host_posix_fd
+                .ok_or(PluginError::Message("Host lacks POSIX fd support"))?;
+            posix_fd
+                .register_fd(&self.host, connection.stream().as_raw_fd(), FdFlags::READ)
+                .map_err(|_| PluginError::Message("POSIX fd registration failed"))?;
+            posix_fd
+                .modify_fd(
+                    &self.host,
+                    connection.stream().as_raw_fd(),
+                    FdFlags::READ | FdFlags::WRITE,
+                )
+                .map_err(|_| PluginError::Message("POSIX fd modification failed"))?;
+            posix_fd
+                .modify_fd(&self.host, connection.stream().as_raw_fd(), FdFlags::READ)
+                .map_err(|_| PluginError::Message("POSIX fd modification failed"))?;
+            let (mut reader, writer) =
+                UnixStream::pair().map_err(|_| PluginError::Message("GLib fd pair failed"))?;
+            reader
+                .set_nonblocking(true)
+                .map_err(|_| PluginError::Message("GLib fd setup failed"))?;
+            let gain = Arc::clone(&self.gain);
+            let main_thread_id = self.main_thread_id;
+            let source = glib::source::unix_fd_add_local(
+                reader.as_raw_fd(),
+                glib::IOCondition::IN,
+                move |_, _| {
+                    let mut signal = [0];
+                    if std::thread::current().id() == main_thread_id
+                        && reader.read(&mut signal).is_ok()
+                    {
+                        gain.store(96, Ordering::Relaxed);
+                    }
+                    glib::ControlFlow::Continue
+                },
+            );
+            *self.glib_fd_source.borrow_mut() = Some(source);
+            *self.glib_signal.borrow_mut() = Some(writer);
             *self.editor.borrow_mut() = Some((connection, window));
         }
         Ok(())
     }
 
     fn destroy(&self) {
+        #[cfg(target_os = "linux")]
+        if std::thread::current().id() != self.main_thread_id {
+            self.gain.store(0, Ordering::Relaxed);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(source) = self.glib_fd_source.borrow_mut().take() {
+            source.remove();
+            self.glib_signal.borrow_mut().take();
+        }
+        #[cfg(target_os = "linux")]
+        if let Some((connection, _)) = self.editor.borrow().as_ref()
+            && let Some(posix_fd) = self.host_posix_fd
+            && posix_fd
+                .unregister_fd(&self.host, connection.stream().as_raw_fd())
+                .is_err()
+        {
+            self.gain.store(0, Ordering::Relaxed);
+        }
         #[cfg(target_os = "linux")]
         if let Some((connection, window)) = self.editor.borrow_mut().take() {
             use x11rb::protocol::xproto::ConnectionExt;
@@ -214,7 +333,7 @@ impl PluginGuiImpl for MainThread {
     }
 }
 
-impl PluginNotePortsImpl for MainThread {
+impl PluginNotePortsImpl for MainThread<'_> {
     fn count(&self, is_input: bool) -> u32 {
         u32::from(is_input)
     }
@@ -231,7 +350,7 @@ impl PluginNotePortsImpl for MainThread {
     }
 }
 
-impl PluginStateImpl for MainThread {
+impl PluginStateImpl for MainThread<'_> {
     fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         output.write_all(&[self.gain.load(Ordering::Relaxed)])?;
         Ok(())
@@ -245,10 +364,43 @@ impl PluginStateImpl for MainThread {
     }
 }
 
-impl<'a> ClackPluginAudioProcessor<'a, Shared, MainThread> for AudioProcessor {
+#[cfg(target_os = "linux")]
+impl PluginPosixFdImpl for MainThread<'_> {
+    fn on_fd(&self, fd: i32, flags: FdFlags) {
+        if !flags.contains(FdFlags::READ) || std::thread::current().id() != self.main_thread_id {
+            return;
+        }
+        let editor = self.editor.borrow();
+        let Some((connection, _)) = editor.as_ref() else {
+            return;
+        };
+        if connection.stream().as_raw_fd() != fd {
+            return;
+        }
+        while let Ok(Some(event)) = connection.poll_for_event() {
+            match event {
+                x11rb::protocol::Event::Expose(_) => self.gain.store(64, Ordering::Relaxed),
+                x11rb::protocol::Event::KeyPress(_) => {
+                    self.gain.store(80, Ordering::Relaxed);
+                    if let Some(signal) = self.glib_signal.borrow_mut().as_mut() {
+                        let _ = signal.write_all(&[1]);
+                    }
+                }
+                x11rb::protocol::Event::DestroyNotify(_) => {
+                    if let Some(host_gui) = self.host_gui {
+                        host_gui.closed(&self.host.shared(), true);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl<'a> ClackPluginAudioProcessor<'a, Shared, MainThread<'a>> for AudioProcessor {
     fn activate(
         _host: HostAudioProcessorHandle<'a>,
-        _main_thread: &MainThread,
+        _main_thread: &MainThread<'a>,
         shared: &'a Shared,
         _audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {

@@ -114,6 +114,11 @@ impl ClapInstrumentHelperProcess {
         self.instance_id
     }
 
+    /// Returns the operating-system process ID while the helper is running.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.as_ref().map(Child::id)
+    }
+
     pub fn config(&self) -> ClapIpcConfig {
         self.config
     }

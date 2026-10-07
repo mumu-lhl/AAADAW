@@ -13,8 +13,10 @@ Install the stable Rust toolchain with `rustfmt` and `clippy`. The default build
 does not enable a device backend. Linux builds also need the GLib development
 package for the isolated CLAP helper's GLib main-context servicing
 (`libglib2.0-dev` on Debian/Ubuntu). This services GLib-integrated plug-in UI
-events and CLAP main-thread callbacks; it is not a universal event pump for
-every X11 toolkit:
+events and CLAP main-thread callbacks. The isolated CLAP helper also supports
+`clap.posix-fd-support` for plug-ins that integrate their main-thread event work
+through registered POSIX descriptors. Neither service runs arbitrary Qt, Xlib,
+or other toolkit event loops:
 
 ```sh
 cargo run -p aaadaw
