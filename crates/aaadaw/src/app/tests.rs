@@ -24,6 +24,45 @@ use std::time::{Duration, Instant};
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
+    let mut app = App::default();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.timeline.selected_track = None;
+    app.timeline.selected_tracks.clear();
+    let window_id = iced::window::Id::unique();
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+    let modifiers = app.keyboard_modifiers;
+    assert_eq!(modifiers, Modifiers::CTRL);
+    let _ = app.update(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+        track_id: tracks[0],
+        modifiers,
+    }));
+    let _ = app.update(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+        track_id: tracks[2],
+        modifiers,
+    }));
+
+    assert_eq!(app.timeline.selected_track, Some(tracks[2]));
+    assert_eq!(
+        app.timeline.selected_tracks,
+        HashSet::from([tracks[0], tracks[2]])
+    );
+    assert_eq!(app.selected_track_id(), Some(tracks[2]));
+}
+
+#[test]
 fn left_click_in_midi_editor_dismisses_expression_context_menus_globally() {
     let midi_editor_window_id = iced::window::Id::unique();
     let other_window_id = iced::window::Id::unique();
