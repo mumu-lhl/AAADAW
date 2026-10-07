@@ -974,6 +974,10 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
                     shell.capture_event();
                     return;
                 }
+                iced::Event::Mouse(
+                    iced::mouse::Event::ButtonPressed(mouse::Button::Right)
+                    | iced::mouse::Event::ButtonReleased(mouse::Button::Right),
+                ) if !cursor.is_over(layout.bounds()) => {}
                 iced::Event::Mouse(_) => {
                     shell.capture_event();
                     return;
@@ -996,7 +1000,7 @@ impl Widget<Message, Theme, iced::Renderer> for SliderInteraction<'_> {
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(mouse::Button::Right))
-                if state.left_pressed =>
+                if state.left_pressed && cursor.is_over(layout.bounds()) =>
             {
                 state.cancelled = true;
                 state.previous_click = None;
