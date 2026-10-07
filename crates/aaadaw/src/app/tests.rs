@@ -975,6 +975,197 @@ fn loading_a_project_clears_the_previous_time_selection() {
 }
 
 #[test]
+fn fx_chain_reordering_moves_plugin_state_and_automation_as_one_undoable_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let selected_plugin = TrackFxPlugin::new("vendor.comp", "/plugins/comp.clap")
+        .unwrap()
+        .with_enabled(false)
+        .with_state(Some(vec![1, 2, 3]));
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap(),
+                selected_plugin.clone(),
+                TrackFxPlugin::new("vendor.limit", "/plugins/limit.clap").unwrap(),
+            ],
+        },
+        "FX chain configured",
+    );
+    app.apply_action(
+        DawAction::SetTrackFxParameterAutomation {
+            track_id,
+            chain_index: 1,
+            parameter_id: 7,
+            points: vec![
+                aaadaw_core::FxParameterAutomationPoint::new(100, 0.25).unwrap(),
+                aaadaw_core::FxParameterAutomationPoint::new(200, 0.75).unwrap(),
+            ],
+        },
+        "Automation configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(1);
+
+    #[cfg(feature = "audio-device")]
+    {
+        app.playback_graph_dirty = false;
+    }
+    let _ = app.update(Message::ReorderFxChainPlugin { from: 1, to: 2 });
+    #[cfg(feature = "audio-device")]
+    assert!(app.playback_graph_dirty);
+
+    let chain = app.project.tracks()[0].fx_chain();
+    assert_eq!(chain[0].plugin_id(), "vendor.eq");
+    assert_eq!(chain[1].plugin_id(), "vendor.limit");
+    assert_eq!(chain[2].plugin_id(), "vendor.comp");
+    assert_eq!(chain[2].state(), Some(&[1, 2, 3][..]));
+    assert!(!chain[2].is_enabled());
+    assert_eq!(
+        chain[2].parameter_automation_for(7).unwrap().points().len(),
+        2
+    );
+    assert_eq!(app.fx_chain_selected_index, Some(2));
+
+    let _ = app.update(Message::Undo);
+    let chain = app.project.tracks()[0].fx_chain();
+    assert_eq!(
+        chain
+            .iter()
+            .map(TrackFxPlugin::plugin_id)
+            .collect::<Vec<_>>(),
+        ["vendor.eq", "vendor.comp", "vendor.limit"]
+    );
+    assert_eq!(chain[1].state(), Some(&[1, 2, 3][..]));
+    assert_eq!(
+        chain[1].parameter_automation_for(7).unwrap().points().len(),
+        2
+    );
+
+    let _ = app.update(Message::Redo);
+    let chain = app.project.tracks()[0].fx_chain();
+    assert_eq!(
+        chain
+            .iter()
+            .map(TrackFxPlugin::plugin_id)
+            .collect::<Vec<_>>(),
+        ["vendor.eq", "vendor.limit", "vendor.comp"]
+    );
+    assert_eq!(chain[2].state(), Some(&[1, 2, 3][..]));
+    assert_eq!(
+        chain[2].parameter_automation_for(7).unwrap().points().len(),
+        2
+    );
+}
+
+#[test]
+fn fx_chain_reordering_waits_for_pending_parameter_updates() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap(),
+                TrackFxPlugin::new("vendor.comp", "/plugins/comp.clap").unwrap(),
+            ],
+        },
+        "FX chain configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(1);
+    app.pending_fx_parameter_sync = Some(aaadaw_core::FxParameterChange {
+        track_id,
+        chain_index: 1,
+        parameter_id: 7,
+        value: 0.5,
+    });
+
+    let _ = app.update(Message::ReorderFxChainPlugin { from: 1, to: 0 });
+
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].plugin_id(),
+        "vendor.eq"
+    );
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[1].plugin_id(),
+        "vendor.comp"
+    );
+    assert!(app.pending_fx_parameter_sync.is_some());
+    assert!(app.status.contains("parameter update to finish"));
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn fx_chain_reordering_waits_for_an_active_automation_take() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap(),
+                TrackFxPlugin::new("vendor.comp", "/plugins/comp.clap").unwrap(),
+            ],
+        },
+        "FX chain configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(1);
+    app.fx_automation_write_target = Some((track_id, 1, 7));
+
+    let _ = app.update(Message::ReorderFxChainPlugin { from: 1, to: 0 });
+
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].plugin_id(),
+        "vendor.eq"
+    );
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[1].plugin_id(),
+        "vendor.comp"
+    );
+    assert_eq!(app.fx_automation_write_target, Some((track_id, 1, 7)));
+    assert!(app.status.contains("automation take"));
+}
+
+#[test]
+fn fx_chain_reordering_rejects_invalid_positions_and_tracks_shifted_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: ["eq", "comp", "limit"]
+                .into_iter()
+                .map(|name| TrackFxPlugin::new(name, format!("/plugins/{name}.clap")).unwrap())
+                .collect(),
+        },
+        "FX chain configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(1);
+    let revision_before = app.revision;
+
+    let _ = app.update(Message::ReorderFxChainPlugin {
+        from: 0,
+        to: usize::MAX,
+    });
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.fx_chain_selected_index, Some(1));
+
+    let _ = app.update(Message::ReorderFxChainPlugin { from: 2, to: 0 });
+    assert_eq!(app.project.tracks()[0].fx_chain()[0].plugin_id(), "limit");
+    assert_eq!(app.project.tracks()[0].fx_chain()[1].plugin_id(), "eq");
+    assert_eq!(app.project.tracks()[0].fx_chain()[2].plugin_id(), "comp");
+    assert_eq!(app.fx_chain_selected_index, Some(2));
+}
+
+#[test]
 fn automation_lane_view_changes_mark_the_project_dirty_for_saving() {
     let mut app = App::default();
     app.project

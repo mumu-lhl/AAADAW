@@ -164,6 +164,10 @@ pub(crate) enum Message {
     AddScannedPlugin(String),
     SelectScannedInstrument(String),
     SelectFxChainPlugin(usize),
+    ReorderFxChainPlugin {
+        from: usize,
+        to: usize,
+    },
     FxParameterChanged(u32, f64),
     CancelFxParameterGesture(u32),
     FxAutomationWriteToggled(u32),

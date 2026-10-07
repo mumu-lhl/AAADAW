@@ -54,6 +54,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     })
                     .on_press(Message::SelectFxChainPlugin(index))
                     .padding([4, 6]),
+                button("Up")
+                    .on_press_maybe((index > 0).then_some(Message::ReorderFxChainPlugin {
+                        from: index,
+                        to: index.saturating_sub(1),
+                    }),)
+                    .padding([3, 5]),
+                button("Down")
+                    .on_press_maybe((index + 1 < track.fx_chain().len()).then_some(
+                        Message::ReorderFxChainPlugin {
+                            from: index,
+                            to: index + 1,
+                        },
+                    ),)
+                    .padding([3, 5]),
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -111,7 +125,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8)
     .padding(10)
-    .width(Length::Fixed(250.0))
+    .width(Length::Fixed(290.0))
     .height(Length::Fill);
 
     let editor_panel = container(editor.width(Length::Fill))

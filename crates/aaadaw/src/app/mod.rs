@@ -467,7 +467,8 @@ struct MeterMapEdit {
 #[cfg(feature = "audio-device")]
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
-        DawAction::SetTempo { .. }
+        DawAction::SetTrackFxChain { .. }
+        | DawAction::SetTempo { .. }
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
@@ -1936,6 +1937,9 @@ impl App {
                 task = self.select_scanned_instrument(&plugin_id)
             }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
+            Message::ReorderFxChainPlugin { from, to } => {
+                task = self.reorder_fx_chain_plugin(from, to)
+            }
             Message::FxParameterChanged(id, value) => self.change_fx_parameter(id, value),
             Message::CancelFxParameterGesture(id) => self.cancel_fx_parameter_gesture(id),
             Message::FxAutomationWriteToggled(id) => {

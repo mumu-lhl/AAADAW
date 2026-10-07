@@ -594,6 +594,96 @@ impl App {
         Task::none()
     }
 
+    pub(super) fn reorder_fx_chain_plugin(&mut self, from: usize, to: usize) -> Task<Message> {
+        let Some(track_id) = self.fx_chain_track_id else {
+            return Task::none();
+        };
+        let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+        else {
+            self.status = "Track no longer exists".to_owned();
+            return Task::none();
+        };
+        let chain_len = track.fx_chain().len();
+        if from >= chain_len || to >= chain_len || from == to {
+            return Task::none();
+        }
+
+        if let Some(gesture) = self.fx_parameter_gesture.as_ref() {
+            self.end_fx_parameter_gesture(gesture.parameter_id);
+        }
+        if self.fx_parameter_gesture.is_some()
+            || self.fx_parameter_end_requested
+            || self.pending_fx_parameter_sync.is_some()
+        {
+            self.status =
+                "Wait for the active FX parameter update to finish before reordering".to_owned();
+            return Task::none();
+        }
+
+        #[cfg(feature = "audio-device")]
+        if self.fx_automation_write_target.is_some() {
+            self.finish_fx_automation_write();
+            if self.fx_automation_write_target.is_some() {
+                self.status = "Finish the active FX automation take before reordering".to_owned();
+                return Task::none();
+            }
+        }
+
+        let selected_before = self.fx_chain_selected_index;
+        let reopen_editor = self.fx_chain_plugin_gui.is_some();
+        self.close_selected_fx_plugin_gui();
+
+        let Some(track) = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)
+        else {
+            return Task::none();
+        };
+        let mut chain = track.fx_chain().to_vec();
+        if from >= chain.len() || to >= chain.len() {
+            return Task::none();
+        }
+        let plugin = chain.remove(from);
+        chain.insert(to, plugin);
+        let previous_revision = self.revision;
+        self.apply_action(
+            DawAction::SetTrackFxChain {
+                track_id,
+                plugins: chain,
+            },
+            "Track FX reordered",
+        );
+        if self.revision == previous_revision {
+            return if reopen_editor {
+                self.open_selected_fx_plugin_gui()
+            } else {
+                Task::none()
+            };
+        }
+        self.fx_chain_selected_index = selected_before.map(|selected| {
+            if selected == from {
+                to
+            } else if from < to && selected > from && selected <= to {
+                selected - 1
+            } else if from > to && selected >= to && selected < from {
+                selected + 1
+            } else {
+                selected
+            }
+        });
+        if reopen_editor {
+            self.open_selected_fx_plugin_gui()
+        } else {
+            Task::none()
+        }
+    }
+
     pub(super) fn toggle_fx_chain_plugin(&mut self, index: usize) {
         let Some(track_id) = self.fx_chain_track_id else {
             return;
