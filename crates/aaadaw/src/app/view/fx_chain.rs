@@ -240,12 +240,17 @@ fn selected_plugin_details<'a>(
         parameter_controls = parameter_controls.push(
             row![
                 parameter_label.width(Length::Fixed(120.0)),
-                slider(minimum..=maximum, value, move |value| {
-                    Message::FxParameterChanged(id, f64::from(value))
-                })
-                .step(step)
-                .on_release(Message::FxParameterEnded(id))
-                .width(Length::Fill),
+                super::arrangement::slider_interaction(
+                    slider(minimum..=maximum, value, move |value| {
+                        Message::FxParameterChanged(id, f64::from(value))
+                    })
+                    .step(step)
+                    .on_release(Message::FxParameterEnded(id))
+                    .width(Length::Fill)
+                    .into(),
+                    None,
+                    Message::CancelFxParameterGesture(id),
+                ),
                 text_input(
                     "value",
                     app.fx_parameter_value_edits

@@ -149,6 +149,7 @@ pub(crate) enum Message {
     SelectScannedInstrument(String),
     SelectFxChainPlugin(usize),
     FxParameterChanged(u32, f64),
+    CancelFxParameterGesture(u32),
     FxAutomationWriteToggled(u32),
     FxAutomationLaneToggled {
         parameter_id: u32,
@@ -220,6 +221,7 @@ pub(crate) enum Message {
     #[cfg(feature = "audio-device")]
     ToggleInputMonitor(TrackId),
     PreviewTrackVolume(TrackId, f32),
+    CancelTrackMixGesture,
     CommitTrackVolume(TrackId),
     PreviewTrackPan(TrackId, f32),
     CommitTrackPan(TrackId),

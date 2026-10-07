@@ -1104,6 +1104,22 @@ impl App {
         );
     }
 
+    pub(super) fn cancel_fx_parameter_gesture(&mut self, parameter_id: u32) {
+        let Some(gesture) = self
+            .fx_parameter_gesture
+            .as_ref()
+            .filter(|gesture| gesture.parameter_id == parameter_id)
+        else {
+            return;
+        };
+        let before = gesture.before;
+        self.change_fx_parameter(parameter_id, before);
+        self.end_fx_parameter_gesture(parameter_id);
+        if !self.fx_parameter_value_edit_pending.contains(&parameter_id) {
+            self.fx_parameter_value_edits.remove(&parameter_id);
+        }
+    }
+
     fn send_fx_parameter_command(
         &mut self,
         track_id: TrackId,

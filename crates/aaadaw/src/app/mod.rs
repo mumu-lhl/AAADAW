@@ -1765,6 +1765,7 @@ impl App {
             }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
             Message::FxParameterChanged(id, value) => self.change_fx_parameter(id, value),
+            Message::CancelFxParameterGesture(id) => self.cancel_fx_parameter_gesture(id),
             Message::FxAutomationWriteToggled(id) => {
                 #[cfg(feature = "audio-device")]
                 self.toggle_fx_automation_write(id);
@@ -2363,6 +2364,7 @@ impl App {
             Message::PreviewTrackVolume(track_id, volume_db) => {
                 self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
             }
+            Message::CancelTrackMixGesture => self.cancel_track_mix_gesture(),
             Message::CommitTrackVolume(track_id) => {
                 self.finish_track_mix_gesture(track_id, TrackMixParameter::Volume);
             }
