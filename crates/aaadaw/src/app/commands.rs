@@ -143,7 +143,11 @@ impl Shortcut {
         }
         let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
         if !(2..=3).contains(&parts.len()) {
-            return Err("Use a letter, Delete, Mod+letter, Mod+Shift+letter, or Space".to_owned());
+            return Err(format!(
+                "Use a letter, Delete, {}+letter, {}+Shift+letter, or Space",
+                shortcut_modifier_name(),
+                shortcut_modifier_name()
+            ));
         }
         let has_mod = matches!(
             parts[0].to_ascii_lowercase().as_str(),
@@ -151,7 +155,11 @@ impl Shortcut {
         );
         let shifted = parts.len() == 3 && parts[1].eq_ignore_ascii_case("shift");
         if !has_mod || (parts.len() == 3 && !shifted) {
-            return Err("Use Mod+key, Mod+Shift+key, or Space".to_owned());
+            return Err(format!(
+                "Use {}+key, {}+Shift+key, or Space",
+                shortcut_modifier_name(),
+                shortcut_modifier_name()
+            ));
         }
         let key = parts.last().copied().unwrap_or_default();
         let mut characters = key.chars();
@@ -679,48 +687,49 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
         .iter()
         .map(|definition| {
             let id = command_kind_id(definition.kind);
-            ShortcutEntry {
-                id: id.to_owned(),
-                label: definition.label.to_owned(),
-                category: definition.category.to_owned(),
-                binding: if app.shortcut_defaults_restored.contains(id) {
-                    definition
-                        .shortcuts
-                        .iter()
-                        .map(|shortcut| shortcut.config_label())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    app.shortcut_binding_edits
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts))
-                }
-                .replace("Mod+", "Ctrl/Cmd+"),
-                default_binding: definition
+            let binding = if app.shortcut_defaults_restored.contains(id) {
+                definition
                     .shortcuts
                     .iter()
                     .map(|shortcut| shortcut.config_label())
                     .collect::<Vec<_>>()
                     .join(", ")
-                    .replace("Mod+", "Ctrl/Cmd+"),
+            } else {
+                app.shortcut_binding_edits
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| config_binding_for(app, id, definition.shortcuts))
+            };
+            ShortcutEntry {
+                id: id.to_owned(),
+                label: definition.label.to_owned(),
+                category: definition.category.to_owned(),
+                binding: format_shortcut_label(&binding),
+                default_binding: format_shortcut_label(
+                    &definition
+                        .shortcuts
+                        .iter()
+                        .map(|shortcut| shortcut.config_label())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
             }
         })
         .collect::<Vec<_>>();
     entries.extend(app.action_macros.iter().map(|action_macro| {
         let id = macro_id(action_macro.id);
+        let binding = app
+            .shortcut_defaults_restored
+            .contains(&id)
+            .then(String::new)
+            .unwrap_or_else(|| {
+                app.shortcut_binding_edits
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| config_binding_for(app, &id, &[]))
+            });
         ShortcutEntry {
-            binding: app
-                .shortcut_defaults_restored
-                .contains(&id)
-                .then(String::new)
-                .unwrap_or_else(|| {
-                    app.shortcut_binding_edits
-                        .get(&id)
-                        .cloned()
-                        .unwrap_or_else(|| config_binding_for(app, &id, &[]))
-                })
-                .replace("Mod+", "Ctrl/Cmd+"),
+            binding: format_shortcut_label(&binding),
             id,
             label: action_macro.name.clone(),
             category: "Macros".to_owned(),
@@ -933,9 +942,7 @@ pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String,
     } else if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
         format!("Mod+Shift+{key}")
     } else {
-        return Err(
-            "Use a letter, Delete, Ctrl/Cmd+letter, Ctrl/Cmd+Shift+letter, or Space".to_owned(),
-        );
+        return Err(shortcut_capture_help());
     };
     Shortcut::parse(&candidate)?
         .map(Shortcut::config_label)
@@ -960,7 +967,33 @@ pub(super) fn friendly_shortcut_error(error: &str, macros: &[ActionMacro]) -> St
 }
 
 fn binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
-    config_binding_for(app, id, defaults).replace("Mod+", "Ctrl/Cmd+")
+    format_shortcut_label(&config_binding_for(app, id, defaults))
+}
+
+pub(super) fn format_shortcut_label(binding: &str) -> String {
+    format_shortcut_label_for_platform(binding, cfg!(target_os = "macos"))
+}
+
+fn format_shortcut_label_for_platform(binding: &str, is_macos: bool) -> String {
+    let modifier = format!("{}+", modifier_name_for_platform(is_macos));
+    binding
+        .replace("Ctrl/Cmd+", &modifier)
+        .replace("Mod+", &modifier)
+}
+
+pub(super) fn shortcut_modifier_name() -> &'static str {
+    modifier_name_for_platform(cfg!(target_os = "macos"))
+}
+
+fn modifier_name_for_platform(is_macos: bool) -> &'static str {
+    if is_macos { "Cmd" } else { "Ctrl" }
+}
+
+pub(super) fn shortcut_capture_help() -> String {
+    let modifier = shortcut_modifier_name();
+    format!(
+        "Select a binding, then press a letter, Delete, {modifier}+letter, {modifier}+Shift+letter, or Space."
+    )
 }
 
 fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
@@ -1411,6 +1444,42 @@ fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
 
 fn key_matches_character(key: &Key<&str>, expected: char) -> bool {
     matches!(key, Key::Character(character) if character.eq_ignore_ascii_case(&expected.to_string()))
+}
+
+#[cfg(test)]
+mod shortcut_label_tests {
+    use super::*;
+
+    #[test]
+    fn shortcut_labels_use_the_platform_modifier_name() {
+        assert_eq!(
+            format_shortcut_label_for_platform("Mod+Shift+S", true),
+            "Cmd+Shift+S"
+        );
+        assert_eq!(
+            format_shortcut_label_for_platform("Ctrl/Cmd+N", true),
+            "Cmd+N"
+        );
+        assert_eq!(
+            format_shortcut_label_for_platform("Mod+Shift+S", false),
+            "Ctrl+Shift+S"
+        );
+        assert_eq!(
+            format_shortcut_label_for_platform("Ctrl/Cmd+N", false),
+            "Ctrl+N"
+        );
+        let current_modifier = if cfg!(target_os = "macos") {
+            "Cmd"
+        } else {
+            "Ctrl"
+        };
+        assert_eq!(
+            shortcut_capture_help(),
+            format!(
+                "Select a binding, then press a letter, Delete, {current_modifier}+letter, {current_modifier}+Shift+letter, or Space."
+            )
+        );
+    }
 }
 
 #[cfg(test)]
