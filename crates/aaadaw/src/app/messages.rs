@@ -164,6 +164,10 @@ pub(crate) enum Message {
     AddScannedPlugin(String),
     SelectScannedInstrument(String),
     SelectFxChainPlugin(usize),
+    BeginFxChainPluginDrag(usize),
+    HoverFxChainPluginDragTarget(usize),
+    LeaveFxChainPluginDragTarget(usize),
+    FinishFxChainPluginDrag,
     ReorderFxChainPlugin {
         from: usize,
         to: usize,

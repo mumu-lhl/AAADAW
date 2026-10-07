@@ -23,6 +23,54 @@ fn x11_window_id(handle: RawWindowHandle) -> Option<u64> {
 }
 
 impl App {
+    pub(super) fn selected_fx_chain_instance_id(&self) -> Option<u64> {
+        let track_id = self.fx_chain_track_id?;
+        let index = self.fx_chain_selected_index?;
+        self.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id)?
+            .fx_chain()
+            .get(index)
+            .map(TrackFxPlugin::instance_id)
+    }
+
+    pub(super) fn restore_fx_chain_selection(&mut self, instance_id: Option<u64>) {
+        let Some(track_id) = self.fx_chain_track_id else {
+            return;
+        };
+        self.fx_chain_selected_index = instance_id.and_then(|instance_id| {
+            self.project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)?
+                .fx_chain()
+                .iter()
+                .position(|plugin| plugin.instance_id() == instance_id)
+        });
+        let rebound_gui_identity = self.fx_chain_selected_index.and_then(|index| {
+            let plugin = self
+                .project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == track_id)?
+                .fx_chain()
+                .get(index)?;
+            Some((track_id, index, plugin.plugin_id().to_owned()))
+        });
+        if self.fx_chain_plugin_gui.is_some() {
+            if let Some(identity) = rebound_gui_identity {
+                self.fx_chain_plugin_gui_identity = Some(identity);
+            } else {
+                if let Some(mut plugin_gui) = self.fx_chain_plugin_gui.take() {
+                    plugin_gui.close();
+                }
+                self.fx_chain_plugin_gui_identity = None;
+                self.fx_chain_parameters.clear();
+            }
+        }
+    }
+
     #[cfg(feature = "audio-device")]
     pub(super) fn toggle_fx_automation_write(&mut self, parameter_id: u32) {
         let Some(track_id) = self.fx_chain_track_id else {
