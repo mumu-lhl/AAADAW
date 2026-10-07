@@ -33,8 +33,12 @@ input/output is not implemented yet. CI builds ARM64 and x86_64 APK libraries
 and launches the app on an API 35 emulator through relaunch, larger font scale,
 orientation changes, and screenshot capture. When an output stream is lost,
 AAADAW attempts to reopen it and resume from the last reported sample; if the
-route remains unavailable, playback stops safely. Input failure finalizes the
-current take and requires recording to be started again. Validate SAF providers,
+route remains unavailable, playback stops safely. If an input route is lost
+while recording, AAADAW closes the old stream and tries to reopen the selected
+input. Captured frame timestamps preserve the interruption as silence in the
+take. If reopening fails, AAADAW finalizes the audio captured before the route
+loss; interruptions longer than ten seconds keep recoverable data and report a
+timing error. Validate SAF providers,
 audio-route recovery, background recording, MIDI devices, system bars, screen
 rotation, and font scaling on a physical ARM64 device before distributing a
 release build.
