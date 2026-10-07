@@ -110,6 +110,8 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Set a MIDI item's user-visible name.
+    SetMidiItemName { item_id: ItemId, name: String },
     /// Move a MIDI item and/or change its length without discarding notes.
     EditMidiItem {
         item_id: ItemId,

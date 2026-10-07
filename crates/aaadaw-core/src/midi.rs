@@ -100,6 +100,7 @@ impl MidiNote {
 pub struct MidiItem {
     pub(crate) id: ItemId,
     pub(crate) track_id: TrackId,
+    pub(crate) name: String,
     pub(crate) start_tick: u64,
     pub(crate) length_ticks: u64,
     pub(crate) notes: Arc<Vec<MidiNote>>,
@@ -116,6 +117,11 @@ impl MidiItem {
     /// Returns the identifier of the track containing this item.
     pub fn track_id(&self) -> TrackId {
         self.track_id
+    }
+
+    /// Returns the user-visible name of this MIDI item.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the item's start position in project ticks.
