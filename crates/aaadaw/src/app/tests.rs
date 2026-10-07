@@ -1476,7 +1476,7 @@ fn track_fx_add_button_opens_a_scanned_plugin_picker_and_chain_edits_use_actions
 }
 
 #[test]
-fn fx_parameter_slider_commits_one_undoable_gesture() {
+fn fx_parameter_slider_commits_or_cancels_one_undoable_gesture() {
     let mut app = App::default();
     app.project
         .apply(DawAction::CreateTrack {
@@ -1540,6 +1540,15 @@ fn fx_parameter_slider_commits_one_undoable_gesture() {
         app.project.tracks()[0].fx_chain()[0].parameter_value(12),
         Some(12.0)
     );
+    let revision = app.revision;
+    let _ = app.update(Message::FxParameterChanged(12, 18.0));
+    let _ = app.update(Message::CancelFxParameterGesture(12));
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].parameter_value(12),
+        Some(12.0)
+    );
+    assert!(app.fx_parameter_gesture.is_none());
+    assert_eq!(app.revision, revision);
 
     let _ = app.update(Message::FxParameterValueTextChanged(
         12,
@@ -2904,6 +2913,27 @@ fn dragging_track_volume_commits_one_undoable_action() {
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
     let _ = app.update(Message::Undo);
     assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn right_click_cancels_a_track_mix_slider_gesture() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::SetTrackVolume {
+            track_id,
+            volume_db: -6.0,
+        })
+        .expect("track volume should be set");
+    let revision = app.revision;
+
+    let _ = app.update(Message::PreviewTrackVolume(track_id, -2.0));
+    let _ = app.update(Message::CancelTrackMixGesture);
+
+    assert_eq!(app.project.tracks()[0].volume_db(), -6.0);
+    assert!(app.track_mix_gesture.is_none());
+    assert_eq!(app.revision, revision);
 }
 
 #[test]
