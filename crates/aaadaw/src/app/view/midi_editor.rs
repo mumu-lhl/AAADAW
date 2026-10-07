@@ -1336,6 +1336,7 @@ struct Interaction {
     empty_drag: Option<EmptySpaceGesture>,
     last_empty_click: Option<(Instant, Point)>,
     hovered_velocity_note: Option<NoteId>,
+    hovered_pitch: Option<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -1406,6 +1407,17 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 self.region == RollRegion::Pitch,
             )
             .map(canvas::Action::publish);
+        }
+        if self.region == RollRegion::Pitch
+            && let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
+        {
+            let hovered_pitch = cursor
+                .position_in(bounds)
+                .and_then(|position| self.piano_key_pitch_at(position));
+            if state.hovered_pitch != hovered_pitch {
+                state.hovered_pitch = hovered_pitch;
+                return Some(canvas::Action::request_redraw());
+            }
         }
         if self.region == RollRegion::Pitch
             && let Event::Keyboard(keyboard::Event::KeyPressed {
@@ -1857,7 +1869,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         for row in 0..self.pitch_rows {
             let pitch = self.high_pitch.saturating_sub(row);
             let y = grid_top + f32::from(row) * self.pitch_row_height;
-            let black = matches!(pitch % 12, 1 | 3 | 6 | 8 | 10);
+            let black = is_black_key(pitch);
             let row_color = if black {
                 Color::from_rgb8(31, 35, 38)
             } else {
@@ -1875,25 +1887,36 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     .with_color(Color::from_rgb8(52, 59, 63))
                     .with_width(0.7),
             );
-            let key = canvas::Path::rectangle(
-                Point::new(0.0, y),
-                Size::new(KEY_WIDTH, self.pitch_row_height),
-            );
-            frame.fill(
-                &key,
-                if black {
-                    Color::from_rgb8(46, 51, 54)
-                } else {
-                    Color::from_rgb8(66, 72, 76)
-                },
-            );
-            if pitch % 12 == 0 || row == 0 {
+            if !black {
+                let key = piano_key_rect(pitch, y, self.pitch_row_height);
+                let hovered = state.hovered_pitch == Some(pitch);
+                frame.fill_rectangle(
+                    Point::new(key.x, key.y),
+                    Size::new(key.width, key.height),
+                    if hovered {
+                        Color::from_rgb8(220, 229, 232)
+                    } else {
+                        Color::from_rgb8(205, 211, 213)
+                    },
+                );
+                let outline = canvas::Path::rectangle(
+                    Point::new(key.x, key.y),
+                    Size::new(key.width, key.height),
+                );
+                frame.stroke(
+                    &outline,
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgb8(81, 89, 93))
+                        .with_width(0.8),
+                );
+            }
+            if pitch % 12 == 0 && self.pitch_row_height >= 11.0 {
                 frame.fill_text(Text {
                     content: pitch_name(pitch),
                     position: Point::new(KEY_WIDTH - 5.0, y + self.pitch_row_height / 2.0),
                     max_width: KEY_WIDTH - 8.0,
-                    color: Color::from_rgb8(218, 222, 224),
-                    size: Pixels(10.0),
+                    color: Color::from_rgb8(31, 37, 40),
+                    size: Pixels(11.0),
                     line_height: LineHeight::Relative(1.0),
                     font: Font::default(),
                     align_x: TextAlignment::Right,
@@ -1901,6 +1924,49 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     shaping: Shaping::Basic,
                 });
             }
+        }
+        for row in 0..self.pitch_rows {
+            let pitch = self.high_pitch.saturating_sub(row);
+            if !is_black_key(pitch) {
+                continue;
+            }
+            let y = grid_top + f32::from(row) * self.pitch_row_height;
+            let key = piano_key_rect(pitch, y, self.pitch_row_height);
+            let hovered = state.hovered_pitch == Some(pitch);
+            frame.fill_rectangle(
+                Point::new(key.x, key.y),
+                Size::new(key.width, key.height),
+                if hovered {
+                    Color::from_rgb8(63, 72, 77)
+                } else {
+                    Color::from_rgb8(27, 32, 35)
+                },
+            );
+            let outline =
+                canvas::Path::rectangle(Point::new(key.x, key.y), Size::new(key.width, key.height));
+            frame.stroke(
+                &outline,
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgb8(14, 17, 19))
+                    .with_width(0.9),
+            );
+        }
+        if let Some(pitch) = state.hovered_pitch {
+            let badge =
+                canvas::Path::rectangle(Point::new(0.0, 0.0), Size::new(KEY_WIDTH, HEADER_HEIGHT));
+            frame.fill(&badge, Color::from_rgb8(34, 39, 42));
+            frame.fill_text(Text {
+                content: pitch_name(pitch),
+                position: Point::new(KEY_WIDTH / 2.0, HEADER_HEIGHT / 2.0),
+                max_width: KEY_WIDTH - 8.0,
+                color: Color::from_rgb8(236, 240, 242),
+                size: Pixels(12.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Center,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
         }
         let item_end_x = grid_left + mapping.x_at_tick(self.item.length_ticks());
         if item_end_x < bounds.width {
@@ -2065,6 +2131,14 @@ fn wheel_navigation_message(
 }
 
 impl PianoRoll<'_> {
+    fn piano_key_pitch_at(&self, position: Point) -> Option<u8> {
+        if position.x >= KEY_WIDTH || position.y < HEADER_HEIGHT {
+            return None;
+        }
+        let row = ((position.y - HEADER_HEIGHT) / self.pitch_row_height).floor() as u8;
+        (row < self.pitch_rows).then(|| self.high_pitch.saturating_sub(row))
+    }
+
     fn roll_point(&self, position: Point) -> Point {
         Point::new(
             position.x
@@ -2409,6 +2483,28 @@ fn pitch_name(pitch: u8) -> String {
     )
 }
 
+fn is_black_key(pitch: u8) -> bool {
+    matches!(pitch % 12, 1 | 3 | 6 | 8 | 10)
+}
+
+fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
+    if is_black_key(pitch) {
+        Rectangle {
+            x: 0.0,
+            y: row_y + row_height * 0.08,
+            width: KEY_WIDTH * 0.62,
+            height: row_height * 0.84,
+        }
+    } else {
+        Rectangle {
+            x: 0.0,
+            y: row_y,
+            width: KEY_WIDTH,
+            height: row_height,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2424,6 +2520,20 @@ mod tests {
         assert_eq!(epoch, 5);
     }
     use iced::widget::canvas::Program;
+
+    #[test]
+    fn piano_keyboard_geometry_places_narrow_black_keys_over_full_white_keys() {
+        let white = piano_key_rect(60, 20.0, 18.0);
+        let black = piano_key_rect(61, 38.0, 18.0);
+
+        assert!(!is_black_key(60));
+        assert!(is_black_key(61));
+        assert_eq!(white.width, KEY_WIDTH);
+        assert!(black.width < white.width);
+        assert!(black.height < 18.0);
+        assert!(black.y > 38.0);
+        assert!(black.y + black.height < 56.0);
+    }
 
     #[test]
     fn visible_caret_falls_back_to_the_clipboards_default_paste_target() {
