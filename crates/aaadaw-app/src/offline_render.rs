@@ -668,6 +668,23 @@ pub fn render_freeze_track_to_float32_wav(
         );
         return Err(OfflineRenderError::Cancelled);
     }
+    // Open the destination before installing processors in the graph. If the destination is
+    // unavailable, the processors are still owned by the local vectors and can be deactivated
+    // through the normal uninstalled-processor cleanup path.
+    let export = Float32WavExport::create(destination.as_ref(), sample_rate)
+        .map_err(OfflineRenderError::Float32Wav);
+    let export = match export {
+        Ok(export) => export,
+        Err(error) => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(error);
+        }
+    };
     if let Err(error) = prepared
         .graph_mut()
         .install_instrument_processors(&source_project, &mut instrument_processors)
@@ -692,20 +709,6 @@ pub fn render_freeze_track_to_float32_wav(
         cleanup_uninstalled_processors(Vec::new(), Vec::new(), effect_owners, effect_processors);
         return Err(OfflineRenderError::Media(error.to_string()));
     }
-    let export = Float32WavExport::create(destination.as_ref(), sample_rate)
-        .map_err(OfflineRenderError::Float32Wav);
-    let export = match export {
-        Ok(export) => export,
-        Err(error) => {
-            cleanup_uninstalled_processors(
-                instrument_owners,
-                instrument_processors,
-                effect_owners,
-                effect_processors,
-            );
-            return Err(error);
-        }
-    };
     let result = render_graph_with_waiter(
         prepared.graph_mut(),
         RenderRequest {
