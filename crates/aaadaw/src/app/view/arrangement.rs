@@ -870,7 +870,7 @@ fn record_left_click(previous_click: &mut Option<mouse::Click>, position: iced::
     click.kind() == mouse::click::Kind::Double
 }
 
-fn invalidate_click_after_drag(state: &mut DoubleClickResetState, position: iced::Point) {
+fn invalidate_click_after_drag(state: &mut SliderInteractionState, position: iced::Point) {
     if state
         .press_position
         .is_some_and(|start| start.distance(position) >= 6.0)
