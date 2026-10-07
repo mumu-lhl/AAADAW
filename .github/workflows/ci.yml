@@ -12,15 +12,15 @@ jobs:
     name: Build and launch Android APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,x86_64-linux-android
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4.0.4
       - name: Install Android SDK and NDK
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
       - name: Set Android Java API jar
@@ -52,7 +52,7 @@ jobs:
         with:
           name: aaadaw-android-debug
           path: android-apk
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4.0.4
       - name: Launch APK and verify foreground activity
         uses: reactivecircus/android-emulator-runner@v2
         with:
