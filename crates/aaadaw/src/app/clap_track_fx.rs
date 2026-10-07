@@ -286,6 +286,9 @@ impl App {
         let max_block_frames = prepared.graph().max_block_frames();
 
         for track in self.project.tracks() {
+            if track.is_frozen() {
+                continue;
+            }
             for (chain_index, plugin) in track.fx_chain().iter().enumerate() {
                 if !plugin.is_enabled() {
                     continue;

@@ -286,6 +286,9 @@ pub(crate) enum Message {
     ),
     CancelOfflineRender,
     OfflineRenderFinished(Result<PathBuf, String>),
+    FreezeTrack(TrackId),
+    FreezeTrackFinished(Result<FreezeTrackResult, String>),
+    UnfreezeTrack(TrackId),
     RecordingRecoveryScanned(
         PathBuf,
         Result<Vec<aaadaw_app::RecordingRecoveryCandidate>, String>,
@@ -363,4 +366,12 @@ pub(crate) enum Message {
         )
     ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FreezeTrackResult {
+    pub track_id: TrackId,
+    pub media_ref: String,
+    pub start_sample: u64,
+    pub length_samples: u64,
 }

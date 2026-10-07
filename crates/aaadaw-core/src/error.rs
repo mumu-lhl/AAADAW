@@ -26,6 +26,19 @@ pub enum ActionError {
         track_id: TrackId,
     },
     InvalidTrackInstrument,
+    TrackCannotBeFrozen,
+    TrackAlreadyFrozen {
+        track_id: TrackId,
+    },
+    CannotEditFrozenTrackSource {
+        track_id: TrackId,
+    },
+    TrackNotFrozen {
+        track_id: TrackId,
+    },
+    FrozenRenderCannotBeEdited {
+        item_id: ItemId,
+    },
     InvalidTrackFxPlugin,
     InvalidTrackFxParameter,
     InvalidTrackFxParameterAutomation,
@@ -125,6 +138,25 @@ impl fmt::Display for ActionError {
             ),
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
+            Self::TrackCannotBeFrozen => formatter.write_str(
+                "freeze requires a non-bus instrument track with MIDI note content and no audio items",
+            ),
+            Self::TrackAlreadyFrozen { track_id } => {
+                write!(formatter, "track {} is already frozen", track_id.value())
+            }
+            Self::CannotEditFrozenTrackSource { track_id } => write!(
+                formatter,
+                "track {} must be unfrozen before changing its content or live source",
+                track_id.value()
+            ),
+            Self::TrackNotFrozen { track_id } => {
+                write!(formatter, "track {} is not frozen", track_id.value())
+            }
+            Self::FrozenRenderCannotBeEdited { item_id } => write!(
+                formatter,
+                "frozen render item {} can only be changed by unfreezing its track",
+                item_id.value()
+            ),
             Self::InvalidTrackFxPlugin => {
                 formatter.write_str("track FX entries must have a plugin ID and bundle path")
             }

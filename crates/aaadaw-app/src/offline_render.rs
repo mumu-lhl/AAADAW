@@ -1,5 +1,8 @@
 use crate::prepare_audio_playback;
-use crate::{Pcm24WavExport, Pcm24WavExportError, PreparedAudioPlayback};
+use crate::{
+    Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
+    PreparedAudioPlayback,
+};
 use aaadaw_core::{ItemId, Project};
 use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
@@ -7,18 +10,65 @@ use aaadaw_engine::{
 };
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-/// The fixed decay allowance appended after the last placed audio/MIDI item.
+/// Export decay allowance and minimum fallback when frozen CLAP plugins do not report longer tails.
 pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrozenTrackRender {
+    pub start_sample: u64,
+    pub length_samples: u64,
+}
+
+trait OfflineWavWriter {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError>;
+    fn finish(self) -> Result<PathBuf, OfflineRenderError>;
+}
+
+impl OfflineWavWriter for Pcm24WavExport {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        Pcm24WavExport::write_frames(self, frames).map_err(OfflineRenderError::Wav)
+    }
+
+    fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+        Pcm24WavExport::finish(self).map_err(OfflineRenderError::Wav)
+    }
+}
+
+impl OfflineWavWriter for Float32WavExport {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        Float32WavExport::write_frames(self, frames).map_err(OfflineRenderError::Float32Wav)
+    }
+
+    fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+        Float32WavExport::finish(self).map_err(OfflineRenderError::Float32Wav)
+    }
+}
+
+fn freeze_tail_frames(
+    sample_rate: u32,
+    plugin_tail_frames: &[u32],
+) -> Result<u64, OfflineRenderError> {
+    let minimum_tail = u64::from(sample_rate)
+        .checked_mul(u64::from(DEFAULT_EFFECT_TAIL_SECONDS))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let reported_tail = plugin_tail_frames.iter().try_fold(0_u64, |total, frames| {
+        total
+            .checked_add(u64::from(*frames))
+            .ok_or(OfflineRenderError::TimelineRange)
+    })?;
+    Ok(minimum_tail.max(reported_tail))
+}
 
 /// Failure while rendering a prepared graph to an offline PCM WAV file.
 #[derive(Debug)]
 pub enum OfflineRenderError {
     Wav(Pcm24WavExportError),
+    Float32Wav(Float32WavExportError),
     Graph(AudioGraphError),
     Cancelled,
     InputUnderrun { samples: usize },
@@ -28,9 +78,8 @@ pub enum OfflineRenderError {
 }
 
 struct RenderRequest<'a> {
-    destination: &'a Path,
-    sample_rate: u32,
     total_frames: u64,
+    start_sample: u64,
     cancelled: &'a AtomicBool,
 }
 
@@ -38,6 +87,7 @@ impl std::fmt::Display for OfflineRenderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Wav(error) => error.fmt(formatter),
+            Self::Float32Wav(error) => error.fmt(formatter),
             Self::Graph(error) => write!(formatter, "offline render failed: {error}"),
             Self::Cancelled => formatter.write_str("offline render was cancelled"),
             Self::InputUnderrun { samples } => write!(
@@ -61,6 +111,7 @@ impl std::error::Error for OfflineRenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Wav(error) => Some(error),
+            Self::Float32Wav(error) => Some(error),
             Self::Graph(error) => Some(error),
             Self::Media(_)
             | Self::Cancelled
@@ -116,14 +167,16 @@ pub fn render_graph_to_pcm24_wav(
     cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
+    let export = Pcm24WavExport::create(destination.as_ref(), sample_rate)
+        .map_err(OfflineRenderError::Wav)?;
     render_graph_with_waiter(
         graph,
         RenderRequest {
-            destination: destination.as_ref(),
-            sample_rate,
             total_frames,
+            start_sample: 0,
             cancelled,
         },
+        export,
         |_, frames| Ok(frames),
         || Ok(()),
         &mut report_progress,
@@ -162,14 +215,20 @@ fn render_prepared_inner(
     let feeders = RefCell::new(feeders.into_iter().map(Some).collect::<Vec<_>>());
     let item_ids: Vec<_> = project.audio_items().iter().map(|item| item.id()).collect();
     let sample_rate = project.settings().sample_rate();
+    let export =
+        Pcm24WavExport::create(destination.as_ref(), sample_rate).map_err(OfflineRenderError::Wav);
+    let export = match export {
+        Ok(export) => export,
+        Err(error) => return (graph, Err(error)),
+    };
     let result = render_graph_with_waiter(
         &mut graph,
         RenderRequest {
-            destination: destination.as_ref(),
-            sample_rate,
             total_frames,
+            start_sample: 0,
             cancelled,
         },
+        export,
         |graph, requested_frames| loop {
             let available_frames =
                 graph.audio_item_frames_available_for_next_block(requested_frames);
@@ -257,6 +316,9 @@ pub fn render_project_file_to_pcm24_wav(
     let sample_rate = project.settings().sample_rate();
     let max_block_frames = prepared.graph().max_block_frames();
     for track in project.tracks() {
+        if track.is_frozen() {
+            continue;
+        }
         if cancelled.load(Ordering::Acquire) {
             cleanup_uninstalled_processors(
                 instrument_owners,
@@ -379,6 +441,297 @@ pub fn render_project_file_to_pcm24_wav(
     result
 }
 
+/// Renders one instrument track to float WAV from its first MIDI item through its last item and
+/// the plugin tail. Float output preserves headroom because track and Master gain remain live
+/// after freezing. Track gain, pan, routing, mute, solo, and volume automation are neutralized in
+/// this temporary source render. The saved project and playback graph are never modified.
+pub fn render_freeze_track_to_float32_wav(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    track_id: aaadaw_core::TrackId,
+    destination: impl AsRef<Path>,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<FrozenTrackRender, OfflineRenderError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+    let track = project
+        .tracks()
+        .iter()
+        .find(|track| track.id() == track_id)
+        .ok_or_else(|| OfflineRenderError::Media("freeze track no longer exists".into()))?;
+    if track.is_frozen() || track.is_bus() || track.instrument().is_none() {
+        return Err(OfflineRenderError::Media(
+            "only an unfrozen instrument track can be frozen".into(),
+        ));
+    }
+    let midi_items: Vec<_> = project
+        .midi_items()
+        .iter()
+        .filter(|item| item.track_id() == track_id)
+        .collect();
+    if !midi_items.iter().any(|item| !item.notes().is_empty()) {
+        return Err(OfflineRenderError::Media(
+            "track has no MIDI notes to render".into(),
+        ));
+    }
+    let mut start_sample = u64::MAX;
+    let mut content_end = 0_u64;
+    for item in &midi_items {
+        let end_tick = item
+            .start_tick()
+            .checked_add(item.length_ticks())
+            .ok_or(OfflineRenderError::TimelineRange)?;
+        start_sample = start_sample.min(
+            project
+                .sample_at_tick(item.start_tick())
+                .map_err(|_| OfflineRenderError::TimelineRange)?,
+        );
+        content_end = content_end.max(
+            project
+                .sample_at_tick(end_tick)
+                .map_err(|_| OfflineRenderError::TimelineRange)?,
+        );
+    }
+    let mut snapshot = project.snapshot();
+    snapshot
+        .tracks
+        .retain(|candidate| candidate.id == track_id.value());
+    let source_track = snapshot
+        .tracks
+        .first_mut()
+        .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
+    source_track.output_track_id = None;
+    source_track.volume_db = 0.0;
+    source_track.pan = 0.0;
+    source_track.muted = false;
+    source_track.solo = false;
+    source_track.record_armed = false;
+    source_track.volume_automation.clear();
+    source_track.frozen_audio_item_id = None;
+    snapshot.audio_items.clear();
+    snapshot
+        .midi_items
+        .retain(|item| item.track_id == track_id.value());
+    let source_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+
+    let store = ProjectStore::open(project_path.as_ref())
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let prepared = prepare_audio_playback(&source_project, &store, 16_384, 2_048)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let close = store
+        .close()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let mut prepared = prepared?;
+    close?;
+    prepared
+        .graph()
+        .master_output_safety_controller()
+        .set_guard_enabled(false);
+
+    let mut instrument_owners = Vec::new();
+    let mut instrument_processors = Vec::new();
+    let mut effect_owners = Vec::new();
+    let mut effect_processors = Vec::new();
+    let mut plugin_tail_frames = Vec::new();
+    let sample_rate = source_project.settings().sample_rate();
+    let max_block_frames = prepared.graph().max_block_frames();
+    let source_track = &source_project.tracks()[0];
+    let instrument = source_track
+        .instrument()
+        .expect("validated freeze source has an instrument");
+    let max_events = prepared.graph().midi_event_capacity_for_track(track_id);
+    // SAFETY: this saved instrument was assigned through the normal plugin UI.
+    let loaded = unsafe {
+        ClapInstrumentOwner::load_with_state(
+            Path::new(instrument.bundle_path()),
+            instrument.plugin_id(),
+            instrument.state(),
+            sample_rate,
+            max_block_frames,
+            max_events,
+        )
+    }
+    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let (owner, mut processor) = loaded;
+    match processor.tail_length_samples() {
+        Some(frames) => plugin_tail_frames.push(frames),
+        None => {
+            instrument_owners.push((owner.instance_id(), owner));
+            instrument_processors.push(TrackInstrumentProcessor::new(track_id, processor));
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(OfflineRenderError::Media(
+                "cannot freeze a plugin that reports an infinite tail".into(),
+            ));
+        }
+    }
+    instrument_owners.push((owner.instance_id(), owner));
+    instrument_processors.push(TrackInstrumentProcessor::new(track_id, processor));
+    for (chain_index, effect) in source_track.fx_chain().iter().enumerate() {
+        if !effect.is_enabled() {
+            continue;
+        }
+        let parameter_values: Vec<_> = effect.parameter_values().collect();
+        // SAFETY: this saved effect was assigned through the normal plugin UI.
+        let loaded = unsafe {
+            ClapEffectOwner::load_with_state(
+                Path::new(effect.bundle_path()),
+                effect.plugin_id(),
+                effect.state(),
+                &parameter_values,
+                sample_rate,
+                max_block_frames,
+            )
+        };
+        let (owner, mut processor) = match loaded {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                cleanup_uninstalled_processors(
+                    instrument_owners,
+                    instrument_processors,
+                    effect_owners,
+                    effect_processors,
+                );
+                return Err(OfflineRenderError::Media(error.to_string()));
+            }
+        };
+        match processor.tail_length_samples() {
+            Some(frames) => plugin_tail_frames.push(frames),
+            None => {
+                effect_owners.push((owner.instance_id(), owner));
+                effect_processors.push(TrackFxProcessor::new(
+                    track_id,
+                    chain_index,
+                    effect.plugin_id(),
+                    processor,
+                ));
+                cleanup_uninstalled_processors(
+                    instrument_owners,
+                    instrument_processors,
+                    effect_owners,
+                    effect_processors,
+                );
+                return Err(OfflineRenderError::Media(
+                    "cannot freeze a plugin that reports an infinite tail".into(),
+                ));
+            }
+        }
+        effect_owners.push((owner.instance_id(), owner));
+        effect_processors.push(TrackFxProcessor::new(
+            track_id,
+            chain_index,
+            effect.plugin_id(),
+            processor,
+        ));
+    }
+    let tail_frames = match freeze_tail_frames(sample_rate, &plugin_tail_frames) {
+        Ok(frames) => frames,
+        Err(error) => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(error);
+        }
+    };
+    let total_frames = match content_end
+        .checked_add(tail_frames)
+        .and_then(|end_sample| end_sample.checked_sub(start_sample))
+        .filter(|frames| *frames > 0)
+    {
+        Some(frames) => frames,
+        None => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(OfflineRenderError::TimelineRange);
+        }
+    };
+    if cancelled.load(Ordering::Acquire) {
+        cleanup_uninstalled_processors(
+            instrument_owners,
+            instrument_processors,
+            effect_owners,
+            effect_processors,
+        );
+        return Err(OfflineRenderError::Cancelled);
+    }
+    // Open the destination before installing processors in the graph. If the destination is
+    // unavailable, the processors are still owned by the local vectors and can be deactivated
+    // through the normal uninstalled-processor cleanup path.
+    let export = Float32WavExport::create(destination.as_ref(), sample_rate)
+        .map_err(OfflineRenderError::Float32Wav);
+    let export = match export {
+        Ok(export) => export,
+        Err(error) => {
+            cleanup_uninstalled_processors(
+                instrument_owners,
+                instrument_processors,
+                effect_owners,
+                effect_processors,
+            );
+            return Err(error);
+        }
+    };
+    if let Err(error) = prepared
+        .graph_mut()
+        .install_instrument_processors(&source_project, &mut instrument_processors)
+    {
+        cleanup_uninstalled_processors(
+            instrument_owners,
+            instrument_processors,
+            effect_owners,
+            effect_processors,
+        );
+        return Err(OfflineRenderError::Media(error.to_string()));
+    }
+    if let Err(error) = prepared
+        .graph_mut()
+        .install_fx_processors(&source_project, &mut effect_processors)
+    {
+        let _ = prepared.graph_mut().stop_processors_after_offline_render();
+        deactivate_instruments(
+            prepared.graph_mut().take_stopped_instruments(),
+            instrument_owners,
+        );
+        cleanup_uninstalled_processors(Vec::new(), Vec::new(), effect_owners, effect_processors);
+        return Err(OfflineRenderError::Media(error.to_string()));
+    }
+    let result = render_graph_with_waiter(
+        prepared.graph_mut(),
+        RenderRequest {
+            total_frames,
+            start_sample,
+            cancelled,
+        },
+        export,
+        |_, frames| Ok(frames),
+        || Ok(()),
+        &mut report_progress,
+    );
+    let graph = prepared.graph_mut();
+    let _ = graph.stop_processors_after_offline_render();
+    deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
+    deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
+    result?;
+    Ok(FrozenTrackRender {
+        start_sample,
+        length_samples: total_frames,
+    })
+}
+
 fn cleanup_uninstalled_processors(
     mut instrument_owners: Vec<(u64, ClapInstrumentOwner)>,
     instruments: Vec<TrackInstrumentProcessor>,
@@ -456,28 +809,26 @@ fn deactivate_effects(
     }
 }
 
-fn render_graph_with_waiter(
+fn render_graph_with_waiter<W: OfflineWavWriter>(
     graph: &mut AudioRenderGraph,
     request: RenderRequest<'_>,
+    mut export: W,
     mut wait_for_input: impl FnMut(&mut AudioRenderGraph, usize) -> Result<usize, OfflineRenderError>,
     before_finish: impl FnOnce() -> Result<(), OfflineRenderError>,
     report_progress: &mut impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     let RenderRequest {
-        destination,
-        sample_rate,
         total_frames,
+        start_sample,
         cancelled,
     } = request;
-    let mut export =
-        Pcm24WavExport::create(destination, sample_rate).map_err(OfflineRenderError::Wav)?;
     let block_capacity = graph.max_block_frames();
     debug_assert!(
         block_capacity > 0,
         "render graphs reject zero block capacity"
     );
     let mut output = vec![[0.0_f32; 2]; block_capacity];
-    graph.transport_mut().seek_sample(0);
+    graph.transport_mut().seek_sample(start_sample);
     graph.transport_mut().start();
     let mut rendered = 0_u64;
     report_progress(rendered, total_frames);
@@ -503,15 +854,13 @@ fn render_graph_with_waiter(
                 samples: stats.underrun_samples,
             });
         }
-        export
-            .write_frames(&output[..frames])
-            .map_err(OfflineRenderError::Wav)?;
+        export.write_frames(&output[..frames])?;
         rendered += frames as u64;
         report_progress(rendered, total_frames);
     }
 
     before_finish()?;
-    export.finish().map_err(OfflineRenderError::Wav)?;
+    export.finish()?;
     Ok(())
 }
 
@@ -560,6 +909,15 @@ mod tests {
                 .expect("render length should be representable"),
             48_000 + 2 * 48_000
         );
+    }
+
+    #[test]
+    fn freeze_tail_uses_the_longer_of_default_allowance_and_serial_plugin_tails() {
+        assert_eq!(
+            freeze_tail_frames(48_000, &[24_000, 120_000]).unwrap(),
+            144_000
+        );
+        assert_eq!(freeze_tail_frames(48_000, &[24_000]).unwrap(), 96_000);
     }
 
     #[test]

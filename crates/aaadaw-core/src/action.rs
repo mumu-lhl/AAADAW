@@ -49,6 +49,15 @@ pub enum DawAction {
         track_id: TrackId,
         instrument: Option<TrackInstrument>,
     },
+    /// Replace a track's live source chain with a project-managed audio render.
+    FreezeTrack {
+        track_id: TrackId,
+        media_ref: String,
+        start_sample: u64,
+        length_samples: u64,
+    },
+    /// Resume a track's retained MIDI, instrument, and effect source chain.
+    UnfreezeTrack { track_id: TrackId },
     /// Replace a track's ordered CLAP FX chain as one undoable operation.
     SetTrackFxChain {
         track_id: TrackId,

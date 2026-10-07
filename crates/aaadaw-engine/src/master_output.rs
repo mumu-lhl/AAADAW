@@ -58,12 +58,18 @@ impl std::error::Error for MasterOutputSafetyError {}
 #[derive(Clone, Debug)]
 pub struct MasterOutputSafetyController {
     ceiling_linear: Arc<AtomicU32>,
+    guard_enabled: Arc<std::sync::atomic::AtomicBool>,
     output_peak_left: Arc<AtomicU32>,
     output_peak_right: Arc<AtomicU32>,
     guard_active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MasterOutputSafetyController {
+    /// Enables or bypasses the final sample-peak ceiling without changing meter reporting.
+    pub fn set_guard_enabled(&self, enabled: bool) {
+        self.guard_enabled.store(enabled, Ordering::Relaxed);
+    }
+
     /// Sets the final sample-peak ceiling. The supported range is -12 through 0 dBFS.
     pub fn set_ceiling(&self, ceiling: MasterOutputCeiling) {
         self.ceiling_linear
@@ -101,6 +107,7 @@ impl MasterOutputSafetyController {
 #[derive(Debug)]
 pub(super) struct MasterOutputSafety {
     ceiling_linear: Arc<AtomicU32>,
+    guard_enabled: Arc<std::sync::atomic::AtomicBool>,
     output_peak_left: Arc<AtomicU32>,
     output_peak_right: Arc<AtomicU32>,
     guard_active: Arc<std::sync::atomic::AtomicBool>,
@@ -112,6 +119,7 @@ impl Default for MasterOutputSafety {
             ceiling_linear: Arc::new(AtomicU32::new(
                 MasterOutputCeiling::default().linear_amplitude().to_bits(),
             )),
+            guard_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             output_peak_left: Arc::new(AtomicU32::new(0)),
             output_peak_right: Arc::new(AtomicU32::new(0)),
             guard_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -123,6 +131,7 @@ impl MasterOutputSafety {
     pub(super) fn controller(&self) -> MasterOutputSafetyController {
         MasterOutputSafetyController {
             ceiling_linear: Arc::clone(&self.ceiling_linear),
+            guard_enabled: Arc::clone(&self.guard_enabled),
             output_peak_left: Arc::clone(&self.output_peak_left),
             output_peak_right: Arc::clone(&self.output_peak_right),
             guard_active: Arc::clone(&self.guard_active),
@@ -131,6 +140,7 @@ impl MasterOutputSafety {
 
     pub(super) fn process(&self, output: &mut [[f32; 2]]) -> MasterOutputGuardStats {
         let ceiling = f32::from_bits(self.ceiling_linear.load(Ordering::Relaxed));
+        let guard_enabled = self.guard_enabled.load(Ordering::Relaxed);
         let mut stats = MasterOutputGuardStats::default();
         let mut output_peaks = [0.0_f32; 2];
         for frame in output {
@@ -138,10 +148,10 @@ impl MasterOutputSafety {
                 if !sample.is_finite() {
                     *sample = 0.0;
                     stats.non_finite_samples += 1;
-                } else if *sample > ceiling {
+                } else if guard_enabled && *sample > ceiling {
                     *sample = ceiling;
                     stats.guarded_samples += 1;
-                } else if *sample < -ceiling {
+                } else if guard_enabled && *sample < -ceiling {
                     *sample = -ceiling;
                     stats.guarded_samples += 1;
                 }
@@ -231,5 +241,19 @@ mod tests {
         assert!(MasterOutputCeiling::new(-13).is_err());
         assert!(MasterOutputCeiling::new(1).is_err());
         assert_eq!(controller.ceiling(), MasterOutputCeiling::new(-6).unwrap());
+    }
+
+    #[test]
+    fn guard_can_be_bypassed_for_source_rendering_while_metering_stays_live() {
+        let safety = MasterOutputSafety::default();
+        let controller = safety.controller();
+        controller.set_guard_enabled(false);
+        let mut output = [[1.25, -1.5]];
+
+        let stats = safety.process(&mut output);
+
+        assert_eq!(stats.guarded_samples, 0);
+        assert_eq!(output, [[1.25, -1.5]]);
+        assert_eq!(controller.take_output_peak(), [1.25, 1.5]);
     }
 }

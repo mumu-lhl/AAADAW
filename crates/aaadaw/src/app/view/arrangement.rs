@@ -236,32 +236,64 @@ fn track_context_menu<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message
             .find(|plugin| plugin.plugin_id == instrument.plugin_id())
             .map_or(instrument.plugin_id(), |plugin| plugin.name.as_str())
     });
-    actions = actions
-        .push(text(format!("Instrument: {instrument_label}")).size(11))
-        .push(action_button(
-            "Set instrument…",
-            Message::OpenTrackInstrumentPicker(track_id),
-        ));
-    if track.instrument().is_some() {
+    let has_midi_notes = app
+        .project
+        .midi_items()
+        .iter()
+        .any(|item| item.track_id() == track_id && !item.notes().is_empty());
+    let has_audio_items = app
+        .project
+        .audio_items()
+        .iter()
+        .any(|item| item.track_id() == track_id);
+    if track.is_frozen() {
         actions = actions
-            .push(text(super::CLAP_PLUGIN_RISK).size(10))
+            .push(text("Frozen audio is playing; source edits require unfreeze.").size(10))
             .push(action_button(
-                if app.track_instrument_gui_open(track_id) {
-                    "Close instrument editor"
-                } else {
-                    "Open instrument editor"
-                },
-                Message::SetTrackInstrumentGui(track_id, !app.track_instrument_gui_open(track_id)),
-            ))
-            .push(action_button(
-                "Clear instrument",
-                Message::ClearTrackInstrument(track_id),
+                "Unfreeze track",
+                Message::UnfreezeTrack(track_id),
             ));
+    } else {
+        actions = actions
+            .push(text(format!("Instrument: {instrument_label}")).size(11))
+            .push(action_button(
+                "Set instrument…",
+                Message::OpenTrackInstrumentPicker(track_id),
+            ));
+        if track.instrument().is_some() {
+            actions = actions
+                .push(text(super::CLAP_PLUGIN_RISK).size(10))
+                .push(action_button(
+                    if app.track_instrument_gui_open(track_id) {
+                        "Close instrument editor"
+                    } else {
+                        "Open instrument editor"
+                    },
+                    Message::SetTrackInstrumentGui(
+                        track_id,
+                        !app.track_instrument_gui_open(track_id),
+                    ),
+                ))
+                .push(action_button(
+                    "Clear instrument",
+                    Message::ClearTrackInstrument(track_id),
+                ));
+            if !track.is_bus() && has_midi_notes && !has_audio_items {
+                actions = actions.push(action_button(
+                    "Freeze track",
+                    Message::FreezeTrack(track_id),
+                ));
+            } else {
+                actions = actions.push(
+                    text("Freeze requires MIDI notes and no audio items on this track.").size(10),
+                );
+            }
+        }
+        actions = actions.push(action_button(
+            "Open FX chain…",
+            Message::OpenTrackFxChain(track_id),
+        ));
     }
-    actions = actions.push(action_button(
-        "Open FX chain…",
-        Message::OpenTrackFxChain(track_id),
-    ));
     actions = actions.push(iced::widget::rule::horizontal(1));
     actions = actions.push(track_output_selector(app, track));
     let automation_visible = is_volume_automation_visible(app, track);
@@ -367,6 +399,12 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
         .midi_items()
         .iter()
         .any(|item| item.id() == item_id);
+    let frozen_track_id = app
+        .project
+        .tracks()
+        .iter()
+        .find(|track| track.frozen_audio_item_id() == Some(item_id))
+        .map(|track| track.id());
     let title = if is_audio { "Audio item" } else { "MIDI item" };
     let heading = row![
         text(title).size(12).width(Length::Fill),
@@ -377,17 +415,26 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
     ]
     .align_y(Alignment::Center);
     let mut actions = column![];
-    for entry in commands::for_menu(app, super::super::MainMenu::Item) {
-        if entry.id == CommandId::DuplicateSelectedAudioItem && !is_audio {
-            continue;
+    if let Some(track_id) = frozen_track_id {
+        actions = actions
+            .push(text("Frozen render; unfreeze before editing this item.").size(10))
+            .push(action_button(
+                "Unfreeze track",
+                Message::UnfreezeTrack(track_id),
+            ));
+    } else {
+        for entry in commands::for_menu(app, super::super::MainMenu::Item) {
+            if entry.id == CommandId::DuplicateSelectedAudioItem && !is_audio {
+                continue;
+            }
+            if entry.id == CommandId::DuplicateSelectedMidiItem && !is_midi {
+                continue;
+            }
+            if entry.separator_before {
+                actions = actions.push(iced::widget::rule::horizontal(1));
+            }
+            actions = actions.push(context_item_command(entry));
         }
-        if entry.id == CommandId::DuplicateSelectedMidiItem && !is_midi {
-            continue;
-        }
-        if entry.separator_before {
-            actions = actions.push(iced::widget::rule::horizontal(1));
-        }
-        actions = actions.push(context_item_command(entry));
     }
     if is_midi {
         actions = actions.push(action_button(
