@@ -1794,6 +1794,28 @@ fn view_menu_contains_the_media_browser_panel_and_no_workspace_pages() {
 }
 
 #[test]
+fn offline_jobs_panel_is_available_from_view_menu_and_action_search() {
+    let mut app = App::default();
+    let toggle = CommandId::ToggleOfflineJobsPanel;
+    assert!(commands::is_enabled(&app, toggle));
+    assert!(
+        commands::for_menu(&app, MainMenu::View)
+            .iter()
+            .any(|entry| entry.id == toggle && entry.label == "Toggle Offline Jobs")
+    );
+    assert!(
+        commands::for_actions_menu(&app)
+            .iter()
+            .any(|entry| entry.id == toggle)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(toggle));
+    assert!(app.offline_jobs_panel_open);
+    let _ = app.update(Message::Escape);
+    assert!(!app.offline_jobs_panel_open);
+}
+
+#[test]
 fn track_controls_and_undo_change_project_only_through_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

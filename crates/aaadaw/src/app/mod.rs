@@ -1110,6 +1110,7 @@ impl App {
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
                 | Message::ToggleOfflineJobsPanel
+                | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
                 | Message::WindowClosed(_)
                 | Message::WindowCloseRequested(_)
                 | Message::StartShortcutCapture(_)
