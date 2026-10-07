@@ -224,6 +224,7 @@ struct App {
     active_menu: Option<MainMenu>,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    render_window_id: Option<iced::window::Id>,
     tempo_map_window_id: Option<iced::window::Id>,
     time_map_tab: TimeMapTab,
     tempo_map_edits: Vec<TempoMapEdit>,
@@ -972,6 +973,8 @@ impl App {
     fn window_title(&self, window_id: iced::window::Id) -> String {
         if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
+        } else if self.render_window_id == Some(window_id) {
+            "Render project to WAV".to_owned()
         } else if self.fx_chain_window_id == Some(window_id) {
             self.fx_chain_track_id
                 .and_then(|track_id| {
@@ -1105,6 +1108,7 @@ impl App {
         let window_safe_message = matches!(
             &message,
             Message::OpenSettings
+                | Message::OpenRenderWindow
                 | Message::ShowMainWorkspace(_)
                 | Message::OpenTempoMap
                 | Message::OpenMeterMap
@@ -1131,6 +1135,7 @@ impl App {
                 | Message::PluginPickerSearchChanged(_)
                 | Message::SelectFxChainPlugin(_)
                 | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                | Message::ExecuteCommand(commands::CommandId::ExportWav)
                 | Message::ToggleMediaBrowserPanel
                 | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
                 | Message::ToggleOfflineJobsPanel
@@ -1424,6 +1429,7 @@ impl App {
                 self.active_menu = None;
             }
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenRenderWindow => task = self.open_render_window(),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
             Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
@@ -1486,6 +1492,8 @@ impl App {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
+                } else if self.render_window_id == Some(window_id) {
+                    self.render_window_id = None;
                 } else if self.tempo_map_window_id == Some(window_id) {
                     self.tempo_map_window_id = None;
                     self.tempo_map_edits.clear();
@@ -3066,6 +3074,19 @@ impl App {
             feature = "cpal-backend",
             any(target_os = "windows", target_os = "macos")
         )))]
+        task.discard()
+    }
+
+    fn open_render_window(&mut self) -> Task<Message> {
+        if let Some(window_id) = self.render_window_id {
+            return iced::window::gain_focus(window_id);
+        }
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(540.0, 480.0),
+            min_size: Some(iced::Size::new(420.0, 360.0)),
+            ..iced::window::Settings::default()
+        });
+        self.render_window_id = Some(window_id);
         task.discard()
     }
 
