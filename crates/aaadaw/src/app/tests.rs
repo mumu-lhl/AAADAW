@@ -1339,6 +1339,40 @@ fn midi_editor_stop_shortcut_reaches_the_transport_command() {
 }
 
 #[test]
+fn midi_editor_escape_is_left_for_the_editor_gesture_to_handle() {
+    let window_id = iced::window::Id::unique();
+    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::Escape),
+        modified_key: Key::Named(iced::keyboard::key::Named::Escape),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(
+        midi_editor_shortcut_event(
+            event,
+            iced::event::Status::Captured,
+            window_id,
+            Some(window_id),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn midi_editor_feedback_stays_local_to_that_window() {
+    let mut app = App {
+        status: "Main window status".to_owned(),
+        ..App::default()
+    };
+    let _ = app.update(Message::MidiEditorFeedback("Resize rejected".to_owned()));
+    assert_eq!(app.status, "Main window status");
+    assert_eq!(app.midi_editor_feedback.as_deref(), Some("Resize rejected"));
+}
+
+#[test]
 fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu() {
     let mut app = App {
         project_path: Some(std::path::PathBuf::from("session.aaadaw")),
@@ -3161,7 +3195,12 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
         .collect::<Vec<_>>();
 
     let _ = app.update(Message::CopyMidiNotes(item_id, source_ids.clone()));
+    assert_eq!(
+        app.midi_editor_feedback.as_deref(),
+        Some("Copied 2 MIDI notes")
+    );
     let _ = app.update(Message::PasteMidiNotes(item_id));
+    assert!(app.midi_editor_feedback.is_none());
     let notes = app.project.midi_items()[0].notes();
     assert_eq!(notes.len(), 4);
     assert_eq!(notes[2].tick(), 1_200);
@@ -3208,6 +3247,36 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             .iter()
             .all(|note| note.velocity() == 100)
     );
+}
+
+#[test]
+fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    app.midi_editor_origin_tick = 3_600;
+    app.midi_note_clipboard.notes = vec![MidiNoteData {
+        pitch: 60,
+        tick: 0,
+        duration: 480,
+        velocity: 96,
+    }];
+    app.midi_note_clipboard.source_item_id = None;
+    app.status = "Main window status".to_owned();
+
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+
+    assert_eq!(
+        app.status,
+        "Paste rejected: notes would extend beyond the MIDI item"
+    );
+    assert_eq!(
+        app.midi_editor_feedback.as_deref(),
+        Some("Paste rejected: notes would extend beyond the MIDI item")
+    );
+    assert!(app.project.midi_items()[0].notes().is_empty());
 }
 
 #[test]

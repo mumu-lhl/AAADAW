@@ -250,6 +250,7 @@ struct App {
     fx_parameter_value_edit_pending: HashSet<u32>,
     midi_editor_window_id: Option<iced::window::Id>,
     midi_editor_item_id: Option<ItemId>,
+    midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_origin_tick: u64,
@@ -1585,6 +1586,7 @@ impl App {
                 } else if self.midi_editor_window_id == Some(window_id) {
                     self.midi_editor_window_id = None;
                     self.midi_editor_item_id = None;
+                    self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                 } else if self.main_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
@@ -1605,12 +1607,17 @@ impl App {
             Message::CloseMidiEditor => {
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
+                    self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                     task = iced::window::close(window_id);
                 }
             }
             Message::SelectMidiEditorLane(lane) => self.midi_editor_lane = lane,
+            Message::MidiEditorFeedback(feedback) => {
+                self.midi_editor_feedback = Some(feedback);
+            }
             Message::SelectMidiNotes(note_ids) => {
+                self.midi_editor_feedback = None;
                 self.midi_editor_selected_notes = note_ids;
             }
             Message::CopyMidiNotes(item_id, note_ids) => {
@@ -1647,8 +1654,10 @@ impl App {
                             .unwrap_or(0);
                         self.midi_note_clipboard.source_item_id = Some(item_id);
                         self.midi_note_clipboard.last_paste = None;
-                        self.status =
+                        let feedback =
                             format!("Copied {} MIDI notes", self.midi_note_clipboard.notes.len());
+                        self.status = feedback.clone();
+                        self.midi_editor_feedback = Some(feedback);
                     }
                 }
             }
@@ -1698,9 +1707,11 @@ impl App {
                     .iter()
                     .any(|note| note.tick.saturating_add(note.duration) > item.length_ticks())
                 {
-                    self.status =
-                        "Paste rejected: notes would extend beyond the MIDI item".to_owned();
+                    let feedback = "Paste rejected: notes would extend beyond the MIDI item";
+                    self.status = feedback.to_owned();
+                    self.midi_editor_feedback = Some(feedback.to_owned());
                 } else {
+                    self.midi_editor_feedback = None;
                     let old_ids = item
                         .notes()
                         .iter()
@@ -1730,6 +1741,7 @@ impl App {
                 }
             }
             Message::AddMidiNoteAt(item_id, data) => {
+                self.midi_editor_feedback = None;
                 self.apply_action(
                     DawAction::AddMidiNotes {
                         item_id,
@@ -1739,6 +1751,7 @@ impl App {
                 );
             }
             Message::EditMidiNotes(item_id, edits) => {
+                self.midi_editor_feedback = None;
                 let actions = edits
                     .into_iter()
                     .map(|(note_id, data)| DawAction::EditMidiNote {
@@ -1757,6 +1770,7 @@ impl App {
             }
             Message::DeleteMidiNotes(item_id, note_ids) => {
                 if !note_ids.is_empty() {
+                    self.midi_editor_feedback = None;
                     self.apply_action(
                         DawAction::DeleteMidiNotes { item_id, note_ids },
                         "MIDI notes deleted",
@@ -1765,6 +1779,7 @@ impl App {
                 }
             }
             Message::SetMidiControllers(item_id, controllers) => {
+                self.midi_editor_feedback = None;
                 self.apply_action(
                     DawAction::SetMidiControllers {
                         item_id,
@@ -1774,6 +1789,7 @@ impl App {
                 );
             }
             Message::SetMidiPitchBends(item_id, pitch_bends) => {
+                self.midi_editor_feedback = None;
                 self.apply_action(
                     DawAction::SetMidiPitchBends {
                         item_id,
@@ -3619,6 +3635,7 @@ impl App {
                 self.midi_editor_origin_tick = 0;
             }
             self.midi_editor_item_id = Some(item_id);
+            self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
             return iced::window::gain_focus(window_id);
         }
@@ -3629,6 +3646,7 @@ impl App {
         });
         self.midi_editor_window_id = Some(window_id);
         self.midi_editor_item_id = Some(item_id);
+        self.midi_editor_feedback = None;
         self.midi_editor_selected_notes.clear();
         self.midi_editor_origin_tick = 0;
         self.midi_editor_high_pitch = 84;
@@ -6509,6 +6527,16 @@ fn midi_editor_shortcut_event(
     midi_editor_window_id: Option<iced::window::Id>,
 ) -> Option<Message> {
     if midi_editor_window_id != Some(window_id) {
+        return None;
+    }
+    if matches!(
+        &event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            repeat: false,
+            ..
+        })
+    ) {
         return None;
     }
     keyboard_shortcut_event(event, status, window_id, Some(window_id), None, None)
