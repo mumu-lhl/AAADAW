@@ -295,7 +295,7 @@ impl App {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(feature = "audio-device", not(target_os = "android")))]
     fn install_desktop_track_instrument_processors(
         &mut self,
         prepared: &mut PreparedAudioPlayback,
