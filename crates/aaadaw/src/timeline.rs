@@ -195,6 +195,7 @@ pub(crate) enum TimelineEvent {
     },
     ClearSelectedFxAutomationPoint,
     SelectEmpty(u64),
+    SetEditCursor(u64),
     SetTimeSelection {
         start_tick: u64,
         end_tick: u64,
@@ -1383,6 +1384,7 @@ impl TimelineState {
                 self.edit_cursor_tick = tick;
                 self.select_item(None, false, false, false);
             }
+            TimelineEvent::SetEditCursor(tick) => self.edit_cursor_tick = tick,
             TimelineEvent::SetTimeSelection {
                 start_tick,
                 end_tick,
@@ -2235,8 +2237,15 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
-                let (track_index, row_y) = row_at_y(self.row_layout, position.y)?;
                 let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                let Some((track_index, row_y)) = row_at_y(self.row_layout, position.y) else {
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SetEditCursor(raw_tick),
+                        ))
+                        .and_capture(),
+                    );
+                };
                 let tick = snap_tick_to_grid(
                     raw_tick,
                     self.cache.snap_grid_ticks,
@@ -2985,7 +2994,9 @@ pub(crate) fn timeline_widget<'a>(
 ) -> Element<'a, crate::app::Message> {
     shader::Shader::new(state.program(project, playhead_sample))
         .width(Length::Fill)
-        .height(Length::Fixed(state.content_height()))
+        .height(Length::Fixed(
+            state.content_height().max(state.viewport_height),
+        ))
         .into()
 }
 
@@ -3013,6 +3024,27 @@ struct RulerProgram<'a> {
 
 impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
     type State = ();
+
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<crate::app::Message>> {
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
+            let position = cursor.position_in(bounds)?;
+            let tick = tick_at_x(
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+                position.x,
+            );
+            return Some(canvas::Action::publish(crate::app::Message::Timeline(
+                TimelineEvent::SetEditCursor(tick),
+            )));
+        }
+        None
+    }
 
     fn draw(
         &self,
@@ -3353,17 +3385,81 @@ fn media_label(media_ref: &str) -> String {
 mod tests {
     use super::{
         FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState,
-        PendingTimeSelectionDrag, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
+        PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
         TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineState,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at, row_at_y,
         slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{DawAction, Project, ProjectSettings, TempoCurve, TimeSignature};
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
-    use iced::Point;
+    use iced::{Event, Point, Rectangle, Size, mouse};
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
     use std::sync::Arc;
+
+    #[test]
+    fn ruler_click_publishes_edit_cursor_tick() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ();
+        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let cursor = mouse::Cursor::Available(Point::new(100.0, 16.0));
+        let action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &event,
+            bounds,
+            cursor,
+        )
+        .expect("ruler click should set the edit cursor");
+        let (message, _, _) = action.into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(TimelineEvent::SetEditCursor(
+                440
+            )))
+        ));
+    }
+
+    #[test]
+    fn click_below_track_rows_publishes_edit_cursor_tick() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = timeline.program(&project, None);
+        let mut interaction = super::TimelineInteractionState::default();
+        let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let cursor = mouse::Cursor::Available(Point::new(100.0, 100.0));
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &event,
+            bounds,
+            cursor,
+        )
+        .expect("blank timeline click should set the edit cursor");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(TimelineEvent::SetEditCursor(
+                440
+            )))
+        ));
+    }
 
     fn project_with_items() -> (Project, [aaadaw_core::TrackId; 3], [aaadaw_core::ItemId; 3]) {
         let mut project = Project::new();
