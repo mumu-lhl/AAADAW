@@ -1269,8 +1269,7 @@ fn entry_for(
 
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
-        CommandKind::NewProject => !project_edit_busy(app) && !app.is_dirty(),
-        CommandKind::OpenProject => !project_edit_busy(app) && !app.is_dirty(),
+        CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
