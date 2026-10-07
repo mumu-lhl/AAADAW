@@ -239,6 +239,8 @@ struct App {
     fx_chain_window_id: Option<iced::window::Id>,
     fx_chain_track_id: Option<TrackId>,
     fx_chain_selected_index: Option<usize>,
+    fx_chain_drag_index: Option<usize>,
+    fx_chain_drag_target_index: Option<usize>,
     fx_chain_native_parent: Option<u64>,
     fx_chain_window_size: iced::Size,
     fx_chain_window_scale_factor: f32,
@@ -1077,6 +1079,7 @@ impl App {
         };
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
+            iced::event::listen_with(fx_chain_plugin_drag_event),
             iced::window::close_events().map(Message::WindowClosed),
             iced::window::close_requests().map(Message::WindowCloseRequested),
             iced::window::resize_events()
@@ -1937,6 +1940,27 @@ impl App {
                 task = self.select_scanned_instrument(&plugin_id)
             }
             Message::SelectFxChainPlugin(index) => task = self.select_fx_chain_plugin(index),
+            Message::BeginFxChainPluginDrag(index) => {
+                self.fx_chain_drag_index = Some(index);
+                self.fx_chain_drag_target_index = Some(index);
+            }
+            Message::HoverFxChainPluginDragTarget(index) => {
+                if self.fx_chain_drag_index.is_some() {
+                    self.fx_chain_drag_target_index = Some(index);
+                }
+            }
+            Message::LeaveFxChainPluginDragTarget(index) => {
+                if self.fx_chain_drag_target_index == Some(index) {
+                    self.fx_chain_drag_target_index = None;
+                }
+            }
+            Message::FinishFxChainPluginDrag => {
+                let from = self.fx_chain_drag_index.take();
+                let to = self.fx_chain_drag_target_index.take();
+                if let Some((from, to)) = from.zip(to) {
+                    task = self.reorder_fx_chain_plugin(from, to);
+                }
+            }
             Message::ReorderFxChainPlugin { from, to } => {
                 task = self.reorder_fx_chain_plugin(from, to)
             }
@@ -5535,6 +5559,7 @@ impl App {
     }
 
     fn undo(&mut self) {
+        let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
         #[cfg(feature = "audio-device")]
@@ -5563,6 +5588,7 @@ impl App {
         self.audio_item_start_edits.clear();
         self.status = match self.project.undo() {
             Ok(true) => {
+                self.restore_fx_chain_selection(selected_fx_instance_id);
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
@@ -5587,6 +5613,7 @@ impl App {
     }
 
     fn redo(&mut self) {
+        let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
         #[cfg(feature = "audio-device")]
@@ -5615,6 +5642,7 @@ impl App {
         self.audio_item_start_edits.clear();
         self.status = match self.project.redo() {
             Ok(true) => {
+                self.restore_fx_chain_selection(selected_fx_instance_id);
                 self.midi_note_clipboard.last_paste =
                     self.midi_editor_item_id.and_then(|item_id| {
                         self.selected_clipboard_paste_start(item_id)
@@ -6696,6 +6724,20 @@ fn runtime_keyboard_event(
 ) -> Option<Message> {
     matches!(event, iced::Event::Keyboard(_))
         .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
+}
+
+fn fx_chain_plugin_drag_event(
+    event: iced::Event,
+    _status: iced::event::Status,
+    _window_id: iced::window::Id,
+) -> Option<Message> {
+    matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+            iced::mouse::Button::Left
+        ))
+    )
+    .then_some(Message::FinishFxChainPluginDrag)
 }
 
 fn plugin_window_escape_message(

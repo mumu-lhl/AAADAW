@@ -1,6 +1,10 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 /// Maximum number of independently automated parameters accepted for one track FX instance.
 /// This keeps per-block playback scheduling bounded even for malformed project files.
 pub const MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES: usize = 256;
+
+static NEXT_FX_PLUGIN_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The identifier of a track in a project.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -173,6 +177,7 @@ impl TrackInstrument {
 /// A CLAP plugin reference inserted in a track's ordered FX chain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrackFxPlugin {
+    instance_id: u64,
     plugin_id: String,
     bundle_path: String,
     enabled: bool,
@@ -190,6 +195,7 @@ impl TrackFxPlugin {
             return None;
         }
         Some(Self {
+            instance_id: NEXT_FX_PLUGIN_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
             plugin_id,
             bundle_path,
             enabled: true,
@@ -197,6 +203,11 @@ impl TrackFxPlugin {
             parameter_values: Vec::new(),
             parameter_automation: Vec::new(),
         })
+    }
+
+    /// Returns the identity of this inserted plugin instance. Clones retain it across edits and undo history.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Returns this plugin's stable CLAP identifier.

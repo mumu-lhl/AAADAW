@@ -1021,6 +1021,7 @@ fn fx_chain_reordering_moves_plugin_state_and_automation_as_one_undoable_edit() 
     assert_eq!(chain[0].plugin_id(), "vendor.eq");
     assert_eq!(chain[1].plugin_id(), "vendor.limit");
     assert_eq!(chain[2].plugin_id(), "vendor.comp");
+    let selected_instance_id = selected_plugin.instance_id();
     assert_eq!(chain[2].state(), Some(&[1, 2, 3][..]));
     assert!(!chain[2].is_enabled());
     assert_eq!(
@@ -1028,6 +1029,10 @@ fn fx_chain_reordering_moves_plugin_state_and_automation_as_one_undoable_edit() 
         2
     );
     assert_eq!(app.fx_chain_selected_index, Some(2));
+    assert_eq!(
+        app.selected_fx_chain_instance_id(),
+        Some(selected_instance_id)
+    );
 
     let _ = app.update(Message::Undo);
     let chain = app.project.tracks()[0].fx_chain();
@@ -1043,6 +1048,11 @@ fn fx_chain_reordering_moves_plugin_state_and_automation_as_one_undoable_edit() 
         chain[1].parameter_automation_for(7).unwrap().points().len(),
         2
     );
+    assert_eq!(app.fx_chain_selected_index, Some(1));
+    assert_eq!(
+        app.selected_fx_chain_instance_id(),
+        Some(selected_instance_id)
+    );
 
     let _ = app.update(Message::Redo);
     let chain = app.project.tracks()[0].fx_chain();
@@ -1057,6 +1067,85 @@ fn fx_chain_reordering_moves_plugin_state_and_automation_as_one_undoable_edit() 
     assert_eq!(
         chain[2].parameter_automation_for(7).unwrap().points().len(),
         2
+    );
+    assert_eq!(app.fx_chain_selected_index, Some(2));
+    assert_eq!(
+        app.selected_fx_chain_instance_id(),
+        Some(selected_instance_id)
+    );
+}
+
+#[test]
+fn fx_chain_drag_reorder_uses_the_same_undoable_move_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap(),
+                TrackFxPlugin::new("vendor.comp", "/plugins/comp.clap").unwrap(),
+            ],
+        },
+        "FX chain configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+    app.fx_chain_selected_index = Some(0);
+
+    let _ = app.update(Message::BeginFxChainPluginDrag(0));
+    let _ = app.update(Message::HoverFxChainPluginDragTarget(1));
+    let _ = app.update(Message::FinishFxChainPluginDrag);
+
+    assert_eq!(
+        app.project.tracks()[0]
+            .fx_chain()
+            .iter()
+            .map(TrackFxPlugin::plugin_id)
+            .collect::<Vec<_>>(),
+        ["vendor.comp", "vendor.eq"]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].plugin_id(),
+        "vendor.eq"
+    );
+}
+
+#[test]
+fn fx_chain_drag_release_outside_a_handle_cancels_and_clears_the_source() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.apply_action(
+        DawAction::SetTrackFxChain {
+            track_id,
+            plugins: vec![
+                TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap").unwrap(),
+                TrackFxPlugin::new("vendor.comp", "/plugins/comp.clap").unwrap(),
+            ],
+        },
+        "FX chain configured",
+    );
+    app.fx_chain_track_id = Some(track_id);
+
+    let _ = app.update(Message::BeginFxChainPluginDrag(0));
+    let _ = app.update(Message::LeaveFxChainPluginDragTarget(0));
+    let _ = app.update(Message::FinishFxChainPluginDrag);
+
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].plugin_id(),
+        "vendor.eq"
+    );
+    assert_eq!(app.fx_chain_drag_index, None);
+    assert_eq!(app.fx_chain_drag_target_index, None);
+
+    let _ = app.update(Message::BeginFxChainPluginDrag(1));
+    let _ = app.update(Message::HoverFxChainPluginDragTarget(0));
+    let _ = app.update(Message::FinishFxChainPluginDrag);
+    assert_eq!(
+        app.project.tracks()[0].fx_chain()[0].plugin_id(),
+        "vendor.comp"
     );
 }
 
