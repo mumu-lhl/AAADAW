@@ -33,6 +33,9 @@ pub struct RecordingRecoveryManifest {
     pub sample_rate: u32,
     /// Stable numeric `TrackId::value()` values; the core ID type intentionally stays opaque.
     pub track_ids: Vec<u64>,
+    /// Track names aligned with `track_ids`, used to recreate an unsaved armed track on recovery.
+    #[serde(default)]
+    pub track_names: Vec<String>,
     pub start_sample: Option<u64>,
     /// True until the capture-start playhead sample is durably refined by the writer.
     #[serde(default = "default_true")]
@@ -160,6 +163,25 @@ impl AudioRecordingWorker {
         consumer: AudioCaptureConsumer,
         control: AudioCaptureControl,
     ) -> Result<Self, AudioRecordingError> {
+        Self::start_recoverable_with_track_names(
+            project_path,
+            sample_rate,
+            track_ids,
+            Vec::new(),
+            consumer,
+            control,
+        )
+    }
+
+    /// Starts recording with a durable sidecar that can restore tracks missing from the last save.
+    pub fn start_recoverable_with_track_names(
+        project_path: impl AsRef<Path>,
+        sample_rate: u32,
+        track_ids: Vec<u64>,
+        track_names: Vec<String>,
+        consumer: AudioCaptureConsumer,
+        control: AudioCaptureControl,
+    ) -> Result<Self, AudioRecordingError> {
         Self::start_internal(
             project_path.as_ref(),
             sample_rate,
@@ -167,6 +189,7 @@ impl AudioRecordingWorker {
             control,
             MAX_SEGMENT_DATA_BYTES,
             Some(track_ids),
+            track_names,
         )
     }
 
@@ -184,6 +207,7 @@ impl AudioRecordingWorker {
             control,
             segment_data_limit,
             None,
+            Vec::new(),
         )
     }
 
@@ -194,6 +218,7 @@ impl AudioRecordingWorker {
         control: AudioCaptureControl,
         segment_data_limit: u64,
         recovery_tracks: Option<Vec<u64>>,
+        recovery_track_names: Vec<String>,
     ) -> Result<Self, AudioRecordingError> {
         if sample_rate == 0 {
             return Err(AudioRecordingError::InvalidSampleRate);
@@ -232,6 +257,7 @@ impl AudioRecordingWorker {
                 project_path: project_path.to_path_buf(),
                 sample_rate,
                 track_ids,
+                track_names: recovery_track_names,
                 start_sample: None,
                 start_sample_is_estimate: true,
                 stem: stem.clone(),
@@ -1129,6 +1155,7 @@ mod tests {
             control.clone(),
             12,
             Some(vec![41, 42]),
+            vec!["Audio 1".to_owned(), "Audio 2".to_owned()],
         )
         .expect("recoverable recording worker should start");
         let manifest_path = worker
@@ -1259,6 +1286,44 @@ mod tests {
         );
         assert!(!candidates[0].manifest.start_sample_is_estimate);
         fs::remove_dir_all(directory).expect("test files should be removed");
+    }
+
+    #[test]
+    fn recovery_manifest_preserves_names_for_unsaved_record_tracks() {
+        let (directory, project) = test_project_path();
+        let (producer, consumer, control) = audio_capture_stream(8);
+        let worker = AudioRecordingWorker::start_recoverable_with_track_names(
+            &project,
+            48_000,
+            vec![41, 42],
+            vec!["Vocal".to_owned(), "Guitar".to_owned()],
+            consumer,
+            control,
+        )
+        .expect("recoverable recording worker should start");
+        let manifest_path = worker
+            .recovery_manifest_path()
+            .expect("manifest should be available")
+            .to_path_buf();
+
+        let manifest: RecordingRecoveryManifest = serde_json::from_slice(
+            &fs::read(&manifest_path).expect("manifest should be readable before capture"),
+        )
+        .expect("manifest should decode");
+        assert_eq!(manifest.track_ids, [41, 42]);
+        assert_eq!(manifest.track_names, ["Vocal", "Guitar"]);
+        let mut legacy_json = serde_json::to_value(&manifest).expect("manifest should serialize");
+        legacy_json
+            .as_object_mut()
+            .expect("manifest should serialize as an object")
+            .remove("track_names");
+        let legacy_manifest: RecordingRecoveryManifest =
+            serde_json::from_value(legacy_json).expect("older manifests should remain readable");
+        assert!(legacy_manifest.track_names.is_empty());
+
+        worker.cancel();
+        drop(producer);
+        fs::remove_dir_all(directory).expect("test directory should be removed");
     }
 
     #[test]
@@ -1457,6 +1522,7 @@ mod tests {
             control.clone(),
             12,
             Some(vec![track_id.value()]),
+            vec!["Audio 1".to_owned()],
         )
         .expect("recoverable writer should start");
         let manifest_path = writer

@@ -33,18 +33,11 @@ fn dirty_saved_project_can_start_recording_without_saving_again() {
     save_project_file(project_path.clone(), app.project.snapshot(), false)
         .expect("project should be saved before recording");
     let saved_revision = app.revision;
-    let saved_track_ids = app
-        .project
-        .tracks()
-        .iter()
-        .map(|track| track.id())
-        .collect();
     let _ = app.update(Message::ProjectSaved(
         project_path,
         saved_revision,
         Ok(()),
         None,
-        saved_track_ids,
         SharedProjectSessionLock::new(None),
     ));
     let _ = app.update(Message::ToggleRecordArm(track_id));
@@ -67,7 +60,7 @@ fn dirty_saved_project_can_start_recording_without_saving_again() {
 
 #[cfg(feature = "audio-device")]
 #[test]
-fn unsaved_track_cannot_start_recoverable_recording() {
+fn unsaved_new_track_can_start_recording_without_saving_again() {
     let directory = tempfile::tempdir().expect("test directory should be created");
     let project_path = directory.path().join("recording.aaadaw");
     let mut app = App::default();
@@ -75,18 +68,11 @@ fn unsaved_track_cannot_start_recoverable_recording() {
     save_project_file(project_path.clone(), app.project.snapshot(), false)
         .expect("project should be saved before recording");
     let saved_revision = app.revision;
-    let saved_track_ids = app
-        .project
-        .tracks()
-        .iter()
-        .map(|track| track.id())
-        .collect();
     let _ = app.update(Message::ProjectSaved(
         project_path,
         saved_revision,
         Ok(()),
         None,
-        saved_track_ids,
         SharedProjectSessionLock::new(None),
     ));
 
@@ -96,51 +82,9 @@ fn unsaved_track_cannot_start_recoverable_recording() {
         .tracks()
         .iter()
         .map(|track| track.id())
-        .find(|track_id| !app.saved_track_ids.contains(track_id))
-        .expect("new track should not be in the saved snapshot");
+        .next_back()
+        .expect("new track should be available");
     let _ = app.update(Message::ToggleRecordArm(unsaved_track_id));
-    let _ = app.update(Message::StartRecording);
-
-    assert!(!app.recording_starting);
-    assert_eq!(
-        app.status,
-        "Save the project before recording on a new track"
-    );
-}
-
-#[cfg(feature = "audio-device")]
-#[test]
-fn track_in_save_snapshot_can_record_if_project_changes_before_save_finishes() {
-    let directory = tempfile::tempdir().expect("test directory should be created");
-    let project_path = directory.path().join("recording.aaadaw");
-    let mut app = App::default();
-    let _ = app.update(Message::AddTrack);
-    let saved_track_id = app.project.tracks()[0].id();
-    let saved_snapshot = app.project.snapshot();
-    let saved_revision = app.revision;
-    let saved_track_ids = app
-        .project
-        .tracks()
-        .iter()
-        .map(|track| track.id())
-        .collect();
-    save_project_file(project_path.clone(), saved_snapshot, false)
-        .expect("project snapshot should be saved");
-
-    let _ = app.update(Message::AddTrack);
-    let _ = app.update(Message::ProjectSaved(
-        project_path,
-        saved_revision,
-        Ok(()),
-        None,
-        saved_track_ids,
-        SharedProjectSessionLock::new(None),
-    ));
-    let _ = app.update(Message::ToggleRecordArm(saved_track_id));
-
-    assert!(app.is_dirty(), "later edits should remain unsaved");
-    assert!(app.saved_track_ids.contains(&saved_track_id));
-
     let _ = app.update(Message::StartRecording);
 
     assert!(
@@ -149,6 +93,53 @@ fn track_in_save_snapshot_can_record_if_project_changes_before_save_finishes() {
         app.status
     );
     assert!(app.playback_busy);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn recovery_recreates_a_newly_armed_track_from_manifest_metadata() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let project_path = directory.path().join("recording.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    app.project_path = Some(project_path.clone());
+    let candidate = aaadaw_app::RecordingRecoveryCandidate {
+        manifest_path: directory.path().join("recording.recovery.json"),
+        manifest: aaadaw_app::RecordingRecoveryManifest {
+            version: 1,
+            project_path,
+            sample_rate: 48_000,
+            track_ids: vec![u64::MAX],
+            track_names: vec!["New Audio Track".to_owned()],
+            start_sample: Some(24_000),
+            start_sample_is_estimate: false,
+            stem: "recording".to_owned(),
+            segments: Vec::new(),
+            finalized: false,
+            discarded_frames: 0,
+            discarded_tail_bytes: 0,
+        },
+        segment_paths: vec![directory.path().join("recovered.wav")],
+        recorded_frames: 4,
+        discarded_frames: 0,
+        discarded_tail_bytes: 0,
+    };
+
+    let _task = app.recording_recovery_prepared(Ok(candidate));
+
+    let restored_track = app
+        .project
+        .tracks()
+        .last()
+        .expect("missing recorded track should be restored");
+    assert_eq!(restored_track.name(), "New Audio Track");
+    assert_eq!(
+        app.record_import_tracks
+            .as_ref()
+            .expect("recovery import should be prepared")
+            .track_ids,
+        [restored_track.id()]
+    );
 }
 
 #[cfg(feature = "audio-device")]
@@ -684,7 +675,6 @@ fn cancelling_save_picker_or_failing_save_does_not_continue_close() {
         1,
         Err("permission denied".to_owned()),
         None,
-        HashSet::new(),
         SharedProjectSessionLock::new(None),
     ));
     assert_eq!(
@@ -714,7 +704,6 @@ fn successful_save_continues_the_pending_transition() {
         1,
         Ok(()),
         None,
-        HashSet::new(),
         SharedProjectSessionLock::new(None),
     ));
 
@@ -737,7 +726,6 @@ fn successful_save_continues_open_by_picking_a_project() {
         1,
         Ok(()),
         None,
-        HashSet::new(),
         SharedProjectSessionLock::new(None),
     ));
 
@@ -4080,18 +4068,11 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
     }));
     let _ = app.update(Message::Undo);
     assert!(app.project.audio_items().is_empty());
-    let saved_track_ids = app
-        .project
-        .tracks()
-        .iter()
-        .map(|track| track.id())
-        .collect();
     let _ = app.update(Message::ProjectSaved(
         app.project_path.clone().expect("project path is set"),
         app.revision,
         Ok(()),
         None,
-        saved_track_ids,
         SharedProjectSessionLock::new(None),
     ));
     assert_eq!(app.pending_recording_cleanup.len(), 1);
@@ -4104,18 +4085,11 @@ fn recorded_take_places_one_shared_asset_on_all_captured_armed_tracks_in_one_und
         app.pending_recording_cleanup[0].saved_revision,
         imported_revision
     );
-    let saved_track_ids = app
-        .project
-        .tracks()
-        .iter()
-        .map(|track| track.id())
-        .collect();
     let _ = app.update(Message::ProjectSaved(
         app.project_path.clone().expect("project path is set"),
         app.revision,
         Ok(()),
         None,
-        saved_track_ids,
         SharedProjectSessionLock::new(None),
     ));
     let manifest_path = app.pending_recording_cleanup[0].manifest_path.clone();

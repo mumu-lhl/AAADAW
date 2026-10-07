@@ -39,14 +39,17 @@ impl App {
             self.status = "Arm at least one track before recording".to_owned();
             return Task::none();
         }
-        if tracks
-            .iter()
-            .any(|track_id| !self.saved_track_ids.contains(track_id))
-        {
-            self.status = "Save the project before recording on a new track".to_owned();
-            return Task::none();
-        }
         let recovery_track_ids = tracks.iter().map(|track| track.value()).collect();
+        let recovery_track_names = tracks
+            .iter()
+            .filter_map(|track_id| {
+                self.project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == *track_id)
+                    .map(|track| track.name().to_owned())
+            })
+            .collect();
         let sample_rate = self.project.settings().sample_rate();
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
@@ -100,10 +103,11 @@ impl App {
         };
         Task::perform(
             run_blocking("aaadaw-recording-start", move || {
-                let writer = aaadaw_app::AudioRecordingWorker::start_recoverable(
+                let writer = aaadaw_app::AudioRecordingWorker::start_recoverable_with_track_names(
                     project_path,
                     sample_rate,
                     recovery_track_ids,
+                    recovery_track_names,
                     consumer,
                     control.clone(),
                 );
