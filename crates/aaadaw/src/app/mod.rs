@@ -4145,7 +4145,7 @@ impl App {
             backend = self.playback_name(),
             "playback output device was lost"
         );
-        let resume_sample = route_loss_resume_sample(
+        let resume_sample = Self::route_loss_resume_sample(
             cfg!(target_os = "android"),
             self.playback_playing,
             self.playhead_sample,
