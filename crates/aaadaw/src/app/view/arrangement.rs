@@ -8,8 +8,8 @@ use iced::advanced::widget::Operation;
 use iced::advanced::widget::tree::{self, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::{
-    button, column, container, float, mouse_area, pane_grid, pick_list, progress_bar, responsive,
-    row, scrollable, slider, stack, text, text_input,
+    button, canvas, column, container, float, mouse_area, pane_grid, pick_list, progress_bar,
+    responsive, row, scrollable, slider, stack, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 use std::fmt;
@@ -537,7 +537,8 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
         .into()
 }
 
-const COMPACT_TCP_WIDTH: f32 = 340.0;
+const COMPACT_TCP_WIDTH: f32 = 400.0;
+const TCP_STEREO_METER_WIDTH: f32 = 80.0;
 
 fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let height = app
@@ -630,8 +631,11 @@ fn track_row_layout<'a>(
     };
     let (volume_controls, pan_controls) = track_mix_controls(app, track, compact);
     let selected = app.timeline.is_track_selected(track_id);
-    let meter = track_peak_meter(app, track);
-    let row = container(column![heading, volume_controls, meter, pan_controls].spacing(2))
+    let controls = column![heading, volume_controls, pan_controls]
+        .spacing(4)
+        .width(Length::Fill);
+    let meter = tcp_track_peak_meter(app, track);
+    let row = container(row![controls, meter].spacing(6).align_y(Alignment::Center))
         .padding([5, 4])
         .height(height)
         .width(Length::Fill)
@@ -651,17 +655,145 @@ fn track_row_layout<'a>(
 }
 
 pub(super) fn track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message> {
+    let (peaks, hold) = track_peak_reading(app, track);
+    stereo_peak_meter(peaks, hold, Message::ClearTrackMeter(track.id()))
+}
+
+fn tcp_track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message> {
+    let (peaks, hold) = track_peak_reading(app, track);
+    let channel_meter = |channel: usize, label: &'static str| {
+        column![
+            text(if hold.clipped[channel] { "CLIP" } else { "" })
+                .size(8)
+                .color(iced::Color::from_rgb8(237, 77, 68)),
+            canvas::Canvas::new(VerticalPeakMeter {
+                peak: peaks[channel],
+                hold: hold.levels[channel],
+                clipped: hold.clipped[channel],
+            })
+            .width(Length::Fixed(12.0))
+            .height(Length::Fill),
+            text(peak_dbfs_label(hold.levels[channel])).size(8),
+            text(label).size(9),
+        ]
+        .spacing(1)
+        .align_x(Alignment::Center)
+        .width(Length::Fixed(36.0))
+        .height(Length::Fill)
+    };
+    column![
+        text("PEAK").size(9),
+        row![channel_meter(0, "L"), channel_meter(1, "R")].spacing(2),
+        button(text("Clear").size(8))
+            .on_press(Message::ClearTrackMeter(track.id()))
+            .style(button::secondary)
+            .padding([0, 3]),
+    ]
+    .spacing(1)
+    .align_x(Alignment::Center)
+    .width(Length::Fixed(TCP_STEREO_METER_WIDTH))
+    .height(Length::Fill)
+    .into()
+}
+
+fn track_peak_reading(app: &App, track: &Track) -> ([f32; 2], StereoPeakHold) {
+    let track_id = track.id();
     let peaks = app
         .track_peak_levels
-        .get(&track.id())
+        .get(&track_id)
         .copied()
         .unwrap_or([0.0; 2]);
     let hold = app
         .track_peak_holds
-        .get(&track.id())
+        .get(&track_id)
         .copied()
         .unwrap_or_default();
-    stereo_peak_meter(peaks, hold, Message::ClearTrackMeter(track.id()))
+    (peaks, hold)
+}
+
+fn peak_dbfs_label(peak: f32) -> String {
+    if peak.is_finite() && peak > 0.0 {
+        let label = format!("{:.0}dBFS", 20.0 * peak.log10());
+        if let Some(positive) = label.strip_prefix('-') {
+            format!("−{positive}")
+        } else {
+            label
+        }
+    } else {
+        "−∞dBFS".to_owned()
+    }
+}
+
+fn peak_meter_level_fraction(peak: f32) -> f32 {
+    if !peak.is_finite() || peak <= 0.0 {
+        return 0.0;
+    }
+    ((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
+struct VerticalPeakMeter {
+    peak: f32,
+    hold: f32,
+    clipped: bool,
+}
+
+impl canvas::Program<Message> for VerticalPeakMeter {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: iced::Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(
+            iced::Point::ORIGIN,
+            bounds.size(),
+            iced::Color::from_rgb8(23, 27, 29),
+        );
+
+        let fraction = peak_meter_level_fraction(self.peak);
+        let fill_height = bounds.height * fraction;
+        let color = if self.peak >= 1.0 {
+            iced::Color::from_rgb8(237, 77, 68)
+        } else if self.peak >= 0.708 {
+            iced::Color::from_rgb8(226, 177, 72)
+        } else {
+            iced::Color::from_rgb8(93, 190, 127)
+        };
+        frame.fill_rectangle(
+            iced::Point::new(0.0, bounds.height - fill_height),
+            iced::Size::new(bounds.width, fill_height),
+            color,
+        );
+
+        if self.hold.is_finite() && self.hold > 0.0 {
+            let hold_fraction = peak_meter_level_fraction(self.hold);
+            let hold_y = bounds.height * (1.0 - hold_fraction);
+            let hold_path = canvas::Path::line(
+                iced::Point::new(0.0, hold_y),
+                iced::Point::new(bounds.width, hold_y),
+            );
+            frame.stroke(
+                &hold_path,
+                canvas::Stroke::default()
+                    .with_color(iced::Color::WHITE)
+                    .with_width(1.0),
+            );
+        }
+
+        if self.clipped {
+            frame.fill_rectangle(
+                iced::Point::ORIGIN,
+                iced::Size::new(bounds.width, 2.0),
+                iced::Color::from_rgb8(237, 77, 68),
+            );
+        }
+        vec![frame.into_geometry()]
+    }
 }
 
 pub(super) fn stereo_peak_meter<'a>(
@@ -671,12 +803,7 @@ pub(super) fn stereo_peak_meter<'a>(
 ) -> Element<'a, Message> {
     let channel_meter = |channel: usize| {
         let peak = peaks[channel];
-        let db = if peak > 0.0 {
-            20.0 * peak.log10()
-        } else {
-            -60.0
-        };
-        let value = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        let value = peak_meter_level_fraction(peak);
         let color = if peak >= 1.0 {
             iced::Color::from_rgb8(237, 77, 68)
         } else if peak >= 0.708 {
@@ -1284,9 +1411,28 @@ fn pan_label(pan: f32) -> String {
 mod tests {
     use super::{
         SliderInteractionState, forward_left_release_after_cancel, invalidate_click_after_drag,
-        record_left_click,
+        peak_dbfs_label, peak_meter_level_fraction, record_left_click,
     };
     use iced::{Event, Point, advanced::mouse};
+
+    #[test]
+    fn peak_meter_fraction_maps_db_scale_and_clamps_invalid_levels() {
+        let minus_30_db = 10.0_f32.powf(-30.0 / 20.0);
+
+        assert_eq!(peak_meter_level_fraction(0.0), 0.0);
+        assert_eq!(peak_meter_level_fraction(-1.0), 0.0);
+        assert_eq!(peak_meter_level_fraction(f32::NAN), 0.0);
+        assert!((peak_meter_level_fraction(minus_30_db) - 0.5).abs() < 0.001);
+        assert_eq!(peak_meter_level_fraction(1.0), 1.0);
+        assert_eq!(peak_meter_level_fraction(2.0), 1.0);
+    }
+
+    #[test]
+    fn peak_hold_readout_identifies_dbfs_units() {
+        assert_eq!(peak_dbfs_label(0.0), "−∞dBFS");
+        assert_eq!(peak_dbfs_label(f32::NAN), "−∞dBFS");
+        assert_eq!(peak_dbfs_label(0.5), "−6dBFS");
+    }
 
     #[test]
     fn consecutive_left_clicks_are_detected_as_double_click() {

@@ -222,7 +222,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 | 严重度 | 维度 | 当前问题 | 后续影响 / 处理 |
 | --- | --- | --- | --- |
 | P1 — 时间线导航不完整 | Interaction / transport | 视口已有滚轮缩放、中键拖动缩放/平移、Snap、片段选择/拖动/修边/切分和自动化编辑；还没有循环播放、播放光标跟随，以及 Fit Project、Fit Selection、Fit Selected Items。编辑光标与播放起点也需要保持清晰一致。 | 补齐常用导航命令并统一缩放锚点；时间选区与循环状态须可区分。验证播放、暂停、停止和点击定位的起点语义。 |
-| P1 — TCP 密度和 Mixer 工作流 | Layout / mixing | TCP 已有轨道选择、名称、Volume、Pan、Mute/Solo/Arm、输入监听、左右电平表、FX 和输出选择；固定行高与紧凑控件在窄布局下仍有裁剪风险。Mixer 已存在，但通道固定约 220px，采用横向推子和电平条，Master 随横向滚动且没有输出音量推子。 | 先解决 TCP 行高/密度与可读性；Mixer 使用纵向推子及相邻电平表，保持 Master 可见，并让两个视图操作同一轨道状态和撤销历史。 |
+| P1 — TCP 密度和 Mixer 工作流 | Layout / mixing | TCP 已有轨道选择、名称、Volume、Pan、Mute/Solo/Arm、输入监听、FX 和输出选择；L/R 峰值表已移至右侧并纵向显示，固定行高与紧凑控件在窄布局下仍有裁剪风险。Mixer 已存在，但通道固定约 220px，采用横向推子和电平条，Master 随横向滚动且没有输出音量推子。 | 先解决 TCP 行高/密度与可读性；Mixer 使用纵向推子及相邻电平表，保持 Master 可见，并让两个视图操作同一轨道状态和撤销历史。 |
 | P1 — 工程身份与切换保护 | Window / project workflow | 主菜单显示工程名和未保存标记，但操作系统主窗口标题仍为 `AAADAW`。New/Open/Close 已提供保存、放弃或取消选择，并在保存成功后继续原操作。 | 让操作系统窗口标题同步工程名/dirty 状态；保留已有切换确认语义，保存失败或取消选择器时保持当前工程。 |
 | P1 — Transport 的缺失操作 | Transport / recovery | Transport 已有 Play/Pause、Stop、Record、Restart、seek、BPM/拍号编辑、播放准备反馈和后端详情；Loop 仍显示 unavailable，时间线导航缺少跟随/适配入口。Linux 后端状态和路由诊断正在 #271 / PR #273 实施，尚未完成验收。 | 保留现有窄窗口布局；实现循环与导航前先定义状态语义。设备/路由诊断不得占用音频回调，也不能暗示已连接即有声音。 |
 | P2 — Inspector 与素材发现 | Panel / editing | Inspector 选中片段时高度从 52px 增至 156px，并为 MIDI 音符显示大量按钮；目前没有折叠/resize。Media Browser 支持导入、扫描、打包和重链接，但没有通用目录浏览、试听及拖入编排。 | Inspector 保持简洁并允许折叠/调整高度；素材浏览、试听和拖放应复用现有媒体导入及后台任务能力。 |
