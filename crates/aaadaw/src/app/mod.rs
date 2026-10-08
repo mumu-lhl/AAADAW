@@ -27,6 +27,7 @@ use aaadaw_engine::{
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
+use commands::CommandId;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -67,8 +68,8 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, Message, MidiEditorLane, PathPickerTarget, PendingProjectTransition,
-    SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 pub(crate) fn run() -> iced::Result {
@@ -250,6 +251,8 @@ struct App {
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
+    menu_selected_command: Option<CommandId>,
+    action_menu_scroll_offset: f32,
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
@@ -1144,6 +1147,7 @@ impl App {
             &message,
             Message::RuntimeKeyboardEvent(..)
                 | Message::ShortcutPressed(..)
+                | Message::MenuKeyboard(_)
                 | Message::BackgroundTick
                 | Message::MeterTick
                 | Message::AudioImportStarted(_)
@@ -1173,7 +1177,9 @@ impl App {
         let preserve_menu_state = preserve_context_targets
             || matches!(
                 &message,
-                Message::ActionQueryChanged(_) | Message::RunActionQuery
+                Message::ActionQueryChanged(_)
+                    | Message::ActionMenuScrolled(_)
+                    | Message::RunActionQuery
             );
         if !preserve_context_targets
             && !matches!(
@@ -1219,63 +1225,80 @@ impl App {
         {
             self.active_menu = None;
         }
-        let window_safe_message = matches!(
+        let menu_ui_message = matches!(
             &message,
-            Message::OpenSettings
-                | Message::OpenClapPluginSettings
-                | Message::OpenRenderWindow
-                | Message::ShowMainWorkspace(_)
-                | Message::OpenTempoMap
-                | Message::OpenMeterMap
-                | Message::SelectTimeMapTab(_)
-                | Message::ApplyTempoMap
-                | Message::AddTempoPoint
-                | Message::DeleteTempoPoint(_)
-                | Message::TempoPointTickChanged(_, _)
-                | Message::TempoPointBpmChanged(_, _)
-                | Message::CycleTempoCurve(_)
-                | Message::AddMeterPoint
-                | Message::DeleteMeterPoint(_)
-                | Message::MeterPointTickChanged(_, _)
-                | Message::MeterPointNumeratorChanged(_, _)
-                | Message::MeterPointDenominatorChanged(_, _)
-                | Message::ApplyMeterMap
-                | Message::OpenTrackFxChain(_)
-                | Message::OpenTrackInstrumentPicker(_)
-                | Message::OpenPluginPicker
-                | Message::OpenMidiEditor(_)
-                | Message::CloseMidiEditor
-                | Message::CloseTrackFxChain
-                | Message::ClosePluginPicker
-                | Message::PluginPickerSearchChanged(_)
-                | Message::SelectFxChainPlugin(_)
-                | Message::ExecuteCommand(commands::CommandId::OpenSettings)
-                | Message::ExecuteCommand(commands::CommandId::ExportWav)
-                | Message::ToggleMediaBrowserPanel
-                | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
-                | Message::ToggleOfflineJobsPanel
-                | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
-                | Message::WindowClosed(_)
-                | Message::WindowCloseRequested(_)
-                | Message::StartShortcutCapture(_)
-                | Message::ClearShortcutBinding(_)
-                | Message::RestoreShortcutDefault(_)
-                | Message::SelectSettingsCategory(_)
-                | Message::RecordingOffsetTextChanged(_)
-                | Message::ApplyRecordingOffset
-                | Message::CancelShortcutCapture
-                | Message::ShortcutCaptureKey { .. }
-                | Message::SaveShortcutBindings
-                | Message::ResetShortcutBindings
-                | Message::RemoveClapPluginPath(_)
-                | Message::RescanClapPlugins
-                | Message::ClapPluginsScanned(_)
-                | Message::PickPath(PathPickerTarget::AddClapPluginPath)
-                | Message::CancelOfflineRender
-                | Message::OfflineRenderFinished(_)
-                | Message::FreezeTrackFinished(_)
-                | Message::RemoveQueuedOfflineJob(_)
+            Message::ActionQueryChanged(_)
+                | Message::ActionMenuScrolled(_)
+                | Message::MenuKeyboard(
+                    MenuNavigation::Open
+                        | MenuNavigation::NextMenu
+                        | MenuNavigation::PreviousMenu
+                        | MenuNavigation::NextCommand
+                        | MenuNavigation::PreviousCommand
+                )
+        ) || matches!(
+            &message,
+            Message::RuntimeKeyboardEvent(_, _, window_id)
+                if self.main_window_id == Some(*window_id)
         );
+        let window_safe_message = menu_ui_message
+            || matches!(
+                &message,
+                Message::OpenSettings
+                    | Message::OpenClapPluginSettings
+                    | Message::OpenRenderWindow
+                    | Message::ShowMainWorkspace(_)
+                    | Message::OpenTempoMap
+                    | Message::OpenMeterMap
+                    | Message::SelectTimeMapTab(_)
+                    | Message::ApplyTempoMap
+                    | Message::AddTempoPoint
+                    | Message::DeleteTempoPoint(_)
+                    | Message::TempoPointTickChanged(_, _)
+                    | Message::TempoPointBpmChanged(_, _)
+                    | Message::CycleTempoCurve(_)
+                    | Message::AddMeterPoint
+                    | Message::DeleteMeterPoint(_)
+                    | Message::MeterPointTickChanged(_, _)
+                    | Message::MeterPointNumeratorChanged(_, _)
+                    | Message::MeterPointDenominatorChanged(_, _)
+                    | Message::ApplyMeterMap
+                    | Message::OpenTrackFxChain(_)
+                    | Message::OpenTrackInstrumentPicker(_)
+                    | Message::OpenPluginPicker
+                    | Message::OpenMidiEditor(_)
+                    | Message::CloseMidiEditor
+                    | Message::CloseTrackFxChain
+                    | Message::ClosePluginPicker
+                    | Message::PluginPickerSearchChanged(_)
+                    | Message::SelectFxChainPlugin(_)
+                    | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                    | Message::ExecuteCommand(commands::CommandId::ExportWav)
+                    | Message::ToggleMediaBrowserPanel
+                    | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
+                    | Message::ToggleOfflineJobsPanel
+                    | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
+                    | Message::WindowClosed(_)
+                    | Message::WindowCloseRequested(_)
+                    | Message::StartShortcutCapture(_)
+                    | Message::ClearShortcutBinding(_)
+                    | Message::RestoreShortcutDefault(_)
+                    | Message::SelectSettingsCategory(_)
+                    | Message::RecordingOffsetTextChanged(_)
+                    | Message::ApplyRecordingOffset
+                    | Message::CancelShortcutCapture
+                    | Message::ShortcutCaptureKey { .. }
+                    | Message::SaveShortcutBindings
+                    | Message::ResetShortcutBindings
+                    | Message::RemoveClapPluginPath(_)
+                    | Message::RescanClapPlugins
+                    | Message::ClapPluginsScanned(_)
+                    | Message::PickPath(PathPickerTarget::AddClapPluginPath)
+                    | Message::CancelOfflineRender
+                    | Message::OfflineRenderFinished(_)
+                    | Message::FreezeTrackFinished(_)
+                    | Message::RemoveQueuedOfflineJob(_)
+            );
         let offline_queue_submission = self.offline_render_busy
             && matches!(
                 &message,
@@ -1353,6 +1376,7 @@ impl App {
         }
         if self.recording_recovery_busy
             && !standby_input_completion
+            && !menu_ui_message
             && !matches!(
                 &message,
                 Message::RecordingRecoveryPrepared(_)
@@ -1538,8 +1562,16 @@ impl App {
         let mut task = Task::none();
         match message {
             Message::ToggleMainMenu(menu) => {
-                self.active_menu = (self.active_menu != Some(menu)).then_some(menu);
                 self.offline_jobs_panel_open = false;
+                if self.active_menu == Some(menu) {
+                    self.active_menu = None;
+                    self.menu_selected_command = None;
+                } else {
+                    task = self.open_main_menu(menu);
+                }
+            }
+            Message::MenuKeyboard(navigation) => {
+                task = self.navigate_main_menu(navigation);
             }
             Message::ShowMainWorkspace(workspace) => {
                 self.main_workspace = workspace;
@@ -2292,13 +2324,22 @@ impl App {
                 {
                     self.keyboard_modifiers = *modifiers;
                 }
-                let message = plugin_window_escape_message(
+                let message = menu_navigation_event(
                     &event,
                     status,
                     window_id,
-                    self.fx_chain_window_id,
-                    self.plugin_picker_window_id,
+                    self.main_window_id,
+                    self.active_menu,
                 )
+                .or_else(|| {
+                    plugin_window_escape_message(
+                        &event,
+                        status,
+                        window_id,
+                        self.fx_chain_window_id,
+                        self.plugin_picker_window_id,
+                    )
+                })
                 .or_else(|| {
                     midi_editor_shortcut_event(
                         event.clone(),
@@ -2339,7 +2380,9 @@ impl App {
                     self.pending_project_transition = None;
                 } else if self.offline_jobs_panel_open {
                     self.offline_jobs_panel_open = false;
-                } else if self.active_menu.take().is_none() && !self.cancel_active_track_draft() {
+                } else if self.active_menu.take().is_some() {
+                    self.menu_selected_command = None;
+                } else if !self.cancel_active_track_draft() {
                     let dismissed_item_menu = self.timeline.context_item.take().is_some();
                     let dismissed_track_menu = self.timeline.context_track.take().is_some();
                     let dismissed_automation_menu =
@@ -2814,7 +2857,21 @@ impl App {
                 }
                 self.sync_all_track_mix_to_playback();
             }
-            Message::ActionQueryChanged(query) => self.action_query = query,
+            Message::ActionQueryChanged(query) => {
+                self.action_query = query;
+                if self.active_menu == Some(MainMenu::Actions) {
+                    self.menu_selected_command =
+                        commands::matching_actions_menu(self, &self.action_query)
+                            .into_iter()
+                            .find(|entry| entry.enabled)
+                            .map(|entry| entry.id);
+                    self.action_menu_scroll_offset = 0.0;
+                    task = scroll_widget_to("aaadaw-actions-menu-results", 0.0);
+                }
+            }
+            Message::ActionMenuScrolled(offset) => {
+                self.action_menu_scroll_offset = offset.max(0.0);
+            }
             Message::ActionMacroNameChanged(name) => self.action_macro_name = name,
             Message::ActionMacroStepSelected(step) => self.action_macro_step = Some(step),
             Message::AddActionMacroStep => self.add_action_macro_step(),
@@ -6113,8 +6170,127 @@ impl App {
             .map_or(0, |tick| tick.saturating_add(grid / 2) / grid * grid)
     }
 
+    fn open_main_menu(&mut self, menu: MainMenu) -> Task<Message> {
+        self.active_menu = Some(menu);
+        self.menu_selected_command = self.menu_command_ids(menu).first().copied();
+        self.action_menu_scroll_offset = 0.0;
+        if menu == MainMenu::Actions {
+            Task::batch([
+                iced::widget::operation::focus(messages::action_search_input_id()),
+                scroll_widget_to("aaadaw-actions-menu-results", 0.0),
+            ])
+        } else {
+            Task::none()
+        }
+    }
+
+    fn menu_command_ids(&self, menu: MainMenu) -> Vec<CommandId> {
+        let entries = if menu == MainMenu::Actions {
+            commands::matching_actions_menu(self, &self.action_query)
+        } else {
+            commands::for_menu(self, menu)
+        };
+        entries
+            .into_iter()
+            .filter(|entry| entry.enabled)
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    fn navigate_main_menu(&mut self, navigation: MenuNavigation) -> Task<Message> {
+        const MENUS: [MainMenu; 7] = [
+            MainMenu::File,
+            MainMenu::Edit,
+            MainMenu::View,
+            MainMenu::Insert,
+            MainMenu::Item,
+            MainMenu::Track,
+            MainMenu::Actions,
+        ];
+        match navigation {
+            MenuNavigation::Open => {
+                if self.active_menu.is_some() {
+                    self.active_menu = None;
+                    self.menu_selected_command = None;
+                    Task::none()
+                } else {
+                    self.open_main_menu(MENUS[0])
+                }
+            }
+            MenuNavigation::NextMenu | MenuNavigation::PreviousMenu => {
+                let direction = if navigation == MenuNavigation::NextMenu {
+                    1_isize
+                } else {
+                    -1_isize
+                };
+                let current = self
+                    .active_menu
+                    .and_then(|active| MENUS.iter().position(|menu| *menu == active))
+                    .unwrap_or(0);
+                let next = if direction > 0 {
+                    (current + 1) % MENUS.len()
+                } else {
+                    (current + MENUS.len() - 1) % MENUS.len()
+                };
+                self.open_main_menu(MENUS[next])
+            }
+            MenuNavigation::NextCommand | MenuNavigation::PreviousCommand => {
+                let Some(menu) = self.active_menu else {
+                    return Task::none();
+                };
+                let commands = self.menu_command_ids(menu);
+                if commands.is_empty() {
+                    self.menu_selected_command = None;
+                    return Task::none();
+                }
+                let direction = if navigation == MenuNavigation::NextCommand {
+                    1_isize
+                } else {
+                    -1_isize
+                };
+                let current = self
+                    .menu_selected_command
+                    .and_then(|selected| commands.iter().position(|command| *command == selected));
+                let next = current.map_or_else(
+                    || if direction > 0 { 0 } else { commands.len() - 1 },
+                    |index| {
+                        if direction > 0 {
+                            (index + 1) % commands.len()
+                        } else {
+                            (index + commands.len() - 1) % commands.len()
+                        }
+                    },
+                );
+                self.menu_selected_command = Some(commands[next]);
+                if menu == MainMenu::Actions {
+                    scroll_actions_menu_selection(self, commands[next])
+                } else {
+                    Task::none()
+                }
+            }
+            MenuNavigation::Activate => {
+                if let Some(command) = self
+                    .menu_selected_command
+                    .filter(|command| commands::is_enabled(self, *command))
+                {
+                    self.update(Message::ExecuteCommand(command))
+                } else if self.active_menu == Some(MainMenu::Actions) {
+                    self.run_action_query()
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+
     fn run_action_query(&mut self) -> Task<Message> {
-        if let Some(command) = commands::find(self, &self.action_query) {
+        let selected = (self.active_menu == Some(MainMenu::Actions))
+            .then_some(self.menu_selected_command)
+            .flatten();
+        if let Some(command) = selected
+            .filter(|command| commands::is_enabled(self, *command))
+            .or_else(|| commands::find(self, &self.action_query))
+        {
             self.update(Message::ExecuteCommand(command))
         } else {
             self.status =
@@ -6933,6 +7109,10 @@ fn project_path_from_query(query: &str) -> Option<PathBuf> {
 }
 
 fn scroll_arrangement_to(target: &'static str, offset_y: f32) -> Task<Message> {
+    scroll_widget_to(target, offset_y)
+}
+
+fn scroll_widget_to(target: &'static str, offset_y: f32) -> Task<Message> {
     use iced::advanced::widget::operation::scrollable::{self, AbsoluteOffset};
 
     let target = iced::widget::Id::new(target);
@@ -6941,6 +7121,59 @@ fn scroll_arrangement_to(target: &'static str, offset_y: f32) -> Task<Message> {
         y: Some(offset_y.max(0.0)),
     };
     iced::advanced::widget::operate(scrollable::scroll_to(target, offset))
+}
+
+fn scroll_actions_menu_selection(app: &mut App, selected: CommandId) -> Task<Message> {
+    let entries = commands::matching_actions_menu(app, &app.action_query);
+    let Some(offset_y) =
+        actions_menu_selection_scroll_offset(&entries, selected, app.action_menu_scroll_offset)
+    else {
+        return Task::none();
+    };
+    app.action_menu_scroll_offset = offset_y;
+    scroll_widget_to("aaadaw-actions-menu-results", offset_y)
+}
+
+fn actions_menu_selection_scroll_offset(
+    entries: &[commands::CommandEntry],
+    selected: CommandId,
+    current_offset: f32,
+) -> Option<f32> {
+    const VIEWPORT_HEIGHT: f32 = 284.0;
+    const ROW_HEIGHT: f32 = 28.0;
+    const CATEGORY_HEIGHT: f32 = 16.0;
+    const SEPARATOR_HEIGHT: f32 = 5.0;
+    const ROW_GAP: f32 = 4.0;
+
+    let mut y = 0.0;
+    let mut category = None;
+    let mut selected_bounds = None;
+    for entry in entries {
+        if category != Some(entry.category) {
+            category = Some(entry.category);
+            y += CATEGORY_HEIGHT + ROW_GAP;
+        }
+        if entry.separator_before {
+            y += SEPARATOR_HEIGHT + ROW_GAP;
+        }
+        if entry.id == selected {
+            selected_bounds = Some((y, y + ROW_HEIGHT));
+        }
+        y += ROW_HEIGHT + ROW_GAP;
+    }
+    let content_height = y;
+    let (row_top, row_bottom) = selected_bounds?;
+    let max_offset = (content_height - VIEWPORT_HEIGHT).max(0.0);
+    let current_offset = current_offset.clamp(0.0, max_offset);
+    let next_offset = if row_top < current_offset {
+        row_top
+    } else if row_bottom > current_offset + VIEWPORT_HEIGHT {
+        row_bottom - VIEWPORT_HEIGHT
+    } else {
+        return None;
+    }
+    .clamp(0.0, max_offset);
+    (next_offset != current_offset).then_some(next_offset)
 }
 
 /// Runs blocking project storage work away from the Iced update thread.
@@ -7021,6 +7254,76 @@ fn prepare_project_playback_file(
     let prepared = prepared?;
     close?;
     Ok(prepared)
+}
+
+fn menu_navigation_event(
+    event: &iced::Event,
+    status: iced::event::Status,
+    window_id: iced::window::Id,
+    main_window_id: Option<iced::window::Id>,
+    active_menu: Option<MainMenu>,
+) -> Option<Message> {
+    if main_window_id != Some(window_id) {
+        return None;
+    }
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key,
+        modifiers,
+        repeat: false,
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    let navigation = match key.as_ref() {
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::F10)
+            if status == iced::event::Status::Ignored =>
+        {
+            MenuNavigation::Open
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) if active_menu.is_some() => {
+            return Some(Message::Escape);
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored || modifiers.alt()) =>
+        {
+            MenuNavigation::PreviousMenu
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored || modifiers.alt()) =>
+        {
+            MenuNavigation::NextMenu
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored
+                    || active_menu == Some(MainMenu::Actions)) =>
+        {
+            MenuNavigation::PreviousCommand
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored
+                    || active_menu == Some(MainMenu::Actions)) =>
+        {
+            MenuNavigation::NextCommand
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored
+                    || active_menu == Some(MainMenu::Actions)) =>
+        {
+            return Some(if active_menu == Some(MainMenu::Actions) {
+                Message::RunActionQuery
+            } else {
+                Message::MenuKeyboard(MenuNavigation::Activate)
+            });
+        }
+        _ => return None,
+    };
+    Some(Message::MenuKeyboard(navigation))
 }
 
 fn runtime_keyboard_event(
