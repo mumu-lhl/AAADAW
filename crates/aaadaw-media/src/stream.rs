@@ -716,6 +716,32 @@ struct StreamingResampler<F> {
     pending_frames: Vec<F>,
 }
 
+/// Incremental, phase-continuous stereo PCM resampler for offline/control-thread work.
+///
+/// Each call may allocate its returned chunk. Do not use this helper in a realtime callback.
+pub struct StereoPcmResampler {
+    inner: StreamingResampler<[f32; 2]>,
+}
+
+impl StereoPcmResampler {
+    /// Creates a resampler from `input_sample_rate` to `output_sample_rate`.
+    pub fn new(input_sample_rate: u32, output_sample_rate: u32) -> Result<Self, MediaError> {
+        Ok(Self {
+            inner: StreamingResampler::new(input_sample_rate, output_sample_rate)?,
+        })
+    }
+
+    /// Converts one contiguous input chunk without resetting the resampling phase.
+    pub fn push(&mut self, input: &[[f32; 2]]) -> Result<Vec<[f32; 2]>, MediaError> {
+        self.inner.push(input)
+    }
+
+    /// Flushes the final interpolation frame after the input stream ends.
+    pub fn finish(&mut self) -> Vec<[f32; 2]> {
+        self.inner.finish()
+    }
+}
+
 impl<F: FeedFrame> StreamingResampler<F> {
     fn new(input_sample_rate: u32, output_sample_rate: u32) -> Result<Self, MediaError> {
         if input_sample_rate == 0 {
@@ -826,7 +852,7 @@ impl DecodedAudioChunk {
 
 #[cfg(test)]
 mod tests {
-    use super::StreamingResampler;
+    use super::{StereoPcmResampler, StreamingResampler};
 
     #[test]
     fn streaming_resampler_preserves_interpolation_across_chunk_boundaries() {
@@ -875,5 +901,21 @@ mod tests {
         assert!(first.is_empty());
         assert_eq!(second, [[0.0, 1.0], [0.5, 0.5]]);
         assert_eq!(final_frames, [[1.0, 0.0], [1.0, 0.0]]);
+    }
+
+    #[test]
+    fn public_stereo_resampler_flushes_a_contiguous_rate_converted_stream() {
+        let mut resampler = StereoPcmResampler::new(24_000, 48_000)
+            .expect("valid sample rates should create a resampler");
+        let mut output = resampler
+            .push(&[[0.0, 0.0], [1.0, 0.5]])
+            .expect("input chunk should be converted");
+        output.extend(resampler.finish());
+
+        assert_eq!(output.len(), 4);
+        assert_eq!(output[0], [0.0, 0.0]);
+        assert_eq!(output[1], [0.5, 0.25]);
+        assert_eq!(output[2], [1.0, 0.5]);
+        assert_eq!(output[3], [1.0, 0.5]);
     }
 }
