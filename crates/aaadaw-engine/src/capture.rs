@@ -26,6 +26,7 @@ struct CaptureState {
     first_capture_frame: AtomicU64,
     has_first_capture_frame: AtomicBool,
     next_capture_frame: AtomicU64,
+    capture_anchor_frame: AtomicU64,
     capture_started_at: OnceLock<Instant>,
     monitor: Mutex<Option<AudioMonitorProducer>>,
     replacement_queues: Arc<Mutex<VecDeque<CaptureQueueConsumer>>>,
@@ -144,6 +145,9 @@ impl AudioCaptureControl {
             .clone();
         let elapsed_frame = self.elapsed_capture_frames(sample_rate).unwrap_or(0);
         let base_frame = elapsed_frame.max(self.0.next_capture_frame.load(Ordering::Acquire));
+        self.0
+            .capture_anchor_frame
+            .store(base_frame, Ordering::Release);
         AudioCaptureProducer {
             producer,
             block_producer,
@@ -160,6 +164,19 @@ impl AudioCaptureControl {
         let started_at = self.0.capture_started_at.get()?;
         let frames = started_at.elapsed().as_nanos() * u128::from(sample_rate) / 1_000_000_000;
         u64::try_from(frames).ok()
+    }
+
+    /// Refreshes the capture timeline anchor on a device-management thread before stream start.
+    pub(crate) fn refresh_capture_anchor(&self, sample_rate: u32) -> Option<u64> {
+        let elapsed_frame = self.elapsed_capture_frames(sample_rate)?;
+        let frame = elapsed_frame.max(self.0.next_capture_frame.load(Ordering::Acquire));
+        self.0.capture_anchor_frame.store(frame, Ordering::Release);
+        Some(frame)
+    }
+
+    /// Reads the prepared capture timeline anchor without consulting the system clock.
+    pub(crate) fn capture_anchor_frame(&self) -> u64 {
+        self.0.capture_anchor_frame.load(Ordering::Acquire)
     }
 
     /// Invalidates an active take when the backend provides unusable frame timing.
@@ -753,6 +770,18 @@ mod tests {
         assert_eq!(block.frame_count, 2);
         assert_eq!(output[..2], [[0.1, -0.1], [0.2, -0.2]]);
         assert!(consumer.pop_timed_frames(&mut output).is_none());
+    }
+
+    #[test]
+    fn capture_anchor_is_refreshed_for_realtime_callback_reads() {
+        let (_producer, _consumer, control) = audio_capture_stream(8);
+        control.start();
+
+        let anchor = control
+            .refresh_capture_anchor(48_000)
+            .expect("an armed take has a monotonic start time");
+
+        assert_eq!(control.capture_anchor_frame(), anchor);
     }
 
     #[test]

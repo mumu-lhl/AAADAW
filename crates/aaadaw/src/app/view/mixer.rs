@@ -10,11 +10,19 @@ use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    view_with_mix_layout(app, TrackMixLayout::Compact)
+}
+
+pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
+    view_with_mix_layout(app, TrackMixLayout::TouchCompact)
+}
+
+fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Message> {
     let strips = app
         .project
         .tracks()
         .iter()
-        .map(|track| track_strip(app, track));
+        .map(|track| track_strip(app, track, mix_layout));
     let master = master_strip(app);
     let content = row(strips).push(master).spacing(tokens::SECTION_GAP);
     let scroll = scrollable(content)
@@ -25,12 +33,22 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let toolbar = row![
         text("Mixer").size(14),
         button("+ Track")
+            .padding(if matches!(mix_layout, TrackMixLayout::TouchCompact) {
+                [tokens::SPACING_LG as u16, tokens::SPACING_MD as u16]
+            } else {
+                [4, 8]
+            })
             .on_press_maybe(
                 commands::is_enabled(app, CommandId::AddTrack)
                     .then_some(Message::ExecuteCommand(CommandId::AddTrack)),
             )
             .style(button::secondary),
         button("+ Bus")
+            .padding(if matches!(mix_layout, TrackMixLayout::TouchCompact) {
+                [tokens::SPACING_LG as u16, tokens::SPACING_MD as u16]
+            } else {
+                [4, 8]
+            })
             .on_press(super::Message::AddBusTrack)
             .style(button::secondary),
     ]
@@ -43,7 +61,17 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
+fn track_strip<'a>(
+    app: &'a App,
+    track: &'a Track,
+    mix_layout: TrackMixLayout,
+) -> Element<'a, Message> {
+    let touch = matches!(mix_layout, TrackMixLayout::TouchCompact);
+    let touch_target = if touch {
+        Length::Fixed(tokens::TOUCH_TARGET_MIN)
+    } else {
+        Length::Shrink
+    };
     let track_id = track.id();
     let selected = app.timeline.is_track_selected(track_id);
     let primary = app.timeline.selected_track == Some(track_id);
@@ -67,7 +95,13 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     } else {
         button::secondary
     })
-    .padding([2, 4]);
+    .padding(if touch {
+        [tokens::SPACING_SM as u16; 2]
+    } else {
+        [2, 4]
+    })
+    .width(touch_target)
+    .height(touch_target);
     let header = row![
         selection,
         track_name_input(app, track),
@@ -75,7 +109,7 @@ fn track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     ]
     .spacing(tokens::SPACING_XS)
     .align_y(Alignment::Center);
-    let (volume, pan) = track_mix_controls(app, track, TrackMixLayout::Compact);
+    let (volume, pan) = track_mix_controls(app, track, mix_layout);
     let content = column![
         header,
         rule::horizontal(1),

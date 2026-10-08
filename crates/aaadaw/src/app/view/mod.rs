@@ -316,7 +316,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
     .into_iter()
     .map(|menu_id| -> Element<'_, Message> {
         button(text(menu_id.label()).size(14))
-            .padding([16, 14])
+            .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
             .style(if app.active_menu == Some(menu_id) {
                 button::primary
             } else {
@@ -333,7 +333,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
 
     let workspace_switcher = row![
         button("Arrange")
-            .padding([16, 16])
+            .padding([tokens::SPACING_LG as u16; 2])
             .style(if app.main_workspace == MainWorkspace::Arrangement {
                 button::primary
             } else {
@@ -341,7 +341,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
             })
             .on_press(Message::ShowMainWorkspace(MainWorkspace::Arrangement)),
         button("Mixer")
-            .padding([16, 16])
+            .padding([tokens::SPACING_LG as u16; 2])
             .style(if app.main_workspace == MainWorkspace::Mixer {
                 button::primary
             } else {
@@ -352,14 +352,14 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
             "Jobs · {}",
             usize::from(app.offline_render_busy) + app.offline_job_queue.len()
         )))
-        .padding([16, 12])
+        .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
         .on_press(Message::ToggleOfflineJobsPanel),
     ]
     .spacing(tokens::SPACING_SM);
 
     let workspace: Element<'_, Message> = match app.main_workspace {
         MainWorkspace::Arrangement => arrangement::mobile_view(app),
-        MainWorkspace::Mixer => mixer::view(app),
+        MainWorkspace::Mixer => mixer::mobile_view(app),
     };
     let transport = container(
         column![

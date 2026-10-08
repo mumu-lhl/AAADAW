@@ -1,5 +1,6 @@
 use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
 use super::super::{App, Message, StereoPeakHold, TrackDraftField};
+use super::tokens;
 use crate::timeline::{
     self, ArrangementPane, TCP_SCROLL_ID, TIMELINE_ROW_HEIGHT, TIMELINE_SCROLL_ID, TimelineEvent,
 };
@@ -123,7 +124,10 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
         .map(|track| -> Element<'_, Message> {
             let selected = app.timeline.selected_track == Some(track.id());
             button(text(track.name()).size(13))
-                .padding([16, 12])
+                .padding([
+                    tokens::SPACING_LG as u16,
+                    tokens::SPACING_MD as u16,
+                ])
                 .style(if selected {
                     button::primary
                 } else {
@@ -924,13 +928,27 @@ pub(super) fn track_mix_controls<'a>(
 ) -> (Element<'a, Message>, Element<'a, Message>) {
     let compact = !matches!(layout, TrackMixLayout::Normal);
     let touch = matches!(layout, TrackMixLayout::TouchCompact);
+    let touch_target_width = if touch {
+        Length::Fixed(tokens::TOUCH_TARGET_MIN)
+    } else {
+        Length::Shrink
+    };
+    let touch_target_height = touch_target_width;
     let track_id = track.id();
-    let toggle_padding: [u16; 2] = if touch { [16, 14] } else { [2, 8] };
+    let toggle_padding: [u16; 2] = if touch {
+        [tokens::SPACING_MD as u16, tokens::SPACING_SM as u16]
+    } else {
+        [2, 8]
+    };
     let mute_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleMute,
     };
-    let mute = button("M")
+    let mute = button(if touch && track.is_muted() {
+        "M ✓"
+    } else {
+        "M"
+    })
         .on_press_maybe(
             commands::is_enabled(app, mute_command)
                 .then_some(Message::ExecuteCommand(mute_command)),
@@ -942,12 +960,18 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding(toggle_padding);
+        .padding(toggle_padding)
+        .width(touch_target_width)
+        .height(touch_target_height);
     let solo_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleSolo,
     };
-    let solo = button("S")
+    let solo = button(if touch && track.is_solo() {
+        "S ✓"
+    } else {
+        "S"
+    })
         .on_press_maybe(
             commands::is_enabled(app, solo_command)
                 .then_some(Message::ExecuteCommand(solo_command)),
@@ -959,7 +983,9 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding(toggle_padding);
+        .padding(toggle_padding)
+        .width(touch_target_width)
+        .height(touch_target_height);
     let record_arm_command = CommandId::Track {
         track_id,
         command: TrackCommand::ToggleRecordArm,
@@ -968,7 +994,13 @@ pub(super) fn track_mix_controls<'a>(
     let is_recording = app.recording.is_some() && app.recording_tracks.contains(&track_id);
     #[cfg(not(feature = "audio-device"))]
     let is_recording = false;
-    let record_arm = button(if is_recording { "REC" } else { "R" })
+    let record_arm = button(if is_recording {
+        "REC"
+    } else if touch && track.is_record_armed() {
+        "R ✓"
+    } else {
+        "R"
+    })
         .on_press_maybe(
             commands::is_enabled(app, record_arm_command)
                 .then_some(Message::ExecuteCommand(record_arm_command)),
@@ -982,7 +1014,9 @@ pub(super) fn track_mix_controls<'a>(
                 iced::widget::button::secondary(theme, status)
             }
         })
-        .padding(toggle_padding);
+        .padding(toggle_padding)
+        .width(touch_target_width)
+        .height(touch_target_height);
     #[cfg(feature = "audio-device")]
     let monitor_enabled = app
         .playback
@@ -1014,10 +1048,12 @@ pub(super) fn track_mix_controls<'a>(
         }
     })
     .padding(if touch {
-        [14_u16, 10_u16]
+        [tokens::SPACING_MD as u16, tokens::SPACING_SM as u16]
     } else {
         [2_u16, 6_u16]
-    });
+    })
+    .width(touch_target_width)
+    .height(touch_target_height);
     #[cfg(not(feature = "audio-device"))]
     let input_monitor = text("").size(10);
     let mix_gesture = app
@@ -1053,7 +1089,7 @@ pub(super) fn track_mix_controls<'a>(
     );
     let volume: Element<'_, Message> = if touch {
         container(volume)
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .align_y(Alignment::Center)
             .into()
     } else {
@@ -1073,7 +1109,7 @@ pub(super) fn track_mix_controls<'a>(
     );
     let pan_slider: Element<'_, Message> = if touch {
         container(pan_slider)
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .align_y(Alignment::Center)
             .into()
     } else {
@@ -1088,7 +1124,17 @@ pub(super) fn track_mix_controls<'a>(
         .style(track_draft_input_style(volume_has_error))
         .padding(if touch { 10_u16 } else { 4_u16 })
         .width(Length::Fixed(48.0));
-    let volume_controls = if compact {
+    let volume_controls: Element<'_, Message> = if touch {
+        let controls = row![mute, solo, record_arm];
+        let controls = if track.is_record_armed() || show_input_monitor {
+            controls.push(input_monitor)
+        } else {
+            controls
+        };
+        column![controls, row![volume, volume_value].spacing(tokens::SPACING_XS)]
+            .spacing(tokens::SPACING_XS)
+            .into()
+    } else if compact {
         let controls = row![mute, solo, record_arm];
         let controls = if track.is_record_armed() || show_input_monitor {
             controls.push(input_monitor)
@@ -1100,6 +1146,7 @@ pub(super) fn track_mix_controls<'a>(
             .push(volume_value)
             .spacing(2)
             .align_y(Alignment::Center)
+            .into()
     } else {
         row![
             mute,
@@ -1117,6 +1164,7 @@ pub(super) fn track_mix_controls<'a>(
         ]
         .spacing(2)
         .align_y(Alignment::Center)
+        .into()
     };
     let pan_has_error = app
         .track_draft_errors
@@ -1135,10 +1183,12 @@ pub(super) fn track_mix_controls<'a>(
             .style(iced::widget::button::secondary)
             .on_press(Message::ResetTrackPan(track_id))
             .padding(if touch {
-                [12_u16, 12_u16]
+                [tokens::SPACING_MD as u16, tokens::SPACING_SM as u16]
             } else {
                 [2_u16, 5_u16]
-            }),
+            })
+            .width(touch_target_width)
+            .height(touch_target_height),
     ]
     .spacing(3)
     .align_y(Alignment::Center);

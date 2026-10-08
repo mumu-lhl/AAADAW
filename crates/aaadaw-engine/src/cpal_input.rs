@@ -129,10 +129,10 @@ fn capture_input<T>(
         control.fail_if_enabled();
         return;
     }
-    if clock.origin.is_none()
-        && let Some(elapsed_frame) = control.elapsed_capture_frames(sample_rate)
-    {
-        clock.base_frame = clock.base_frame.max(elapsed_frame);
+    // This anchor is refreshed from the device-control thread before the stream starts, so the
+    // realtime callback only reads an atomic and never asks the system clock for wall time.
+    if clock.origin.is_none() {
+        clock.base_frame = clock.base_frame.max(control.capture_anchor_frame());
     }
     let frame_count = samples.len() / usize::from(input_channels);
     let Some(first_frame) = clock.first_frame(info.timestamp().capture, frame_count, sample_rate)
@@ -298,6 +298,7 @@ impl CpalAudioInput {
                 is_default_device,
             })?;
         let sample_format = selected.sample_format();
+        let _ = control.refresh_capture_anchor(project_sample_rate);
         let base_frame = producer.base_frame();
         let mut config = selected.with_sample_rate(project_sample_rate).config();
         config.buffer_size = buffer_size;
