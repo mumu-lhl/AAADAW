@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 public final class AudioService extends Service {
     public static final String ACTION_RECORDING = "org.aaadaw.app.action.RECORDING";
@@ -18,6 +19,7 @@ public final class AudioService extends Service {
 
     private boolean recording;
     private boolean playback;
+    private PowerManager.WakeLock audioWakeLock;
 
     @Override
     public void onCreate() {
@@ -46,6 +48,7 @@ public final class AudioService extends Service {
 
         if (!recording && !playback) {
             stopForeground(STOP_FOREGROUND_REMOVE);
+            releaseAudioWakeLock();
             stopSelf(startId);
             return START_NOT_STICKY;
         }
@@ -56,7 +59,30 @@ public final class AudioService extends Service {
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
+        acquireAudioWakeLock();
         return START_NOT_STICKY;
+    }
+
+    private void acquireAudioWakeLock() {
+        if (audioWakeLock == null) {
+            PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+            if (powerManager == null) {
+                return;
+            }
+            audioWakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "AAADAW:AudioService");
+            audioWakeLock.setReferenceCounted(false);
+        }
+        if (!audioWakeLock.isHeld()) {
+            audioWakeLock.acquire();
+        }
+    }
+
+    private void releaseAudioWakeLock() {
+        if (audioWakeLock != null && audioWakeLock.isHeld()) {
+            audioWakeLock.release();
+        }
     }
 
     private Notification notification() {
@@ -98,5 +124,11 @@ public final class AudioService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        releaseAudioWakeLock();
+        super.onDestroy();
     }
 }

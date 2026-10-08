@@ -93,10 +93,11 @@ The Android audio feature uses CPAL's AAudio backend for playback and capture;
 recording asks for microphone permission at runtime and starts a microphone
 foreground service with an ongoing notification. Playback starts a media
 playback foreground service, so Android can keep the audio stream alive when
-the Activity moves to the background. The shared service tracks recording and
-playback independently and stops only when both modes end. If an output stream
-is lost while playing, AAADAW closes it and tries to reopen playback at the
-last reported sample. If no output is available, playback stops with an error.
+the Activity moves to the background. While either mode is active, the shared
+service holds a partial wake lock and releases it when both modes end. If an
+output stream is lost while playing, AAADAW closes it and tries to reopen
+playback at the last reported sample. If no output is available, playback stops
+with an error.
 If an input route fails while recording, AAADAW closes the old stream and tries
 to reopen the selected input. The capture writer preserves the outage as silence
 between timestamped audio blocks. If reopening fails, AAADAW finalizes the audio
