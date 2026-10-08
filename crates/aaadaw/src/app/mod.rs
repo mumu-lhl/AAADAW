@@ -1002,10 +1002,7 @@ fn duplicate_item_actions(
 
 impl App {
     fn is_mobile_main_window(&self) -> bool {
-        cfg!(target_os = "android")
-            || self
-                .main_window_size
-                .is_some_and(|size| size.width < 720.0)
+        cfg!(target_os = "android") || self.main_window_size.is_some_and(|size| size.width < 720.0)
     }
 
     fn show_mobile_panel(&mut self, panel: MobilePanel) {

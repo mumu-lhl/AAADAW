@@ -12,8 +12,7 @@ use super::project_io::{
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool, MobilePanel,
-    PathPickerTarget,
-    fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
+    PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
     midi_editor_shortcut_event, midi_expression_context_menu_event, mobile_back_event,
     shortcut_message,
 };

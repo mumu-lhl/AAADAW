@@ -73,9 +73,7 @@ pub(super) fn playback_diagnostic_suffix(
 }
 
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
-    if app.main_window_id == Some(window_id)
-        && app.mobile_panel == super::MobilePanel::MidiEditor
-    {
+    if app.main_window_id == Some(window_id) && app.mobile_panel == super::MobilePanel::MidiEditor {
         let size = app
             .main_window_size
             .unwrap_or_else(|| iced::Size::new(420.0, 640.0));

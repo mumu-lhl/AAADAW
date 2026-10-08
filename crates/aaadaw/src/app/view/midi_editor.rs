@@ -1,5 +1,5 @@
 use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane, MidiEditorTool};
-use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS, TOUCH_TARGET_MIN};
+use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent};
 use aaadaw_core::{
     ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
@@ -451,7 +451,11 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .push(pitch_canvas)
         .push(active_lane)
         .spacing(ROW_GAP)
-        .padding(if touch_targets { SPACING_XS } else { PANEL_PADDING })
+        .padding(if touch_targets {
+            SPACING_XS
+        } else {
+            PANEL_PADDING
+        })
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -1812,9 +1816,10 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     let mapping = self.mapping();
                     let data = MidiNoteData {
                         pitch: mapping.pitch_at_y(point.y),
-                        tick: self.item.source_offset_ticks().saturating_add(
-                            mapping.snap_tick(mapping.tick_at_x(point.x), false),
-                        ),
+                        tick: self
+                            .item
+                            .source_offset_ticks()
+                            .saturating_add(mapping.snap_tick(mapping.tick_at_x(point.x), false)),
                         duration: mapping.grid_ticks(),
                         velocity: 96,
                     };
@@ -2552,10 +2557,7 @@ impl PianoRoll<'_> {
                 && point.y < top + self.pitch_row_height
         }) {
             let (left, width, _) = note_bounds(note);
-            return Some((
-                note,
-                point.x >= left + width - resize_handle_width(width),
-            ));
+            return Some((note, point.x >= left + width - resize_handle_width(width)));
         }
         if !touch_targets {
             return None;
@@ -2575,9 +2577,11 @@ impl PianoRoll<'_> {
                     && point.x <= hit_left + hit_width
                     && point.y >= hit_top
                     && point.y <= hit_top + hit_height;
-                in_touch_target.then_some((note, (point.x - (left + width / 2.0)).hypot(
-                    point.y - (top + self.pitch_row_height / 2.0),
-                )))
+                in_touch_target.then_some((
+                    note,
+                    (point.x - (left + width / 2.0))
+                        .hypot(point.y - (top + self.pitch_row_height / 2.0)),
+                ))
             })
             .min_by(|(_, left), (_, right)| left.total_cmp(right))
             .map(|(note, _)| (note, false))
