@@ -29,7 +29,11 @@ fn view_with_touch_targets(app: &App, touch_targets: bool) -> Element<'_, Messag
             text("Inspector").size(12),
             text("Select an Item to inspect it.").size(12)
         ]
-        .spacing(6)
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        })
         .into(),
     };
     let content = container(content).padding(iced::Padding::default().right(12.0));
@@ -63,7 +67,11 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
             buttons.danger("Delete", Message::DeleteAudioItem(item_id)),
         ]
-        .spacing(6);
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
         #[cfg(feature = "audio-device")]
         {
             actions =
@@ -82,13 +90,21 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 buttons.action("Set", Message::CommitAudioItemStartSample(item_id)),
                 buttons.action("Cancel", Message::CancelAudioItemStartSampleEdit(item_id)),
             ]
-            .spacing(6)
+            .spacing(if touch_targets {
+                tokens::SPACING_SM
+            } else {
+                tokens::SPACING_COMPACT
+            })
         } else {
             row![
                 text(format!("Start sample: {}", item.start_sample())).width(Length::Fill),
                 buttons.action("Edit", Message::BeginAudioItemStartSampleEdit(item_id)),
             ]
-            .spacing(6)
+            .spacing(if touch_targets {
+                tokens::SPACING_SM
+            } else {
+                tokens::SPACING_COMPACT
+            })
         };
         let start_seconds =
             item.start_sample() as f64 / app.project.settings().sample_rate() as f64;
@@ -107,7 +123,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             row![text(format!(
                 "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
             )),]
-            .spacing(12),
+            .spacing(tokens::SECTION_GAP),
             action_row(source_status, touch_targets),
             action_row(position_controls, touch_targets),
             action_row(
@@ -120,11 +136,15 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     buttons.action("+100 ms", Message::NudgeAudioItem(item_id, 1, 100)),
                     buttons.action("+1 s", Message::NudgeAudioItem(item_id, 1, 1_000)),
                 ]
-                .spacing(4),
+                .spacing(tokens::SPACING_XS),
                 touch_targets
             ),
         ]
-        .spacing(6)
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        })
         .into()
     } else if let Some(item) = app
         .project
@@ -160,7 +180,11 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             buttons.action("+ beat", Message::NudgeMidiItem(item_id, 1)),
             buttons.action("Add C4", Message::AddMidiNote(item_id)),
         ]
-        .spacing(6);
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
         if !item.notes().is_empty() {
             item_actions = item_actions
                 .push(buttons.action("Quantize 1/16", Message::QuantizeMidiItem(item_id)));
@@ -201,17 +225,29 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                         ),
                         buttons.danger("Delete", Message::DeleteMidiNote(item_id, note.id())),
                     ]
-                    .spacing(5),
+                    .spacing(if touch_targets {
+                        tokens::SPACING_XS
+                    } else {
+                        tokens::SPACING_DENSE
+                    }),
                     touch_targets,
                 )
             })
             .collect::<Vec<Element<'_, Message>>>();
         column![
-            row![text("Name"), name_input].spacing(8),
+            row![text("Name"), name_input].spacing(if touch_targets {
+                tokens::SPACING_SM
+            } else {
+                tokens::SPACING_COMPACT
+            }),
             action_row(item_actions, touch_targets),
-            column(notes).spacing(4)
+            column(notes).spacing(tokens::SPACING_XS)
         ]
-        .spacing(6)
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        })
         .into()
     } else {
         column![text("Selected Item no longer exists.")].into()

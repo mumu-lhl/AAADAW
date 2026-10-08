@@ -93,7 +93,7 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     responsive(move |size| {
         if size.width < 720.0 {
-            mobile_view(app, size.width)
+            mobile_view(app, size.width, size.height)
         } else {
             desktop_view(app)
         }
@@ -301,7 +301,7 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
+fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<'_, Message> {
     use super::{MainMenu, MainWorkspace};
 
     let menus = [
@@ -426,17 +426,10 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
         let popup = float(menu::mobile_dropdown(
             app,
             active_menu,
-            (viewport_width - 24.0).max(240.0),
+            (viewport_width - tokens::SPACING_LG * 2.0).max(1.0),
+            (viewport_height - tokens::SPACING_LG * 2.0).max(1.0),
         ))
-        .translate(|bounds, viewport| {
-            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
-            let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
-            let target_x =
-                (viewport.x + (viewport.width - bounds.width) / 2.0).clamp(viewport.x, max_x);
-            let target_y =
-                (viewport.y + (viewport.height - bounds.height) / 2.0).clamp(viewport.y, max_y);
-            iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
-        });
+        .translate(center_popup);
         layered = stack![layered, popup]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -445,17 +438,10 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
     if app.offline_jobs_panel_open {
         let popup = float(menu::mobile_offline_jobs_panel(
             app,
-            (viewport_width - 24.0).max(240.0),
+            (viewport_width - tokens::SPACING_LG * 2.0).max(1.0),
+            (viewport_height - tokens::SPACING_LG * 2.0).max(1.0),
         ))
-        .translate(|bounds, viewport| {
-            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
-            let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
-            let target_x =
-                (viewport.x + (viewport.width - bounds.width) / 2.0).clamp(viewport.x, max_x);
-            let target_y =
-                (viewport.y + (viewport.height - bounds.height) / 2.0).clamp(viewport.y, max_y);
-            iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
-        });
+        .translate(center_popup);
         layered = stack![layered, popup]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -464,6 +450,14 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
     mouse_area(layered)
         .on_press(Message::DismissMainMenu)
         .into()
+}
+
+fn center_popup(bounds: iced::Rectangle, viewport: iced::Rectangle) -> iced::Vector {
+    let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+    let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+    let target_x = (viewport.x + (viewport.width - bounds.width) / 2.0).clamp(viewport.x, max_x);
+    let target_y = (viewport.y + (viewport.height - bounds.height) / 2.0).clamp(viewport.y, max_y);
+    iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
 }
 
 fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecoveryCandidate) -> bool {

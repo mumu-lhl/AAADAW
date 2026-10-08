@@ -15,7 +15,8 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Theme};
 use std::fmt;
 
-const MOBILE_TRACK_NAME_MAX_CHARS: usize = 12;
+const MOBILE_TRACK_NAME_MAX_CHARS: usize = 9;
+const MOBILE_TRACK_SELECTOR_BUTTON_WIDTH: f32 = 160.0;
 
 fn truncate_track_name(name: &str, max_chars: usize) -> String {
     let mut chars = name.chars();
@@ -138,12 +139,13 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
             let label = truncate_track_name(track.name(), MOBILE_TRACK_NAME_MAX_CHARS);
             let track_button = button(
                 row![
-                    text(label).size(13),
+                    text(label).size(13).width(Length::Fill),
                     text(if selected { "✓" } else { "" }).size(13),
                 ]
                 .spacing(tokens::SPACING_XS)
                 .align_y(Alignment::Center),
             )
+            .width(Length::Fixed(MOBILE_TRACK_SELECTOR_BUTTON_WIDTH))
             .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .padding([tokens::SPACING_SM, tokens::SPACING_MD])
             .style(if selected {
@@ -229,6 +231,7 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
                     .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
             ),
             button("−")
+                .width(Length::Fixed(tokens::TOUCH_TARGET_MIN))
                 .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
                 .padding([tokens::SPACING_LG; 2])
                 .on_press(Message::Timeline(TimelineEvent::ZoomAt {
@@ -236,6 +239,7 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
                     anchor_x: 180.0,
                 })),
             button("+")
+                .width(Length::Fixed(tokens::TOUCH_TARGET_MIN))
                 .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
                 .padding([tokens::SPACING_LG; 2])
                 .on_press(Message::Timeline(TimelineEvent::ZoomAt {
@@ -1223,7 +1227,11 @@ pub(super) fn track_mix_controls<'a>(
             .width(touch_target_width)
             .height(touch_target_height),
     ]
-    .spacing(3)
+    .spacing(if touch {
+        tokens::SPACING_XS
+    } else {
+        tokens::SPACING_TIGHT
+    })
     .align_y(Alignment::Center);
     (volume_controls.into(), pan_controls.into())
 }

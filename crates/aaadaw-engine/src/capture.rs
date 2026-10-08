@@ -167,6 +167,7 @@ impl AudioCaptureControl {
     }
 
     /// Refreshes the capture timeline anchor on a device-management thread before stream start.
+    #[cfg(any(feature = "cpal-backend", test))]
     pub(crate) fn refresh_capture_anchor(&self, sample_rate: u32) -> Option<u64> {
         let elapsed_frame = self.elapsed_capture_frames(sample_rate)?;
         let frame = elapsed_frame.max(self.0.next_capture_frame.load(Ordering::Acquire));
@@ -175,6 +176,7 @@ impl AudioCaptureControl {
     }
 
     /// Reads the prepared capture timeline anchor without consulting the system clock.
+    #[cfg(any(feature = "cpal-backend", test))]
     pub(crate) fn capture_anchor_frame(&self) -> u64 {
         self.0.capture_anchor_frame.load(Ordering::Acquire)
     }
