@@ -21,4 +21,7 @@ license = "MIT OR Apache-2.0"
 # dependency versions and applies only the upstream lru requirement update.
 [patch.crates-io]
 cryoglyph = { path = "vendor/cryoglyph" }
+# Set AAudio's API 28+ unprocessed input preset dynamically without raising minSdk.
+cpal = { path = "vendor/cpal" }
 iced_winit = { path = "vendor/iced_winit" }
+ndk = { path = "vendor/ndk" }

@@ -90,7 +90,9 @@ and save use the Storage Access Framework (SAF): documents are staged in the
 app's private storage while open, and saved project/WAV files are copied back
 to the user-selected URI. Audio import is staged before it enters the project.
 The Android audio feature uses CPAL's AAudio backend for playback and capture;
-recording asks for microphone permission at runtime and starts a microphone
+API 28 and newer request AAudio's unprocessed input preset when the symbol is
+available, while API 26/27 retain the platform default. Recording asks for
+microphone permission at runtime and starts a microphone
 foreground service with an ongoing notification. Playback starts a media
 playback foreground service, so Android can keep the audio stream alive when
 the Activity moves to the background. While either mode is active, the shared
