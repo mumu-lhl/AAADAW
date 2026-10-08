@@ -2180,6 +2180,30 @@ fn render_command_opens_a_reusable_render_window() {
 }
 
 #[test]
+fn main_window_title_tracks_project_name_and_unsaved_changes() {
+    let main_window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window_id),
+        ..App::default()
+    };
+
+    assert_eq!(app.window_title(main_window_id), "New project — AAADAW");
+
+    let _ = app.update(Message::AddTrack);
+    assert_eq!(app.window_title(main_window_id), "New project  * — AAADAW");
+
+    app.project_path = Some(PathBuf::from("/projects/session.aaadaw"));
+    app.saved_revision = app.revision;
+    assert_eq!(app.window_title(main_window_id), "session.aaadaw — AAADAW");
+
+    let _ = app.update(Message::AddTrack);
+    assert_eq!(
+        app.window_title(main_window_id),
+        "session.aaadaw  * — AAADAW"
+    );
+}
+
+#[test]
 fn wav_export_options_default_to_pcm24_and_dither_only_applies_to_integer_formats() {
     let mut app = App::default();
     assert_eq!(

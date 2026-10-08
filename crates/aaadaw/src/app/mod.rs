@@ -1203,6 +1203,18 @@ impl App {
         })
     }
 
+    pub(super) fn project_display_title(&self) -> String {
+        let project_name = self
+            .project_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map_or_else(
+                || "New project".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+        format!("{project_name}{}", if self.is_dirty() { "  *" } else { "" })
+    }
+
     fn window_title(&self, window_id: iced::window::Id) -> String {
         if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
@@ -1230,6 +1242,8 @@ impl App {
                         .map(|_| "MIDI Editor".to_owned())
                 })
                 .unwrap_or_else(|| "MIDI Editor".to_owned())
+        } else if self.main_window_id == Some(window_id) {
+            format!("{} — AAADAW", self.project_display_title())
         } else {
             "AAADAW".to_owned()
         }

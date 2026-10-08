@@ -82,19 +82,9 @@ pub(super) fn bar(app: &App) -> Element<'_, Message> {
                 .into()
         })
         .collect();
-    let project_name = app
-        .project_path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map_or_else(
-            || "New project".to_owned(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-    let title = format!("{project_name}{}", if app.is_dirty() { "  *" } else { "" });
-
     row![
         row(menus).spacing(0).align_y(Alignment::Center),
-        container(text(title).size(13))
+        container(text(app.project_display_title()).size(13))
             .width(Length::Fill)
             .center_y(Length::Fixed(MENU_BAR_HEIGHT)),
     ]
