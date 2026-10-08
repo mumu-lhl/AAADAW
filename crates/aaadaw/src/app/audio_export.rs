@@ -668,8 +668,14 @@ mod tests {
             RenderSampleRateChoice::Project.sample_rate(&project),
             project.settings().sample_rate()
         );
-        assert_eq!(RenderSampleRateChoice::Hz44100.sample_rate(&project), 44_100);
-        assert_eq!(RenderSampleRateChoice::Hz192000.sample_rate(&project), 192_000);
+        assert_eq!(
+            RenderSampleRateChoice::Hz44100.sample_rate(&project),
+            44_100
+        );
+        assert_eq!(
+            RenderSampleRateChoice::Hz192000.sample_rate(&project),
+            192_000
+        );
         assert_eq!(RenderTailChoice::ProjectDefault.seconds(), 2);
         assert_eq!(RenderTailChoice::Seconds0.seconds(), 0);
         assert_eq!(RenderTailChoice::Seconds60.seconds(), 60);
