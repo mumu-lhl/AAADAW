@@ -389,6 +389,8 @@ struct App {
     offline_jobs_panel_open: bool,
     transport_details_open: bool,
     wav_export_options: WavExportOptions,
+    render_sample_rate: audio_export::RenderSampleRateChoice,
+    render_tail: audio_export::RenderTailChoice,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
@@ -2306,6 +2308,8 @@ impl App {
                 self.wav_export_options.dither =
                     enabled && self.wav_export_options.sample_format.is_integer();
             }
+            Message::SetRenderSampleRate(rate) => self.render_sample_rate = rate,
+            Message::SetRenderTail(tail) => self.render_tail = tail,
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);
             }
