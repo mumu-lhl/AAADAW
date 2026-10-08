@@ -898,6 +898,7 @@ fn inspect_pipewire_routes(
     };
     Ok(AudioRouteSnapshot {
         sample_rate_hz: stream_node.sample_rate_hz,
+        capture_routes_inspected: matches!(direction, PipeWireRouteDirection::Input),
         input_routes,
         output_routes,
     })

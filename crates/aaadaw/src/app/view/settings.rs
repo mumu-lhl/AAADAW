@@ -315,7 +315,7 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
             match result {
                 Ok(snapshot) => text(capture_route_summary(
                     &snapshot.input_routes,
-                    app.recording.is_some() || app.recording_starting,
+                    snapshot.capture_routes_inspected,
                 ))
                 .size(11),
                 Err(_) => text("").size(11),
@@ -367,10 +367,10 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
 }
 
 #[cfg(all(target_os = "linux", feature = "audio-device"))]
-fn capture_route_summary(input_routes: &[String], capture_active: bool) -> String {
-    if input_routes.is_empty() && capture_active {
+fn capture_route_summary(input_routes: &[String], capture_routes_inspected: bool) -> String {
+    if input_routes.is_empty() && capture_routes_inspected {
         "No connected capture input route was detected for the active recording.".to_owned()
-    } else if input_routes.is_empty() {
+    } else if !capture_routes_inspected {
         "Capture input routes are shown while recording.".to_owned()
     } else {
         format!("Connected capture inputs: {}", input_routes.join(" · "))

@@ -7523,12 +7523,15 @@ fn inspect_linux_audio_routes(
     };
     #[cfg(feature = "jack-backend")]
     if let Some(client_name) = input_client_name {
-        snapshot.input_routes =
-            aaadaw_engine::inspect_jack_input_routes(&client_name)?.input_routes;
+        let input_snapshot = aaadaw_engine::inspect_jack_input_routes(&client_name)?;
+        snapshot.capture_routes_inspected = input_snapshot.capture_routes_inspected;
+        snapshot.input_routes = input_snapshot.input_routes;
     }
     #[cfg(feature = "pipewire-backend")]
     if let Some(node_id) = input_node_id {
-        snapshot.input_routes = aaadaw_engine::inspect_pipewire_input_routes(node_id)?.input_routes;
+        let input_snapshot = aaadaw_engine::inspect_pipewire_input_routes(node_id)?;
+        snapshot.capture_routes_inspected = input_snapshot.capture_routes_inspected;
+        snapshot.input_routes = input_snapshot.input_routes;
     }
     Ok(snapshot)
 }

@@ -293,6 +293,7 @@ pub fn inspect_jack_input_routes(client_name: &str) -> Result<crate::AudioRouteS
     routes.dedup();
     Ok(crate::AudioRouteSnapshot {
         sample_rate_hz: Some(client.sample_rate()),
+        capture_routes_inspected: true,
         input_routes: routes,
         output_routes: Vec::new(),
     })
