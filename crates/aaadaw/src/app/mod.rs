@@ -203,7 +203,7 @@ struct StereoPeakHold {
 }
 
 impl StereoPeakHold {
-    #[cfg(any(feature = "audio-device", test))]
+    #[cfg(feature = "audio-device")]
     fn observe(&mut self, peaks: [f32; 2]) {
         for (channel, peak) in peaks.into_iter().enumerate() {
             let peak = if peak.is_finite() { peak.max(0.0) } else { 0.0 };
