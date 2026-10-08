@@ -226,11 +226,14 @@ where
             #[cfg(target_os = "android")]
             {
                 self.resumed = true;
-                self.process_event(
-                    event_loop,
-                    Event::EventLoopAwakened(winit::event::Event::AboutToWait),
-                );
+                self.process_event(event_loop, Event::Resumed);
             }
+        }
+
+        #[cfg(target_os = "android")]
+        fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+            self.process_event(event_loop, Event::Suspended);
+            self.resumed = false;
         }
 
         fn new_events(
@@ -322,6 +325,7 @@ where
 
             #[cfg(target_os = "android")]
             if !self.resumed {
+                self.sender.start_send(event).expect("Send event");
                 return;
             }
 
@@ -524,6 +528,10 @@ where
 
 #[derive(Debug)]
 enum Event<Message: 'static> {
+    #[cfg(target_os = "android")]
+    Resumed,
+    #[cfg(target_os = "android")]
+    Suspended,
     WindowCreated {
         id: window::Id,
         window: Arc<winit::window::Window>,
@@ -630,6 +638,14 @@ async fn run_instance<P>(
         };
 
         match event {
+            #[cfg(target_os = "android")]
+            Event::Resumed => {
+                if let Some(compositor) = compositor.as_mut() {
+                    window_manager.resume(compositor);
+                }
+            }
+            #[cfg(target_os = "android")]
+            Event::Suspended => window_manager.suspend(),
             Event::WindowCreated {
                 id,
                 window,
@@ -862,11 +878,13 @@ async fn run_instance<P>(
                             );
                             layout_span.finish();
 
-                            current_compositor.configure_surface(
-                                &mut window.surface,
-                                physical_size.width,
-                                physical_size.height,
-                            );
+                            if let Some(surface) = window.surface.as_mut() {
+                                current_compositor.configure_surface(
+                                    surface,
+                                    physical_size.width,
+                                    physical_size.height,
+                                );
+                            }
 
                             window.surface_version =
                                 window.state.surface_version();
@@ -1038,10 +1056,17 @@ async fn run_instance<P>(
 
                         window.draw_preedit();
 
+                        if window.surface.is_none() {
+                            continue;
+                        }
+
                         let present_span = debug::present(id);
                         match current_compositor.present(
                             &mut window.renderer,
-                            &mut window.surface,
+                            window
+                                .surface
+                                .as_mut()
+                                .expect("surface checked before rendering"),
                             window.state.viewport(),
                             window.state.background_color(),
                             || window.raw.pre_present_notify(),
@@ -1063,18 +1088,23 @@ async fn run_instance<P>(
                                         window.state.physical_size();
 
                                     if error == compositor::SurfaceError::Lost {
-                                        window.surface = current_compositor
-                                            .create_surface(
+                                        window.surface = Some(
+                                            current_compositor.create_surface(
                                                 window.raw.clone(),
                                                 physical_size.width,
                                                 physical_size.height,
-                                            );
-                                    } else {
-                                        current_compositor.configure_surface(
-                                            &mut window.surface,
-                                            physical_size.width,
-                                            physical_size.height,
+                                            ),
                                         );
+                                    } else {
+                                        if let Some(surface) =
+                                            window.surface.as_mut()
+                                        {
+                                            current_compositor.configure_surface(
+                                                surface,
+                                                physical_size.width,
+                                                physical_size.height,
+                                            );
+                                        }
                                     }
 
                                     window.raw.request_redraw();
@@ -1170,6 +1200,22 @@ async fn run_instance<P>(
                                 &window.raw,
                                 &window_event,
                             );
+
+                            if window.surface.is_none()
+                                && let winit::event::WindowEvent::Resized(size) =
+                                    &window_event
+                                && size.width > 0
+                                && size.height > 0
+                                && let Some(compositor) = compositor.as_mut()
+                            {
+                                window.surface = Some(compositor.create_surface(
+                                    window.raw.clone(),
+                                    size.width,
+                                    size.height,
+                                ));
+                                window.surface_version =
+                                    window.state.surface_version();
+                            }
 
                             if let Some(event) = conversion::window_event(
                                 window_event,

@@ -75,7 +75,7 @@ where
                 raw: window,
                 state,
                 exit_on_close_request,
-                surface,
+                surface: Some(surface),
                 surface_version,
                 renderer,
                 mouse_interaction: mouse::Interaction::None,
@@ -92,6 +92,35 @@ where
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn suspend(&mut self) {
+        for window in self.entries.values_mut() {
+            window.surface = None;
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn resume(&mut self, compositor: &mut C) {
+        for window in self.entries.values_mut() {
+            if window.surface.is_some() {
+                continue;
+            }
+
+            let size = window.state.physical_size();
+            if size.width == 0 || size.height == 0 {
+                continue;
+            }
+
+            window.surface = Some(compositor.create_surface(
+                window.raw.clone(),
+                size.width,
+                size.height,
+            ));
+            window.surface_version = window.state.surface_version();
+            window.raw.request_redraw();
+        }
     }
 
     pub fn is_idle(&self) -> bool {
@@ -167,7 +196,7 @@ where
     pub state: State<P>,
     pub exit_on_close_request: bool,
     pub mouse_interaction: mouse::Interaction,
-    pub surface: C::Surface,
+    pub surface: Option<C::Surface>,
     pub surface_version: u64,
     pub renderer: P::Renderer,
     pub redraw_at: Option<Instant>,
