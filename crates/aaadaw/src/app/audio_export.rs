@@ -144,7 +144,6 @@ enum OfflineRenderKind {
     ProjectWav {
         destination: PathBuf,
         master_ceiling: aaadaw_engine::MasterOutputCeiling,
-        options: aaadaw_app::WavExportOptions,
         settings: aaadaw_app::ProjectRenderSettings,
     },
     FreezeTrack {
@@ -164,8 +163,9 @@ impl OfflineRenderJob {
                 settings,
                 ..
             } => Some(format!(
-                "{} · {} Hz · {} s tail",
+                "{} · {} · {} Hz · {} s tail",
                 destination.display(),
+                settings.wav_options.sample_format,
                 settings.output_sample_rate,
                 settings.tail_seconds
             )),
@@ -252,10 +252,10 @@ impl App {
             kind: OfflineRenderKind::ProjectWav {
                 destination,
                 master_ceiling: self.audio_settings.master_output_ceiling,
-                options: self.wav_export_options,
                 settings: aaadaw_app::ProjectRenderSettings {
                     output_sample_rate: self.render_sample_rate.sample_rate(&self.project),
                     tail_seconds: self.render_tail.seconds(),
+                    wav_options: self.wav_export_options,
                 },
             },
             snapshot: Arc::new(self.project.snapshot()),
@@ -327,13 +327,11 @@ impl App {
                 OfflineRenderKind::ProjectWav {
                     destination,
                     master_ceiling,
-                    options,
                     settings,
                 } => {
                     let destination = destination.clone();
                     let result_path = destination.clone();
                     let master_ceiling = *master_ceiling;
-                    let options = *options;
                     let settings = *settings;
                     Task::perform(
                         run_blocking("aaadaw-offline-render", move || {
@@ -344,7 +342,6 @@ impl App {
                                 &project,
                                 &destination,
                                 master_ceiling,
-                                options,
                                 settings,
                                 &worker_cancel,
                                 |done, total| {
@@ -648,10 +645,10 @@ mod tests {
             kind: OfflineRenderKind::ProjectWav {
                 destination: PathBuf::from(destination),
                 master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
-                options: aaadaw_app::WavExportOptions::default(),
                 settings: aaadaw_app::ProjectRenderSettings {
                     output_sample_rate: 48_000,
                     tail_seconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
+                    wav_options: aaadaw_app::WavExportOptions::default(),
                 },
             },
             snapshot: Arc::new(Project::default().snapshot()),
