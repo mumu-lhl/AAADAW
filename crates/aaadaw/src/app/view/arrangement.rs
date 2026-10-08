@@ -1,5 +1,5 @@
 use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
-use super::super::{App, Message, TrackDraftField};
+use super::super::{App, Message, StereoPeakHold, TrackDraftField};
 use crate::timeline::{
     self, ArrangementPane, TCP_SCROLL_ID, TIMELINE_ROW_HEIGHT, TIMELINE_SCROLL_ID, TimelineEvent,
 };
@@ -772,11 +772,21 @@ pub(super) fn track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, M
         .get(&track.id())
         .copied()
         .unwrap_or([0.0; 2]);
-    stereo_peak_meter(peaks)
+    let hold = app
+        .track_peak_holds
+        .get(&track.id())
+        .copied()
+        .unwrap_or_default();
+    stereo_peak_meter(peaks, hold, Message::ClearTrackMeter(track.id()))
 }
 
-pub(super) fn stereo_peak_meter<'a>(peaks: [f32; 2]) -> Element<'a, Message> {
-    let channel_meter = |peak: f32| {
+pub(super) fn stereo_peak_meter<'a>(
+    peaks: [f32; 2],
+    hold: StereoPeakHold,
+    clear_message: Message,
+) -> Element<'a, Message> {
+    let channel_meter = |channel: usize| {
+        let peak = peaks[channel];
         let db = if peak > 0.0 {
             20.0 * peak.log10()
         } else {
@@ -790,7 +800,7 @@ pub(super) fn stereo_peak_meter<'a>(peaks: [f32; 2]) -> Element<'a, Message> {
         } else {
             iced::Color::from_rgb8(93, 190, 127)
         };
-        progress_bar(0.0..=1.0, value).girth(4.0).style(move |_| {
+        progress_bar(0.0..=1.0, value).girth(8.0).style(move |_| {
             iced::widget::progress_bar::Style {
                 background: iced::Background::Color(iced::Color::from_rgb8(23, 27, 29)),
                 bar: iced::Background::Color(color),
@@ -798,13 +808,40 @@ pub(super) fn stereo_peak_meter<'a>(peaks: [f32; 2]) -> Element<'a, Message> {
             }
         })
     };
+    let channel_row = |channel: usize, label: &'static str| {
+        let peak_db = if hold.levels[channel] > 0.0 {
+            format!("{:+.1}", 20.0 * hold.levels[channel].log10())
+        } else {
+            "−∞".to_owned()
+        };
+        let clip = if hold.clipped[channel] {
+            text("CLIP")
+                .size(10)
+                .color(iced::Color::from_rgb8(237, 77, 68))
+        } else {
+            text("").size(10)
+        };
+        row![
+            text(label).size(10).width(Length::Fixed(12.0)),
+            channel_meter(channel),
+            text(peak_db).size(10).width(Length::Fixed(36.0)),
+            container(clip).width(Length::Fixed(26.0)),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center)
+    };
     column![
-        row![text("L").size(8), channel_meter(peaks[0])]
-            .spacing(3)
-            .align_y(Alignment::Center),
-        row![text("R").size(8), channel_meter(peaks[1])]
-            .spacing(3)
-            .align_y(Alignment::Center),
+        channel_row(0, "L"),
+        channel_row(1, "R"),
+        row![
+            text("−60   −30   −12   0 dBFS").size(10),
+            button(text("Clear").size(10))
+                .on_press(clear_message)
+                .style(button::secondary)
+                .padding([0, 3]),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
     ]
     .spacing(1)
     .width(Length::Fill)

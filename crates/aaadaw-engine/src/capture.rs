@@ -1,10 +1,18 @@
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 const CAPTURE_BLOCK_QUEUE_CAPACITY: usize = 16_384;
+
+fn sample_peak(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample.abs()
+    } else {
+        0.0
+    }
+}
 
 #[derive(Default)]
 struct CaptureState {
@@ -23,6 +31,16 @@ struct CaptureState {
     replacement_queues: Arc<Mutex<VecDeque<CaptureQueueConsumer>>>,
     capacity_frames: usize,
     capacity_blocks: usize,
+    input_peak: [AtomicU32; 2],
+}
+
+impl CaptureState {
+    fn observe_input_peak(&self, peaks: [f32; 2]) {
+        for (channel, peak) in peaks.into_iter().enumerate() {
+            let peak = if peak.is_finite() { peak.abs() } else { 0.0 };
+            self.input_peak[channel].fetch_max(peak.to_bits(), Ordering::Relaxed);
+        }
+    }
 }
 
 /// Control-thread access to a capture stream's armed and overflow state.
@@ -176,6 +194,14 @@ impl AudioCaptureControl {
             .has_first_capture_frame
             .load(Ordering::Acquire)
             .then(|| self.0.first_capture_frame.load(Ordering::Relaxed))
+    }
+
+    /// Takes the accumulated stereo input sample peaks since the previous poll.
+    pub fn take_input_peak(&self) -> [f32; 2] {
+        [
+            f32::from_bits(self.0.input_peak[0].swap(0, Ordering::Relaxed)),
+            f32::from_bits(self.0.input_peak[1].swap(0, Ordering::Relaxed)),
+        ]
     }
 }
 
@@ -524,19 +550,27 @@ impl AudioCaptureProducer {
         let mut frames = frames.into_iter();
         if !capture_enabled {
             if monitor_enabled && let Some(monitor) = &mut self.monitor {
+                let mut peak = [0.0_f32; 2];
                 for frame in frames {
+                    peak[0] = peak[0].max(sample_peak(frame[0]));
+                    peak[1] = peak[1].max(sample_peak(frame[1]));
                     monitor.write_frame(frame);
                 }
+                self.state.observe_input_peak(peak);
             }
             return 0;
         }
 
         let mut frame_count = 0_usize;
+        let mut peak = [0.0_f32; 2];
         while let Some(frame) = frames.next() {
+            peak[0] = peak[0].max(sample_peak(frame[0]));
+            peak[1] = peak[1].max(sample_peak(frame[1]));
             if monitor_enabled && let Some(monitor) = &mut self.monitor {
                 monitor.write_frame(frame);
             }
             if let Err(PushError::Full(_)) = self.producer.push(frame) {
+                self.state.observe_input_peak(peak);
                 let dropped_frames = 1_u64.saturating_add(frames.count() as u64);
                 if frame_count > 0 && !self.publish_block(first_frame, frame_count) {
                     self.fail_overflow(dropped_frames.saturating_add(frame_count as u64));
@@ -550,6 +584,7 @@ impl AudioCaptureProducer {
         if frame_count == 0 {
             return 0;
         }
+        self.state.observe_input_peak(peak);
         if first_frame.checked_add(frame_count as u64).is_none() {
             self.fail_timing();
             return 0;
@@ -673,7 +708,23 @@ impl AudioCaptureConsumer {
 
 #[cfg(test)]
 mod tests {
-    use super::{audio_capture_stream, audio_capture_stream_with_capacity};
+    use super::{audio_capture_stream, audio_capture_stream_with_capacity, audio_monitor_stream};
+
+    #[test]
+    fn input_meter_reports_stereo_peaks_for_capture_and_standby_monitoring() {
+        let (mut producer, _, control) = audio_capture_stream(8);
+        control.start();
+        producer.push_frames_at(0, [[-0.75, 0.25], [0.5, -1.2]]);
+        assert_eq!(control.take_input_peak(), [0.75, 1.2]);
+        assert_eq!(control.take_input_peak(), [0.0; 2]);
+
+        let (mut producer, _, control) = audio_capture_stream(8);
+        let (monitor, _, gate) = audio_monitor_stream(8);
+        producer.attach_monitor(monitor);
+        gate.set_enabled(true);
+        producer.push_frames_at(0, [[-0.4, 0.1], [0.2, -0.9]]);
+        assert_eq!(control.take_input_peak(), [0.4, 0.9]);
+    }
 
     #[test]
     fn capture_queue_only_accepts_armed_frames_and_reports_backpressure() {

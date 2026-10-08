@@ -195,6 +195,23 @@ impl std::fmt::Display for CpalDeviceChoice {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct StereoPeakHold {
+    levels: [f32; 2],
+    clipped: [bool; 2],
+}
+
+impl StereoPeakHold {
+    #[cfg(any(feature = "audio-device", test))]
+    fn observe(&mut self, peaks: [f32; 2]) {
+        for (channel, peak) in peaks.into_iter().enumerate() {
+            let peak = if peak.is_finite() { peak.max(0.0) } else { 0.0 };
+            self.levels[channel] = self.levels[channel].max(peak);
+            self.clipped[channel] |= peak >= 1.0;
+        }
+    }
+}
+
 #[derive(Default)]
 struct App {
     project: Project,
@@ -226,6 +243,10 @@ struct App {
     track_mix_commit_at: Option<Instant>,
     track_peak_levels: HashMap<TrackId, [f32; 2]>,
     master_peak_level: [f32; 2],
+    track_peak_holds: HashMap<TrackId, StereoPeakHold>,
+    input_peak_level: [f32; 2],
+    input_peak_hold: StereoPeakHold,
+    master_peak_hold: StereoPeakHold,
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
     active_menu: Option<MainMenu>,
@@ -3039,6 +3060,30 @@ impl App {
                 #[cfg(feature = "audio-device")]
                 self.update_track_peak_levels();
             }
+            Message::ClearTrackMeter(track_id) => {
+                self.track_peak_levels.remove(&track_id);
+                self.track_peak_holds.remove(&track_id);
+            }
+            Message::ClearMasterMeter => {
+                self.master_peak_level = [0.0; 2];
+                self.master_peak_hold = StereoPeakHold::default();
+                #[cfg(feature = "audio-device")]
+                if let Some(playback) = self.playback.as_ref() {
+                    playback.reset_master_output_meter();
+                }
+            }
+            Message::ClearInputMeter => {
+                self.input_peak_level = [0.0; 2];
+                self.input_peak_hold = StereoPeakHold::default();
+                #[cfg(feature = "audio-device")]
+                if let Some(recording) = self.recording.as_ref() {
+                    let _ = recording.control.take_input_peak();
+                }
+                #[cfg(feature = "audio-device")]
+                if let Some(playback) = self.playback.as_ref() {
+                    let _ = playback.take_standby_input_peak();
+                }
+            }
             Message::ProjectLoaded(path, result) => {
                 self.io_busy = false;
                 let result = result.lock().ok().and_then(|mut result| result.take());
@@ -4882,20 +4927,36 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn update_track_peak_levels(&mut self) {
-        let meter_active = self
-            .playback
-            .as_ref()
-            .is_some_and(|playback| self.playback_playing || playback.has_enabled_input_monitor());
+        let meter_active =
+            self.playback.as_ref().is_some_and(|playback| {
+                self.playback_playing || playback.has_enabled_input_monitor()
+            }) || self.recording.is_some();
         if !meter_active {
             self.reset_track_meters();
             return;
         }
+
+        let observed_input = self
+            .recording
+            .as_ref()
+            .map(|recording| recording.control.take_input_peak())
+            .or_else(|| {
+                self.playback
+                    .as_ref()
+                    .and_then(|playback| playback.take_standby_input_peak())
+            })
+            .unwrap_or([0.0; 2]);
+        for (channel, observed) in observed_input.into_iter().enumerate() {
+            self.input_peak_level[channel] = observed.max(self.input_peak_level[channel] * 0.96);
+        }
+        self.input_peak_hold.observe(observed_input);
 
         if let Some(playback) = self.playback.as_ref() {
             let observed = playback.take_master_output_peak();
             for (level, peak) in self.master_peak_level.iter_mut().zip(observed) {
                 *level = peak.max(*level * 0.96);
             }
+            self.master_peak_hold.observe(observed);
             if playback.take_master_guard_active() {
                 self.master_guard_ticks_remaining = 15;
             } else {
@@ -4914,8 +4975,18 @@ impl App {
             for channel in 0..2 {
                 levels[channel] = observed[channel].max(levels[channel] * 0.96);
             }
+            self.track_peak_holds
+                .entry(track.id())
+                .or_default()
+                .observe(observed);
         }
         self.track_peak_levels.retain(|track_id, _| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == *track_id)
+        });
+        self.track_peak_holds.retain(|track_id, _| {
             self.project
                 .tracks()
                 .iter()
@@ -4926,6 +4997,7 @@ impl App {
     #[cfg(feature = "audio-device")]
     fn reset_track_meters(&mut self) {
         self.track_peak_levels.clear();
+        self.input_peak_level = [0.0; 2];
         self.master_peak_level = [0.0; 2];
         self.master_guard_ticks_remaining = 0;
         #[cfg(feature = "audio-device")]
