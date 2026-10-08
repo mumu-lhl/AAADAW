@@ -56,18 +56,6 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         )
         .width(Length::Fixed(120.0)),
         text("Zoom · MMB drag ↑↓").size(10),
-        button("−")
-            .on_press(Message::Timeline(TimelineEvent::ZoomAt {
-                factor: 0.8,
-                anchor_x: 480.0,
-            }))
-            .style(iced::widget::button::secondary),
-        button("+")
-            .on_press(Message::Timeline(TimelineEvent::ZoomAt {
-                factor: 1.25,
-                anchor_x: 480.0,
-            }))
-            .style(iced::widget::button::secondary),
         text(format!("{} px / quarter", {
             let ppq = app.project.settings().ppq() as f32;
             app.timeline.pixels_per_tick * ppq
@@ -359,6 +347,10 @@ impl fmt::Display for TrackOutputChoice {
 }
 
 fn timeline_content(app: &App) -> Element<'_, Message> {
+    responsive(move |size| timeline_content_at_width(app, size.width)).into()
+}
+
+fn timeline_content_at_width(app: &App, viewport_width: f32) -> Element<'_, Message> {
     let playhead_sample = {
         #[cfg(feature = "audio-device")]
         {
@@ -369,6 +361,41 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
             None
         }
     };
+    let has_items = !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty();
+    let fit_project = has_items.then_some(Message::Timeline(
+        TimelineEvent::FitProjectToView { viewport_width },
+    ));
+    let fit_selection = app.timeline.time_selection.is_some().then_some(Message::Timeline(
+        TimelineEvent::FitSelectionToView { viewport_width },
+    ));
+    let fit_selected_items = (!app.timeline.selected_items.is_empty()).then_some(Message::Timeline(
+        TimelineEvent::FitSelectedItemsToView { viewport_width },
+    ));
+    let navigation = row![
+        button("Fit project")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(fit_project),
+        button("Fit selection")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(fit_selection),
+        button("Fit items")
+            .style(iced::widget::button::secondary)
+            .on_press_maybe(fit_selected_items),
+        button("−")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::Timeline(TimelineEvent::ZoomAt {
+                factor: 0.8,
+                anchor_x: viewport_width / 2.0,
+            })),
+        button("+")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::Timeline(TimelineEvent::ZoomAt {
+                factor: 1.25,
+                anchor_x: viewport_width / 2.0,
+            })),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
     let timeline = stack![
         timeline::timeline_widget(&app.timeline, &app.project, playhead_sample),
         timeline::item_labels_widget(&app.timeline),
@@ -380,7 +407,11 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
             offset: viewport.absolute_offset().y,
             height: viewport.bounds().height,
         });
-    let contents = column![timeline::ruler_widget(&app.timeline, &app.project), scroll]
+    let contents = column![
+        navigation,
+        timeline::ruler_widget(&app.timeline, &app.project),
+        scroll
+    ]
         .spacing(0)
         .width(Length::Fill)
         .height(Length::Fill);
