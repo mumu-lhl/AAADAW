@@ -5025,6 +5025,12 @@ impl App {
             } else {
                 (Vec::new(), Vec::new(), false)
             };
+        if self.playback_playing
+            && self.timeline.follow_playhead
+            && let Ok(playhead_tick) = self.project.tick_at_sample(self.playhead_sample)
+        {
+            self.timeline.follow_playhead_to_tick(playhead_tick);
+        }
         self.deactivate_stopped_instruments(retired_instruments);
         self.deactivate_stopped_effects(retired_effects);
         let mut new_helper_failures = Vec::new();
