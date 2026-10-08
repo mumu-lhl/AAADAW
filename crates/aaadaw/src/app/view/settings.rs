@@ -377,7 +377,10 @@ fn capture_route_summary(input_routes: &[String], capture_routes_inspected: bool
     } else if !capture_routes_inspected {
         "Capture input routes are shown while recording.".to_owned()
     } else {
-        format!("Last inspected capture routes: {}", input_routes.join(" · "))
+        format!(
+            "Last inspected capture routes: {}",
+            input_routes.join(" · ")
+        )
     }
 }
 
