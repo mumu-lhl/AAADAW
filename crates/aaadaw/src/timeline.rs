@@ -736,6 +736,7 @@ pub(crate) struct TimelineState {
     pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    #[cfg(feature = "audio-device")]
     pub(crate) follow_playhead: bool,
     viewport_width: f32,
     pub(crate) time_selection: Option<TimeSelection>,
@@ -910,6 +911,7 @@ impl Default for TimelineState {
             selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
+            #[cfg(feature = "audio-device")]
             follow_playhead: false,
             viewport_width: 480.0,
             time_selection: None,
