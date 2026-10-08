@@ -5584,19 +5584,22 @@ impl App {
         let project_rate = u64::from(self.project.settings().sample_rate());
         let source_rate = u64::from(waveform.sample_rate());
         let start_delta = i128::from(start_sample) - i128::from(old_start);
-        let source_start_delta =
-            scale_project_samples_to_source_frames_nearest(start_delta, source_rate, project_rate)?;
+        let source_start_delta = scale_project_samples_to_source_frames_toward_zero(
+            start_delta,
+            source_rate,
+            project_rate,
+        )?;
         let source_offset_samples = i128::from(item.source_offset_samples())
             .checked_add(source_start_delta)
             .and_then(|offset| u64::try_from(offset).ok())
             .ok_or_else(|| "Audio trim exceeds the start of the source".to_owned())?;
-        let source_end_delta = scale_project_samples_to_source_frames_ceil(
-            i128::from(end_sample - old_start),
+        let source_length = scale_project_samples_to_source_frames_ceil(
+            i128::from(end_sample - start_sample),
             source_rate,
             project_rate,
         )?;
-        let source_end = i128::from(item.source_offset_samples())
-            .checked_add(source_end_delta)
+        let source_end = i128::from(source_offset_samples)
+            .checked_add(source_length)
             .and_then(|end| u64::try_from(end).ok())
             .ok_or_else(|| "Audio trim exceeds the end of the source".to_owned())?;
         if source_offset_samples >= source_end || source_end > waveform.frame_count() {
@@ -7133,7 +7136,7 @@ fn scroll_widget_to(target: &'static str, offset_y: f32) -> Task<Message> {
     iced::advanced::widget::operate(scrollable::scroll_to(target, offset))
 }
 
-fn scale_project_samples_to_source_frames_nearest(
+fn scale_project_samples_to_source_frames_toward_zero(
     project_samples: i128,
     source_rate: u64,
     project_rate: u64,
@@ -7144,12 +7147,7 @@ fn scale_project_samples_to_source_frames_nearest(
     let numerator = project_samples
         .checked_mul(i128::from(source_rate))
         .ok_or_else(|| "Audio trim exceeds the supported time range".to_owned())?;
-    let denominator = i128::from(project_rate);
-    let quotient = numerator.div_euclid(denominator);
-    let remainder = numerator.rem_euclid(denominator);
-    quotient
-        .checked_add(i128::from(remainder * 2 >= denominator))
-        .ok_or_else(|| "Audio trim exceeds the supported time range".to_owned())
+    Ok(numerator / i128::from(project_rate))
 }
 
 fn scale_project_samples_to_source_frames_ceil(
