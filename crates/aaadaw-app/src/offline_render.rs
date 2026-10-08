@@ -8,6 +8,7 @@ use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
 };
+use aaadaw_media::StereoPcmResampler;
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,23 @@ pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
 pub struct FrozenTrackRender {
     pub start_sample: u64,
     pub length_samples: u64,
+}
+
+/// Per-job project render settings. The output rate is independent of the project rate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectRenderSettings {
+    pub output_sample_rate: u32,
+    pub tail_seconds: u32,
+}
+
+impl ProjectRenderSettings {
+    /// Uses the project's sample rate and the default effect tail.
+    pub fn project_defaults(project: &Project) -> Self {
+        Self {
+            output_sample_rate: project.settings().sample_rate(),
+            tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+        }
+    }
 }
 
 trait OfflineWavWriter {
@@ -46,6 +64,27 @@ impl OfflineWavWriter for WavExport {
 
     fn finish(self) -> Result<PathBuf, OfflineRenderError> {
         WavExport::finish(self).map_err(OfflineRenderError::WavExport)
+    }
+}
+
+struct ResampledOfflineWavWriter<W> {
+    writer: W,
+    resampler: StereoPcmResampler,
+}
+
+impl<W: OfflineWavWriter> OfflineWavWriter for ResampledOfflineWavWriter<W> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        let converted = self
+            .resampler
+            .push(frames)
+            .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+        self.writer.write_frames(&converted)
+    }
+
+    fn finish(mut self) -> Result<PathBuf, OfflineRenderError> {
+        let final_frames = self.resampler.finish();
+        self.writer.write_frames(&final_frames)?;
+        self.writer.finish()
     }
 }
 
@@ -85,6 +124,7 @@ pub enum OfflineRenderError {
     InputUnderrun { samples: usize },
     Media(String),
     SourceEndedEarly { item_id: ItemId },
+    InvalidRenderRange { start: u64, end: u64 },
     TimelineRange,
 }
 
@@ -112,6 +152,10 @@ impl std::fmt::Display for OfflineRenderError {
                 "audio source for item {} ended before its timeline range was rendered",
                 item_id.value()
             ),
+            Self::InvalidRenderRange { start, end } => write!(
+                formatter,
+                "render range cannot end before it starts (start {start}, end {end})"
+            ),
             Self::TimelineRange => {
                 formatter.write_str("project render length exceeds the sample timeline range")
             }
@@ -130,6 +174,7 @@ impl std::error::Error for OfflineRenderError {
             | Self::Cancelled
             | Self::InputUnderrun { .. }
             | Self::SourceEndedEarly { .. }
+            | Self::InvalidRenderRange { .. }
             | Self::TimelineRange => None,
         }
     }
@@ -140,6 +185,12 @@ pub fn project_render_length_samples(
     project: &Project,
     tail_seconds: u32,
 ) -> Result<u64, OfflineRenderError> {
+    let end = project_content_end_sample(project)?;
+    project_render_length_for_range(project, 0, end, tail_seconds)
+}
+
+/// Returns the last sample containing a placed audio or MIDI item.
+pub fn project_content_end_sample(project: &Project) -> Result<u64, OfflineRenderError> {
     let mut content_end = 0_u64;
     for item in project.audio_items() {
         let end = item
@@ -158,12 +209,62 @@ pub fn project_render_length_samples(
             .map_err(|_| OfflineRenderError::TimelineRange)?;
         content_end = content_end.max(end_sample);
     }
+    Ok(content_end)
+}
+
+/// Returns the input-rate length for a half-open project-sample render range and tail.
+pub fn project_render_length_for_range(
+    project: &Project,
+    start_sample: u64,
+    end_sample: u64,
+    tail_seconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    if end_sample < start_sample {
+        return Err(OfflineRenderError::InvalidRenderRange {
+            start: start_sample,
+            end: end_sample,
+        });
+    }
     let tail_frames = u64::from(project.settings().sample_rate())
         .checked_mul(u64::from(tail_seconds))
         .ok_or(OfflineRenderError::TimelineRange)?;
-    content_end
+    end_sample
+        .checked_sub(start_sample)
+        .ok_or(OfflineRenderError::TimelineRange)?
         .checked_add(tail_frames)
         .ok_or(OfflineRenderError::TimelineRange)
+}
+
+/// Returns the output WAV frame count for the full project at a selected rate and tail duration.
+pub fn project_render_output_frames(
+    project: &Project,
+    output_sample_rate: u32,
+    tail_seconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    resampled_frame_count(
+        project_render_length_samples(project, tail_seconds)?,
+        project.settings().sample_rate(),
+        output_sample_rate,
+    )
+}
+
+fn resampled_frame_count(
+    input_frames: u64,
+    input_rate: u32,
+    output_rate: u32,
+) -> Result<u64, OfflineRenderError> {
+    if input_rate == 0 || output_rate == 0 {
+        return Err(OfflineRenderError::TimelineRange);
+    }
+    let numerator = u128::from(input_frames)
+        .checked_mul(u128::from(output_rate))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let denominator = u128::from(input_rate);
+    let frames = numerator
+        .checked_add(denominator - 1)
+        .ok_or(OfflineRenderError::TimelineRange)?
+        / denominator;
+    u64::try_from(frames).map_err(|_| OfflineRenderError::TimelineRange)
 }
 
 /// Renders an already prepared graph to stereo PCM24 WAV using fixed-size buffers.
@@ -364,18 +465,54 @@ pub fn render_project_file_to_wav(
     master_ceiling: MasterOutputCeiling,
     options: WavExportOptions,
     cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    render_project_file_with_settings(
+        project_path,
+        project,
+        destination,
+        master_ceiling,
+        options,
+        ProjectRenderSettings::project_defaults(project),
+        cancelled,
+        report_progress,
+    )
+}
+
+/// Renders a saved project using an explicit output sample rate and effect-tail duration.
+pub fn render_project_file_with_settings(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destination: impl AsRef<Path>,
+    master_ceiling: MasterOutputCeiling,
+    options: WavExportOptions,
+    settings: ProjectRenderSettings,
+    cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
-    let total_frames = project_render_length_samples(project, DEFAULT_EFFECT_TAIL_SECONDS)?;
+    let total_frames = project_render_length_samples(project, settings.tail_seconds)?;
+    let _output_frames = resampled_frame_count(
+        total_frames,
+        project.settings().sample_rate(),
+        settings.output_sample_rate,
+    )?;
     let export = WavExport::create(
         destination.as_ref(),
-        project.settings().sample_rate(),
+        settings.output_sample_rate,
         options,
     )
     .map_err(OfflineRenderError::WavExport)?;
+    let export = ResampledOfflineWavWriter {
+        writer: export,
+        resampler: StereoPcmResampler::new(
+            project.settings().sample_rate(),
+            settings.output_sample_rate,
+        )
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?,
+    };
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     let prepared = prepare_audio_playback(project, &store, 16_384, 2_048)
@@ -986,6 +1123,42 @@ mod tests {
             project_render_length_samples(&project, DEFAULT_EFFECT_TAIL_SECONDS)
                 .expect("render length should be representable"),
             48_000 + 2 * 48_000
+        );
+    }
+
+    #[test]
+    fn selected_render_range_uses_half_open_samples_and_custom_tail() {
+        let project = project_with_one_track();
+        assert_eq!(
+            project_render_length_for_range(&project, 12_000, 20_000, 3)
+                .expect("selected range length should be representable"),
+            8_000 + 3 * 48_000
+        );
+        assert!(matches!(
+            project_render_length_for_range(&project, 20_000, 12_000, 0),
+            Err(OfflineRenderError::InvalidRenderRange {
+                start: 20_000,
+                end: 12_000
+            })
+        ));
+    }
+
+    #[test]
+    fn output_frame_count_tracks_the_requested_sample_rate() {
+        assert_eq!(resampled_frame_count(48_000, 48_000, 44_100).unwrap(), 44_100);
+        assert_eq!(resampled_frame_count(48_000, 48_000, 96_000).unwrap(), 96_000);
+        assert_eq!(resampled_frame_count(1, 48_000, 44_100).unwrap(), 1);
+    }
+
+    #[test]
+    fn default_project_render_settings_follow_the_project_sample_rate() {
+        let project = project_with_one_track();
+        assert_eq!(
+            ProjectRenderSettings::project_defaults(&project),
+            ProjectRenderSettings {
+                output_sample_rate: project.settings().sample_rate(),
+                tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+            }
         );
     }
 
