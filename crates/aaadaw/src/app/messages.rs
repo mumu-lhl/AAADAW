@@ -141,6 +141,8 @@ pub(crate) enum Message {
     TrackInstrumentNativeParent(TrackId, bool, u64),
     OpenMidiEditor(ItemId),
     CloseMidiEditor,
+    PreviewMidiNote(TrackId, u8),
+    ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
