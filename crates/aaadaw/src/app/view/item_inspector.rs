@@ -1,4 +1,5 @@
 use super::super::{App, Message};
+use super::tokens;
 use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
 use aaadaw_core::ItemId;
 use iced::widget::{Button, button, column, container, row, scrollable, text, text_input};
@@ -8,6 +9,14 @@ const EMPTY_INSPECTOR_HEIGHT: f32 = 52.0;
 const SELECTED_INSPECTOR_HEIGHT: f32 = 156.0;
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    view_with_touch_targets(app, false)
+}
+
+pub(super) fn touch_view(app: &App) -> Element<'_, Message> {
+    view_with_touch_targets(app, true)
+}
+
+fn view_with_touch_targets(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let has_selection = app.timeline.selected_item.is_some();
     let height = if has_selection {
         SELECTED_INSPECTOR_HEIGHT
@@ -15,7 +24,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         EMPTY_INSPECTOR_HEIGHT
     };
     let content = match app.timeline.selected_item {
-        Some(item_id) => selected_item_view(app, item_id),
+        Some(item_id) => selected_item_view(app, item_id, touch_targets),
         None => column![
             text("Inspector").size(12),
             text("Select an Item to inspect it.").size(12)
@@ -40,7 +49,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
+fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Element<'_, Message> {
+    let buttons = ItemInspectorButtons { touch_targets };
     if let Some(item) = app
         .project
         .audio_items()
@@ -50,19 +60,17 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
         let status = app.audio_asset_source_statuses.get(item.media_ref());
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
-            action_button("Duplicate", Message::DuplicateAudioItem(item_id)),
-            danger_button("Delete", Message::DeleteAudioItem(item_id)),
+            buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
+            buttons.danger("Delete", Message::DeleteAudioItem(item_id)),
         ]
         .spacing(6);
         #[cfg(feature = "audio-device")]
         {
-            actions = actions.push(action_button(
-                "Seek",
-                Message::SeekToItem(item.start_sample()),
-            ));
+            actions =
+                actions.push(buttons.action("Seek", Message::SeekToItem(item.start_sample())));
         }
         if status.is_some_and(can_relink_source) {
-            actions = actions.push(action_button("Relink", Message::RelinkAudioItem(item_id)));
+            actions = actions.push(buttons.action("Relink", Message::RelinkAudioItem(item_id)));
         }
         let position_controls = if let Some(query) = app.audio_item_start_edits.get(&item_id) {
             row![
@@ -71,14 +79,14 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
                     .on_input(move |query| Message::AudioItemStartSampleChanged(item_id, query))
                     .on_submit(Message::CommitAudioItemStartSample(item_id))
                     .width(160),
-                action_button("Set", Message::CommitAudioItemStartSample(item_id)),
-                action_button("Cancel", Message::CancelAudioItemStartSampleEdit(item_id)),
+                buttons.action("Set", Message::CommitAudioItemStartSample(item_id)),
+                buttons.action("Cancel", Message::CancelAudioItemStartSampleEdit(item_id)),
             ]
             .spacing(6)
         } else {
             row![
                 text(format!("Start sample: {}", item.start_sample())).width(Length::Fill),
-                action_button("Edit", Message::BeginAudioItemStartSampleEdit(item_id)),
+                buttons.action("Edit", Message::BeginAudioItemStartSampleEdit(item_id)),
             ]
             .spacing(6)
         };
@@ -91,29 +99,30 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
         });
         let mut source_status = row![text(source).width(Length::Fill)];
         if status.is_some_and(can_reimport_source) {
-            source_status = source_status.push(action_button(
-                "Reimport",
-                Message::ReimportAudioItem(item_id),
-            ));
+            source_status =
+                source_status.push(buttons.action("Reimport", Message::ReimportAudioItem(item_id)));
         }
         column![
-            actions,
+            action_row(actions, touch_targets),
             row![text(format!(
                 "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
             )),]
             .spacing(12),
-            source_status,
-            position_controls,
-            row![
-                text("Nudge"),
-                action_button("−1 s", Message::NudgeAudioItem(item_id, -1, 1_000)),
-                action_button("−100 ms", Message::NudgeAudioItem(item_id, -1, 100)),
-                action_button("−10 ms", Message::NudgeAudioItem(item_id, -1, 10)),
-                action_button("+10 ms", Message::NudgeAudioItem(item_id, 1, 10)),
-                action_button("+100 ms", Message::NudgeAudioItem(item_id, 1, 100)),
-                action_button("+1 s", Message::NudgeAudioItem(item_id, 1, 1_000)),
-            ]
-            .spacing(4),
+            action_row(source_status, touch_targets),
+            action_row(position_controls, touch_targets),
+            action_row(
+                row![
+                    text("Nudge"),
+                    buttons.action("−1 s", Message::NudgeAudioItem(item_id, -1, 1_000)),
+                    buttons.action("−100 ms", Message::NudgeAudioItem(item_id, -1, 100)),
+                    buttons.action("−10 ms", Message::NudgeAudioItem(item_id, -1, 10)),
+                    buttons.action("+10 ms", Message::NudgeAudioItem(item_id, 1, 10)),
+                    buttons.action("+100 ms", Message::NudgeAudioItem(item_id, 1, 100)),
+                    buttons.action("+1 s", Message::NudgeAudioItem(item_id, 1, 1_000)),
+                ]
+                .spacing(4),
+                touch_targets
+            ),
         ]
         .spacing(6)
         .into()
@@ -146,59 +155,60 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
                 item.length_ticks()
             ))
             .width(Length::Fill),
-            action_button("Piano roll…", Message::OpenMidiEditor(item_id)),
-            action_button("− beat", Message::NudgeMidiItem(item_id, -1)),
-            action_button("+ beat", Message::NudgeMidiItem(item_id, 1)),
-            action_button("Add C4", Message::AddMidiNote(item_id)),
+            buttons.action("Piano roll…", Message::OpenMidiEditor(item_id)),
+            buttons.action("− beat", Message::NudgeMidiItem(item_id, -1)),
+            buttons.action("+ beat", Message::NudgeMidiItem(item_id, 1)),
+            buttons.action("Add C4", Message::AddMidiNote(item_id)),
         ]
         .spacing(6);
         if !item.notes().is_empty() {
-            item_actions = item_actions.push(action_button(
-                "Quantize 1/16",
-                Message::QuantizeMidiItem(item_id),
-            ));
+            item_actions = item_actions
+                .push(buttons.action("Quantize 1/16", Message::QuantizeMidiItem(item_id)));
         }
-        item_actions = item_actions.push(danger_button("Delete", Message::DeleteMidiItem(item_id)));
+        item_actions =
+            item_actions.push(buttons.danger("Delete", Message::DeleteMidiItem(item_id)));
         let notes = item
             .notes()
             .iter()
             .map(|note| {
-                row![
-                    text(format!(
-                        "{} · tick {} · {} ticks · velocity {}",
-                        midi_pitch_name(note.pitch()),
-                        note.tick(),
-                        note.duration(),
-                        note.velocity()
-                    ))
-                    .width(Length::Fill),
-                    action_button("−1/16", Message::NudgeMidiNote(item_id, note.id(), -1)),
-                    action_button("+1/16", Message::NudgeMidiNote(item_id, note.id(), 1)),
-                    action_button(
-                        "Pitch−",
-                        Message::AdjustMidiNotePitch(item_id, note.id(), -1)
-                    ),
-                    action_button(
-                        "Pitch+",
-                        Message::AdjustMidiNotePitch(item_id, note.id(), 1)
-                    ),
-                    action_button(
-                        "Vel−",
-                        Message::AdjustMidiNoteVelocity(item_id, note.id(), -1)
-                    ),
-                    action_button(
-                        "Vel+",
-                        Message::AdjustMidiNoteVelocity(item_id, note.id(), 1)
-                    ),
-                    danger_button("Delete", Message::DeleteMidiNote(item_id, note.id())),
-                ]
-                .spacing(5)
-                .into()
+                action_row(
+                    row![
+                        text(format!(
+                            "{} · tick {} · {} ticks · velocity {}",
+                            midi_pitch_name(note.pitch()),
+                            note.tick(),
+                            note.duration(),
+                            note.velocity()
+                        ))
+                        .width(Length::Fill),
+                        buttons.action("−1/16", Message::NudgeMidiNote(item_id, note.id(), -1)),
+                        buttons.action("+1/16", Message::NudgeMidiNote(item_id, note.id(), 1)),
+                        buttons.action(
+                            "Pitch−",
+                            Message::AdjustMidiNotePitch(item_id, note.id(), -1)
+                        ),
+                        buttons.action(
+                            "Pitch+",
+                            Message::AdjustMidiNotePitch(item_id, note.id(), 1)
+                        ),
+                        buttons.action(
+                            "Vel−",
+                            Message::AdjustMidiNoteVelocity(item_id, note.id(), -1)
+                        ),
+                        buttons.action(
+                            "Vel+",
+                            Message::AdjustMidiNoteVelocity(item_id, note.id(), 1)
+                        ),
+                        buttons.danger("Delete", Message::DeleteMidiNote(item_id, note.id())),
+                    ]
+                    .spacing(5),
+                    touch_targets,
+                )
             })
             .collect::<Vec<Element<'_, Message>>>();
         column![
             row![text("Name"), name_input].spacing(8),
-            item_actions,
+            action_row(item_actions, touch_targets),
             column(notes).spacing(4)
         ]
         .spacing(6)
@@ -208,18 +218,62 @@ fn selected_item_view(app: &App, item_id: ItemId) -> Element<'_, Message> {
     }
 }
 
-fn action_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
-    button(label)
-        .style(iced::widget::button::secondary)
-        .on_press(message)
-        .padding([2, 5])
+fn action_row<'a>(
+    content: impl Into<Element<'a, Message>>,
+    touch_targets: bool,
+) -> Element<'a, Message> {
+    let content = content.into();
+    if touch_targets {
+        scrollable(content)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .into()
+    } else {
+        content
+    }
 }
 
-fn danger_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
-    button(label)
+#[derive(Clone, Copy)]
+struct ItemInspectorButtons {
+    touch_targets: bool,
+}
+
+impl ItemInspectorButtons {
+    fn action<'a>(&self, label: &'a str, message: Message) -> Button<'a, Message> {
+        action_button(label, message, self.touch_targets)
+    }
+
+    fn danger<'a>(&self, label: &'a str, message: Message) -> Button<'a, Message> {
+        danger_button(label, message, self.touch_targets)
+    }
+}
+
+fn action_button<'a>(label: &'a str, message: Message, touch_targets: bool) -> Button<'a, Message> {
+    let button = button(label)
+        .style(iced::widget::button::secondary)
+        .on_press(message);
+    if touch_targets {
+        button
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_SM, tokens::SPACING_MD])
+    } else {
+        button.padding([2, 5])
+    }
+}
+
+fn danger_button<'a>(label: &'a str, message: Message, touch_targets: bool) -> Button<'a, Message> {
+    let button = button(label)
         .style(iced::widget::button::danger)
-        .on_press(message)
-        .padding([2, 5])
+        .on_press(message);
+    if touch_targets {
+        button
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_SM, tokens::SPACING_MD])
+    } else {
+        button.padding([2, 5])
+    }
 }
 
 fn can_relink_source(entry: &AudioAssetSourceStatusEntry) -> bool {

@@ -316,6 +316,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
     .into_iter()
     .map(|menu_id| -> Element<'_, Message> {
         button(text(menu_id.label()).size(14))
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
             .style(if app.active_menu == Some(menu_id) {
                 button::primary
@@ -333,6 +334,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
 
     let workspace_switcher = row![
         button("Arrange")
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .padding([tokens::SPACING_LG as u16; 2])
             .style(if app.main_workspace == MainWorkspace::Arrangement {
                 button::primary
@@ -341,6 +343,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
             })
             .on_press(Message::ShowMainWorkspace(MainWorkspace::Arrangement)),
         button("Mixer")
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
             .padding([tokens::SPACING_LG as u16; 2])
             .style(if app.main_workspace == MainWorkspace::Mixer {
                 button::primary
@@ -352,6 +355,7 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
             "Jobs · {}",
             usize::from(app.offline_render_busy) + app.offline_job_queue.len()
         )))
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
         .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
         .on_press(Message::ToggleOfflineJobsPanel),
     ]
@@ -400,10 +404,12 @@ fn mobile_view(app: &App, viewport_width: f32) -> Element<'_, Message> {
                 .size(12)
                 .width(Length::Fill),
             button("Recover")
-                .padding([12, 12])
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_MD; 2])
                 .on_press(Message::RecoverRecording(candidate.manifest_path.clone())),
             button("Discard")
-                .padding([12, 12])
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_MD; 2])
                 .on_press(Message::DiscardRecording(candidate.manifest_path.clone())),
         ]
         .spacing(tokens::SPACING_XS)
@@ -529,21 +535,24 @@ fn mobile_playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             "Play"
         })
-        .padding([16, 14])
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+        .padding([tokens::SPACING_LG, tokens::SPACING_MD])
         .on_press_maybe(available.then_some(if app.playback_playing {
             Message::TogglePlayback
         } else {
             Message::StartPlayback
         })),
         button("Stop")
-            .padding([16, 14])
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_LG, tokens::SPACING_MD])
             .on_press_maybe(available.then_some(Message::StopPlayback)),
         button(if app.recording.is_some() {
             "End rec"
         } else {
             "Record"
         })
-        .padding([16, 14])
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+        .padding([tokens::SPACING_LG, tokens::SPACING_MD])
         .style(button::danger)
         .on_press_maybe(if app.recording.is_some() {
             Some(Message::StopRecording)

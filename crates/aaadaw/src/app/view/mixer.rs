@@ -25,6 +25,7 @@ fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Me
         .map(|track| track_strip(app, track, mix_layout));
     let master = master_strip(app);
     let content = row(strips).push(master).spacing(tokens::SECTION_GAP);
+    let touch_targets = matches!(mix_layout, TrackMixLayout::TouchCompact);
     let scroll = scrollable(content)
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default(),
@@ -33,7 +34,12 @@ fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Me
     let toolbar = row![
         text("Mixer").size(14),
         button("+ Track")
-            .padding(if matches!(mix_layout, TrackMixLayout::TouchCompact) {
+            .height(if touch_targets {
+                Length::Fixed(tokens::TOUCH_TARGET_MIN)
+            } else {
+                Length::Shrink
+            })
+            .padding(if touch_targets {
                 [tokens::SPACING_LG as u16, tokens::SPACING_MD as u16]
             } else {
                 [4, 8]
@@ -44,7 +50,12 @@ fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Me
             )
             .style(button::secondary),
         button("+ Bus")
-            .padding(if matches!(mix_layout, TrackMixLayout::TouchCompact) {
+            .height(if touch_targets {
+                Length::Fixed(tokens::TOUCH_TARGET_MIN)
+            } else {
+                Length::Shrink
+            })
+            .padding(if touch_targets {
                 [tokens::SPACING_LG as u16, tokens::SPACING_MD as u16]
             } else {
                 [4, 8]

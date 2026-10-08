@@ -8,7 +8,7 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, Message, PathPickerTarget,
+    App, MainMenu, MainWorkspace, Message, PathPickerTarget, StereoPeakHold,
     keyboard_shortcut_event, midi_editor_shortcut_event, midi_expression_context_menu_event,
     shortcut_message,
 };
@@ -4736,10 +4736,7 @@ fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
         app.project.audio_items(),
         std::slice::from_ref(&audio_before)
     );
-    assert_eq!(
-        app.project.midi_items(),
-        std::slice::from_ref(&midi_before)
-    );
+    assert_eq!(app.project.midi_items(), std::slice::from_ref(&midi_before));
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items().len(), 2);
     assert_eq!(app.project.midi_items().len(), 2);

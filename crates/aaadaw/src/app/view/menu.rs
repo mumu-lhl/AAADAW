@@ -117,18 +117,23 @@ pub(super) const fn bar_bottom() -> f32 {
 }
 
 pub(super) fn dropdown(app: &App, menu: MainMenu) -> Element<'_, Message> {
-    dropdown_with_max_width(app, menu, f32::INFINITY)
+    dropdown_with_max_width(app, menu, f32::INFINITY, false)
 }
 
 pub(super) fn mobile_dropdown(app: &App, menu: MainMenu, max_width: f32) -> Element<'_, Message> {
-    dropdown_with_max_width(app, menu, max_width)
+    dropdown_with_max_width(app, menu, max_width, true)
 }
 
-fn dropdown_with_max_width(app: &App, menu: MainMenu, max_width: f32) -> Element<'_, Message> {
+fn dropdown_with_max_width(
+    app: &App,
+    menu: MainMenu,
+    max_width: f32,
+    touch_targets: bool,
+) -> Element<'_, Message> {
     let contents = if menu == MainMenu::Actions {
-        actions_menu(app, commands::for_actions_menu(app))
+        actions_menu(app, commands::for_actions_menu(app), touch_targets)
     } else {
-        menu_commands(app, menu, commands::for_menu(app, menu))
+        menu_commands(app, menu, commands::for_menu(app, menu), touch_targets)
     };
     let popup_width = MENU_LAYOUT
         .iter()
@@ -149,13 +154,18 @@ fn dropdown_with_max_width(app: &App, menu: MainMenu, max_width: f32) -> Element
         .into()
 }
 
-fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Element<'_, Message> {
+fn menu_commands(
+    app: &App,
+    menu: MainMenu,
+    entries: Vec<CommandEntry>,
+    touch_targets: bool,
+) -> Element<'_, Message> {
     let mut contents = column![].spacing(tokens::ROW_GAP);
     for entry in entries {
         if entry.separator_before {
             contents = contents.push(rule::horizontal(1));
         }
-        contents = contents.push(command(entry));
+        contents = contents.push(command(entry, touch_targets));
     }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
@@ -164,14 +174,18 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
 }
 
 pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
-    offline_jobs_panel_with_width(app, 420.0)
+    offline_jobs_panel_with_width(app, 420.0, false)
 }
 
 pub(super) fn mobile_offline_jobs_panel(app: &App, max_width: f32) -> Element<'_, Message> {
-    offline_jobs_panel_with_width(app, max_width)
+    offline_jobs_panel_with_width(app, max_width, true)
 }
 
-fn offline_jobs_panel_with_width(app: &App, width: f32) -> Element<'_, Message> {
+fn offline_jobs_panel_with_width(
+    app: &App,
+    width: f32,
+    touch_targets: bool,
+) -> Element<'_, Message> {
     let visible_rows = 2
         + usize::from(app.active_offline_job.is_some())
         + app
@@ -186,8 +200,7 @@ fn offline_jobs_panel_with_width(app: &App, width: f32) -> Element<'_, Message> 
         jobs = jobs.push(
             row![
                 text(format!("Active: {}", active.job.label())).size(10),
-                button("Cancel")
-                    .padding([1, 6])
+                touch_button(button("Cancel"), touch_targets)
                     .on_press(Message::CancelOfflineRender),
             ]
             .spacing(6)
@@ -212,8 +225,7 @@ fn offline_jobs_panel_with_width(app: &App, width: f32) -> Element<'_, Message> 
             jobs = jobs.push(
                 row![
                     text(format!("Queued: {}", job.label())).size(10),
-                    button("Remove")
-                        .padding([1, 6])
+                    touch_button(button("Remove"), touch_targets)
                         .on_press(Message::RemoveQueuedOfflineJob(id.value())),
                 ]
                 .spacing(6)
@@ -238,7 +250,11 @@ fn offline_jobs_panel_with_width(app: &App, width: f32) -> Element<'_, Message> 
         .into()
 }
 
-fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
+fn actions_menu(
+    app: &App,
+    entries: Vec<CommandEntry>,
+    touch_targets: bool,
+) -> Element<'_, Message> {
     let query = app.action_query.trim().to_ascii_lowercase();
     let entries = entries
         .into_iter()
@@ -254,7 +270,7 @@ fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
         if entry.separator_before {
             results = results.push(rule::horizontal(1));
         }
-        results = results.push(command(entry));
+        results = results.push(command(entry, touch_targets));
     }
     let results: Element<'_, Message> = if category.is_some() {
         scrollable(results).height(Length::Fixed(284.0)).into()
@@ -276,10 +292,10 @@ fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
     .into()
 }
 
-fn command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
+fn command<'a>(entry: CommandEntry, touch_targets: bool) -> iced::widget::Button<'a, Message> {
     let message = Message::ExecuteCommand(entry.id);
     let destructive = entry.destructive;
-    button(
+    let button = button(
         row![
             text(entry.label.clone()).width(Length::Fill),
             text(entry.shortcut.unwrap_or_default()).size(11),
@@ -288,9 +304,22 @@ fn command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([tokens::SPACING_XS, tokens::SPACING_LG])
     .style(move |_, status| menu_item_style(status, destructive))
-    .on_press_maybe(entry.enabled.then_some(message))
+    .on_press_maybe(entry.enabled.then_some(message));
+    touch_button(button, touch_targets)
+}
+
+fn touch_button<'a>(
+    button: iced::widget::Button<'a, Message>,
+    touch_targets: bool,
+) -> iced::widget::Button<'a, Message> {
+    if touch_targets {
+        button
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_SM, tokens::SPACING_LG])
+    } else {
+        button.padding([tokens::SPACING_XS, tokens::SPACING_LG])
+    }
 }
 
 fn menu_bar_style(active: bool, status: button::Status) -> button::Style {

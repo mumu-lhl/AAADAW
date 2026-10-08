@@ -2991,10 +2991,7 @@ impl AudioRenderGraph {
         let scheduled_events = self.midi_scratch.iter().take(midi_processing_count);
         for route in &mut self.instruments {
             let receives_live_midi = !midi_input.is_empty() && route.isolated_reader.is_none();
-            if !block.is_playing
-                && !self.preview_routes[route.track_index]
-                && !receives_live_midi
-            {
+            if !block.is_playing && !self.preview_routes[route.track_index] && !receives_live_midi {
                 continue;
             }
             self.track_has_stereo_input[route.track_index] = true;
