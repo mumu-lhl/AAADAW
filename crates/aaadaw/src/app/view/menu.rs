@@ -118,7 +118,7 @@ pub(super) const fn bar_bottom() -> f32 {
 
 pub(super) fn dropdown(app: &App, menu: MainMenu) -> Element<'_, Message> {
     let contents = if menu == MainMenu::Actions {
-        actions_menu(app, commands::for_actions_menu(app))
+        actions_menu(app)
     } else {
         menu_commands(app, menu, commands::for_menu(app, menu))
     };
@@ -146,11 +146,14 @@ fn menu_commands(app: &App, menu: MainMenu, entries: Vec<CommandEntry>) -> Eleme
         if entry.separator_before {
             contents = contents.push(rule::horizontal(1));
         }
-        contents = contents.push(command(entry));
+        let selected = app.menu_selected_command == Some(entry.id);
+        contents = contents.push(command(entry, selected));
     }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
     }
+    contents =
+        contents.push(text("↑/↓ select · ←/→ switch sections · Enter run · Esc close").size(9));
     contents.into()
 }
 
@@ -221,12 +224,8 @@ pub(super) fn offline_jobs_panel(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
-    let query = app.action_query.trim().to_ascii_lowercase();
-    let entries = entries
-        .into_iter()
-        .filter(|entry| query.is_empty() || entry.matches_query(&query))
-        .collect::<Vec<_>>();
+fn actions_menu(app: &App) -> Element<'_, Message> {
+    let entries = commands::matching_actions_menu(app, &app.action_query);
     let mut results = column![].spacing(tokens::ROW_GAP);
     let mut category = None;
     for entry in entries {
@@ -237,10 +236,15 @@ fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
         if entry.separator_before {
             results = results.push(rule::horizontal(1));
         }
-        results = results.push(command(entry));
+        let selected = app.menu_selected_command == Some(entry.id);
+        results = results.push(command(entry, selected));
     }
     let results: Element<'_, Message> = if category.is_some() {
-        scrollable(results).height(Length::Fixed(284.0)).into()
+        scrollable(results)
+            .id(iced::widget::Id::new("aaadaw-actions-menu-results"))
+            .height(Length::Fixed(284.0))
+            .on_scroll(|viewport| Message::ActionMenuScrolled(viewport.absolute_offset().y))
+            .into()
     } else {
         container(text("No matching commands").size(12))
             .height(Length::Fixed(44.0))
@@ -249,9 +253,10 @@ fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
     };
     column![
         text_input("Search actions…", &app.action_query)
+            .id(super::super::messages::action_search_input_id())
             .on_input(Message::ActionQueryChanged)
-            .on_submit(Message::RunActionQuery)
             .width(Length::Fill),
+        text("↑/↓ results · Enter run · Alt+←/→ switch menus · Esc close").size(9),
         rule::horizontal(1),
         results,
     ]
@@ -259,7 +264,7 @@ fn actions_menu(app: &App, entries: Vec<CommandEntry>) -> Element<'_, Message> {
     .into()
 }
 
-fn command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
+fn command<'a>(entry: CommandEntry, selected: bool) -> iced::widget::Button<'a, Message> {
     let message = Message::ExecuteCommand(entry.id);
     let destructive = entry.destructive;
     button(
@@ -272,7 +277,7 @@ fn command<'a>(entry: CommandEntry) -> iced::widget::Button<'a, Message> {
     )
     .width(Length::Fill)
     .padding([tokens::SPACING_XS, tokens::SPACING_LG])
-    .style(move |_, status| menu_item_style(status, destructive))
+    .style(move |_, status| menu_item_style(status, destructive, selected))
     .on_press_maybe(entry.enabled.then_some(message))
 }
 
@@ -300,7 +305,7 @@ fn menu_bar_style(active: bool, status: button::Status) -> button::Style {
     }
 }
 
-fn menu_item_style(status: button::Status, destructive: bool) -> button::Style {
+fn menu_item_style(status: button::Status, destructive: bool, selected: bool) -> button::Style {
     let (background, text_color) = match status {
         button::Status::Disabled => (Color::TRANSPARENT, Color::from_rgb8(116, 122, 126)),
         button::Status::Hovered | button::Status::Pressed => (
@@ -309,6 +314,10 @@ fn menu_item_style(status: button::Status, destructive: bool) -> button::Style {
             } else {
                 Color::from_rgb8(67, 91, 103)
             },
+            Color::from_rgb8(248, 249, 250),
+        ),
+        _ if selected => (
+            Color::from_rgb8(67, 91, 103),
             Color::from_rgb8(248, 249, 250),
         ),
         _ => (
