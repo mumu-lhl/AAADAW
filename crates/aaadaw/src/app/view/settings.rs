@@ -700,9 +700,12 @@ fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
             .width(Length::Fixed(if compact { 72.0 } else { 68.0 }))
             .on_press(Message::RestoreShortcutDefault(action_id));
         let row: Element<'_, Message> = if compact {
-            column![label, row![binding, clear, restore].spacing(tokens::ROW_GAP)]
-                .spacing(tokens::ROW_GAP)
-                .into()
+            column![
+                label,
+                row![binding, clear, restore].spacing(tokens::ROW_GAP)
+            ]
+            .spacing(tokens::ROW_GAP)
+            .into()
         } else {
             row![label, binding, clear, restore]
                 .spacing(6)
