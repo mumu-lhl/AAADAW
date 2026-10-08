@@ -197,8 +197,13 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
         any(target_os = "windows", target_os = "macos")
     )))]
     let cpal_input: Element<'_, Message> = text("").into();
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    let linux_diagnostics = linux_audio_diagnostics(app);
+    #[cfg(not(all(target_os = "linux", feature = "audio-device")))]
+    let linux_diagnostics: Element<'_, Message> = text("").into();
     column![
         text("Audio output and recording").size(17),
+        linux_diagnostics,
         cpal_output,
         cpal_input,
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
@@ -241,6 +246,143 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
     .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
+}
+
+#[cfg(all(target_os = "linux", feature = "audio-device"))]
+fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
+    let backend = app.selected_playback_backend();
+    let backend_available = backend.is_available();
+    let output_open = app.playback.is_some();
+    let last_error = app
+        .last_audio_backend_failure
+        .as_ref()
+        .filter(|(failed_backend, _)| *failed_backend == backend)
+        .map(|(_, message)| message.as_str());
+    let (state, guidance) = linux_audio_connection_state(
+        backend.name(),
+        backend_available,
+        app.playback_busy,
+        output_open,
+        last_error,
+    );
+    let sample_rate = app
+        .playback
+        .as_ref()
+        .and_then(aaadaw_app::RunningAudioPlayback::device_sample_rate)
+        .map(|rate| format!("{rate} Hz"))
+        .unwrap_or_else(|| "Unavailable until output opens".to_owned());
+
+    let routes = if !output_open {
+        text("Output routes are unavailable while the backend is closed. Open playback to inspect its current connections.").size(11)
+    } else if app.linux_audio_routes_busy {
+        text("Inspecting the backend graph…").size(11)
+    } else if let Some((reported_backend, result)) = &app.linux_audio_route_report {
+        if *reported_backend != backend {
+            text("Backend changed; refresh the route summary.").size(11)
+        } else {
+            match result {
+                Ok(snapshot) if snapshot.output_routes.is_empty() => {
+                    text("AAADAW has no connected output route. Check the backend patchbay or default sink.").size(11)
+                }
+                Ok(snapshot) => text(format!(
+                    "Connected output routes: {}",
+                    snapshot.output_routes.join(" · ")
+                ))
+                .size(11),
+                Err(error) => text(format!("Route inspection failed: {error}")).size(11),
+            }
+        }
+    } else {
+        text("Refresh routes to inspect AAADAW's current output connection.").size(11)
+    };
+
+    let refresh_enabled = output_open && !app.linux_audio_routes_busy;
+    let reconnect_enabled = backend_available
+        && !app.playback_playing
+        && !app.playback_paused
+        && !app.playback_busy
+        && !app.io_busy
+        && app.recording.is_none()
+        && !app.recording_starting
+        && !app.recording_stopping;
+
+    column![
+        rule::horizontal(1),
+        text("Linux audio backend").size(15),
+        row![
+            text(format!("Selected: {}", backend.name())).size(12),
+            text(format!("Output: {state}")).size(12),
+            text(format!("Rate: {sample_rate}")).size(12),
+        ]
+        .spacing(tokens::SPACING_MD)
+        .align_y(Alignment::Center),
+        text(guidance).size(11),
+        last_error
+            .map(|error| text(format!("Last backend failure: {error}")).size(11))
+            .unwrap_or_else(|| text("").size(11)),
+        routes,
+        row![
+            button("Refresh routes")
+                .on_press_maybe(refresh_enabled.then_some(Message::RefreshLinuxAudioRoutes)),
+            button("Reconnect backend")
+                .style(button::secondary)
+                .on_press_maybe(reconnect_enabled.then_some(Message::ReconnectLinuxAudioBackend)),
+        ]
+        .spacing(tokens::SPACING_SM),
+        text("An open stream or listed route does not guarantee audible output.").size(10),
+    ]
+    .spacing(tokens::SPACING_SM)
+    .width(Length::Fill)
+    .into()
+}
+
+#[cfg(all(target_os = "linux", feature = "audio-device"))]
+pub(super) fn linux_audio_connection_state(
+    backend_name: &str,
+    backend_available: bool,
+    preparing: bool,
+    output_open: bool,
+    last_error: Option<&str>,
+) -> (&'static str, String) {
+    if !backend_available {
+        return (
+            "Unavailable",
+            "This build has no enabled Linux audio backend. Rebuild with JACK or PipeWire support."
+                .to_owned(),
+        );
+    }
+    if preparing {
+        return (
+            "Preparing",
+            "Wait for project and audio output preparation to finish.".to_owned(),
+        );
+    }
+    if output_open {
+        return (
+            "Open",
+            "The stream is open. Check the listed route and backend mixer if you cannot hear audio."
+                .to_owned(),
+        );
+    }
+    if let Some(error) = last_error {
+        let recovery = match backend_name {
+            "JACK" => "Check that the JACK server is running and has an active playback device.",
+            "PipeWire" => {
+                "Check that PipeWire and its session manager are running and that an output device is available."
+            }
+            _ => "Check that the selected audio service is running and has an output device.",
+        };
+        return (
+            "Failed",
+            format!(
+                "{error}. {recovery} Select another available backend if needed, then reconnect."
+            ),
+        );
+    }
+    (
+        "Closed",
+        "Press Play or Reconnect backend to open the selected audio output.".to_owned(),
+    )
 }
 
 #[cfg(all(
@@ -618,4 +760,53 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+#[cfg(all(test, target_os = "linux", feature = "audio-device"))]
+mod linux_audio_diagnostics_tests {
+    use super::linux_audio_connection_state;
+
+    #[test]
+    fn unavailable_backend_has_build_guidance() {
+        let (state, guidance) =
+            linux_audio_connection_state("Unavailable", false, false, false, None);
+
+        assert_eq!(state, "Unavailable");
+        assert!(guidance.contains("JACK or PipeWire"));
+    }
+
+    #[test]
+    fn connection_progress_is_distinct_from_transport_state() {
+        let (state, guidance) = linux_audio_connection_state("JACK", true, true, false, None);
+
+        assert_eq!(state, "Preparing");
+        assert!(guidance.contains("preparation"));
+    }
+
+    #[test]
+    fn open_output_explains_route_does_not_guarantee_audible_audio() {
+        let (state, guidance) = linux_audio_connection_state("PipeWire", true, false, true, None);
+
+        assert_eq!(state, "Open");
+        assert!(guidance.contains("backend mixer"));
+    }
+
+    #[test]
+    fn backend_failure_includes_recovery_guidance() {
+        let (state, guidance) =
+            linux_audio_connection_state("JACK", true, false, false, Some("server unavailable"));
+
+        assert_eq!(state, "Failed");
+        assert!(guidance.contains("server unavailable"));
+        assert!(guidance.contains("JACK server is running"));
+        assert!(guidance.contains("Select another available backend"));
+    }
+
+    #[test]
+    fn closed_output_has_a_clear_next_step() {
+        let (state, guidance) = linux_audio_connection_state("PipeWire", true, false, false, None);
+
+        assert_eq!(state, "Closed");
+        assert!(guidance.contains("Press Play or Reconnect backend"));
+    }
 }

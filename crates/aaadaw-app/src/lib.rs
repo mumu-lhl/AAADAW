@@ -880,6 +880,85 @@ impl RunningAudioPlayback {
         }
     }
 
+    /// Returns the rate negotiated by the open output backend.
+    pub fn device_sample_rate(&self) -> Option<u32> {
+        match &self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(output) => Some(output.device_sample_rate()),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => Some(output.device_sample_rate()),
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            DeviceAudioOutput::Cpal(_) => None,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
+                    )
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => None,
+        }
+    }
+
+    #[cfg(feature = "jack-backend")]
+    pub fn jack_client_name(&self) -> Option<&str> {
+        match &self.output {
+            DeviceAudioOutput::Jack(output) => Some(output.client_name()),
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(_) => None,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            DeviceAudioOutput::Cpal(_) => None,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
+                    )
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => None,
+        }
+    }
+
+    #[cfg(feature = "pipewire-backend")]
+    pub fn pipewire_node_id(&self) -> Option<u32> {
+        match &self.output {
+            DeviceAudioOutput::PipeWire(output) => Some(output.node_id()),
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => None,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            DeviceAudioOutput::Cpal(_) => None,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
+                    )
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => None,
+        }
+    }
+
     pub fn play(&mut self) -> Result<(), PlaybackBuildError> {
         match &mut self.output {
             #[cfg(feature = "jack-backend")]

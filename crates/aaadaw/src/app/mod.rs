@@ -334,6 +334,17 @@ struct App {
     audio_settings: audio_config::AudioSettings,
     audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
+    #[cfg(feature = "audio-device")]
+    last_audio_backend_failure: Option<(PlaybackBackend, String)>,
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    linux_audio_route_report: Option<(
+        PlaybackBackend,
+        Result<aaadaw_engine::AudioRouteSnapshot, String>,
+    )>,
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    linux_audio_routes_busy: bool,
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    linux_audio_routes_generation: u64,
     #[cfg(all(
         feature = "cpal-backend",
         any(target_os = "windows", target_os = "macos")
@@ -3614,6 +3625,7 @@ impl App {
                     match audio_config::save(&settings) {
                         Ok(()) => {
                             self.status = format!("{} selected for playback", backend.name());
+                            self.last_audio_backend_failure = None;
                             self.audio_settings_feedback =
                                 format!("{} selected for playback", backend.name());
                         }
@@ -3627,6 +3639,19 @@ impl App {
                     }
                     self.audio_settings = settings;
                 }
+            }
+            #[cfg(all(target_os = "linux", feature = "audio-device"))]
+            Message::RefreshLinuxAudioRoutes => task = self.refresh_linux_audio_routes(),
+            #[cfg(all(target_os = "linux", feature = "audio-device"))]
+            Message::LinuxAudioRoutesRefreshed(generation, backend, result) => {
+                if generation == self.linux_audio_routes_generation {
+                    self.linux_audio_routes_busy = false;
+                    self.linux_audio_route_report = Some((backend, result));
+                }
+            }
+            #[cfg(all(target_os = "linux", feature = "audio-device"))]
+            Message::ReconnectLinuxAudioBackend => {
+                task = self.reconnect_linux_audio_backend();
             }
         }
         if self.revision > revision_before_message
@@ -4576,6 +4601,64 @@ impl App {
         self.selected_playback_backend().name()
     }
 
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    fn refresh_linux_audio_routes(&mut self) -> Task<Message> {
+        if self.linux_audio_routes_busy {
+            self.status = "Audio route inspection is already running".to_owned();
+            return Task::none();
+        }
+        let Some(playback) = self.playback.as_ref() else {
+            let backend = self.selected_playback_backend();
+            self.linux_audio_route_report = Some((
+                backend,
+                Err("Open playback to inspect AAADAW's current output route".to_owned()),
+            ));
+            return Task::none();
+        };
+        let backend = playback.backend();
+        #[cfg(feature = "jack-backend")]
+        let client_name = playback.jack_client_name().map(str::to_owned);
+        #[cfg(not(feature = "jack-backend"))]
+        let client_name = None;
+        #[cfg(feature = "pipewire-backend")]
+        let node_id = playback.pipewire_node_id();
+        #[cfg(not(feature = "pipewire-backend"))]
+        let node_id = None;
+        let generation = self.linux_audio_routes_generation.wrapping_add(1);
+        self.linux_audio_routes_generation = generation;
+        self.linux_audio_routes_busy = true;
+        let message_backend = backend;
+        Task::perform(
+            run_blocking("aaadaw-linux-audio-routes", move || {
+                inspect_linux_audio_output_routes(backend, client_name, node_id)
+            }),
+            move |result| Message::LinuxAudioRoutesRefreshed(generation, message_backend, result),
+        )
+    }
+
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    fn reconnect_linux_audio_backend(&mut self) -> Task<Message> {
+        if self.playback_playing || self.playback_paused {
+            self.status = "Stop playback before reconnecting the audio backend".to_owned();
+            return Task::none();
+        }
+        if self.playback_busy || self.io_busy {
+            self.status = "Wait for current audio or project operation to finish".to_owned();
+            return Task::none();
+        }
+        if self.recording.is_some() || self.recording_starting || self.recording_stopping {
+            self.status = "Stop recording before reconnecting the audio backend".to_owned();
+            return Task::none();
+        }
+        let target_sample = self.playhead_sample;
+        let close_task = self.close_playback();
+        self.linux_audio_routes_generation = self.linux_audio_routes_generation.wrapping_add(1);
+        self.linux_audio_routes_busy = false;
+        self.linux_audio_route_report = None;
+        let prepare_task = self.prepare_playback(target_sample, false);
+        Task::batch([close_task, prepare_task])
+    }
+
     fn release_midi_preview(&self) {
         #[cfg(feature = "audio-device")]
         if let Some(playback) = &self.playback {
@@ -4895,7 +4978,10 @@ impl App {
                     self.reset_track_meters();
                     if let Err(error) = play_result {
                         self.playback_playing = false;
-                        self.status = format!("{} play failed: {error}", self.playback_name());
+                        let backend = self.playback_name().to_owned();
+                        self.last_audio_backend_failure =
+                            Some((self.selected_playback_backend(), error.to_string()));
+                        self.status = format!("{backend} play failed: {error}");
                         return;
                     }
                     self.playback_playing = start_when_ready;
@@ -4939,6 +5025,8 @@ impl App {
             Ok(playback) => playback,
             Err(error) => {
                 tracing::error!(backend = self.playback_name(), error = %error, "audio output setup failed");
+                self.last_audio_backend_failure =
+                    Some((self.selected_playback_backend(), error.to_string()));
                 let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
                 if let Some(instrument_error) =
                     self.discard_unused_instrument_owners(&instrument_owner_ids)
@@ -4982,9 +5070,12 @@ impl App {
         self.seek_sample_query = target_sample.to_string();
         if let Some(error) = play_error {
             tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
+            self.last_audio_backend_failure =
+                Some((self.selected_playback_backend(), error.to_string()));
             self.status = format!("{} play failed: {error}", self.playback_name());
             return;
         }
+        self.last_audio_backend_failure = None;
         self.status = if start_when_ready {
             "Playback started".to_owned()
         } else {
@@ -7376,6 +7467,34 @@ fn parse_track_volume_draft(text: &str) -> Result<f32, &'static str> {
         return Err("Enter a finite volume in dB");
     }
     Ok(value.clamp(-60.0, 6.0))
+}
+
+#[cfg(all(target_os = "linux", feature = "audio-device"))]
+fn inspect_linux_audio_output_routes(
+    backend: PlaybackBackend,
+    client_name: Option<String>,
+    node_id: Option<u32>,
+) -> Result<aaadaw_engine::AudioRouteSnapshot, String> {
+    match backend {
+        #[cfg(feature = "jack-backend")]
+        PlaybackBackend::Jack => {
+            let client_name = client_name.ok_or_else(|| {
+                "The active JACK output client could not be identified".to_owned()
+            })?;
+            aaadaw_engine::inspect_jack_output_routes(&client_name)
+        }
+        #[cfg(feature = "pipewire-backend")]
+        PlaybackBackend::PipeWire => {
+            let node_id = node_id.ok_or_else(|| {
+                "The active PipeWire output stream could not be identified".to_owned()
+            })?;
+            aaadaw_engine::inspect_pipewire_output_routes(node_id)
+        }
+        _ => Err(format!(
+            "{} route diagnostics are unavailable in this Linux build",
+            backend.name()
+        )),
+    }
 }
 
 fn parse_track_pan_draft(text: &str) -> Result<f32, &'static str> {

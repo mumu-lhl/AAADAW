@@ -1,4 +1,4 @@
-use crate::AudioRenderGraph;
+use crate::{AudioRenderGraph, AudioRouteSnapshot};
 use pipewire as pw;
 use pw::spa::pod::Pod;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -271,6 +271,7 @@ struct PipeWireParts {
     commands: Producer<TransportCommand>,
     retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    node_id: u32,
 }
 
 /// A native PipeWire stereo output. The PipeWire objects stay on a dedicated control thread;
@@ -284,6 +285,7 @@ pub struct PipeWireAudioOutput {
     shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
     device_sample_rate: u32,
     maximum_block_frames: usize,
+    node_id: u32,
     replacement_pending: bool,
 }
 
@@ -331,8 +333,17 @@ impl PipeWireAudioOutput {
             shutdown_graphs,
             device_sample_rate: sample_rate,
             maximum_block_frames,
+            node_id: parts.node_id,
             replacement_pending: false,
         })
+    }
+
+    pub fn node_id(&self) -> u32 {
+        self.node_id
+    }
+
+    pub fn device_sample_rate(&self) -> u32 {
+        self.device_sample_rate
     }
 
     pub fn play(&mut self) -> Result<(), PipeWireOutputError> {
@@ -609,11 +620,13 @@ fn setup_pipewire_stream(
             &mut params,
         )
         .map_err(|error| error.to_string())?;
+    let node_id = stream.node_id();
     if setup
         .send(Ok(PipeWireParts {
             commands,
             retired_graphs: retired_graph_consumer,
             counters,
+            node_id,
         }))
         .is_err()
     {
@@ -634,6 +647,119 @@ fn setup_pipewire_stream(
     drop(context);
     drop(mainloop);
     Ok(())
+}
+
+/// Reads the connected PipeWire destinations for an active playback stream.
+///
+/// This performs a registry round trip, so call it from a background control task.
+pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct RegistrySnapshot {
+        nodes: Vec<(u32, String, Option<u32>)>,
+        links: Vec<(Option<u32>, Option<u32>)>,
+    }
+
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(pw::init);
+
+    let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(|error| error.to_string())?;
+    let context =
+        pw::context::ContextRc::new(&mainloop, None).map_err(|error| error.to_string())?;
+    let core = context
+        .connect_rc(None)
+        .map_err(|error| error.to_string())?;
+    let registry = core.get_registry().map_err(|error| error.to_string())?;
+    let snapshot = Rc::new(RefCell::new(RegistrySnapshot::default()));
+    let listener_snapshot = Rc::clone(&snapshot);
+    let _registry_listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            let Some(properties) = global.props.as_ref() else {
+                return;
+            };
+            match global.type_ {
+                pw::types::ObjectType::Node => {
+                    let name = properties
+                        .get("node.description")
+                        .or_else(|| properties.get("node.nick"))
+                        .or_else(|| properties.get("node.name"))
+                        .unwrap_or("Unknown PipeWire node")
+                        .to_owned();
+                    let sample_rate = properties
+                        .get("audio.rate")
+                        .and_then(|rate| rate.parse::<u32>().ok());
+                    listener_snapshot
+                        .borrow_mut()
+                        .nodes
+                        .push((global.id, name, sample_rate));
+                }
+                pw::types::ObjectType::Link => {
+                    let output = properties
+                        .get("link.output.node")
+                        .and_then(|value| value.parse::<u32>().ok());
+                    let input = properties
+                        .get("link.input.node")
+                        .and_then(|value| value.parse::<u32>().ok());
+                    listener_snapshot.borrow_mut().links.push((output, input));
+                }
+                _ => {}
+            }
+        })
+        .register();
+
+    let pending = core.sync(0).map_err(|error| error.to_string())?;
+    let complete = Rc::new(Cell::new(false));
+    let complete_listener = Rc::clone(&complete);
+    let loop_listener = mainloop.clone();
+    let _core_listener = core
+        .add_listener_local()
+        .done(move |id, sequence| {
+            if id == pw::core::PW_ID_CORE && sequence == pending {
+                complete_listener.set(true);
+                loop_listener.quit();
+            }
+        })
+        .register();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !complete.get() {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out while reading PipeWire output routes".to_owned());
+        }
+        mainloop
+            .loop_()
+            .iterate(pw::loop_::Timeout::Finite(Duration::from_millis(20)));
+    }
+
+    let snapshot = snapshot.borrow();
+    let output_node = snapshot
+        .nodes
+        .iter()
+        .find(|(id, _, _)| *id == node_id)
+        .ok_or_else(|| "AAADAW's PipeWire playback stream is no longer available".to_owned())?;
+    let mut routes = snapshot
+        .links
+        .iter()
+        .filter_map(|(source, destination)| {
+            (*source == Some(node_id)).then_some(*destination).flatten()
+        })
+        .filter_map(|destination| {
+            snapshot
+                .nodes
+                .iter()
+                .find(|(id, _, _)| *id == destination)
+                .map(|(_, name, _)| name.clone())
+        })
+        .collect::<Vec<_>>();
+    routes.sort();
+    routes.dedup();
+    Ok(AudioRouteSnapshot {
+        sample_rate_hz: output_node.2,
+        output_routes: routes,
+    })
 }
 
 #[cfg(test)]
