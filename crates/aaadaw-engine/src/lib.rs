@@ -39,7 +39,7 @@ mod pipewire_output;
 mod stream;
 mod transport;
 
-pub use audio_diagnostics::AudioRouteSnapshot;
+pub use audio_diagnostics::{AudioOutputConnectionState, AudioRouteSnapshot};
 pub use capture::{
     AudioCaptureConsumer, AudioCaptureControl, AudioCaptureProducer, AudioInputMonitorGate,
     AudioMonitorConsumer, AudioMonitorProducer, CapturedFrames, audio_capture_stream,

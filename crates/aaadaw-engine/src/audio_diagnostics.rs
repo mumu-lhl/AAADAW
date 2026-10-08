@@ -1,3 +1,23 @@
+/// Connection state reported by an audio output backend.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AudioOutputConnectionState {
+    #[default]
+    Connecting = 0,
+    Connected = 1,
+    Failed = 2,
+}
+
+impl AudioOutputConnectionState {
+    pub(crate) fn from_atomic_value(value: u8) -> Self {
+        match value {
+            1 => Self::Connected,
+            2 => Self::Failed,
+            _ => Self::Connecting,
+        }
+    }
+}
+
 /// A point-in-time summary of the active backend's audio output route.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AudioRouteSnapshot {

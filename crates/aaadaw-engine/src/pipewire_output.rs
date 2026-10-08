@@ -1,10 +1,10 @@
-use crate::{AudioRenderGraph, AudioRouteSnapshot};
+use crate::{AudioOutputConnectionState, AudioRenderGraph, AudioRouteSnapshot};
 use pipewire as pw;
 use pw::spa::pod::Pod;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -37,6 +37,8 @@ struct CallbackCounters {
     master_non_finite_samples: AtomicU64,
     callback_errors: AtomicU64,
     playhead_sample: AtomicU64,
+    connection_state: AtomicU8,
+    connection_error: Mutex<Option<String>>,
 }
 
 struct ProcessData {
@@ -346,6 +348,20 @@ impl PipeWireAudioOutput {
         self.device_sample_rate
     }
 
+    pub fn connection_state(&self) -> AudioOutputConnectionState {
+        AudioOutputConnectionState::from_atomic_value(
+            self.counters.connection_state.load(Ordering::Acquire),
+        )
+    }
+
+    pub fn connection_error(&self) -> Option<String> {
+        self.counters
+            .connection_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     pub fn play(&mut self) -> Result<(), PipeWireOutputError> {
         self.enqueue(TransportCommand::Play)
     }
@@ -521,11 +537,30 @@ fn setup_pipewire_stream(
     let listener = stream
         .add_local_listener_with_user_data(process_data)
         .state_changed(|_, data, _, state| {
-            if matches!(state, pw::stream::StreamState::Error(_)) {
-                data.counters
-                    .callback_errors
-                    .fetch_add(1, Ordering::Relaxed);
+            let connection_state = pipewire_connection_state(&state);
+            match state {
+                pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming => {
+                    *data
+                        .counters
+                        .connection_error
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+                pw::stream::StreamState::Error(error) => {
+                    data.counters
+                        .callback_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    *data
+                        .counters
+                        .connection_error
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                }
+                pw::stream::StreamState::Unconnected | pw::stream::StreamState::Connecting => {}
             }
+            data.counters
+                .connection_state
+                .store(connection_state as u8, Ordering::Release);
         })
         .process(|stream, data| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
@@ -647,6 +682,18 @@ fn setup_pipewire_stream(
     drop(context);
     drop(mainloop);
     Ok(())
+}
+
+fn pipewire_connection_state(state: &pw::stream::StreamState) -> AudioOutputConnectionState {
+    match state {
+        pw::stream::StreamState::Unconnected | pw::stream::StreamState::Connecting => {
+            AudioOutputConnectionState::Connecting
+        }
+        pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming => {
+            AudioOutputConnectionState::Connected
+        }
+        pw::stream::StreamState::Error(_) => AudioOutputConnectionState::Failed,
+    }
 }
 
 /// Reads the connected PipeWire destinations for an active playback stream.
@@ -819,6 +866,28 @@ mod tests {
 
         assert_eq!(linked_pipewire_route_nodes(&links, 20, true), [10, 11]);
         assert_eq!(linked_pipewire_route_nodes(&links, 20, false), [30, 31]);
+    }
+
+    #[test]
+    fn pipewire_stream_state_maps_to_connection_status() {
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Connecting),
+            AudioOutputConnectionState::Connecting
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Paused),
+            AudioOutputConnectionState::Connected
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Streaming),
+            AudioOutputConnectionState::Connected
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Error(
+                "connection refused".to_owned()
+            )),
+            AudioOutputConnectionState::Failed
+        );
     }
 
     fn graph(max_frames: usize) -> AudioRenderGraph {

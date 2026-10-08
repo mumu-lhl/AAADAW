@@ -253,16 +253,25 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
     let backend = app.selected_playback_backend();
     let backend_available = backend.is_available();
     let output_open = app.playback.is_some();
+    let stream_error = app
+        .playback
+        .as_ref()
+        .and_then(aaadaw_app::RunningAudioPlayback::output_connection_error);
     let last_error = app
         .last_audio_backend_failure
         .as_ref()
         .filter(|(failed_backend, _)| *failed_backend == backend)
-        .map(|(_, message)| message.as_str());
+        .map(|(_, message)| message.as_str())
+        .or(stream_error.as_deref());
+    let output_connection_state = app
+        .playback
+        .as_ref()
+        .map(aaadaw_app::RunningAudioPlayback::output_connection_state);
     let (state, guidance) = linux_audio_connection_state(
-        backend.name(),
+        backend,
         backend_available,
         app.playback_busy,
-        output_open,
+        output_connection_state,
         last_error,
     );
     let sample_rate = app
@@ -362,10 +371,10 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(target_os = "linux", feature = "audio-device"))]
 pub(super) fn linux_audio_connection_state(
-    backend_name: &str,
+    backend: aaadaw_app::PlaybackBackend,
     backend_available: bool,
     preparing: bool,
-    output_open: bool,
+    output_state: Option<aaadaw_app::AudioOutputConnectionState>,
     last_error: Option<&str>,
 ) -> (&'static str, String) {
     if !backend_available {
@@ -381,26 +390,35 @@ pub(super) fn linux_audio_connection_state(
             "Wait for project and audio output preparation to finish.".to_owned(),
         );
     }
-    if output_open {
+    if output_state == Some(aaadaw_app::AudioOutputConnectionState::Connecting) {
+        return (
+            "Connecting",
+            "Wait for the audio backend to establish its stream connection.".to_owned(),
+        );
+    }
+    if output_state == Some(aaadaw_app::AudioOutputConnectionState::Connected) {
         return (
             "Open",
             "The stream is open. Check the listed route and backend mixer if you cannot hear audio."
                 .to_owned(),
         );
     }
-    if let Some(error) = last_error {
-        let recovery = match backend_name {
-            "JACK" => "Check that the JACK server is running and has an active playback device.",
-            "PipeWire" => {
+    if output_state == Some(aaadaw_app::AudioOutputConnectionState::Failed) || last_error.is_some()
+    {
+        let recovery = match backend {
+            #[cfg(feature = "jack-backend")]
+            aaadaw_app::PlaybackBackend::Jack => {
+                "Check that the JACK server is running and has an active playback device."
+            }
+            #[cfg(feature = "pipewire-backend")]
+            aaadaw_app::PlaybackBackend::PipeWire => {
                 "Check that PipeWire and its session manager are running and that an output device is available."
             }
             _ => "Check that the selected audio service is running and has an output device.",
         };
         return (
             "Failed",
-            format!(
-                "{error}. {recovery} Select another available backend if needed, then reconnect."
-            ),
+            format!("{recovery} Select another available backend if needed, then reconnect."),
         );
     }
     (
@@ -789,11 +807,13 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
 #[cfg(all(test, target_os = "linux", feature = "audio-device"))]
 mod linux_audio_diagnostics_tests {
     use super::linux_audio_connection_state;
+    use aaadaw_app::AudioOutputConnectionState;
+    use aaadaw_app::PlaybackBackend;
 
     #[test]
     fn unavailable_backend_has_build_guidance() {
         let (state, guidance) =
-            linux_audio_connection_state("Unavailable", false, false, false, None);
+            linux_audio_connection_state(PlaybackBackend::default(), false, false, None, None);
 
         assert_eq!(state, "Unavailable");
         assert!(guidance.contains("JACK or PipeWire"));
@@ -801,15 +821,41 @@ mod linux_audio_diagnostics_tests {
 
     #[test]
     fn connection_progress_is_distinct_from_transport_state() {
-        let (state, guidance) = linux_audio_connection_state("JACK", true, true, false, None);
+        let (state, guidance) = linux_audio_connection_state(
+            PlaybackBackend::default(),
+            true,
+            true,
+            Some(AudioOutputConnectionState::Connecting),
+            None,
+        );
 
         assert_eq!(state, "Preparing");
         assert!(guidance.contains("preparation"));
     }
 
     #[test]
+    fn pending_backend_stream_is_reported_as_connecting() {
+        let (state, guidance) = linux_audio_connection_state(
+            PlaybackBackend::default(),
+            true,
+            false,
+            Some(AudioOutputConnectionState::Connecting),
+            None,
+        );
+
+        assert_eq!(state, "Connecting");
+        assert!(guidance.contains("stream connection"));
+    }
+
+    #[test]
     fn open_output_explains_route_does_not_guarantee_audible_audio() {
-        let (state, guidance) = linux_audio_connection_state("PipeWire", true, false, true, None);
+        let (state, guidance) = linux_audio_connection_state(
+            PlaybackBackend::default(),
+            true,
+            false,
+            Some(AudioOutputConnectionState::Connected),
+            None,
+        );
 
         assert_eq!(state, "Open");
         assert!(guidance.contains("backend mixer"));
@@ -817,20 +863,54 @@ mod linux_audio_diagnostics_tests {
 
     #[test]
     fn backend_failure_includes_recovery_guidance() {
-        let (state, guidance) =
-            linux_audio_connection_state("JACK", true, false, false, Some("server unavailable"));
+        let (state, guidance) = linux_audio_connection_state(
+            PlaybackBackend::default(),
+            true,
+            false,
+            Some(AudioOutputConnectionState::Failed),
+            Some("server unavailable"),
+        );
 
         assert_eq!(state, "Failed");
-        assert!(guidance.contains("server unavailable"));
-        assert!(guidance.contains("JACK server is running"));
         assert!(guidance.contains("Select another available backend"));
     }
 
     #[test]
     fn closed_output_has_a_clear_next_step() {
-        let (state, guidance) = linux_audio_connection_state("PipeWire", true, false, false, None);
+        let (state, guidance) =
+            linux_audio_connection_state(PlaybackBackend::default(), true, false, None, None);
 
         assert_eq!(state, "Closed");
         assert!(guidance.contains("Press Play or Reconnect backend"));
+    }
+
+    #[cfg(feature = "jack-backend")]
+    #[test]
+    fn jack_failure_guidance_names_server_and_device_recovery() {
+        let (_, guidance) = linux_audio_connection_state(
+            PlaybackBackend::Jack,
+            true,
+            false,
+            Some(AudioOutputConnectionState::Failed),
+            Some("connection refused"),
+        );
+
+        assert!(guidance.contains("JACK server is running"));
+        assert!(guidance.contains("playback device"));
+    }
+
+    #[cfg(feature = "pipewire-backend")]
+    #[test]
+    fn pipewire_failure_guidance_names_service_recovery() {
+        let (_, guidance) = linux_audio_connection_state(
+            PlaybackBackend::PipeWire,
+            true,
+            false,
+            Some(AudioOutputConnectionState::Failed),
+            Some("connection refused"),
+        );
+
+        assert!(guidance.contains("PipeWire and its session manager"));
+        assert!(guidance.contains("output device"));
     }
 }

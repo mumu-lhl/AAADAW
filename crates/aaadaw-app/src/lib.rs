@@ -18,7 +18,7 @@ mod waveform;
 pub use aaadaw_engine::ClapPluginDescriptor;
 pub use aaadaw_engine::{
     AudioInputMonitorController, AudioInputMonitorGate, AudioMonitorConsumer, AudioMonitorProducer,
-    MasterOutputCeiling, MasterOutputSafetyError,
+    AudioOutputConnectionState, MasterOutputCeiling, MasterOutputSafetyError,
 };
 pub use aaadaw_storage::AudioAssetSourceStatus;
 pub use asset_management::{
@@ -933,6 +933,58 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Jack(output) => Some(output.device_sample_rate()),
             #[cfg(feature = "pipewire-backend")]
             DeviceAudioOutput::PipeWire(output) => Some(output.device_sample_rate()),
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            DeviceAudioOutput::Cpal(_) => None,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
+                    )
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => None,
+        }
+    }
+
+    pub fn output_connection_state(&self) -> AudioOutputConnectionState {
+        match &self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => AudioOutputConnectionState::Connected,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => output.connection_state(),
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            DeviceAudioOutput::Cpal(_) => AudioOutputConnectionState::Connected,
+            #[cfg(all(
+                feature = "audio-device",
+                not(any(
+                    feature = "jack-backend",
+                    feature = "pipewire-backend",
+                    all(
+                        feature = "cpal-backend",
+                        any(target_os = "windows", target_os = "macos")
+                    )
+                ))
+            ))]
+            DeviceAudioOutput::Unavailable => AudioOutputConnectionState::Failed,
+        }
+    }
+
+    pub fn output_connection_error(&self) -> Option<String> {
+        match &self.output {
+            #[cfg(feature = "jack-backend")]
+            DeviceAudioOutput::Jack(_) => None,
+            #[cfg(feature = "pipewire-backend")]
+            DeviceAudioOutput::PipeWire(output) => output.connection_error(),
             #[cfg(all(
                 feature = "cpal-backend",
                 any(target_os = "windows", target_os = "macos")
