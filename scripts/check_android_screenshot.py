@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Fail Android emulator smoke checks when the app surface renders black."""
+"""Reject blank Android screenshots and missing small-screen UI labels."""
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -72,6 +75,19 @@ def decode_rgba_png(path: Path) -> tuple[int, int, list[bytes]]:
     return width, height, rows
 
 
+def recognize_text(path: Path) -> str:
+    if shutil.which("tesseract") is None:
+        raise RuntimeError("tesseract is required to verify Android screen text")
+    result = subprocess.run(
+        ["tesseract", str(path), "stdout", "--psm", "11"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return result.stdout
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: check_android_screenshot.py <screenshot.png>", file=sys.stderr)
@@ -98,7 +114,34 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"Android app surface rendered ({visible_pixels} visible pixels in {width}x{height})")
+    try:
+        recognized_text = recognize_text(Path(sys.argv[1]))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"Android screenshot text check failed: {error}", file=sys.stderr)
+        return 1
+
+    if re.search(r"system\s+ui\s+isn't\s+responding", recognized_text, re.IGNORECASE):
+        print("Android screenshot shows the System UI not-responding dialog", file=sys.stderr)
+        return 1
+
+    missing_labels = [
+        label
+        for label in ("Arrange", "Mixer")
+        if re.search(rf"\b{label}\b", recognized_text, re.IGNORECASE) is None
+    ]
+    if missing_labels:
+        print(
+            "Android screenshot is missing visible app labels: " + ", ".join(missing_labels),
+            file=sys.stderr,
+        )
+        if recognized_text.strip():
+            print(f"Recognized screenshot text: {recognized_text.strip()}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Android app surface rendered with Arrange and Mixer labels "
+        f"({visible_pixels} visible pixels in {width}x{height})"
+    )
     return 0
 
 

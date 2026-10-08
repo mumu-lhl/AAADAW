@@ -55,6 +55,11 @@ jobs:
           name: aaadaw-android-debug
           path: android-apk
       - uses: android-actions/setup-android@v4.0.4
+      - name: Install screenshot OCR tool
+        run: |
+          if ! command -v tesseract >/dev/null 2>&1; then
+            sudo apt-get install --no-install-recommends -y tesseract-ocr
+          fi
       - name: Launch APK and verify rendered foreground activity
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -77,18 +82,23 @@ jobs:
             sleep 5
             adb shell screencap -p /data/local/tmp/aaadaw-portrait.png
             adb pull /data/local/tmp/aaadaw-portrait.png ./aaadaw-portrait.png
-            python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { sh scripts/dump_android_state.sh; exit 1; }
+            python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 1
             sleep 5
             adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app" || { sh scripts/dump_android_state.sh; exit 1; }
             adb shell settings put system user_rotation 0
             adb shell settings put system font_scale 1.0
+            adb logcat -d -v threadtime -b all > android-logcat.txt
       - name: Upload emulator screenshot
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: aaadaw-android-emulator-screen
-          path: aaadaw-portrait.png
+          path: |
+            aaadaw-portrait.png
+            android-logcat.txt
+          if-no-files-found: warn
 
   macos:
     name: Check macOS CoreAudio workspace (Apple Silicon)
