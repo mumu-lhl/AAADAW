@@ -2828,10 +2828,18 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         edit(6, item_id.value(), 960, 2400),
         edit(7, 999_999, 960, 5760),
         query(8, 0, 7680),
-        call(9, "daw_undo", json!({})),
+        edit(9, item_id.value(), 960, 5760),
         query(10, 0, 7680),
-        call(11, "daw_redo", json!({})),
+        call(11, "daw_undo", json!({})),
         query(12, 0, 7680),
+        call(13, "daw_undo", json!({})),
+        query(14, 0, 7680),
+        call(15, "daw_undo", json!({})),
+        query(16, 0, 7680),
+        call(17, "daw_redo", json!({})),
+        call(18, "daw_redo", json!({})),
+        call(19, "daw_redo", json!({})),
+        query(20, 0, 7680),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -2868,11 +2876,20 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         response_for(3)["result"]["structuredContent"],
         json!({"item_id": item_id.value(), "start_tick": 960, "length_ticks": 5760})
     );
-    for id in [4, 5, 6, 7] {
+    for id in [4, 5, 7] {
         assert_eq!(response_for(id)["result"]["isError"], true);
     }
+    assert_eq!(response_for(6)["result"]["isError"], false);
     assert_eq!(
-        response_for(8)["result"]["structuredContent"]["notes"],
+        response_for(6)["result"]["structuredContent"],
+        json!({"item_id": item_id.value(), "start_tick": 960, "length_ticks": 2400})
+    );
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["notes"][1]["duration"],
+        480
+    );
+    assert_eq!(
+        response_for(10)["result"]["structuredContent"]["notes"],
         json!([
             {
                 "item_id": item_id.value(),
@@ -2892,21 +2909,40 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             }
         ])
     );
-    assert_eq!(
-        response_for(9)["result"]["structuredContent"]["changed"],
-        true
-    );
-    assert_eq!(
-        response_for(10)["result"]["structuredContent"]["notes"][0]["tick"],
-        120
-    );
+    assert_eq!(response_for(9)["result"]["isError"], false);
     assert_eq!(
         response_for(11)["result"]["structuredContent"]["changed"],
         true
     );
     assert_eq!(
-        response_for(12)["result"]["structuredContent"]["notes"],
-        response_for(8)["result"]["structuredContent"]["notes"]
+        response_for(12)["result"]["structuredContent"]["notes"][1]["duration"],
+        480
+    );
+    assert_eq!(
+        response_for(13)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(14)["result"]["structuredContent"]["notes"],
+        response_for(10)["result"]["structuredContent"]["notes"]
+    );
+    assert_eq!(
+        response_for(15)["result"]["structuredContent"]["changed"],
+        true
+    );
+    assert_eq!(
+        response_for(16)["result"]["structuredContent"]["notes"][0]["tick"],
+        120
+    );
+    for id in [17, 18, 19] {
+        assert_eq!(
+            response_for(id)["result"]["structuredContent"]["changed"],
+            true
+        );
+    }
+    assert_eq!(
+        response_for(20)["result"]["structuredContent"]["notes"],
+        response_for(10)["result"]["structuredContent"]["notes"]
     );
 
     let reopened = ProjectStore::load_read_only(&project_path).unwrap();

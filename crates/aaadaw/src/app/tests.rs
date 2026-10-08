@@ -1,3 +1,5 @@
+#[cfg(feature = "audio-device")]
+use super::StereoPeakHold;
 use super::commands::{self, CommandId, TrackCommand};
 use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
@@ -8,7 +10,7 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, MenuNavigation, Message, PathPickerTarget, StereoPeakHold,
+    App, MainMenu, MainWorkspace, MenuNavigation, Message, PathPickerTarget,
     keyboard_shortcut_event, menu_navigation_event, midi_editor_shortcut_event,
     midi_expression_context_menu_event, shortcut_message,
 };
@@ -27,8 +29,10 @@ static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn transport_details_can_toggle_during_project_io() {
-    let mut app = App::default();
-    app.io_busy = true;
+    let mut app = App {
+        io_busy: true,
+        ..App::default()
+    };
 
     let _ = app.update(Message::ToggleTransportDetails);
 
@@ -169,8 +173,10 @@ fn left_click_in_midi_editor_dismisses_expression_context_menus_globally() {
         .is_none()
     );
 
-    let mut app = App::default();
-    app.midi_editor_window_id = Some(midi_editor_window_id);
+    let mut app = App {
+        midi_editor_window_id: Some(midi_editor_window_id),
+        ..App::default()
+    };
     let _ = app.update(Message::DismissMidiExpressionContextMenus(other_window_id));
     assert_eq!(app.midi_expression_context_menu_epoch, 0);
     let _ = app.update(Message::DismissMidiExpressionContextMenus(
@@ -3243,8 +3249,7 @@ fn action_search_keyboard_selection_scrolls_past_the_visible_rows() {
     let entries = super::commands::matching_actions_menu(&app, "");
     let selected = entries
         .iter()
-        .filter(|entry| entry.enabled)
-        .last()
+        .rfind(|entry| entry.enabled)
         .expect("Actions menu has an enabled command")
         .id;
 
@@ -3921,7 +3926,10 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
         HashSet::from([notes[1].id()])
     );
     let _ = app.update(Message::Undo);
-    assert_eq!(app.project.midi_items()[0].notes(), &[source.clone()]);
+    assert_eq!(
+        app.project.midi_items()[0].notes(),
+        std::slice::from_ref(&source)
+    );
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0].notes().len(), 2);
     assert_eq!(app.project.midi_items()[0].notes()[0], source);
@@ -5031,8 +5039,11 @@ fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
     assert_eq!(app.revision, revision_before_copy + 1);
 
     let _ = app.update(Message::Undo);
-    assert_eq!(app.project.audio_items(), &[audio_before.clone()]);
-    assert_eq!(app.project.midi_items(), &[midi_before.clone()]);
+    assert_eq!(
+        app.project.audio_items(),
+        std::slice::from_ref(&audio_before)
+    );
+    assert_eq!(app.project.midi_items(), std::slice::from_ref(&midi_before));
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items().len(), 2);
     assert_eq!(app.project.midi_items().len(), 2);
