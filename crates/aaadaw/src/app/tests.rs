@@ -25,6 +25,29 @@ use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn transport_details_can_toggle_during_project_io() {
+    let mut app = App::default();
+    app.io_busy = true;
+
+    let _ = app.update(Message::ToggleTransportDetails);
+
+    assert!(app.transport_details_open);
+    let _ = app.update(Message::ToggleTransportDetails);
+    assert!(!app.transport_details_open);
+}
+
+#[test]
+#[cfg(feature = "audio-device")]
+fn transport_details_can_open_while_playback_is_preparing() {
+    let mut app = App::default();
+    app.playback_busy = true;
+
+    let _ = app.update(Message::ToggleTransportDetails);
+
+    assert!(app.transport_details_open);
+}
+
 fn silent_test_waveform(sample_rate: u32, frame_count: u32) -> std::sync::Arc<AudioWaveform> {
     let data_len = frame_count * 2;
     let mut bytes = Vec::with_capacity(44 + data_len as usize);
