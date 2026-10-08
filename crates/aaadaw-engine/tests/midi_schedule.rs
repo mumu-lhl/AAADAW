@@ -77,6 +77,90 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
 }
 
 #[test]
+fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
+    let (mut project, track_id) = project_with_note(69, 720, 960);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 72,
+                tick: 1_200,
+                duration: 120,
+                velocity: 90,
+            }],
+        })
+        .expect("the second note should fit before shortening the clip");
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 1,
+                    tick: 840,
+                    value: 64,
+                },
+                MidiControllerData {
+                    controller: 1,
+                    tick: 1_200,
+                    value: 100,
+                },
+            ],
+        })
+        .expect("controller events should be accepted");
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    tick: 840,
+                    value: 9_000,
+                },
+                MidiPitchBendData {
+                    tick: 1_200,
+                    value: 10_000,
+                },
+            ],
+        })
+        .expect("pitch bends should be accepted");
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("the clip should retain hidden MIDI content");
+
+    let plan = MidiEventPlan::compile(&project).expect("trimmed project should compile");
+    assert_eq!(plan.len(), 4);
+    let clipped_end = project.sample_at_tick(960).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(
+        plan.events_for_block(0, clipped_end as usize + 1, &mut events)
+            .unwrap(),
+        4
+    );
+    assert!(events.iter().any(|event| {
+        event.is_some_and(|event| {
+            event.track_id == track_id
+                && event.pitch == 69
+                && event.kind == MidiEventKind::NoteOff
+                && event.sample_offset as u64 == clipped_end
+        })
+    }));
+    assert!(events.iter().all(|event| {
+        event.is_none_or(|event| {
+            !(event.pitch == 72 || event.controller == Some(1) && event.velocity == 100)
+        })
+    }));
+    assert_eq!(
+        plan.active_notes_at(clipped_end, &mut events).unwrap(),
+        0,
+        "a note crossing the clip end must not remain active after the boundary"
+    );
+}
+
+#[test]
 fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
     let (mut project, track_id) = project_with_note(69, 480, 240);
     let item_id = project.midi_items()[0].id();

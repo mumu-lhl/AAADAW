@@ -1120,10 +1120,7 @@ impl Project {
                     || data.pitch > 127
                     || data.velocity > 127
                     || data.duration == 0
-                    || data
-                        .tick
-                        .checked_add(data.duration)
-                        .is_none_or(|end| end > item.length_ticks)
+                    || data.tick.checked_add(data.duration).is_none()
                 {
                     return Err(SnapshotError::InvalidProjectData);
                 }
@@ -1135,12 +1132,12 @@ impl Project {
             }
             let mut controllers = item.controllers;
             controllers.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
-            if !valid_midi_controllers(&controllers, item.length_ticks) {
+            if !valid_midi_controllers(&controllers) {
                 return Err(SnapshotError::InvalidProjectData);
             }
             let mut pitch_bends = item.pitch_bends;
             pitch_bends.sort_unstable_by_key(|bend| bend.tick);
-            if !valid_midi_pitch_bends(&pitch_bends, item.length_ticks) {
+            if !valid_midi_pitch_bends(&pitch_bends) {
                 return Err(SnapshotError::InvalidProjectData);
             }
             midi_items.push(MidiItem {
@@ -1924,18 +1921,10 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                if item.notes.iter().any(|note| {
-                    note.data
-                        .tick
-                        .checked_add(note.data.duration)
-                        .is_none_or(|end| end > length_ticks)
-                }) {
-                    return Err(ActionError::InvalidMidiNote);
-                }
-                if !valid_midi_controllers(&item.controllers, length_ticks) {
+                if !valid_midi_controllers(&item.controllers) {
                     return Err(ActionError::InvalidMidiController);
                 }
-                if !valid_midi_pitch_bends(&item.pitch_bends, length_ticks) {
+                if !valid_midi_pitch_bends(&item.pitch_bends) {
                     return Err(ActionError::InvalidMidiPitchBend);
                 }
                 let before = item.clone();
@@ -2009,7 +1998,12 @@ impl Project {
                     let mut first_piece = true;
                     for (segment_index, segment) in relative_points.windows(2).enumerate() {
                         let overlap_start = note_start.max(segment[0]);
-                        let overlap_end = note_end.min(segment[1]);
+                        let is_last_segment = segment_index + 1 == segment_notes.len();
+                        let overlap_end = if is_last_segment {
+                            note_end
+                        } else {
+                            note_end.min(segment[1])
+                        };
                         if overlap_start >= overlap_end {
                             continue;
                         }
@@ -2036,6 +2030,7 @@ impl Project {
                 }
 
                 let mut next_item_id = ids.next_item_id;
+                let segment_count = segment_notes.len();
                 let mut after = Vec::with_capacity(segment_notes.len());
                 for (index, notes) in segment_notes.into_iter().enumerate() {
                     let segment_start = absolute_points[index];
@@ -2060,11 +2055,13 @@ impl Project {
                             &original.controllers,
                             relative_points[index],
                             relative_points[index + 1],
+                            index + 1 == segment_count,
                         )),
                         pitch_bends: Arc::new(pitch_bends_for_segment(
                             &original.pitch_bends,
                             relative_points[index],
                             relative_points[index + 1],
+                            index + 1 == segment_count,
                         )),
                     });
                 }
@@ -2195,7 +2192,7 @@ impl Project {
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 controllers
                     .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
-                if !valid_midi_controllers(&controllers, item.length_ticks) {
+                if !valid_midi_controllers(&controllers) {
                     return Err(ActionError::InvalidMidiController);
                 }
                 ProjectEvent::MidiControllersChanged {
@@ -2214,7 +2211,7 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 pitch_bends.sort_unstable_by_key(|bend| bend.tick);
-                if !valid_midi_pitch_bends(&pitch_bends, item.length_ticks) {
+                if !valid_midi_pitch_bends(&pitch_bends) {
                     return Err(ActionError::InvalidMidiPitchBend);
                 }
                 ProjectEvent::MidiPitchBendsChanged {
@@ -2782,14 +2779,8 @@ impl Project {
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || after.length_ticks == 0
                     || after.start_tick.checked_add(after.length_ticks).is_none()
-                    || after.notes.iter().any(|note| {
-                        note.data
-                            .tick
-                            .checked_add(note.data.duration)
-                            .is_none_or(|end| end > after.length_ticks)
-                    })
-                    || !valid_midi_controllers(&after.controllers, after.length_ticks)
-                    || !valid_midi_pitch_bends(&after.pitch_bends, after.length_ticks)
+                    || !valid_midi_controllers(&after.controllers)
+                    || !valid_midi_pitch_bends(&after.pitch_bends)
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
@@ -2832,18 +2823,14 @@ impl Project {
                         !state.tracks.iter().any(|track| track.id == item.track_id)
                             || item.length_ticks == 0
                             || item.start_tick.checked_add(item.length_ticks).is_none()
-                            || !valid_midi_controllers(&item.controllers, item.length_ticks)
-                            || !valid_midi_pitch_bends(&item.pitch_bends, item.length_ticks)
+                            || !valid_midi_controllers(&item.controllers)
+                            || !valid_midi_pitch_bends(&item.pitch_bends)
                             || !existing_item_ids.insert(item.id)
                             || item.notes.iter().any(|note| {
                                 note.data.pitch > 127
                                     || note.data.velocity > 127
                                     || note.data.duration == 0
-                                    || note
-                                        .data
-                                        .tick
-                                        .checked_add(note.data.duration)
-                                        .is_none_or(|note_end| note_end > item.length_ticks)
+                                    || note.data.tick.checked_add(note.data.duration).is_none()
                                     || !existing_note_ids.insert(note.id)
                             })
                     })
@@ -2923,9 +2910,7 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.controllers.as_ref() != before
-                    || !valid_midi_controllers(after, item.length_ticks)
-                {
+                if item.controllers.as_ref() != before || !valid_midi_controllers(after) {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.controllers = Arc::new(after.clone());
@@ -2940,9 +2925,7 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.pitch_bends.as_ref() != before
-                    || !valid_midi_pitch_bends(after, item.length_ticks)
-                {
+                if item.pitch_bends.as_ref() != before || !valid_midi_pitch_bends(after) {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.pitch_bends = Arc::new(after.clone());
@@ -3051,31 +3034,33 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
     }
 }
 
-fn valid_midi_controllers(controllers: &[MidiControllerData], length_ticks: u64) -> bool {
+fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {
     let mut positions = HashSet::with_capacity(controllers.len());
     controllers.iter().all(|controller| {
         controller.controller <= 127
             && controller.value <= 127
-            && controller.tick < length_ticks
             && positions.insert((controller.controller, controller.tick))
     })
 }
 
-fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData], length_ticks: u64) -> bool {
+fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {
     let mut positions = HashSet::with_capacity(pitch_bends.len());
     pitch_bends
         .iter()
-        .all(|bend| bend.value <= 16_383 && bend.tick < length_ticks && positions.insert(bend.tick))
+        .all(|bend| bend.value <= 16_383 && positions.insert(bend.tick))
 }
 
 fn controllers_for_segment(
     controllers: &[MidiControllerData],
     start_tick: u64,
     end_tick: u64,
+    preserve_tail: bool,
 ) -> Vec<MidiControllerData> {
     let mut segment = controllers
         .iter()
-        .filter(|controller| start_tick <= controller.tick && controller.tick < end_tick)
+        .filter(|controller| {
+            start_tick <= controller.tick && (preserve_tail || controller.tick < end_tick)
+        })
         .map(|controller| MidiControllerData {
             tick: controller.tick - start_tick,
             ..*controller
@@ -3111,6 +3096,7 @@ fn pitch_bends_for_segment(
     pitch_bends: &[MidiPitchBendData],
     start_tick: u64,
     end_tick: u64,
+    preserve_tail: bool,
 ) -> Vec<MidiPitchBendData> {
     let mut result = Vec::new();
     if let Some(latest) = pitch_bends
@@ -3126,7 +3112,7 @@ fn pitch_bends_for_segment(
     result.extend(
         pitch_bends
             .iter()
-            .filter(|bend| bend.tick > start_tick && bend.tick < end_tick)
+            .filter(|bend| bend.tick > start_tick && (preserve_tail || bend.tick < end_tick))
             .map(|bend| MidiPitchBendData {
                 tick: bend.tick - start_tick,
                 value: bend.value,

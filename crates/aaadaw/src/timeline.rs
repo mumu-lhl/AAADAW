@@ -1857,10 +1857,6 @@ impl TimelineState {
             return;
         };
         let item = &self.cache.items[item_index];
-        if item.kind != ItemKind::Audio {
-            self.item_trim_preview = None;
-            return;
-        }
         let target_tick = snap_tick_to_grid(
             target_tick,
             self.cache.snap_grid_ticks,
@@ -3378,12 +3374,13 @@ fn item_trim_edge_at_x(
     cache
         .items
         .iter()
-        .filter(|item| item.track_index == track_index && item.kind == ItemKind::Audio)
+        .filter(|item| item.track_index == track_index)
         .flat_map(|item| {
             [
                 (item.start_tick, ItemTrimEdge::Start),
                 (item.end_tick, ItemTrimEdge::End),
             ]
+            .into_iter()
             .map(move |(tick, edge)| (item, tick, edge))
         })
         .filter_map(|(item, tick, edge)| {
@@ -3933,13 +3930,14 @@ fn media_label(media_ref: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, MAX_FX_AUTOMATION_LANE_HEIGHT,
-        MiddleDragState, MidiNotePreview, PendingAutomationPoint, PendingTimeSelectionDrag,
-        RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode,
-        TimelineCache, TimelineEvent, TimelineInteractionState, TimelineState,
-        automation_sample_between, fx_automation_band_at_y, fx_automation_lane_resize_target,
-        fx_automation_tick_at, midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport,
-        snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+        AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, ItemTrimEdge,
+        MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState, MidiNotePreview, PendingAutomationPoint,
+        PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
+        TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineInteractionState,
+        TimelineState, automation_sample_between, fx_automation_band_at_y,
+        fx_automation_lane_resize_target, fx_automation_tick_at, item_trim_edge_at_x,
+        midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport, snap_tick_to_grid,
+        tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
         DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
@@ -3982,6 +3980,37 @@ mod tests {
                 440
             )))
         ));
+    }
+
+    #[test]
+    fn midi_item_edges_are_available_for_trim_hit_testing() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 480,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 480.0, 0, 1.0),
+            Some((item_id, ItemTrimEdge::Start))
+        );
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 1_440.0, 0, 1.0),
+            Some((item_id, ItemTrimEdge::End))
+        );
     }
 
     #[test]

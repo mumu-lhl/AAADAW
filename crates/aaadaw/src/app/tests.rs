@@ -17,7 +17,7 @@ use super::{
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
-use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
+use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TrackFxPlugin};
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
@@ -5300,6 +5300,72 @@ fn invalid_audio_item_trim_changes_neither_project_nor_history() {
     assert_eq!(app.project.audio_items()[0], original);
     assert_eq!(app.revision, revision);
     assert!(app.status.contains("at least one sample"));
+}
+
+#[test]
+fn midi_item_edge_trim_keeps_hidden_events_and_is_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 960,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                tick: 1_200,
+                duration: 480,
+                velocity: 96,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 1_680,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::BeginItemTrim {
+        item_id,
+        edge: crate::timeline::ItemTrimEdge::End,
+        target_tick: 2_640,
+        ignore_snap: true,
+    });
+    let preview = app.timeline.item_trim_preview().unwrap();
+    assert!(preview.valid);
+    assert_eq!(preview.end_tick, 2_640);
+    app.finish_item_trim();
+
+    let trimmed = &app.project.midi_items()[0];
+    assert_eq!(trimmed.start_tick(), 960);
+    assert_eq!(trimmed.length_ticks(), 1_680);
+    assert_eq!(trimmed.notes(), original.notes());
+    assert_eq!(trimmed.controllers(), original.controllers());
+    assert_eq!(app.status, "MIDI item trimmed");
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 1_680);
+    assert_eq!(app.project.midi_items()[0].notes(), original.notes());
+    assert_eq!(
+        app.project.midi_items()[0].controllers(),
+        original.controllers()
+    );
 }
 
 #[test]

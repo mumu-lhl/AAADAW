@@ -330,14 +330,22 @@ impl MidiEventPlan {
                 continue;
             }
 
+            let clip_end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or(MidiScheduleError::PositionOutOfRange)?;
             for note in item.notes() {
                 let start_tick = item
                     .start_tick()
                     .checked_add(note.tick())
                     .ok_or(MidiScheduleError::PositionOutOfRange)?;
+                if start_tick >= clip_end_tick {
+                    continue;
+                }
                 let end_tick = start_tick
                     .checked_add(note.duration())
-                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
+                    .ok_or(MidiScheduleError::PositionOutOfRange)?
+                    .min(clip_end_tick);
                 let start_sample = project
                     .sample_at_tick(start_tick)
                     .map_err(MidiScheduleError::Timebase)?;
@@ -374,6 +382,9 @@ impl MidiEventPlan {
                 });
             }
             for controller in item.controllers() {
+                if controller.tick >= item.length_ticks() {
+                    continue;
+                }
                 let absolute_tick = item
                     .start_tick()
                     .checked_add(controller.tick)
@@ -413,6 +424,9 @@ impl MidiEventPlan {
                 });
             }
             for bend in item.pitch_bends() {
+                if bend.tick >= item.length_ticks() {
+                    continue;
+                }
                 let absolute_tick = item
                     .start_tick()
                     .checked_add(bend.tick)
