@@ -112,6 +112,7 @@ impl From<jack::Error> for JackInputError {
 pub struct JackAudioInput {
     active: Option<jack::AsyncClient<JackCaptureNotifications, JackCaptureHandler>>,
     sample_rate: u32,
+    client_name: String,
     reported_capture_latency_frames: Arc<AtomicU64>,
     latest_frame: Arc<AtomicU64>,
     has_latest_frame: Arc<AtomicBool>,
@@ -167,6 +168,7 @@ impl JackAudioInput {
         project_sample_rate: u32,
     ) -> Result<Self, JackInputError> {
         let (client, _) = Client::new("aaadaw_capture", ClientOptions::default())?;
+        let client_name = client.name().to_owned();
         let sample_rate = client.sample_rate();
         if sample_rate != project_sample_rate {
             return Err(JackInputError::SampleRateMismatch {
@@ -223,6 +225,7 @@ impl JackAudioInput {
         Ok(Self {
             active: Some(active),
             sample_rate,
+            client_name,
             reported_capture_latency_frames,
             latest_frame,
             has_latest_frame,
@@ -232,6 +235,11 @@ impl JackAudioInput {
     /// Returns the device sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Returns the JACK client name used for capture port diagnostics.
+    pub fn client_name(&self) -> &str {
+        &self.client_name
     }
 
     /// Returns a precise nonzero capture-path latency shared by both connected input ports.
@@ -260,6 +268,35 @@ impl JackAudioInput {
     pub fn shutdown(&mut self) {
         drop(self.active.take());
     }
+}
+
+/// Reads the connected sources for an active AAADAW JACK capture client.
+///
+/// Call this from a background control task. JACK port enumeration is not realtime-safe.
+pub fn inspect_jack_input_routes(client_name: &str) -> Result<crate::AudioRouteSnapshot, String> {
+    let (client, _status) =
+        Client::new("aaadaw_capture_diagnostics", ClientOptions::NO_START_SERVER)
+            .map_err(|error| error.to_string())?;
+    let mut routes = Vec::new();
+    for port_name in ["in_l", "in_r"] {
+        let full_name = format!("{client_name}:{port_name}");
+        let port = client
+            .port_by_name(&full_name)
+            .ok_or_else(|| format!("JACK input port {full_name} is no longer available"))?;
+        routes.extend(
+            port.get_connections()
+                .into_iter()
+                .map(|source| format!("{port_name} ← {source}")),
+        );
+    }
+    routes.sort();
+    routes.dedup();
+    Ok(crate::AudioRouteSnapshot {
+        sample_rate_hz: Some(client.sample_rate()),
+        capture_routes_inspected: true,
+        input_routes: routes,
+        output_routes: Vec::new(),
+    })
 }
 
 fn precise_shared_capture_latency(left: (u32, u32), right: (u32, u32)) -> Option<u32> {

@@ -1,4 +1,4 @@
-use crate::{AudioRenderGraph, TransportClockAnchor};
+use crate::{AudioRenderGraph, AudioRouteSnapshot, TransportClockAnchor};
 use jack::{
     AudioOut, Client, ClientOptions, Control, NotificationHandler, Port, ProcessHandler,
     ProcessScope,
@@ -278,6 +278,7 @@ pub struct JackAudioOutput {
     counters: Arc<CallbackCounters>,
     device_sample_rate: u32,
     device_block_size: usize,
+    client_name: String,
     replacement_pending: bool,
 }
 
@@ -300,6 +301,7 @@ impl JackAudioOutput {
     /// Opens the default JACK client and starts the render callback.
     pub fn open(graph: AudioRenderGraph) -> Result<Self, JackOutputError> {
         let (client, _status) = Client::new("aaadaw", ClientOptions::default())?;
+        let client_name = client.name().to_owned();
         let device_sample_rate = client.sample_rate();
         if device_sample_rate != graph.sample_rate() {
             return Err(JackOutputError::SampleRateMismatch {
@@ -355,8 +357,17 @@ impl JackAudioOutput {
             counters,
             device_sample_rate,
             device_block_size,
+            client_name,
             replacement_pending: false,
         })
+    }
+
+    pub fn client_name(&self) -> &str {
+        &self.client_name
+    }
+
+    pub fn device_sample_rate(&self) -> u32 {
+        self.device_sample_rate
     }
 
     /// Queues a start request for the next audio callback.
@@ -488,6 +499,34 @@ impl JackAudioOutput {
             Err(PushError::Full(_)) => Err(JackOutputError::ControlQueueFull),
         }
     }
+}
+
+/// Reads the connected destinations for an active AAADAW JACK client.
+///
+/// Call this from a background control task. JACK port enumeration is not realtime-safe.
+pub fn inspect_jack_output_routes(client_name: &str) -> Result<AudioRouteSnapshot, String> {
+    let (client, _status) = Client::new("aaadaw_diagnostics", ClientOptions::NO_START_SERVER)
+        .map_err(|error| error.to_string())?;
+    let mut routes = Vec::new();
+    for port_name in ["out_l", "out_r"] {
+        let full_name = format!("{client_name}:{port_name}");
+        let port = client
+            .port_by_name(&full_name)
+            .ok_or_else(|| format!("JACK output port {full_name} is no longer available"))?;
+        routes.extend(
+            port.get_connections()
+                .into_iter()
+                .map(|destination| format!("{port_name} → {destination}")),
+        );
+    }
+    routes.sort();
+    routes.dedup();
+    Ok(AudioRouteSnapshot {
+        sample_rate_hz: Some(client.sample_rate()),
+        capture_routes_inspected: false,
+        input_routes: Vec::new(),
+        output_routes: routes,
+    })
 }
 
 fn read_transport_clock_anchor(counters: &CallbackCounters) -> Option<TransportClockAnchor> {

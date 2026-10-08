@@ -1,10 +1,10 @@
-use crate::AudioRenderGraph;
+use crate::{AudioOutputConnectionState, AudioRenderGraph, AudioRouteSnapshot};
 use pipewire as pw;
 use pw::spa::pod::Pod;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::error::Error as StdError;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -37,6 +37,8 @@ struct CallbackCounters {
     master_non_finite_samples: AtomicU64,
     callback_errors: AtomicU64,
     playhead_sample: AtomicU64,
+    connection_state: AtomicU8,
+    connection_error: Mutex<Option<String>>,
 }
 
 struct ProcessData {
@@ -271,6 +273,7 @@ struct PipeWireParts {
     commands: Producer<TransportCommand>,
     retired_graphs: Consumer<Box<AudioRenderGraph>>,
     counters: Arc<CallbackCounters>,
+    node_id: u32,
 }
 
 /// A native PipeWire stereo output. The PipeWire objects stay on a dedicated control thread;
@@ -284,6 +287,7 @@ pub struct PipeWireAudioOutput {
     shutdown_graphs: Arc<Mutex<Vec<AudioRenderGraph>>>,
     device_sample_rate: u32,
     maximum_block_frames: usize,
+    node_id: u32,
     replacement_pending: bool,
 }
 
@@ -331,8 +335,31 @@ impl PipeWireAudioOutput {
             shutdown_graphs,
             device_sample_rate: sample_rate,
             maximum_block_frames,
+            node_id: parts.node_id,
             replacement_pending: false,
         })
+    }
+
+    pub fn node_id(&self) -> u32 {
+        self.node_id
+    }
+
+    pub fn device_sample_rate(&self) -> u32 {
+        self.device_sample_rate
+    }
+
+    pub fn connection_state(&self) -> AudioOutputConnectionState {
+        AudioOutputConnectionState::from_atomic_value(
+            self.counters.connection_state.load(Ordering::Acquire),
+        )
+    }
+
+    pub fn connection_error(&self) -> Option<String> {
+        self.counters
+            .connection_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn play(&mut self) -> Result<(), PipeWireOutputError> {
@@ -510,11 +537,30 @@ fn setup_pipewire_stream(
     let listener = stream
         .add_local_listener_with_user_data(process_data)
         .state_changed(|_, data, _, state| {
-            if matches!(state, pw::stream::StreamState::Error(_)) {
-                data.counters
-                    .callback_errors
-                    .fetch_add(1, Ordering::Relaxed);
+            let connection_state = pipewire_connection_state(&state);
+            match state {
+                pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming => {
+                    *data
+                        .counters
+                        .connection_error
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+                pw::stream::StreamState::Error(error) => {
+                    data.counters
+                        .callback_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    *data
+                        .counters
+                        .connection_error
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                }
+                pw::stream::StreamState::Unconnected | pw::stream::StreamState::Connecting => {}
             }
+            data.counters
+                .connection_state
+                .store(connection_state as u8, Ordering::Release);
         })
         .process(|stream, data| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
@@ -609,11 +655,13 @@ fn setup_pipewire_stream(
             &mut params,
         )
         .map_err(|error| error.to_string())?;
+    let node_id = stream.node_id();
     if setup
         .send(Ok(PipeWireParts {
             commands,
             retired_graphs: retired_graph_consumer,
             counters,
+            node_id,
         }))
         .is_err()
     {
@@ -636,10 +684,360 @@ fn setup_pipewire_stream(
     Ok(())
 }
 
+fn pipewire_connection_state(state: &pw::stream::StreamState) -> AudioOutputConnectionState {
+    match state {
+        pw::stream::StreamState::Unconnected | pw::stream::StreamState::Connecting => {
+            AudioOutputConnectionState::Connecting
+        }
+        pw::stream::StreamState::Paused | pw::stream::StreamState::Streaming => {
+            AudioOutputConnectionState::Connected
+        }
+        pw::stream::StreamState::Error(_) => AudioOutputConnectionState::Failed,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PipeWireRouteDirection {
+    Input,
+    Output,
+}
+
+#[derive(Default)]
+struct PipeWireRegistrySnapshot {
+    nodes: Vec<PipeWireRouteNode>,
+    ports: Vec<PipeWireRoutePort>,
+    links: Vec<PipeWireRouteLink>,
+}
+
+struct PipeWireRouteNode {
+    id: u32,
+    name: String,
+    sample_rate_hz: Option<u32>,
+}
+
+struct PipeWireRoutePort {
+    id: u32,
+    node_id: u32,
+    name: String,
+}
+
+struct PipeWireRouteLink {
+    output_node_id: u32,
+    output_port_id: u32,
+    input_node_id: u32,
+    input_port_id: u32,
+}
+
+/// Reads the connected PipeWire destinations for an active playback stream.
+///
+/// This performs a registry round trip, so call it from a background control task.
+pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
+    inspect_pipewire_routes(node_id, PipeWireRouteDirection::Output)
+}
+
+/// Reads the connected PipeWire sources for an active capture stream.
+///
+/// This performs a registry round trip, so call it from a background control task.
+pub fn inspect_pipewire_input_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
+    inspect_pipewire_routes(node_id, PipeWireRouteDirection::Input)
+}
+
+fn inspect_pipewire_routes(
+    node_id: u32,
+    direction: PipeWireRouteDirection,
+) -> Result<AudioRouteSnapshot, String> {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(pw::init);
+
+    let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(|error| error.to_string())?;
+    let context =
+        pw::context::ContextRc::new(&mainloop, None).map_err(|error| error.to_string())?;
+    let core = context
+        .connect_rc(None)
+        .map_err(|error| error.to_string())?;
+    let registry = core.get_registry().map_err(|error| error.to_string())?;
+    let snapshot = Rc::new(RefCell::new(PipeWireRegistrySnapshot::default()));
+    let listener_snapshot = Rc::clone(&snapshot);
+    let _registry_listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            let Some(properties) = global.props.as_ref() else {
+                return;
+            };
+            match global.type_ {
+                pw::types::ObjectType::Node => {
+                    let name = properties
+                        .get("node.description")
+                        .or_else(|| properties.get("node.nick"))
+                        .or_else(|| properties.get("node.name"))
+                        .unwrap_or("Unknown PipeWire node")
+                        .to_owned();
+                    let sample_rate = properties
+                        .get("audio.rate")
+                        .and_then(|rate| rate.parse::<u32>().ok());
+                    listener_snapshot
+                        .borrow_mut()
+                        .nodes
+                        .push(PipeWireRouteNode {
+                            id: global.id,
+                            name,
+                            sample_rate_hz: sample_rate,
+                        });
+                }
+                pw::types::ObjectType::Port => {
+                    let Some(node_id) = properties
+                        .get("node.id")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let name = properties
+                        .get("port.alias")
+                        .or_else(|| properties.get("port.name"))
+                        .unwrap_or("Unknown PipeWire port")
+                        .to_owned();
+                    listener_snapshot
+                        .borrow_mut()
+                        .ports
+                        .push(PipeWireRoutePort {
+                            id: global.id,
+                            node_id,
+                            name,
+                        });
+                }
+                pw::types::ObjectType::Link => {
+                    let Some(output_node_id) = properties
+                        .get("link.output.node")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(output_port_id) = properties
+                        .get("link.output.port")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(input_node_id) = properties
+                        .get("link.input.node")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(input_port_id) = properties
+                        .get("link.input.port")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    listener_snapshot
+                        .borrow_mut()
+                        .links
+                        .push(PipeWireRouteLink {
+                            output_node_id,
+                            output_port_id,
+                            input_node_id,
+                            input_port_id,
+                        });
+                }
+                _ => {}
+            }
+        })
+        .register();
+
+    let pending = core.sync(0).map_err(|error| error.to_string())?;
+    let complete = Rc::new(Cell::new(false));
+    let complete_listener = Rc::clone(&complete);
+    let loop_listener = mainloop.clone();
+    let _core_listener = core
+        .add_listener_local()
+        .done(move |id, sequence| {
+            if id == pw::core::PW_ID_CORE && sequence == pending {
+                complete_listener.set(true);
+                loop_listener.quit();
+            }
+        })
+        .register();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !complete.get() {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out while reading PipeWire routes".to_owned());
+        }
+        mainloop
+            .loop_()
+            .iterate(pw::loop_::Timeout::Finite(Duration::from_millis(20)));
+    }
+
+    let snapshot = snapshot.borrow();
+    let stream_node = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id == node_id)
+        .ok_or_else(|| match direction {
+            PipeWireRouteDirection::Input => {
+                "AAADAW's PipeWire capture stream is no longer available".to_owned()
+            }
+            PipeWireRouteDirection::Output => {
+                "AAADAW's PipeWire playback stream is no longer available".to_owned()
+            }
+        })?;
+    let routes = pipewire_route_summaries(
+        &snapshot.nodes,
+        &snapshot.ports,
+        &snapshot.links,
+        node_id,
+        direction,
+    );
+    let (input_routes, output_routes) = match direction {
+        PipeWireRouteDirection::Input => (routes, Vec::new()),
+        PipeWireRouteDirection::Output => (Vec::new(), routes),
+    };
+    Ok(AudioRouteSnapshot {
+        sample_rate_hz: stream_node.sample_rate_hz,
+        capture_routes_inspected: matches!(direction, PipeWireRouteDirection::Input),
+        input_routes,
+        output_routes,
+    })
+}
+
+fn pipewire_route_summaries(
+    nodes: &[PipeWireRouteNode],
+    ports: &[PipeWireRoutePort],
+    links: &[PipeWireRouteLink],
+    node_id: u32,
+    direction: PipeWireRouteDirection,
+) -> Vec<String> {
+    let mut routes = links
+        .iter()
+        .filter_map(|link| {
+            let (own_port_id, peer_node_id, peer_port_id) = match direction {
+                PipeWireRouteDirection::Input if link.input_node_id == node_id => {
+                    (link.input_port_id, link.output_node_id, link.output_port_id)
+                }
+                PipeWireRouteDirection::Output if link.output_node_id == node_id => {
+                    (link.output_port_id, link.input_node_id, link.input_port_id)
+                }
+                _ => return None,
+            };
+            let own_port = ports
+                .iter()
+                .find(|port| port.id == own_port_id && port.node_id == node_id)?;
+            let peer_port = ports
+                .iter()
+                .find(|port| port.id == peer_port_id && port.node_id == peer_node_id)?;
+            let peer_node = nodes.iter().find(|node| node.id == peer_node_id)?;
+            Some(match direction {
+                PipeWireRouteDirection::Input => format!(
+                    "{}:{} → AAADAW:{}",
+                    peer_node.name, peer_port.name, own_port.name
+                ),
+                PipeWireRouteDirection::Output => format!(
+                    "AAADAW:{} → {}:{}",
+                    own_port.name, peer_node.name, peer_port.name
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+    routes.sort();
+    routes.dedup();
+    routes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use aaadaw_core::Project;
+
+    #[test]
+    fn pipewire_route_summaries_include_port_connections_and_direction() {
+        let nodes = [
+            PipeWireRouteNode {
+                id: 10,
+                name: "Microphone".to_owned(),
+                sample_rate_hz: None,
+            },
+            PipeWireRouteNode {
+                id: 20,
+                name: "AAADAW".to_owned(),
+                sample_rate_hz: Some(48_000),
+            },
+            PipeWireRouteNode {
+                id: 30,
+                name: "Speakers".to_owned(),
+                sample_rate_hz: None,
+            },
+        ];
+        let ports = [
+            PipeWireRoutePort {
+                id: 101,
+                node_id: 10,
+                name: "capture_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 201,
+                node_id: 20,
+                name: "input_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 202,
+                node_id: 20,
+                name: "output_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 301,
+                node_id: 30,
+                name: "playback_FL".to_owned(),
+            },
+        ];
+        let links = [
+            PipeWireRouteLink {
+                output_node_id: 10,
+                output_port_id: 101,
+                input_node_id: 20,
+                input_port_id: 201,
+            },
+            PipeWireRouteLink {
+                output_node_id: 20,
+                output_port_id: 202,
+                input_node_id: 30,
+                input_port_id: 301,
+            },
+        ];
+        assert_eq!(
+            pipewire_route_summaries(&nodes, &ports, &links, 20, PipeWireRouteDirection::Input),
+            vec!["Microphone:capture_FL → AAADAW:input_FL".to_owned()]
+        );
+        assert_eq!(
+            pipewire_route_summaries(&nodes, &ports, &links, 20, PipeWireRouteDirection::Output),
+            vec!["AAADAW:output_FL → Speakers:playback_FL".to_owned()]
+        );
+    }
+
+    #[test]
+    fn pipewire_stream_state_maps_to_connection_status() {
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Connecting),
+            AudioOutputConnectionState::Connecting
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Paused),
+            AudioOutputConnectionState::Connected
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Streaming),
+            AudioOutputConnectionState::Connected
+        );
+        assert_eq!(
+            pipewire_connection_state(&pw::stream::StreamState::Error(
+                "connection refused".to_owned()
+            )),
+            AudioOutputConnectionState::Failed
+        );
+    }
 
     fn graph(max_frames: usize) -> AudioRenderGraph {
         let project = Project::new();

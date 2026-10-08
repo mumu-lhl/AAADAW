@@ -449,6 +449,16 @@ pub(crate) enum Message {
         )
     ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    RefreshLinuxAudioRoutes,
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    LinuxAudioRoutesRefreshed(
+        u64,
+        aaadaw_app::PlaybackBackend,
+        Result<aaadaw_engine::AudioRouteSnapshot, String>,
+    ),
+    #[cfg(all(target_os = "linux", feature = "audio-device"))]
+    ReconnectLinuxAudioBackend,
 }
 
 #[derive(Clone, Debug)]
