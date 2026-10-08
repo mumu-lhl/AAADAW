@@ -183,6 +183,9 @@ where
         error: Option<Error>,
         system_theme: Option<oneshot::Sender<theme::Mode>>,
 
+        #[cfg(target_os = "android")]
+        resumed: bool,
+
         #[cfg(target_arch = "wasm32")]
         canvas: Option<web_sys::HtmlCanvasElement>,
     }
@@ -195,6 +198,9 @@ where
         receiver: control_receiver,
         error: None,
         system_theme: Some(system_theme_sender),
+
+        #[cfg(target_os = "android")]
+        resumed: false,
 
         #[cfg(target_arch = "wasm32")]
         canvas: None,
@@ -214,6 +220,15 @@ where
                         .system_theme()
                         .map(conversion::theme_mode)
                         .unwrap_or_default(),
+                );
+            }
+
+            #[cfg(target_os = "android")]
+            {
+                self.resumed = true;
+                self.process_event(
+                    event_loop,
+                    Event::EventLoopAwakened(winit::event::Event::AboutToWait),
                 );
             }
         }
@@ -302,6 +317,11 @@ where
             event: Event<Action<Message>>,
         ) {
             if event_loop.exiting() {
+                return;
+            }
+
+            #[cfg(target_os = "android")]
+            if !self.resumed {
                 return;
             }
 
