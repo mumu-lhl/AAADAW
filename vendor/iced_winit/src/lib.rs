@@ -447,6 +447,8 @@ where
                                 );
                             }
                             Control::Exit => {
+                                #[cfg(target_os = "android")]
+                                eprintln!("AAADAW_DIAG: iced_winit received Control::Exit");
                                 self.process_event(event_loop, Event::Exit);
                                 event_loop.exit();
                                 break;
@@ -471,6 +473,8 @@ where
                         }
                     },
                     task::Poll::Ready(_) => {
+                        #[cfg(target_os = "android")]
+                        eprintln!("AAADAW_DIAG: iced_winit runtime instance completed");
                         event_loop.exit();
                         break;
                     }
@@ -483,6 +487,8 @@ where
     {
         let mut runner = runner;
         let _ = event_loop.run_app(&mut runner);
+        #[cfg(target_os = "android")]
+        eprintln!("AAADAW_DIAG: winit run_app returned");
 
         runner.error.map(Err).unwrap_or(Ok(()))
     }
