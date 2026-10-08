@@ -217,29 +217,29 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 ## Current UI Audit
 
-本审计基于 `README.md`、产品/架构文档、路线图和 `crates/aaadaw/src/app/view/`、`timeline.rs` 的当前 Iced 实现。当前默认窗口为 Arrangement；已提供基础空间时间线和 Inspector，仍缺少主要的直接编排手势。以下优先级按对核心 DAW 工作流和后续实现的影响排序。
+本审计于 2026-10-08 对照当前 `main`、`crates/aaadaw/src/app/view/`、`timeline.rs` 和 #216 重新核对。主工作区已有可编辑的空间编排、音频/MIDI 边界操作、Snap、自动化和对象菜单；下表只记录仍可从代码确认的缺口，不重复列出已完成的旧审计项。真实设备、窄窗口、高 DPI 和端到端操作仍需单独验收。
 
 | 严重度 | 维度 | 当前问题 | 后续影响 / 处理 |
 | --- | --- | --- | --- |
-| P0 — 阻塞空间编辑 | Information architecture / interaction | 已用 Iced/wgpu 视口替代主 Arrangement 清单，并实现轨道时间行、Audio/MIDI Item 几何、音乐标尺、水平缩放/平移、基础选择和 edit cursor；Item 仍不可拖动，且没有时间选区、Snap、切分、波形或 MIDI note 预览。 | 主工作区已能定位并检查 Items；完成直接移动与切分后，才能自然支撑更多空间编辑。精确数值编辑继续作为 Inspector 入口。 |
-| P1 — 阻塞轨道扩展 | Layout / density / interaction | TCP/Arrange 已可调宽度并按同一垂直滚动对齐轨道，但 TCP 控件仍较密：名称编辑、重排和删除入口靠得近；Mute/Solo 是 compact toggle，Volume/Pan 仍用离散步进。没有 Arm、连续 fader/pan、Meter、FX、Routing 或 Folder。 | 继续验证窄窗口布局；将高频控制与低频轨道操作分组，再按领域能力接入录音、Meter、FX、Routing 和 Folder。 |
-| P1 — 阻塞 Mixer 一致性 | Information architecture / consistency | 当前没有 Mixer。未来若从零另造 mixer 控件，容易与 TCP 的音量、Mute/Solo、选择等操作产生两套状态/命令。 | 先在共享 track-view model 和 Action 层明确 track status，再做与 TCP 同源的 MCP；未有 routing/FX domain model 前不应假装它们已完整实现。 |
-| P1 — 高风险的列表布局 | Density / scrolling | Arrangement 已按时间视口显示全部 Items，主视图没有 200 条上限；Inspector 仍用长控件行编辑 MIDI notes，窄布局下控件密度仍需检查。 | 保持空间视口裁剪和无固定 Item 上限；后续缩短/分组 Inspector 的低频编辑控件。 |
-| P2 — 命令发现仍不完整 | Information architecture / interaction | 已有 File/Edit/View/Insert/Item/Track/Actions 菜单栏、可搜索的现有命令和 Track 右键菜单；Item context menu、主 toolbar、可配置 Action 注册表/快捷键仍未实现。快捷键仅覆盖 undo/redo/save/open，JACK 构建加 Space。 | 菜单与 Actions 搜索提供基础命令入口。随着 Item、Mixer、FX、automation 增加，继续为对象补充上下文入口，并建立完整 Action 注册、快捷键冲突检查和配置。 |
-| P2 — Transport 是占位条 | Hierarchy / interaction | 底部条位置常驻，值得保留；非 JACK 构建只显示 `JACK: enable jack-backend`。JACK 构建显示 play/stop/restart、sample 输入/seek 和状态；当前没有 Pause、Record、Loop、bars/beats 时钟、Tempo 或 Time Signature。 | 固定位置正确但控制完整性低。按 Transport contract 渐进填入已支持的状态，明确不可用项，并让时间/工程节奏信息有稳定读数。 |
-| P2 — 视觉系统尚未完整应用 | Visual hierarchy / consistency | 菜单与主窗口 shell 已开始使用 spacing token 和 DAW 状态样式；多数工作区仍主要使用 Iced 默认控件，view 中还散布 padding/spacing 数值。Meter/record 色彩、统一字号层级和 panel/分隔规范仍不完整。菜单使用方角边界，Transport 仍用 `rounded_box`。 | 扩展 token 与状态规则到 TCP、Inspector、Transport 和 utility 面板；按使用频率检查高度、间距和激活色，不用为了统一而一次性重画已有 utility 页。 |
-| P3 — 工作区边界 | IA / implementation debt | Arrangement、Media、Project 分为独立 workspace tab。Media 的导入/扫描/pack/relink 是合理的工程级维护功能；Project 的通用 Action search 目前很浅。切离 Arrangement 后仍保留底部 Transport，是现有优点。 | 保留 Media/Project 的可达性和后台进度；后续把高频 Media/FX/MIDI 工具转为可 dock 面板，避免频繁离开主编排区。纯 utility 内容可以保留独立页面。 |
+| P1 — 时间线导航不完整 | Interaction / transport | 视口已有滚轮缩放、中键拖动缩放/平移、Snap、片段选择/拖动/修边/切分和自动化编辑；还没有循环播放、播放光标跟随，以及 Fit Project、Fit Selection、Fit Selected Items。编辑光标与播放起点也需要保持清晰一致。 | 补齐常用导航命令并统一缩放锚点；时间选区与循环状态须可区分。验证播放、暂停、停止和点击定位的起点语义。 |
+| P1 — TCP 密度和 Mixer 工作流 | Layout / mixing | TCP 已有轨道选择、名称、Volume、Pan、Mute/Solo/Arm、输入监听、左右电平表、FX 和输出选择；固定行高与紧凑控件在窄布局下仍有裁剪风险。Mixer 已存在，但通道固定约 220px，采用横向推子和电平条，Master 随横向滚动且没有输出音量推子。 | 先解决 TCP 行高/密度与可读性；Mixer 使用纵向推子及相邻电平表，保持 Master 可见，并让两个视图操作同一轨道状态和撤销历史。 |
+| P1 — 工程身份与切换保护 | Window / project workflow | 主菜单显示工程名和未保存标记，但操作系统主窗口标题仍为 `AAADAW`。未保存变更时 New/Open 流程仍需允许用户明确选择保存、放弃或取消，并在保存成功后继续原操作。 | 让窗口标题同步工程名/dirty 状态；统一 New/Open/Close 的确认和延续语义，保存失败或取消选择器时保持当前工程。 |
+| P1 — Transport 的缺失操作 | Transport / recovery | Transport 已有 Play/Pause、Stop、Record、Restart、seek、BPM/拍号编辑、播放准备反馈和后端详情；Loop 仍显示 unavailable，时间线导航缺少跟随/适配入口。Linux 后端状态和路由诊断正在 #271 / PR #273 实施，尚未完成验收。 | 保留现有窄窗口布局；实现循环与导航前先定义状态语义。设备/路由诊断不得占用音频回调，也不能暗示已连接即有声音。 |
+| P2 — Inspector 与素材发现 | Panel / editing | Inspector 选中片段时高度从 52px 增至 156px，并为 MIDI 音符显示大量按钮；目前没有折叠/resize。Media Browser 支持导入、扫描、打包和重链接，但没有通用目录浏览、试听及拖入编排。 | Inspector 保持简洁并允许折叠/调整高度；素材浏览、试听和拖放应复用现有媒体导入及后台任务能力。 |
+| P2 — 国际化和视觉可读性 | Localization / accessibility | 界面文本仍以内嵌英文为主，没有项目级翻译资源或语言设置。Dark 主题固定，多个高频状态依赖缩写/颜色，字号、读数格式和高 DPI 表现尚未统一验收。 | 引入可由翻译平台维护的资源格式、中文/英文和自动语言选择；再统一焦点、选择、录音、旁路等状态提示及可读数值。 |
+| P2 — 渲染与大型工程验收 | Performance / offline workflow | 渲染窗口已独立，但范围、输出采样率和尾音策略仍有限。长工程的轨道布局、渲染和滚动尚无基准；当前实现路径存在按全工程构建部分视图数据的开销，但未测得实际卡顿。 | 用可复现的大工程基准先测量，再决定虚拟化和缓存；补充工程/选区渲染范围、时长估计和尾音控制。避免无数据依据的性能重构。 |
+| P2 — 真实工作流验收 | Verification | 自动测试覆盖项目模型和多种编辑行为，但还没有记录完整的键鼠、音频编排、MIDI 创作、录音、bus 混音、范围渲染以及保存重开的端到端验收。 | 建立可重复的本地验收清单；自动测试继续覆盖确定性语义，真实音频设备、高 DPI、多平台和大工程单独注明环境与结果。 |
 
 ## UI Modernization Roadmap
 
-按依赖关系逐步重构，不做全 UI 一次性重写。此 roadmap 是设计建议，不代表本次启动实现或扩大 `ROADMAP.md` 的功能范围。
+按依赖关系逐步改进，不做全 UI 一次性重写。此 roadmap 是设计建议，不代表扩大 `ROADMAP.md` 的功能范围；已实现的基础能力不再作为未来工作重复排期。
 
-1. **[x] 重构 Arrangement/TCP 主工作面**：已提供可 resize splitter、共享轨道行、时间 ruler、水平缩放/平移、垂直滚动、游标、基础 track/item selection 与按时间绘制；Item 拖动、时间选区、波形和完整 drag-edit 留待后续。精确 sample/tick 编辑保留在 Inspector。
-2. **完成 TCP 控件布局与状态反馈**：增加 compact/normal 布局和统一选择模型；依次接入连续 Volume/Pan、Mute/Solo、Meter、Arm 状态，再按 domain/model 可用性接入 FX、Routing、Folder。验证多选和 undo 行为。
-3. **建立命令与 Transport 基线**：已建立紧凑 menu bar、支持命令的 Actions 搜索和 Track context menu；继续统一 toolbar、Item context menu 与快捷键的命令定义，并补充配置/帮助入口。将 Transport 的项目时间读数、tempo/meter、播放状态和已有 JACK 控制收敛到固定优先级，并只呈现已支持的操作。
-4. **增加 Mixer 并验证状态同源**：实现稳定 channel strip 和 Master strip；测试从 TCP 与 Mixer 改变同一控制的双向即时反映。再扩展 FX inserts、Sends 摘要和 meter 视图。
-5. **增加 Docking 和常用工具面板**：先实现 Mixer、FX/Media browser、MIDI editor 的 dock/float、resize、hide/show 和布局恢复；保持主窗口可在 panel 隐藏时正常编辑。
-6. **扩展编辑器和主题配置**：接入 envelope lanes、Audio waveform、MIDI piano roll/CC lanes、更多 Item 手势；完善 track/mixer layouts、Action map 和主题配置。每种功能依赖领域 Action、数据模型、缓存和实时/撤销语义就绪，不将 UI 外壳当作功能完成。
+1. **[x] 建立空间 Arrangement 基线**：已有时间视口、轨道/item 几何、选择、缩放/平移、Snap、音频/MIDI 移动与修边、切分、波形/音符预览、音量/FX 自动化和对象上下文菜单。后续针对已有能力修复具体缺陷，不再重建主工作区。
+2. **重排 TCP 并完善 Mixer**：解决 TCP 行高与左右电平表可读性；Mixer 改为纵向推子和紧凑通道，固定可见 Master，保持 TCP/Mixer 控制和 Undo/Redo 同源。
+3. **补齐时间线导航与工程切换**：实现 Loop、Follow Playhead、Fit Project/Selection/Selected Items 和统一缩放锚点；让窗口标题与工程名一致，并打通 New/Open/Close 的保存、放弃、取消流程。
+4. **改进 Inspector 与 Media Browser**：允许 Inspector 折叠和 resize，减少全量音符按钮；为媒体浏览增加目录、试听和拖入入口，同时保留导入、扫描、打包、重链接与后台取消。
+5. **完成音频与渲染工作流**：结束 #271 的 Linux 连接/路由诊断；补渲染范围、采样率、尾音控制，以及真实设备上的录音/路由验收。
+6. **国际化、性能和视觉系统**：以翻译资源提供中文/英文及自动选择；先用长工程和高 DPI 验收建立性能/可读性基线，再优化可见性和布局恢复。
 
 ## Current Implementation Worth Keeping
 
@@ -254,9 +254,9 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 ## Rework When Replacing
 
-- 把 `timeline.rs` 的线性列表从主 Arrangement 移出；逐步替换为按轨道和时间定位的 Item canvas，并把准确数值编辑放进 Inspector。
-- 把每轨大行按钮改为可连续调整且支持数值输入的自制 DAW controls；减少通过许多按钮“点刻度”的调节方式。
-- 把 fixed-width track list 改为与时间区共用 track geometry 的可 resize TCP。
-- 已将 File/Edit/Track 内嵌展开面板替换为紧凑的 File/Edit/View/Insert/Item/Track/Actions 菜单栏，并让菜单、Actions 搜索、快捷键和轨道上下文菜单共用命令定义；主 toolbar 和更多 Item context actions 仍待扩展。
-- 去掉 Item/note 的固定 200 项可见上限，改由视口范围加载和明确的项目级搜索/定位。
-- 项目名称、保存状态、操作提示要分出稳定位置，避免一条 status 字符串同时承担工程身份和临时反馈。
+- 不要再以列表替换主 Arrangement；继续深化现有时间视口。仅在有测量证据时增加轨道/item 虚拟化或缓存。
+- 优先改善已有 TCP 和 Mixer 控件的行高、密度、可读性与共享状态；避免重新实现一套不经过 `Project`/`DawAction` 的混音状态。
+- Actions、主菜单、快捷键和对象上下文菜单已有共享命令基础；新增入口应复用注册表，不另建平行命令系统。
+- Inspector 当前由选中状态强制改变固定高度；扩展前先提供折叠和用户可调高度，避免继续堆叠低频控件。
+- 主菜单已显示工程名和未保存标记，主窗口标题仍固定；完善标题和保存/放弃/取消流程，不再把整个工程身份描述为缺失。
+- Item/note 主视图没有旧的固定 200 项显示上限；针对真实大型工程数据先做基准，再选择视口裁剪、索引或缓存策略。
