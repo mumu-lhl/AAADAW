@@ -72,7 +72,7 @@ fn pitch_bends_are_14_bit_sorted_undoable_and_snapshot_safe() {
 }
 
 #[test]
-fn pitch_bends_reject_invalid_values_positions_and_duplicates_atomically() {
+fn pitch_bends_reject_invalid_values_and_duplicates_atomically() {
     let (mut project, item_id) = project_with_midi_item();
     for pitch_bends in [
         vec![
@@ -85,10 +85,6 @@ fn pitch_bends_reject_invalid_values_positions_and_duplicates_atomically() {
         vec![MidiPitchBendData {
             tick: 10,
             value: 16_384,
-        }],
-        vec![MidiPitchBendData {
-            tick: 3_840,
-            value: 8192,
         }],
     ] {
         let before = project.snapshot();
@@ -148,7 +144,7 @@ fn splitting_a_midi_item_carries_the_active_pitch_bend_forward() {
 }
 
 #[test]
-fn shrinking_a_midi_item_cannot_discard_pitch_bend_points() {
+fn shrinking_a_midi_item_preserves_hidden_pitch_bend_points() {
     let (mut project, item_id) = project_with_midi_item();
     project
         .apply(DawAction::SetMidiPitchBends {
@@ -159,14 +155,31 @@ fn shrinking_a_midi_item_cannot_discard_pitch_bend_points() {
             }],
         })
         .expect("pitch bend should be accepted");
-    let before = project.snapshot();
-    assert_eq!(
-        project.apply(DawAction::EditMidiItem {
+    project
+        .apply(DawAction::EditMidiItem {
             item_id,
             start_tick: 0,
             length_ticks: 1_920,
-        }),
-        Err(ActionError::InvalidMidiPitchBend)
+        })
+        .expect("trimming the clip should preserve hidden pitch bends");
+    assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
+    assert_eq!(
+        project.midi_items()[0].pitch_bends(),
+        &[MidiPitchBendData {
+            tick: 2_400,
+            value: 10_000,
+        }]
     );
-    assert_eq!(project.snapshot(), before);
+    let trimmed_snapshot = project.snapshot();
+
+    assert!(project.undo().expect("clip trim should undo"));
+    assert_eq!(project.midi_items()[0].length_ticks(), 3_840);
+    assert!(project.redo().expect("clip trim should redo"));
+    assert_eq!(project.snapshot(), trimmed_snapshot);
+    assert_eq!(
+        Project::from_snapshot(trimmed_snapshot.clone())
+            .expect("trimmed snapshot should retain hidden pitch bends")
+            .snapshot(),
+        trimmed_snapshot
+    );
 }

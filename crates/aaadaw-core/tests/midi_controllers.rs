@@ -66,7 +66,7 @@ fn controller_changes_are_sorted_undoable_and_snapshot_safe() {
 }
 
 #[test]
-fn controller_changes_reject_duplicate_positions_and_out_of_range_data_atomically() {
+fn controller_changes_reject_duplicate_positions_and_invalid_values_atomically() {
     let (mut project, item_id) = project_with_midi_item();
     for controllers in [
         vec![
@@ -86,11 +86,6 @@ fn controller_changes_reject_duplicate_positions_and_out_of_range_data_atomicall
             tick: 10,
             value: 0,
         }],
-        vec![MidiControllerData {
-            controller: 64,
-            tick: 3840,
-            value: 127,
-        }],
     ] {
         let before = project.snapshot();
         assert_eq!(
@@ -102,6 +97,45 @@ fn controller_changes_reject_duplicate_positions_and_out_of_range_data_atomicall
         );
         assert_eq!(project.snapshot(), before);
     }
+}
+
+#[test]
+fn controller_points_beyond_clip_end_survive_trim_undo_and_snapshot() {
+    let (mut project, item_id) = project_with_midi_item();
+    let hidden_controller = MidiControllerData {
+        controller: 64,
+        tick: 4_800,
+        value: 127,
+    };
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![hidden_controller],
+        })
+        .expect("controller points beyond the clip end should be retained");
+
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .expect("trimming the clip should preserve hidden controller points");
+    assert_eq!(project.midi_items()[0].controllers(), &[hidden_controller]);
+    let trimmed_snapshot = project.snapshot();
+
+    assert!(project.undo().expect("clip trim should undo"));
+    assert_eq!(project.midi_items()[0].length_ticks(), 3_840);
+    assert_eq!(project.midi_items()[0].controllers(), &[hidden_controller]);
+    assert!(project.redo().expect("clip trim should redo"));
+    assert_eq!(project.snapshot(), trimmed_snapshot);
+
+    assert_eq!(
+        Project::from_snapshot(trimmed_snapshot.clone())
+            .expect("trimmed snapshot should retain hidden controllers")
+            .snapshot(),
+        trimmed_snapshot
+    );
 }
 
 #[test]
