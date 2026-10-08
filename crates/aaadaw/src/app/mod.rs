@@ -231,6 +231,7 @@ struct App {
     main_workspace: MainWorkspace,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    session_media_dir: Option<tempfile::TempDir>,
     pending_project_transition: Option<PendingProjectTransition>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
@@ -942,6 +943,12 @@ fn duplicate_item_actions(
 impl App {
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
+        match create_unsaved_project_session_dir() {
+            Ok(session_dir) => app.session_media_dir = Some(session_dir),
+            Err(error) => {
+                app.status = format!("Temporary project media storage unavailable: {error}");
+            }
+        }
         let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(1280.0, 800.0),
             min_size: Some(iced::Size::new(900.0, 620.0)),
@@ -1032,6 +1039,14 @@ impl App {
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
         (app, Task::batch([main_window_task, plugin_scan_task, task]))
+    }
+
+    pub(super) fn media_store_path(&self) -> Option<PathBuf> {
+        self.project_path.clone().or_else(|| {
+            self.session_media_dir
+                .as_ref()
+                .map(|directory| directory.path().join("session.aaadaw"))
+        })
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
@@ -3121,6 +3136,7 @@ impl App {
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
+                        self.session_media_dir = None;
                         self.recording_recovery_candidates.clear();
                         self.project_generation = self.project_generation.wrapping_add(1);
                         self.start_audio_waveform_scan(true);
@@ -3180,6 +3196,7 @@ impl App {
                         }
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
+                        self.session_media_dir = None;
                         self.saved_revision = revision;
                         continue_transition =
                             self.revision == revision && self.pending_project_transition.is_some();
@@ -3504,6 +3521,16 @@ impl App {
         self.recording_recovery_scanning = false;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
+        let session_media_error = match create_unsaved_project_session_dir() {
+            Ok(session_dir) => {
+                self.session_media_dir = Some(session_dir);
+                None
+            }
+            Err(error) => {
+                self.session_media_dir = None;
+                Some(error)
+            }
+        };
         self.project_lock = None;
         self.project_path_query.clear();
         self.revision = 0;
@@ -3523,7 +3550,7 @@ impl App {
         self.audio_item_start_edits.clear();
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
-        self.status = "New project created".to_owned();
+        self.status = new_project_status(session_media_error.as_deref());
     }
 
     fn begin_project_transition(&mut self, transition: PendingProjectTransition) -> Task<Message> {
@@ -4399,7 +4426,7 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn restart_playback(&mut self) -> Task<Message> {
-        let can_prepare = !self.playback_busy && !self.io_busy && self.project_path.is_some();
+        let can_prepare = !self.playback_busy && !self.io_busy && self.media_store_path().is_some();
         let task = self.prepare_playback(0, true);
         if can_prepare {
             self.playback_start_sample = 0;
@@ -4522,8 +4549,8 @@ impl App {
             self.status = "Wait for current operation to finish".to_owned();
             return Task::none();
         }
-        let Some(path) = self.project_path.clone() else {
-            self.status = "Save or open project before playback".to_owned();
+        let Some(path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         self.clap_plugin_warnings.clear();
@@ -6842,11 +6869,10 @@ impl App {
         }
 
         let path = self
-            .project_path
-            .as_deref()
+            .media_store_path()
             .filter(|path| path.is_file())
-            .ok_or_else(|| "save the project before splitting audio items".to_owned())?;
-        let store = ProjectStore::open(path).map_err(|error| error.to_string())?;
+            .ok_or_else(|| "audio media store is unavailable for splitting".to_owned())?;
+        let store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
         let mut rates = HashMap::with_capacity(media_refs.len());
         let mut metadata_result = Ok(());
         for media_ref in media_refs {
@@ -6887,7 +6913,7 @@ impl App {
             self.timeline
                 .set_audio_waveforms(&self.project, HashMap::new());
         }
-        let Some(path) = self.project_path.as_deref().filter(|path| path.is_file()) else {
+        let Some(path) = self.media_store_path().filter(|path| path.is_file()) else {
             return;
         };
         let media_refs = self
@@ -7247,6 +7273,28 @@ fn playback_prevents_project_edits(playback_open: bool, transport_playing: bool)
 fn project_path_from_query(query: &str) -> Option<PathBuf> {
     let query = query.trim();
     (!query.is_empty()).then(|| PathBuf::from(query))
+}
+
+fn create_unsaved_project_session_dir() -> Result<tempfile::TempDir, String> {
+    let directories = directories::ProjectDirs::from("org", "AAADAW", "AAADAW")
+        .ok_or_else(|| "application data directory is unavailable".to_owned())?;
+    let session_root = directories.data_local_dir().join("unsaved-sessions");
+    std::fs::create_dir_all(&session_root).map_err(|error| error.to_string())?;
+    let session_dir = tempfile::Builder::new()
+        .prefix("session-")
+        .tempdir_in(session_root)
+        .map_err(|error| error.to_string())?;
+    let store = ProjectStore::open(session_dir.path().join("session.aaadaw"))
+        .map_err(|error| error.to_string())?;
+    store.close().map_err(|error| error.to_string())?;
+    Ok(session_dir)
+}
+
+fn new_project_status(session_media_error: Option<&str>) -> String {
+    session_media_error.map_or_else(
+        || "New project created".to_owned(),
+        |error| format!("New project created, but temporary media storage is unavailable: {error}"),
+    )
 }
 
 fn scroll_arrangement_to(target: &'static str, offset_y: f32) -> Task<Message> {

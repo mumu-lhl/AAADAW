@@ -69,6 +69,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     let revision = app.revision;
     let snapshot = app.project.snapshot();
     let arrangement_view_state = app.timeline.arrangement_view_state(&app.project);
+    let source_media_path = app.media_store_path();
     let reuse_session_lock =
         app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some();
     app.io_busy = true;
@@ -81,12 +82,13 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
             } else {
                 Some(ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?)
             };
-            save_project_session_file(
+            save_project_session_file_with_media(
                 path,
                 snapshot,
                 arrangement_view_state,
                 can_overwrite,
                 new_lock.as_mut(),
+                source_media_path,
             )?;
             Ok(new_lock)
         }),
@@ -168,12 +170,13 @@ pub(super) fn save_project_file(
     Ok(())
 }
 
-pub(super) fn save_project_session_file(
+pub(super) fn save_project_session_file_with_media(
     path: PathBuf,
     snapshot: ProjectSnapshot,
     arrangement_view_state: ArrangementViewState,
     can_overwrite: bool,
     new_session_lock: Option<&mut ProjectSessionLock>,
+    source_media_path: Option<PathBuf>,
 ) -> Result<(), String> {
     if path == Path::new(":memory:") {
         return Err("project path must name a file".to_owned());
@@ -191,6 +194,7 @@ pub(super) fn save_project_session_file(
             &project,
             &arrangement_view_state,
             new_session_lock,
+            source_media_path,
         );
     }
     if !can_overwrite && path.exists() {
@@ -211,6 +215,7 @@ fn save_new_project_session_file(
     project: &Project,
     arrangement_view_state: &ArrangementViewState,
     new_session_lock: &mut ProjectSessionLock,
+    source_media_path: Option<PathBuf>,
 ) -> Result<(), String> {
     let parent = path
         .parent()
@@ -225,6 +230,16 @@ fn save_new_project_session_file(
     if let Err(error) = new_session_lock.lock_file_identity(&temporary_path) {
         let _ = store.close();
         return Err(error.to_string());
+    }
+    if let Some(source_media_path) = source_media_path.filter(|source| source != &path) {
+        let source_store =
+            ProjectStore::open(source_media_path).map_err(|error| error.to_string())?;
+        let copy_result = store
+            .copy_audio_assets_from(&source_store)
+            .map_err(|error| error.to_string());
+        let source_close = source_store.close().map_err(|error| error.to_string());
+        copy_result?;
+        source_close?;
     }
     let save = store
         .save_with_arrangement_view_state(project, arrangement_view_state)

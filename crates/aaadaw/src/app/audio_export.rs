@@ -65,8 +65,8 @@ impl App {
             self.status = "Stop recording before freezing a track".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before freezing a track".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let track_name = self
@@ -98,8 +98,8 @@ impl App {
             self.status = "Wait for the current project operation to finish".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before rendering audio".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         if destination == project_path {
@@ -357,7 +357,7 @@ impl App {
         };
         if result_track_id != *track_id
             || self.project_generation != active.job.project_generation
-            || self.project_path.as_ref() != Some(&active.job.project_path)
+            || self.media_store_path().as_ref() != Some(&active.job.project_path)
             || !freeze_source_matches(&self.project.snapshot(), &active.job.snapshot, *track_id)
         {
             let cleanup = remove_freeze_media(&active.job.project_path, &media_ref);

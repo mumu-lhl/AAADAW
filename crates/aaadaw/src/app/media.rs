@@ -130,8 +130,8 @@ impl App {
             );
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before importing audio".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let (track_id, start_sample) = match self.audio_import_placement() {
@@ -224,8 +224,8 @@ impl App {
             self.status = "Save the project before reimporting audio".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before reimporting audio".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let Some(item) = self
@@ -350,8 +350,8 @@ impl App {
             self.status = "Save the project before scanning or packing audio assets".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before scanning or packing audio assets".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         self.audio_asset_management_busy = true;
@@ -534,8 +534,8 @@ impl App {
             self.status = "Save the project before relinking audio".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before relinking audio".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let Some(source_path) = project_path_from_query(&self.relink_source_path_query) else {

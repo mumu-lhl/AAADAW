@@ -73,8 +73,8 @@ impl App {
             self.status = "No decoder-readable audio remains in this take".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Open the original project before recovering this take".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let mut track_ids = Vec::with_capacity(candidate.manifest.track_ids.len());

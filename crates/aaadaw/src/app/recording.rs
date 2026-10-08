@@ -24,8 +24,8 @@ impl App {
             self.status = "Wait for the current operation to finish before recording".to_owned();
             return Task::none();
         }
-        let Some(project_path) = self.project_path.clone() else {
-            self.status = "Save the project before recording".to_owned();
+        let Some(project_path) = self.media_store_path() else {
+            self.status = "Temporary project media storage is unavailable".to_owned();
             return Task::none();
         };
         let tracks = self
@@ -514,8 +514,8 @@ impl App {
             Some(Ok((paths, recovery_manifest_path, start_sample))) => {
                 let _close_task = self.close_playback();
                 let tracks = std::mem::take(&mut self.recording_tracks);
-                let Some(project_path) = self.project_path.clone() else {
-                    self.status = "Project path disappeared; the finalized take remains available for recovery".to_owned();
+                let Some(project_path) = self.media_store_path() else {
+                    self.status = "Project media storage disappeared; the finalized take remains available for recovery".to_owned();
                     return Task::none();
                 };
                 let Some(first_track) = tracks.first().copied() else {
