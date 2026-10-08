@@ -696,21 +696,30 @@ fn pipewire_connection_state(state: &pw::stream::StreamState) -> AudioOutputConn
     }
 }
 
+#[derive(Clone, Copy)]
+enum PipeWireRouteDirection {
+    Input,
+    Output,
+}
+
 /// Reads the connected PipeWire destinations for an active playback stream.
 ///
 /// This performs a registry round trip, so call it from a background control task.
 pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
-    inspect_pipewire_routes(node_id, false)
+    inspect_pipewire_routes(node_id, PipeWireRouteDirection::Output)
 }
 
 /// Reads the connected PipeWire sources for an active capture stream.
 ///
 /// This performs a registry round trip, so call it from a background control task.
 pub fn inspect_pipewire_input_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
-    inspect_pipewire_routes(node_id, true)
+    inspect_pipewire_routes(node_id, PipeWireRouteDirection::Input)
 }
 
-fn inspect_pipewire_routes(node_id: u32, is_input: bool) -> Result<AudioRouteSnapshot, String> {
+fn inspect_pipewire_routes(
+    node_id: u32,
+    direction: PipeWireRouteDirection,
+) -> Result<AudioRouteSnapshot, String> {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -798,13 +807,16 @@ fn inspect_pipewire_routes(node_id: u32, is_input: bool) -> Result<AudioRouteSna
         .iter()
         .find(|(id, _, _)| *id == node_id)
         .ok_or_else(|| {
-            if is_input {
-                "AAADAW's PipeWire capture stream is no longer available".to_owned()
-            } else {
-                "AAADAW's PipeWire playback stream is no longer available".to_owned()
+            match direction {
+                PipeWireRouteDirection::Input => {
+                    "AAADAW's PipeWire capture stream is no longer available".to_owned()
+                }
+                PipeWireRouteDirection::Output => {
+                    "AAADAW's PipeWire playback stream is no longer available".to_owned()
+                }
             }
         })?;
-    let mut routes = linked_pipewire_route_nodes(&snapshot.links, node_id, is_input)
+    let mut routes = linked_pipewire_route_nodes(&snapshot.links, node_id, direction)
         .into_iter()
         .filter_map(|other_node| {
             snapshot
@@ -816,10 +828,9 @@ fn inspect_pipewire_routes(node_id: u32, is_input: bool) -> Result<AudioRouteSna
         .collect::<Vec<_>>();
     routes.sort();
     routes.dedup();
-    let (input_routes, output_routes) = if is_input {
-        (routes, Vec::new())
-    } else {
-        (Vec::new(), routes)
+    let (input_routes, output_routes) = match direction {
+        PipeWireRouteDirection::Input => (routes, Vec::new()),
+        PipeWireRouteDirection::Output => (Vec::new(), routes),
     };
     Ok(AudioRouteSnapshot {
         sample_rate_hz: stream_node.2,
@@ -831,17 +842,15 @@ fn inspect_pipewire_routes(node_id: u32, is_input: bool) -> Result<AudioRouteSna
 fn linked_pipewire_route_nodes(
     links: &[(Option<u32>, Option<u32>)],
     node_id: u32,
-    is_input: bool,
+    direction: PipeWireRouteDirection,
 ) -> Vec<u32> {
     let mut nodes = links
         .iter()
         .filter_map(|(source, destination)| {
-            if is_input && *destination == Some(node_id) {
-                *source
-            } else if !is_input && *source == Some(node_id) {
-                *destination
-            } else {
-                None
+            match direction {
+                PipeWireRouteDirection::Input if *destination == Some(node_id) => *source,
+                PipeWireRouteDirection::Output if *source == Some(node_id) => *destination,
+                _ => None,
             }
         })
         .collect::<Vec<_>>();
@@ -864,8 +873,14 @@ mod tests {
             (Some(20), Some(31)),
         ];
 
-        assert_eq!(linked_pipewire_route_nodes(&links, 20, true), [10, 11]);
-        assert_eq!(linked_pipewire_route_nodes(&links, 20, false), [30, 31]);
+        assert_eq!(
+            linked_pipewire_route_nodes(&links, 20, PipeWireRouteDirection::Input),
+            [10, 11]
+        );
+        assert_eq!(
+            linked_pipewire_route_nodes(&links, 20, PipeWireRouteDirection::Output),
+            [30, 31]
+        );
     }
 
     #[test]
