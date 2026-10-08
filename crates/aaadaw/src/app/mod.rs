@@ -1780,6 +1780,8 @@ impl App {
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                 } else if self.main_window_id == Some(window_id) {
+                    #[cfg(target_os = "android")]
+                    tracing::warn!(?window_id, "Android main window closed");
                     self.close_fx_editor_resources();
                     task = iced::exit();
                 }
@@ -1788,6 +1790,8 @@ impl App {
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                 } else if self.main_window_id == Some(window_id) {
+                    #[cfg(target_os = "android")]
+                    tracing::warn!(?window_id, "Android main window close requested");
                     self.release_midi_preview();
                     task = self.begin_project_transition(
                         PendingProjectTransition::CloseMainWindow(window_id),
