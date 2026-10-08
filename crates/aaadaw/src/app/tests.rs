@@ -8,8 +8,9 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
-    midi_editor_shortcut_event, midi_expression_context_menu_event, shortcut_message,
+    App, MainMenu, MainWorkspace, Message, PathPickerTarget, StereoPeakHold,
+    keyboard_shortcut_event, midi_editor_shortcut_event, midi_expression_context_menu_event,
+    shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -363,19 +364,60 @@ fn first_new_track_is_selected_but_later_tracks_do_not_change_selection() {
 
 #[test]
 #[cfg(feature = "audio-device")]
-fn resetting_track_meters_clears_the_visible_peak_values() {
+fn resetting_live_track_meters_preserves_peak_hold_and_clip_history() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
     app.track_peak_levels.insert(track_id, [0.75, 0.5]);
     app.master_peak_level = [0.9, 0.8];
+    app.input_peak_level = [0.65, 0.4];
+    app.track_peak_holds
+        .entry(track_id)
+        .or_default()
+        .observe([0.75, 1.05]);
+    app.input_peak_hold.observe([0.65, 1.1]);
+    app.master_peak_hold.observe([0.9, 0.8]);
     app.master_guard_ticks_remaining = 5;
 
     app.reset_track_meters();
 
     assert!(app.track_peak_levels.is_empty());
+    assert_eq!(app.input_peak_level, [0.0; 2]);
     assert_eq!(app.master_peak_level, [0.0; 2]);
+    assert_eq!(app.track_peak_holds[&track_id].levels, [0.75, 1.05]);
+    assert_eq!(app.track_peak_holds[&track_id].clipped, [false, true]);
+    assert_eq!(app.input_peak_hold.levels, [0.65, 1.1]);
+    assert_eq!(app.input_peak_hold.clipped, [false, true]);
+    assert_eq!(app.master_peak_hold.levels, [0.9, 0.8]);
     assert_eq!(app.master_guard_ticks_remaining, 0);
+}
+
+#[test]
+#[cfg(feature = "audio-device")]
+fn clearing_track_and_master_meter_history_resets_peak_values_and_clip_latches() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.track_peak_levels.insert(track_id, [0.75, 1.05]);
+    app.track_peak_holds
+        .entry(track_id)
+        .or_default()
+        .observe([0.75, 1.05]);
+    app.master_peak_level = [0.9, 1.05];
+    app.master_peak_hold.observe([0.9, 1.05]);
+    app.input_peak_level = [0.8, 1.05];
+    app.input_peak_hold.observe([0.8, 1.05]);
+
+    let _ = app.update(Message::ClearTrackMeter(track_id));
+    let _ = app.update(Message::ClearInputMeter);
+    let _ = app.update(Message::ClearMasterMeter);
+
+    assert!(!app.track_peak_levels.contains_key(&track_id));
+    assert_eq!(app.track_peak_holds.get(&track_id), None);
+    assert_eq!(app.master_peak_level, [0.0; 2]);
+    assert_eq!(app.master_peak_hold, StereoPeakHold::default());
+    assert_eq!(app.input_peak_level, [0.0; 2]);
+    assert_eq!(app.input_peak_hold, StereoPeakHold::default());
 }
 
 #[test]

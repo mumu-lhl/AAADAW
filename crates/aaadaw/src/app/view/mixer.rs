@@ -120,8 +120,18 @@ fn master_strip(app: &App) -> Element<'_, Message> {
         column![
             text("MASTER").size(12),
             rule::horizontal(1),
+            text("INPUT · capture/monitor").size(10),
+            stereo_peak_meter(
+                app.input_peak_level,
+                app.input_peak_hold,
+                Message::ClearInputMeter,
+            ),
             text("Output · L/R").size(11),
-            stereo_peak_meter(app.master_peak_level),
+            stereo_peak_meter(
+                app.master_peak_level,
+                app.master_peak_hold,
+                Message::ClearMasterMeter,
+            ),
             guard_indicator.size(10),
             text("Output ceiling").size(11),
             text(format!("{ceiling}")).size(14),
