@@ -98,12 +98,16 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
     assert_eq!(project.midi_items()[0].start_tick(), 1920);
     assert_eq!(project.midi_items()[0].length_ticks(), 1800);
 
-    let too_short = project.apply(DawAction::EditMidiItem {
-        item_id,
-        start_tick: 0,
-        length_ticks: 1000,
-    });
-    assert_eq!(too_short, Err(ActionError::InvalidMidiNote));
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1000,
+        })
+        .expect("clip bounds may be shorter than stored note content");
+    assert_eq!(project.midi_items()[0].start_tick(), 0);
+    assert_eq!(project.midi_items()[0].length_ticks(), 1000);
+    assert!(project.undo().expect("short trim undo should succeed"));
     assert_eq!(project.midi_items()[0].start_tick(), 1920);
     assert_eq!(project.midi_items()[0].length_ticks(), 1800);
 
@@ -128,4 +132,77 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
         Err(ActionError::InvalidMidiItemPosition)
     );
     assert_eq!(project.midi_items().len(), 1);
+}
+
+#[test]
+fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("creating a track should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .expect("inserting a MIDI item should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                tick: 1_440,
+                duration: 480,
+                velocity: 96,
+            }],
+        })
+        .expect("adding a note should succeed");
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![aaadaw_core::MidiControllerData {
+                controller: 1,
+                tick: 1_680,
+                value: 80,
+            }],
+        })
+        .expect("adding a controller should succeed");
+    let notes = project.midi_items()[0].notes().to_vec();
+    let controllers = project.midi_items()[0].controllers().to_vec();
+
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("shortening a MIDI clip should preserve events beyond its end");
+    let shortened = &project.midi_items()[0];
+    assert_eq!(shortened.start_tick(), 0);
+    assert_eq!(shortened.length_ticks(), 960);
+    assert_eq!(shortened.notes(), notes);
+    assert_eq!(shortened.controllers(), controllers);
+
+    assert!(project.undo().expect("clip trim undo should succeed"));
+    assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
+    assert!(project.redo().expect("clip trim redo should succeed"));
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1_680,
+        })
+        .expect("expanding the clip should reveal the retained events");
+    assert_eq!(project.midi_items()[0].notes(), notes);
+    assert_eq!(project.midi_items()[0].controllers(), controllers);
+
+    let reopened = Project::from_snapshot(project.snapshot()).expect("snapshot should reopen");
+    assert_eq!(reopened.midi_items()[0].notes(), notes);
+    assert_eq!(reopened.midi_items()[0].controllers(), controllers);
 }

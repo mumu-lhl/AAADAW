@@ -1,4 +1,6 @@
-use aaadaw_core::{ActionError, DawAction, MidiNoteData, Project};
+use aaadaw_core::{
+    ActionError, DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project,
+};
 
 fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::ItemId) {
     let mut project = Project::new();
@@ -97,6 +99,67 @@ fn splitting_midi_item_preserves_notes_clip_positions_and_one_step_undo_redo() {
     assert_eq!(project.snapshot(), before);
     assert!(project.redo().expect("split should be redoable"));
     assert_eq!(project.snapshot(), after);
+}
+
+#[test]
+fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
+    let (mut project, _, item_id) = project_with_midi_item();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 72,
+                tick: 3_600,
+                duration: 240,
+                velocity: 90,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 3_700,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 3_750,
+                value: 12_000,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 960,
+            length_ticks: 960,
+        })
+        .expect("clip should shorten without deleting its stored tail");
+
+    project
+        .apply(DawAction::SplitMidiItem {
+            item_id,
+            split_ticks: vec![1_440],
+        })
+        .expect("the shortened clip should split at its visible midpoint");
+
+    let final_segment = &project.midi_items()[1];
+    assert_eq!(final_segment.start_tick(), 1_440);
+    assert_eq!(final_segment.length_ticks(), 480);
+    let hidden_note = final_segment
+        .notes()
+        .iter()
+        .find(|note| note.pitch() == 72)
+        .expect("the note beyond the clip end should stay stored");
+    assert_eq!((hidden_note.tick(), hidden_note.duration()), (3_120, 240));
+    assert_eq!(final_segment.controllers()[0].tick, 3_220);
+    assert_eq!(final_segment.pitch_bends()[0].tick, 3_270);
 }
 
 #[test]
