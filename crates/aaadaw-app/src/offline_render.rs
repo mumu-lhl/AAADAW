@@ -30,6 +30,7 @@ pub struct FrozenTrackRender {
 pub struct ProjectRenderSettings {
     pub output_sample_rate: u32,
     pub tail_seconds: u32,
+    pub wav_options: WavExportOptions,
 }
 
 impl ProjectRenderSettings {
@@ -38,6 +39,7 @@ impl ProjectRenderSettings {
         Self {
             output_sample_rate: project.settings().sample_rate(),
             tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+            wav_options: WavExportOptions::default(),
         }
     }
 }
@@ -467,13 +469,14 @@ pub fn render_project_file_to_wav(
     cancelled: &AtomicBool,
     report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
+    let mut settings = ProjectRenderSettings::project_defaults(project);
+    settings.wav_options = options;
     render_project_file_with_settings(
         project_path,
         project,
         destination,
         master_ceiling,
-        options,
-        ProjectRenderSettings::project_defaults(project),
+        settings,
         cancelled,
         report_progress,
     )
@@ -485,7 +488,6 @@ pub fn render_project_file_with_settings(
     project: &Project,
     destination: impl AsRef<Path>,
     master_ceiling: MasterOutputCeiling,
-    options: WavExportOptions,
     settings: ProjectRenderSettings,
     cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
@@ -499,8 +501,12 @@ pub fn render_project_file_with_settings(
         project.settings().sample_rate(),
         settings.output_sample_rate,
     )?;
-    let export = WavExport::create(destination.as_ref(), settings.output_sample_rate, options)
-        .map_err(OfflineRenderError::WavExport)?;
+    let export = WavExport::create(
+        destination.as_ref(),
+        settings.output_sample_rate,
+        settings.wav_options,
+    )
+    .map_err(OfflineRenderError::WavExport)?;
     let export = ResampledOfflineWavWriter {
         writer: export,
         resampler: StereoPcmResampler::new(
@@ -1160,6 +1166,7 @@ mod tests {
             ProjectRenderSettings {
                 output_sample_rate: project.settings().sample_rate(),
                 tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+                wav_options: WavExportOptions::default(),
             }
         );
     }
