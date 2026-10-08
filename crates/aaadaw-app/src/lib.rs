@@ -491,6 +491,7 @@ impl PreparedAudioPlayback {
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
         let mut this = self;
@@ -501,6 +502,7 @@ impl PreparedAudioPlayback {
         Ok(RunningJackPlayback {
             output,
             mix_controller,
+            midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
             input_monitor_producer,
@@ -529,6 +531,7 @@ impl PreparedAudioPlayback {
         _cpal_device_id: Option<&str>,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
         let mut this = self;
@@ -555,6 +558,7 @@ impl PreparedAudioPlayback {
         Ok(RunningAudioPlayback {
             output,
             mix_controller,
+            midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
             input_monitor_producer,
@@ -724,6 +728,7 @@ enum DeviceAudioOutput {
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
+    midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
     input_monitor_producer: Option<AudioMonitorProducer>,
@@ -739,6 +744,14 @@ pub struct RunningAudioPlayback {
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioPlayback {
+    pub fn preview_midi_note(&self, track_id: aaadaw_core::TrackId, pitch: u8) -> bool {
+        self.midi_preview_controller.note_on(track_id, pitch, 96)
+    }
+
+    pub fn release_midi_preview(&self) {
+        self.midi_preview_controller.release();
+    }
+
     /// Takes accumulated post-guard stereo Master output peaks.
     pub fn take_master_output_peak(&self) -> [f32; 2] {
         self.master_output_safety.take_output_peak()
@@ -1038,6 +1051,7 @@ impl RunningAudioPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
@@ -1083,6 +1097,8 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Unavailable => {}
         }
         self.mix_controller = mix_controller;
+        self.midi_preview_controller.release();
+        self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
         self.input_monitor_controller = Some(input_monitor_controller);
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));
@@ -1317,6 +1333,7 @@ impl From<CpalOutputStats> for PlaybackStats {
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
     mix_controller: TrackMixController,
+    midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
     input_monitor_producer: Option<AudioMonitorProducer>,
@@ -1331,6 +1348,14 @@ pub struct RunningJackPlayback {
 
 #[cfg(feature = "jack-backend")]
 impl RunningJackPlayback {
+    pub fn preview_midi_note(&self, track_id: aaadaw_core::TrackId, pitch: u8) -> bool {
+        self.midi_preview_controller.note_on(track_id, pitch, 96)
+    }
+
+    pub fn release_midi_preview(&self) {
+        self.midi_preview_controller.release();
+    }
+
     /// Takes accumulated post-guard stereo Master output peaks.
     pub fn take_master_output_peak(&self) -> [f32; 2] {
         self.master_output_safety.take_output_peak()
@@ -1469,6 +1494,7 @@ impl RunningJackPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
         let (graph, feeders) = prepared.into_parts();
@@ -1476,6 +1502,8 @@ impl RunningJackPlayback {
             .replace_graph(graph, self.is_playing)
             .map_err(PlaybackBuildError::Jack)?;
         self.mix_controller = mix_controller;
+        self.midi_preview_controller.release();
+        self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
         self.input_monitor_controller = Some(input_monitor_controller);
         self.retired_feeders = Some(std::mem::replace(&mut self.feeders, feeders));

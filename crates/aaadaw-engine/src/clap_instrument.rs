@@ -3600,6 +3600,59 @@ mod tests {
     }
 
     #[test]
+    fn stopped_render_graph_auditions_one_note_and_releases_it_without_moving_transport() {
+        let (project, track_id, _) = test_project(120);
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            32,
+            2,
+        )
+        .expect("test synth should load");
+        let mut instruments = vec![TrackInstrumentProcessor::new(track_id, processor)];
+        let mut graph = AudioRenderGraph::new_for_audio_items_with_instruments(
+            &project,
+            Vec::new(),
+            &mut instruments,
+            32,
+        )
+        .expect("test graph should build");
+        graph
+            .install_instrument_processors(&project, &mut instruments)
+            .expect("test instrument should install");
+        let preview = graph.midi_preview_controller();
+        assert!(preview.note_on(track_id, 60, 96));
+
+        let mut output = [[0.0; 2]; 8];
+        let on = graph
+            .render_into(&mut output)
+            .expect("stopped graph should process preview MIDI");
+        assert_eq!(on.midi_event_count, 1);
+        assert!(output[0][0] > 0.0);
+        assert_eq!(graph.transport_mut().position_samples(), 0);
+
+        assert!(preview.note_on(track_id, 72, 96));
+        let change = graph
+            .render_into(&mut output)
+            .expect("dragging to another key should replace the preview pitch");
+        assert_eq!(change.midi_event_count, 2);
+        assert!(output[0][0] > 0.0);
+        preview.release();
+        let off = graph
+            .render_into(&mut output)
+            .expect("released preview should render the instrument tail");
+        assert_eq!(off.midi_event_count, 1);
+        assert_eq!(output, [[0.0; 2]; 8]);
+        assert_eq!(graph.transport_mut().position_samples(), 0);
+
+        assert_eq!(graph.stop_instruments(), 0);
+        let stopped = graph.take_stopped_instruments().pop().unwrap();
+        let (_, processor) = stopped.into_parts();
+        owner.deactivate(processor);
+    }
+
+    #[test]
     fn isolated_shared_memory_route_renders_a_real_test_clap_instrument() {
         let (project, track_id, _) = test_project(120);
         let config = crate::ClapIpcConfig::new(48_000, 1024, 8).unwrap();
@@ -3642,6 +3695,80 @@ mod tests {
             mapping.region().mark_shutdown();
             let stopped = worker.join().expect("helper audio worker should stop");
             owner.deactivate(stopped);
+        });
+    }
+
+    #[test]
+    fn isolated_instrument_route_accepts_stopped_midi_preview_requests() {
+        let (project, track_id, _) = test_project(120);
+        let config = crate::ClapIpcConfig::new(48_000, 1024, 8).unwrap();
+        let mapping = crate::ClapIpcMapping::create(config).unwrap();
+        assert!(mapping.region().accept_handshake(config));
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            1024,
+            config.event_capacity as usize,
+        )
+        .expect("test instrument should load");
+        let region = mapping.region();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(move || {
+                let mut processor = processor;
+                crate::clap_ipc::process_helper_requests(region, &mut processor, config);
+                processor.stop()
+            });
+
+            let (_, pcm) = crate::pcm_stream(1024).unwrap();
+            let mut graph = crate::AudioRenderGraph::new(&project, vec![pcm], 1024).unwrap();
+            let mut routes = vec![crate::TrackIsolatedInstrument::new(
+                track_id,
+                owner.instance_id(),
+                mapping.audio_port(),
+                config,
+            )];
+            graph
+                .install_isolated_instrument_ports(&project, &mut routes)
+                .expect("shared-memory instrument route should install");
+            let preview = graph.midi_preview_controller();
+            assert!(preview.note_on(track_id, 60, 96));
+            let mut output = [[0.0_f32; 2]; 128];
+            let mut rendered = false;
+            let mut preview_event_count = 0;
+            for _ in 0..100 {
+                let stats = graph
+                    .render_into(&mut output)
+                    .expect("stopped isolated route should render preview blocks");
+                preview_event_count = preview_event_count.max(stats.midi_event_count);
+                if output.iter().any(|sample| sample[0].abs() > 0.001) {
+                    rendered = true;
+                    break;
+                }
+                std::thread::yield_now();
+            }
+            assert_eq!(graph.transport_mut().position_samples(), 0);
+            preview.release();
+            for _ in 0..8 {
+                graph
+                    .render_into(&mut output)
+                    .expect("preview release should continue nonblocking helper rendering");
+                std::thread::yield_now();
+            }
+
+            mapping.region().mark_shutdown();
+            let stopped = worker.join().expect("helper audio worker should stop");
+            owner.deactivate(stopped);
+            assert!(
+                rendered,
+                "isolated helper should render the requested preview note; events {preview_event_count}, heartbeat {}, fault code {}, pending {}, queued {}, audio {}, output {}",
+                mapping.region().helper_heartbeat(),
+                mapping.region().fault_code(),
+                graph.instruments[0].isolated_preview_pending,
+                graph.instruments[0].isolated_next_sequence,
+                graph.instruments[0].audio[0][0],
+                output[0][0],
+            );
         });
     }
 

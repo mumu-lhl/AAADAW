@@ -1337,6 +1337,7 @@ struct Interaction {
     last_empty_click: Option<(Instant, Point)>,
     hovered_velocity_note: Option<NoteId>,
     hovered_pitch: Option<u8>,
+    auditioning_pitch: Option<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -1378,11 +1379,17 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 key.as_ref(),
                 keyboard::Key::Named(keyboard::key::Named::Escape)
             )
-            && (state.drag.is_some() || state.empty_drag.is_some())
+            && (state.drag.is_some()
+                || state.empty_drag.is_some()
+                || state.auditioning_pitch.is_some())
         {
             let original_selection = state.drag.take().map(|drag| drag.original_selection);
             state.empty_drag = None;
             state.last_empty_click = None;
+            let release_preview = state.auditioning_pitch.take().is_some();
+            if release_preview {
+                return Some(canvas::Action::publish(Message::ReleaseMidiPreview).and_capture());
+            }
             return Some(
                 original_selection.map_or_else(canvas::Action::capture, |selected| {
                     canvas::Action::publish(Message::SelectMidiNotes(selected))
@@ -1409,13 +1416,37 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             .map(canvas::Action::publish);
         }
         if self.region == RollRegion::Pitch
+            && let Event::Mouse(mouse::Event::CursorLeft) = event
+            && state.auditioning_pitch.take().is_some()
+        {
+            return Some(canvas::Action::publish(Message::ReleaseMidiPreview));
+        }
+        if self.region == RollRegion::Pitch
             && let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
         {
-            let hovered_pitch = cursor
-                .position_in(bounds)
-                .and_then(|position| self.piano_key_pitch_at(position));
-            if state.hovered_pitch != hovered_pitch {
+            let position = cursor.position_in(bounds);
+            let hovered_pitch = position.and_then(|position| self.piano_key_pitch_at(position));
+            let hover_changed = state.hovered_pitch != hovered_pitch;
+            if hover_changed {
                 state.hovered_pitch = hovered_pitch;
+            }
+            if state.auditioning_pitch.is_some() {
+                match hovered_pitch {
+                    Some(pitch) if state.auditioning_pitch != Some(pitch) => {
+                        state.auditioning_pitch = Some(pitch);
+                        return Some(canvas::Action::publish(Message::PreviewMidiNote(
+                            self.item.track_id(),
+                            pitch,
+                        )));
+                    }
+                    None => {
+                        state.auditioning_pitch = None;
+                        return Some(canvas::Action::publish(Message::ReleaseMidiPreview));
+                    }
+                    _ => return Some(canvas::Action::request_redraw()),
+                }
+            }
+            if hover_changed {
                 return Some(canvas::Action::request_redraw());
             }
         }
@@ -1463,6 +1494,18 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
+                if self.region == RollRegion::Pitch
+                    && let Some(pitch) = self.piano_key_pitch_at(position)
+                {
+                    state.auditioning_pitch = Some(pitch);
+                    return Some(
+                        canvas::Action::publish(Message::PreviewMidiNote(
+                            self.item.track_id(),
+                            pitch,
+                        ))
+                        .and_capture(),
+                    );
+                }
                 if self.region == RollRegion::Pitch && position.y < HEADER_HEIGHT {
                     state.last_empty_click = None;
                     if position.x < KEY_WIDTH {
@@ -1663,6 +1706,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if state.auditioning_pitch.take().is_some() {
+                    return Some(
+                        canvas::Action::publish(Message::ReleaseMidiPreview).and_capture(),
+                    );
+                }
                 if let Some(mut gesture) = state.empty_drag.take() {
                     let Some(position) = cursor.position_in(bounds) else {
                         state.last_empty_click = None;
@@ -2538,6 +2586,76 @@ mod tests {
         assert!(black.height < 18.0);
         assert!(black.y > 38.0);
         assert!(black.y + black.height < 56.0);
+    }
+
+    #[test]
+    fn piano_keys_audition_on_drag_across_pitches_and_release_outside_the_strip() {
+        let (project, item_id, _) = project_with_note(
+            960,
+            MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 120,
+                velocity: 96,
+            },
+        );
+        let item = &project.midi_items()[0];
+        let roll = PianoRoll {
+            project: &project,
+            item,
+            item_id,
+            selected: &HashSet::new(),
+            origin_tick: 0,
+            high_pitch: 84,
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap::default(),
+            playhead_tick: None,
+            region: RollRegion::Pitch,
+        };
+        let bounds = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(KEY_WIDTH + 300.0, HEADER_HEIGHT + 36.0 * NOTE_ROW_HEIGHT),
+        );
+        let first = Point::new(12.0, HEADER_HEIGHT + 9.0);
+        let second = Point::new(12.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT + 9.0);
+        let outside = Point::new(KEY_WIDTH + 4.0, second.y);
+        let mut state = Interaction::default();
+        let action = roll
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(first),
+            )
+            .expect("key press starts an audition");
+        let (message, _, _) = action.into_inner();
+        assert!(matches!(message, Some(Message::PreviewMidiNote(_, 84))));
+
+        let action = roll
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::CursorMoved { position: second }),
+                bounds,
+                mouse::Cursor::Available(second),
+            )
+            .expect("dragging to a new key changes the audition pitch");
+        let (message, _, _) = action.into_inner();
+        assert!(matches!(message, Some(Message::PreviewMidiNote(_, 83))));
+
+        let action = roll
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::CursorMoved { position: outside }),
+                bounds,
+                mouse::Cursor::Available(outside),
+            )
+            .expect("leaving the key strip releases the held note");
+        let (message, _, _) = action.into_inner();
+        assert!(matches!(message, Some(Message::ReleaseMidiPreview)));
+        assert_eq!(state.auditioning_pitch, None);
     }
 
     #[test]

@@ -1682,6 +1682,7 @@ impl App {
                     self.plugin_picker_instrument_track_id = None;
                     self.plugin_picker_search.clear();
                 } else if self.midi_editor_window_id == Some(window_id) {
+                    self.release_midi_preview();
                     self.midi_editor_window_id = None;
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -1695,6 +1696,7 @@ impl App {
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                 } else if self.main_window_id == Some(window_id) {
+                    self.release_midi_preview();
                     task = self.begin_project_transition(
                         PendingProjectTransition::CloseMainWindow(window_id),
                     );
@@ -1703,6 +1705,7 @@ impl App {
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
             Message::OpenMidiEditor(item_id) => task = self.open_midi_editor(item_id),
             Message::CloseMidiEditor => {
+                self.release_midi_preview();
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -1711,7 +1714,22 @@ impl App {
                     task = iced::window::close(window_id);
                 }
             }
-            Message::SelectMidiEditorLane(lane) => self.midi_editor_lane = lane,
+            Message::SelectMidiEditorLane(lane) => {
+                self.release_midi_preview();
+                self.midi_editor_lane = lane;
+            }
+            Message::PreviewMidiNote(track_id, pitch) => {
+                #[cfg(feature = "audio-device")]
+                if self.midi_editor_window_id.is_some()
+                    && !self.playback_playing
+                    && let Some(playback) = &self.playback
+                {
+                    let _ = playback.preview_midi_note(track_id, pitch);
+                }
+                #[cfg(not(feature = "audio-device"))]
+                let _ = (track_id, pitch);
+            }
+            Message::ReleaseMidiPreview => self.release_midi_preview(),
             Message::MidiEditorFeedback(feedback) => {
                 self.midi_editor_feedback = Some(feedback);
             }
@@ -3279,6 +3297,7 @@ impl App {
             Message::StartPlayback => task = self.start_playback(),
             #[cfg(feature = "audio-device")]
             Message::StopPlayback => {
+                self.release_midi_preview();
                 self.finish_fx_automation_write();
                 if self.recording.is_some() {
                     task = self.stop_recording();
@@ -3490,6 +3509,7 @@ impl App {
     }
 
     fn new_project(&mut self) {
+        self.release_midi_preview();
         if self.io_busy
             || self.import_busy
             || self.audio_asset_management_busy
@@ -3995,6 +4015,7 @@ impl App {
         if let Some(window_id) = self.midi_editor_window_id {
             let item_changed = self.midi_editor_item_id != Some(item_id);
             if item_changed {
+                self.release_midi_preview();
                 self.midi_editor_origin_tick = 0;
                 self.midi_editor_edit_cursor_tick = None;
             }
@@ -4322,8 +4343,16 @@ impl App {
         self.selected_playback_backend().name()
     }
 
+    fn release_midi_preview(&self) {
+        #[cfg(feature = "audio-device")]
+        if let Some(playback) = &self.playback {
+            playback.release_midi_preview();
+        }
+    }
+
     #[cfg(feature = "audio-device")]
     fn start_playback(&mut self) -> Task<Message> {
+        self.release_midi_preview();
         self.recording_cancelled_transport_start = false;
         if self.playback.is_some() && !self.playback_playing && !self.playback_paused {
             self.playback_start_sample = self.playhead_sample;
@@ -4373,6 +4402,7 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn pause_playback(&mut self) {
+        self.release_midi_preview();
         let Some(playback) = self.playback.as_mut() else {
             self.status = format!("{} output is not open", self.playback_name());
             return;
@@ -4464,6 +4494,7 @@ impl App {
             crate::android_platform::set_midi_input_sender(None);
             crate::android_platform::set_midi_output_receiver(None);
         }
+        self.release_midi_preview();
         self.standby_monitor_track = None;
         self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
         self.reset_track_meters();
@@ -4622,6 +4653,7 @@ impl App {
         };
 
         if self.playback.is_some() {
+            self.release_midi_preview();
             let (result, play_result, retired_instruments, retired_effects) = {
                 let playback = self.playback.as_mut().expect("playback exists");
                 let result = playback.replace_graph(prepared);

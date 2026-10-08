@@ -88,6 +88,37 @@ pub use midi::{
     MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage, MidiScheduleError,
     ScheduledMidiEvent,
 };
+
+/// Lock-free control for auditioning one note through a prepared track instrument.
+///
+/// The callback observes only the latest requested note. This bounds the preview to one voice
+/// and avoids a queue that could strand a note-off when full.
+#[derive(Clone)]
+pub struct MidiPreviewController {
+    state: Arc<AtomicU64>,
+    tracks: Vec<(TrackId, usize)>,
+}
+
+impl MidiPreviewController {
+    /// Requests one note on a track instrument. Returns false if that track has no instrument.
+    pub fn note_on(&self, track_id: TrackId, pitch: u8, velocity: u8) -> bool {
+        if pitch > 127 || velocity == 0 || velocity > 127 {
+            return false;
+        }
+        let Some((_, track_index)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
+            return false;
+        };
+        let encoded =
+            ((*track_index as u64 + 1) << 32) | (u64::from(velocity) << 8) | u64::from(pitch);
+        self.state.store(encoded, Ordering::Release);
+        true
+    }
+
+    /// Releases the current preview note, including any note on another track.
+    pub fn release(&self) {
+        self.state.store(0, Ordering::Release);
+    }
+}
 pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
@@ -105,7 +136,7 @@ use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Precomputed per-track mix coefficients, built outside the audio callback.
 #[derive(Clone, Debug)]
@@ -1353,6 +1384,9 @@ struct InstrumentRoute {
     isolated_config: Option<ClapIpcConfig>,
     isolated_events: Vec<ClapIpcMidiEvent>,
     isolated_schedule_scratch: Vec<Option<ScheduledMidiEvent>>,
+    isolated_preview_pending: bool,
+    isolated_preview_events: [Option<ScheduledMidiEvent>; 2],
+    isolated_stopped_preview: bool,
     isolated_faulted: bool,
     stopped_processor: Option<StoppedClapInstrumentProcessor>,
     midi_events: Vec<ScheduledMidiEvent>,
@@ -1375,6 +1409,16 @@ fn submit_isolated_block(
     midi_plan: &MidiEventPlan,
     route: &mut InstrumentRoute,
     chase: bool,
+) -> bool {
+    submit_isolated_block_with_preview(midi_plan, route, chase, &[], true)
+}
+
+fn submit_isolated_block_with_preview(
+    midi_plan: &MidiEventPlan,
+    route: &mut InstrumentRoute,
+    chase: bool,
+    preview_events: &[Option<ScheduledMidiEvent>],
+    include_project_events: bool,
 ) -> bool {
     let Some(config) = route.isolated_config else {
         fault_isolated_route(route);
@@ -1406,15 +1450,26 @@ fn submit_isolated_block(
         };
         count = controllers + pitch_bends + notes;
     }
-    let Ok(scheduled) = midi_plan.events_for_block(
-        route.isolated_next_start_sample,
-        frame_count,
-        &mut midi_scratch[count..],
-    ) else {
-        fault_isolated_route(route);
-        return false;
-    };
-    count += scheduled;
+    if include_project_events {
+        let Ok(scheduled) = midi_plan.events_for_block(
+            route.isolated_next_start_sample,
+            frame_count,
+            &mut midi_scratch[count..],
+        ) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        count += scheduled;
+    }
+    if route.isolated_next_sequence == 0 {
+        for event in preview_events.iter().flatten() {
+            if event.track_id != route.track_id || count == midi_scratch.len() {
+                continue;
+            }
+            midi_scratch[count] = Some(*event);
+            count += 1;
+        }
+    }
     if chase {
         midi_scratch[..count].sort_unstable_by_key(|event| {
             let event = event.expect("MIDI query initializes every event slot");
@@ -1744,6 +1799,11 @@ pub struct AudioRenderGraph {
     transport: Transport,
     last_midi_sample_end: Option<u64>,
     last_midi_chase_generation: Option<u64>,
+    midi_preview_state: Arc<AtomicU64>,
+    preview_track_index: Option<usize>,
+    preview_pitch: u8,
+    preview_tail_frames: usize,
+    preview_routes: Vec<bool>,
     streams: Vec<AudioItemPcmConsumer>,
     stream_positions: Vec<Option<AudioStreamPosition>>,
     stream_track_indices: Vec<usize>,
@@ -1931,6 +1991,7 @@ impl AudioRenderGraph {
             }
             let required_events = midi_plan.event_count_for_track(instrument.track_id);
             let available_events = instrument.processor.max_events();
+            let required_events = required_events.max(2);
             if available_events < required_events {
                 return Err(AudioGraphBuildError::InstrumentEventCapacity {
                     track_id: instrument.track_id.value(),
@@ -1960,6 +2021,9 @@ impl AudioRenderGraph {
                 isolated_config: None,
                 isolated_events: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
+                isolated_preview_pending: false,
+                isolated_preview_events: [None; 2],
+                isolated_stopped_preview: false,
                 isolated_faulted: false,
                 stopped_processor: None,
             });
@@ -1979,7 +2043,14 @@ impl AudioRenderGraph {
         let scratch = (0..sources.streams.len())
             .map(|_| vec![[0.0, 0.0]; max_block_frames])
             .collect();
-        let midi_scratch = vec![None; midi_plan.len() + MIDI_INPUT_EVENTS_PER_BLOCK];
+        let midi_scratch = vec![
+            None;
+            midi_plan
+                .len()
+                .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+                .saturating_add(2)
+                .max(2)
+        ];
         let track_has_stereo_input = vec![false; project.tracks().len()];
         let solo_audible_tracks = vec![false; project.tracks().len()];
         let solo_bus_subtrees = vec![false; project.tracks().len()];
@@ -2004,6 +2075,11 @@ impl AudioRenderGraph {
             transport: Transport::new(),
             last_midi_sample_end: None,
             last_midi_chase_generation: None,
+            midi_preview_state: Arc::new(AtomicU64::new(0)),
+            preview_track_index: None,
+            preview_pitch: 0,
+            preview_tail_frames: 0,
+            preview_routes: vec![false; project.tracks().len()],
             streams: sources.streams,
             stream_positions: sources.positions,
             stream_track_indices: sources.track_indices,
@@ -2150,6 +2226,18 @@ impl AudioRenderGraph {
         self.midi_plan.event_count_for_track(track_id)
     }
 
+    /// Returns a lock-free control handle for live MIDI key audition.
+    pub fn midi_preview_controller(&self) -> MidiPreviewController {
+        MidiPreviewController {
+            state: Arc::clone(&self.midi_preview_state),
+            tracks: self
+                .instruments
+                .iter()
+                .map(|route| (route.track_id, route.track_index))
+                .collect(),
+        }
+    }
+
     /// Installs pre-activated track instruments before the graph enters an audio callback.
     ///
     /// `project` must be the same project snapshot used to compile this graph. On validation
@@ -2197,6 +2285,7 @@ impl AudioRenderGraph {
             }
             let required_events = self.midi_plan.event_count_for_track(instrument.track_id);
             let available_events = instrument.processor.max_events();
+            let required_events = required_events.max(2);
             if available_events < required_events {
                 return Err(AudioGraphBuildError::InstrumentEventCapacity {
                     track_id: instrument.track_id.value(),
@@ -2219,7 +2308,9 @@ impl AudioRenderGraph {
                 track_index,
                 instance_id: instrument.instance_id,
                 midi_events: Vec::with_capacity(
-                    available_events.saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK),
+                    available_events
+                        .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+                        .saturating_add(2),
                 ),
                 audio: vec![[0.0, 0.0]; self.max_block_frames()],
                 processor: None,
@@ -2231,6 +2322,9 @@ impl AudioRenderGraph {
                 isolated_config: None,
                 isolated_events: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
+                isolated_preview_pending: false,
+                isolated_preview_events: [None; 2],
+                isolated_stopped_preview: false,
                 isolated_faulted: false,
                 stopped_processor: None,
             });
@@ -2252,7 +2346,8 @@ impl AudioRenderGraph {
         let midi_capacity = self
             .midi_plan
             .len()
-            .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK);
+            .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+            .saturating_add(2);
         if self.midi_scratch.len() < midi_capacity {
             self.midi_scratch.resize(midi_capacity, None);
         }
@@ -2303,10 +2398,13 @@ impl AudioRenderGraph {
                     track_id: instrument.track_id.value(),
                 });
             }
-            if !instrument.config.validate() || instrument.config.sample_rate != self.sample_rate {
+            if !instrument.config.validate()
+                || instrument.config.sample_rate != self.sample_rate
+                || instrument.config.event_capacity < 2
+            {
                 return Err(AudioGraphBuildError::InstrumentEventCapacity {
                     track_id: instrument.track_id.value(),
-                    required: 1,
+                    required: 2,
                     available: instrument.config.event_capacity as usize,
                 });
             }
@@ -2321,7 +2419,7 @@ impl AudioRenderGraph {
                 track_id: instrument.track_id,
                 track_index,
                 instance_id: instrument.instance_id,
-                midi_events: Vec::new(),
+                midi_events: Vec::with_capacity(instrument.config.event_capacity as usize),
                 audio: vec![[0.0, 0.0]; self.max_block_frames()],
                 processor: None,
                 isolated_port: Some(instrument.port.clone()),
@@ -2332,6 +2430,9 @@ impl AudioRenderGraph {
                 isolated_config: Some(instrument.config),
                 isolated_events: Vec::with_capacity(instrument.config.event_capacity as usize),
                 isolated_schedule_scratch: vec![None; self.midi_scratch.len()],
+                isolated_preview_pending: false,
+                isolated_preview_events: [None; 2],
+                isolated_stopped_preview: false,
                 isolated_faulted: false,
                 stopped_processor: None,
             });
@@ -2573,7 +2674,7 @@ impl AudioRenderGraph {
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed =
             !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
-        let midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
+        let mut midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
             let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
                 != Some(block_start_sample)
                 || self.last_midi_chase_generation != Some(chase_generation)
@@ -2640,6 +2741,107 @@ impl AudioRenderGraph {
         } else {
             0
         };
+        let block = self
+            .transport
+            .advance_block(output.len())
+            .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+        let mut preview_events_changed = false;
+        if !output.is_empty() {
+            let requested = if block.is_playing {
+                0
+            } else {
+                self.midi_preview_state.load(Ordering::Acquire)
+            };
+            let requested_track = (requested >> 32).checked_sub(1).map(|index| index as usize);
+            let requested_pitch = (requested & 0xff) as u8;
+            let requested_velocity = ((requested >> 8) & 0xff) as u8;
+            let requested_track = requested_track.filter(|index| {
+                requested_velocity > 0
+                    && self
+                        .instruments
+                        .iter()
+                        .any(|route| route.track_index == *index)
+            });
+            let changed = self.preview_track_index != requested_track
+                || requested_track.is_some_and(|_| self.preview_pitch != requested_pitch);
+            if changed {
+                preview_events_changed =
+                    self.preview_track_index.is_some() || requested_track.is_some();
+                if let Some(previous_index) = self.preview_track_index
+                    && let Some(route) = self
+                        .instruments
+                        .iter()
+                        .find(|route| route.track_index == previous_index)
+                {
+                    self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        sample_offset: 0,
+                        track_id: route.track_id,
+                        note_id: Some(
+                            aaadaw_core::NoteId::from_value(i32::MAX as u64 - 1)
+                                .expect("the reserved preview note ID is nonzero"),
+                        ),
+                        pitch: self.preview_pitch,
+                        velocity: 0,
+                        controller: None,
+                        pitch_bend: None,
+                        kind: MidiEventKind::NoteOff,
+                    });
+                    midi_event_count += 1;
+                    self.preview_routes[previous_index] = true;
+                    self.preview_tail_frames = (self.sample_rate as usize).saturating_mul(2);
+                }
+                if let Some(next_index) = requested_track
+                    && let Some(route) = self
+                        .instruments
+                        .iter()
+                        .find(|route| route.track_index == next_index)
+                {
+                    self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        sample_offset: 0,
+                        track_id: route.track_id,
+                        note_id: Some(
+                            aaadaw_core::NoteId::from_value(i32::MAX as u64 - 1)
+                                .expect("the reserved preview note ID is nonzero"),
+                        ),
+                        pitch: requested_pitch,
+                        velocity: requested_velocity,
+                        controller: None,
+                        pitch_bend: None,
+                        kind: MidiEventKind::NoteOn,
+                    });
+                    midi_event_count += 1;
+                    self.preview_routes[next_index] = true;
+                    self.preview_tail_frames = 0;
+                }
+                self.preview_track_index = requested_track;
+                self.preview_pitch = requested_pitch;
+            }
+            if requested_track.is_some() {
+                self.preview_tail_frames = 0;
+                if let Some(index) = requested_track {
+                    self.preview_routes[index] = true;
+                }
+            } else if !block.is_playing && self.preview_tail_frames > 0 {
+                self.preview_tail_frames = self.preview_tail_frames.saturating_sub(output.len());
+                if self.preview_tail_frames == 0 {
+                    self.preview_routes.fill(false);
+                }
+            }
+        }
+        if include_midi && midi_event_count > 0 {
+            if midi_output.len() < midi_event_count {
+                return Err(AudioGraphError::MidiSchedule(
+                    MidiScheduleError::OutputBufferTooSmall {
+                        required: midi_event_count,
+                        available: midi_output.len(),
+                    },
+                ));
+            }
+            midi_output
+                .iter_mut()
+                .zip(self.midi_scratch.iter().take(midi_event_count))
+                .for_each(|(destination, source)| *destination = *source);
+        }
         if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
             return Err(AudioGraphError::MidiInputEventBufferFull {
                 requested: midi_input.len(),
@@ -2672,15 +2874,16 @@ impl AudioRenderGraph {
             });
         }
         let midi_processing_count = midi_event_count + midi_input.len();
-        let block = self
-            .transport
-            .advance_block(output.len())
-            .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
         let monitor_active = self
             .input_monitor_gate
             .as_ref()
             .is_some_and(AudioInputMonitorGate::is_enabled);
-        if !block.is_playing && !monitor_active && midi_input.is_empty() {
+        if !block.is_playing
+            && !monitor_active
+            && midi_input.is_empty()
+            && self.preview_track_index.is_none()
+            && self.preview_tail_frames == 0
+        {
             if let Some(monitor) = &mut self.input_monitor {
                 let _ = monitor.read_into(&mut self.input_monitor_scratch[..output.len()]);
             }
@@ -2785,30 +2988,74 @@ impl AudioRenderGraph {
                 }
             }
         }
-        for route in self.instruments.iter_mut().filter(|route| {
-            block.is_playing || (!midi_input.is_empty() && route.isolated_reader.is_none())
-        }) {
+        let scheduled_events = self.midi_scratch.iter().take(midi_processing_count);
+        for route in &mut self.instruments {
+            let receives_live_midi = !midi_input.is_empty() && route.isolated_reader.is_none();
+            if !block.is_playing
+                && !self.preview_routes[route.track_index]
+                && !receives_live_midi
+            {
+                continue;
+            }
             self.track_has_stereo_input[route.track_index] = true;
-            if route.isolated_reader.is_none() {
-                route.midi_events.clear();
-                for event in self
-                    .midi_scratch
-                    .iter()
-                    .take(midi_processing_count)
-                    .flatten()
-                {
-                    if event.track_id == route.track_id {
-                        if route.midi_events.len() == route.midi_events.capacity() {
-                            return Err(AudioGraphError::InstrumentEventBufferFull {
-                                track_id: route.track_id,
-                            });
+            route.midi_events.clear();
+            for event in scheduled_events.clone().flatten() {
+                if event.track_id == route.track_id {
+                    if route.midi_events.len() == route.midi_events.capacity() {
+                        return Err(AudioGraphError::InstrumentEventBufferFull {
+                            track_id: route.track_id,
+                        });
+                    }
+                    route.midi_events.push(*event);
+                }
+            }
+            if route.isolated_reader.is_some() && !block.is_playing && preview_events_changed {
+                route.isolated_generation = route.isolated_generation.wrapping_add(1);
+                route.isolated_next_sequence = 0;
+                route.isolated_next_start_sample = block.start_sample;
+                route.isolated_preview_pending = true;
+                route.isolated_stopped_preview = true;
+                route.isolated_preview_events = [None; 2];
+                let mut preview_count = 0;
+                for event in route.midi_events.iter().copied().filter(|event| {
+                    event
+                        .note_id
+                        .is_some_and(|id| id.value() == i32::MAX as u64 - 1)
+                }) {
+                    if let Some(slot) = route.isolated_preview_events.get_mut(preview_count) {
+                        *slot = Some(event);
+                        preview_count += 1;
+                    }
+                }
+                if let Some(reader) = route.isolated_reader.as_mut() {
+                    reader.reset(route.isolated_generation, 0, block.start_sample);
+                }
+                if let Some(port) = route.isolated_port.as_ref() {
+                    port.discard_stale_requests(route.isolated_generation);
+                    port.discard_stale_responses(route.isolated_generation);
+                }
+                if let Some(config) = route.isolated_config {
+                    for _ in 0..config.slot_count {
+                        let preview_events = route.isolated_preview_events;
+                        if !submit_isolated_block_with_preview(
+                            &self.midi_plan,
+                            route,
+                            false,
+                            &preview_events,
+                            false,
+                        ) {
+                            break;
                         }
-                        route.midi_events.push(*event);
                     }
                 }
             }
-            if route.isolated_reader.is_some() && route.isolated_generation != chase_generation {
+            if block.is_playing
+                && route.isolated_reader.is_some()
+                && route.isolated_generation != chase_generation
+            {
                 route.isolated_generation = chase_generation;
+                route.isolated_stopped_preview = false;
+                route.isolated_preview_events = [None; 2];
                 route.isolated_next_sequence = 0;
                 route.isolated_next_start_sample = block.start_sample;
                 if let Some(reader) = route.isolated_reader.as_mut() {
@@ -2817,10 +3064,47 @@ impl AudioRenderGraph {
                 if let Some(port) = route.isolated_port.as_ref() {
                     port.discard_stale_requests(chase_generation);
                 }
+                let mut preview_events = [None; 2];
+                let mut preview_count = 0;
+                for event in route.midi_events.iter().copied().filter(|event| {
+                    event
+                        .note_id
+                        .is_some_and(|id| id.value() == i32::MAX as u64 - 1)
+                }) {
+                    if let Some(slot) = preview_events.get_mut(preview_count) {
+                        *slot = Some(event);
+                        preview_count += 1;
+                    }
+                }
                 for sequence in 0..CLAP_IPC_SLOT_COUNT {
-                    if !submit_isolated_block(&self.midi_plan, route, sequence == 0) {
+                    if !submit_isolated_block_with_preview(
+                        &self.midi_plan,
+                        route,
+                        sequence == 0,
+                        &preview_events[..preview_count],
+                        true,
+                    ) {
                         break;
                     }
+                }
+            }
+            if !block.is_playing && route.isolated_stopped_preview {
+                if let Some(port) = route.isolated_port.as_ref() {
+                    // A response from an earlier preview generation may finish after the
+                    // generation reset. Reclaim it before attempting more bounded submits.
+                    port.discard_stale_responses(route.isolated_generation);
+                }
+                // The first request carries the preview note events. If all slots were still
+                // owned by the old generation, keep retrying until one becomes available.
+                if route.isolated_preview_pending && route.isolated_next_sequence == 0 {
+                    let preview_events = route.isolated_preview_events;
+                    submit_isolated_block_with_preview(
+                        &self.midi_plan,
+                        route,
+                        false,
+                        &preview_events,
+                        false,
+                    );
                 }
             }
             if let Some(reader) = route.isolated_reader.as_mut() {
@@ -2832,12 +3116,36 @@ impl AudioRenderGraph {
                     route.isolated_faulted = true;
                     route.audio[..output.len()].fill([0.0, 0.0]);
                 } else {
-                    reader.read_into(&mut route.audio[..output.len()]);
-                    // A callback never waits for a slot. Once a response is consumed, the freed
-                    // capacity is opportunistically filled with the next scheduled MIDI quantum.
-                    for _ in 0..CLAP_IPC_SLOT_COUNT {
-                        if !submit_isolated_block(&self.midi_plan, route, false) {
-                            break;
+                    let preview_ready = !route.isolated_preview_pending
+                        || route.isolated_port.as_ref().is_some_and(|port| {
+                            port.has_response(
+                                route.isolated_generation,
+                                reader.next_sequence(),
+                                reader.next_sample(),
+                            )
+                        });
+                    if !preview_ready {
+                        route.audio[..output.len()].fill([0.0, 0.0]);
+                    } else {
+                        route.isolated_preview_pending = false;
+                        reader.read_into(&mut route.audio[..output.len()]);
+                        // A callback never waits for a slot. Once a response is consumed, the
+                        // freed capacity is opportunistically filled with the next MIDI quantum.
+                        for _ in 0..CLAP_IPC_SLOT_COUNT {
+                            let submitted = if !block.is_playing && route.isolated_stopped_preview {
+                                submit_isolated_block_with_preview(
+                                    &self.midi_plan,
+                                    route,
+                                    false,
+                                    &[],
+                                    false,
+                                )
+                            } else {
+                                submit_isolated_block(&self.midi_plan, route, false)
+                            };
+                            if !submitted {
+                                break;
+                            }
                         }
                     }
                 }
