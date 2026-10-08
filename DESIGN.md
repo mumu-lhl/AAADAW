@@ -221,10 +221,10 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 | 严重度 | 维度 | 当前问题 | 后续影响 / 处理 |
 | --- | --- | --- | --- |
-| P1 — 时间线导航不完整 | Interaction / transport | 视口已有滚轮缩放、中键拖动缩放/平移、Snap、片段选择/拖动/修边/切分和自动化编辑；还没有循环播放、播放光标跟随，以及 Fit Project、Fit Selection、Fit Selected Items。编辑光标与播放起点也需要保持清晰一致。 | 补齐常用导航命令并统一缩放锚点；时间选区与循环状态须可区分。验证播放、暂停、停止和点击定位的起点语义。 |
+| P1 — 时间线导航不完整 | Interaction / transport | 视口已有滚轮缩放、中键拖动缩放/平移、Fit Project、Fit Selection、Fit Selected Items、Follow Playhead、Snap、片段选择/拖动/修边/切分和自动化编辑；Loop 仍不可用。编辑光标与播放起点也需要保持清晰一致。 | 补齐 Loop；时间选区与循环状态须可区分。验证播放、暂停、停止和点击定位的起点语义。 |
 | P1 — TCP 密度和 Mixer 工作流 | Layout / mixing | TCP 已有轨道选择、名称、Volume、Pan、Mute/Solo/Arm、输入监听、左右电平表、FX 和输出选择；固定行高与紧凑控件在窄布局下仍有裁剪风险。Mixer 已存在，但通道固定约 220px，采用横向推子和电平条，Master 随横向滚动且没有输出音量推子。 | 先解决 TCP 行高/密度与可读性；Mixer 使用纵向推子及相邻电平表，保持 Master 可见，并让两个视图操作同一轨道状态和撤销历史。 |
 | P1 — 工程身份与切换保护 | Window / project workflow | 主菜单显示工程名和未保存标记，但操作系统主窗口标题仍为 `AAADAW`。New/Open/Close 已提供保存、放弃或取消选择，并在保存成功后继续原操作。 | 让操作系统窗口标题同步工程名/dirty 状态；保留已有切换确认语义，保存失败或取消选择器时保持当前工程。 |
-| P1 — Transport 的缺失操作 | Transport / recovery | Transport 已有 Play/Pause、Stop、Record、Restart、seek、BPM/拍号编辑、播放准备反馈和后端详情；Loop 仍显示 unavailable，时间线导航缺少跟随/适配入口。Linux 后端状态和路由诊断正在 #271 / PR #273 实施，尚未完成验收。 | 保留现有窄窗口布局；实现循环与导航前先定义状态语义。设备/路由诊断不得占用音频回调，也不能暗示已连接即有声音。 |
+| P1 — Transport 的缺失操作 | Transport / recovery | Transport 已有 Play/Pause、Stop、Record、Restart、seek、BPM/拍号编辑、播放准备反馈和后端详情；Loop 仍不可用，Follow Playhead 尚未实现。Linux 后端状态和路由诊断正在 #271 / PR #273 实施，尚未完成验收。 | 保留现有窄窗口布局；实现循环与跟随前先定义状态语义。设备/路由诊断不得占用音频回调，也不能暗示已连接即有声音。 |
 | P2 — Inspector 与素材发现 | Panel / editing | Inspector 选中片段时高度从 52px 增至 156px，并为 MIDI 音符显示大量按钮；目前没有折叠/resize。Media Browser 支持导入、扫描、打包和重链接，但没有通用目录浏览、试听及拖入编排。 | Inspector 保持简洁并允许折叠/调整高度；素材浏览、试听和拖放应复用现有媒体导入及后台任务能力。 |
 | P2 — 国际化和视觉可读性 | Localization / accessibility | 界面文本仍以内嵌英文为主，没有项目级翻译资源或语言设置。Dark 主题固定，多个高频状态依赖缩写/颜色，字号、读数格式和高 DPI 表现尚未统一验收。 | 引入可由翻译平台维护的资源格式、中文/英文和自动语言选择；再统一焦点、选择、录音、旁路等状态提示及可读数值。 |
 | P2 — 渲染与大型工程验收 | Performance / offline workflow | 渲染窗口已独立，但范围、输出采样率和尾音策略仍有限。长工程的轨道布局、渲染和滚动尚无基准；当前实现路径存在按全工程构建部分视图数据的开销，但未测得实际卡顿。 | 用可复现的大工程基准先测量，再决定虚拟化和缓存；补充工程/选区渲染范围、时长估计和尾音控制。避免无数据依据的性能重构。 |
@@ -236,7 +236,7 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 1. **[x] 建立空间 Arrangement 基线**：已有时间视口、轨道/item 几何、选择、缩放/平移、Snap、音频/MIDI 移动与修边、切分、波形/音符预览、音量/FX 自动化和对象上下文菜单。后续针对已有能力修复具体缺陷，不再重建主工作区。
 2. **重排 TCP 并完善 Mixer**：解决 TCP 行高与左右电平表可读性；Mixer 改为纵向推子和紧凑通道，固定可见 Master，保持 TCP/Mixer 控制和 Undo/Redo 同源。
-3. **补齐时间线导航与工程切换**：实现 Loop、Follow Playhead、Fit Project/Selection/Selected Items 和统一缩放锚点；让窗口标题与工程名一致。New/Open/Close 的保存、放弃、取消流程已实现。
+3. **补齐时间线导航与工程切换**：实现 Loop；缩放适配、Follow Playhead 和工程标题已实现。New/Open/Close 的保存、放弃、取消流程已实现。
 4. **改进 Inspector 与 Media Browser**：允许 Inspector 折叠和 resize，减少全量音符按钮；为媒体浏览增加目录、试听和拖入入口，同时保留导入、扫描、打包、重链接与后台取消。
 5. **完成音频与渲染工作流**：结束 #271 的 Linux 连接/路由诊断；补渲染范围、采样率、尾音控制，以及真实设备上的录音/路由验收。
 6. **国际化、性能和视觉系统**：以翻译资源提供中文/英文及自动选择；先用长工程和高 DPI 验收建立性能/可读性基线，再优化可见性和布局恢复。

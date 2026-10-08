@@ -135,6 +135,20 @@ pub(crate) enum TimelineEvent {
         factor: f32,
         anchor_x: f32,
     },
+    FitProjectToView {
+        viewport_width: f32,
+    },
+    FitSelectionToView {
+        viewport_width: f32,
+    },
+    FitSelectedItemsToView {
+        viewport_width: f32,
+    },
+    #[cfg(feature = "audio-device")]
+    SetFollowPlayhead {
+        enabled: bool,
+        viewport_width: f32,
+    },
     SelectItem {
         item_id: Option<ItemId>,
         additive: bool,
@@ -722,6 +736,9 @@ pub(crate) struct TimelineState {
     pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    #[cfg(feature = "audio-device")]
+    pub(crate) follow_playhead: bool,
+    viewport_width: f32,
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
@@ -894,6 +911,9 @@ impl Default for TimelineState {
             selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
+            #[cfg(feature = "audio-device")]
+            follow_playhead: false,
+            viewport_width: 480.0,
             time_selection: None,
             context_track: None,
             context_item: None,
@@ -1367,6 +1387,50 @@ impl TimelineState {
                 self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
                 self.pan_fractional_tick = 0.0;
             }
+            TimelineEvent::FitProjectToView { viewport_width } => {
+                let range: Option<(u64, u64)> =
+                    self.cache.items.iter().fold(None, |range, item| {
+                        Some(match range {
+                            Some((start, end)) => {
+                                (start.min(item.start_tick), end.max(item.end_tick))
+                            }
+                            None => (item.start_tick, item.end_tick),
+                        })
+                    });
+                self.fit_tick_range(range, viewport_width);
+            }
+            TimelineEvent::FitSelectionToView { viewport_width } => {
+                let range = self
+                    .time_selection
+                    .map(|selection| (selection.start_tick, selection.end_tick));
+                self.fit_tick_range(range, viewport_width);
+            }
+            TimelineEvent::FitSelectedItemsToView { viewport_width } => {
+                let range: Option<(u64, u64)> = self
+                    .cache
+                    .items
+                    .iter()
+                    .filter(|item| self.selected_items.contains(&item.id))
+                    .fold(None, |range, item| {
+                        Some(match range {
+                            Some((start, end)) => {
+                                (start.min(item.start_tick), end.max(item.end_tick))
+                            }
+                            None => (item.start_tick, item.end_tick),
+                        })
+                    });
+                self.fit_tick_range(range, viewport_width);
+            }
+            #[cfg(feature = "audio-device")]
+            TimelineEvent::SetFollowPlayhead {
+                enabled,
+                viewport_width,
+            } => {
+                self.follow_playhead = enabled;
+                if viewport_width.is_finite() && viewport_width > 1.0 {
+                    self.viewport_width = viewport_width;
+                }
+            }
             TimelineEvent::SelectItem {
                 item_id,
                 additive,
@@ -1625,6 +1689,48 @@ impl TimelineState {
                 self.panes.resize(split, ratio.clamp(0.22, 0.58));
             }
             TimelineEvent::ResizeSplit { .. } => {}
+        }
+    }
+
+    fn fit_tick_range(&mut self, range: Option<(u64, u64)>, viewport_width: f32) {
+        if viewport_width.is_finite() && viewport_width > 1.0 {
+            self.viewport_width = viewport_width;
+        }
+        let Some((origin_tick, pixels_per_tick)) = fit_tick_range(range, viewport_width) else {
+            return;
+        };
+        self.origin_tick = origin_tick;
+        self.pixels_per_tick = pixels_per_tick;
+        self.pan_fractional_tick = 0.0;
+    }
+
+    #[cfg(feature = "audio-device")]
+    pub(crate) fn follow_playhead_to_tick(&mut self, tick: u64) {
+        if !self.follow_playhead
+            || !self.viewport_width.is_finite()
+            || self.viewport_width <= 1.0
+            || !self.pixels_per_tick.is_finite()
+            || self.pixels_per_tick <= 0.0
+        {
+            return;
+        }
+
+        let visible_ticks = f64::from(self.viewport_width) / f64::from(self.pixels_per_tick);
+        let head_x = (i128::from(tick) - i128::from(self.origin_tick)) as f64
+            * f64::from(self.pixels_per_tick);
+        let (target_x, should_scroll) = if head_x >= f64::from(self.viewport_width) * 0.8 {
+            (0.6, true)
+        } else if head_x < f64::from(self.viewport_width) * 0.1 {
+            (0.1, true)
+        } else {
+            (0.0, false)
+        };
+        if should_scroll {
+            self.origin_tick = (tick as f64 - visible_ticks * target_x)
+                .max(0.0)
+                .min(u64::MAX as f64)
+                .round() as u64;
+            self.pan_fractional_tick = 0.0;
         }
     }
 
@@ -3798,6 +3904,23 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
     }
 }
 
+fn fit_tick_range(range: Option<(u64, u64)>, viewport_width: f32) -> Option<(u64, f32)> {
+    let (start_tick, end_tick) = range?;
+    if !viewport_width.is_finite() || viewport_width <= 1.0 || end_tick <= start_tick {
+        return None;
+    }
+
+    let span = (end_tick - start_tick) as f64;
+    let margin = span * 0.05;
+    let origin_tick = (start_tick as f64 - margin).max(0.0).floor() as u64;
+    let visible_span = end_tick as f64 + margin - origin_tick as f64;
+    let pixels_per_tick = (f64::from(viewport_width) / visible_span).clamp(
+        f64::from(MIN_PIXELS_PER_TICK),
+        f64::from(MAX_PIXELS_PER_TICK),
+    ) as f32;
+    Some((origin_tick, pixels_per_tick))
+}
+
 fn tick_at_x(origin_tick: u64, pixels_per_tick: f32, x: f32) -> u64 {
     (origin_tick as f64 + f64::from(x.max(0.0)) / f64::from(pixels_per_tick))
         .clamp(0.0, u64::MAX as f64)
@@ -3942,7 +4065,7 @@ mod tests {
         MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState, MidiNotePreview, PendingAutomationPoint,
         PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
         TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineInteractionState,
-        TimelineState, automation_sample_between, fx_automation_band_at_y,
+        TimelineState, automation_sample_between, fit_tick_range, fx_automation_band_at_y,
         fx_automation_lane_resize_target, fx_automation_tick_at, item_trim_edge_at_x,
         midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport, snap_tick_to_grid,
         tick_at_x, time_selection_edge_at_tick,
@@ -3956,6 +4079,101 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
     use std::sync::Arc;
+
+    #[test]
+    fn fit_tick_range_places_content_inside_view_with_margin() {
+        let (origin, pixels_per_tick) =
+            fit_tick_range(Some((1_000, 2_000)), 600.0).expect("valid range should fit");
+        let first_x = (1_000 - origin) as f32 * pixels_per_tick;
+        let last_x = (2_000 - origin) as f32 * pixels_per_tick;
+
+        assert!(first_x > 0.0);
+        assert!(last_x < 600.0);
+        assert!((last_x - first_x - 545.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn fit_tick_range_ignores_empty_or_invalid_viewports() {
+        assert_eq!(fit_tick_range(None, 600.0), None);
+        assert_eq!(fit_tick_range(Some((10, 10)), 600.0), None);
+        assert_eq!(fit_tick_range(Some((10, 20)), f32::NAN), None);
+        assert_eq!(fit_tick_range(Some((10, 20)), 0.0), None);
+    }
+
+    #[test]
+    fn fit_commands_use_project_selection_and_selected_item_ranges() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        for start_tick in [1_000, 4_000] {
+            project
+                .apply(DawAction::InsertMidiItem {
+                    track_id,
+                    start_tick,
+                    length_ticks: 500,
+                })
+                .unwrap();
+        }
+        let first_item = project.midi_items()[0].id();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+
+        timeline.handle(TimelineEvent::FitProjectToView {
+            viewport_width: 1_000.0,
+        });
+        assert!(timeline.origin_tick < 1_000);
+        let project_end_x = (4_500 - timeline.origin_tick) as f32 * timeline.pixels_per_tick;
+        assert!(project_end_x < 1_000.0);
+
+        timeline.selected_items.insert(first_item);
+        timeline.handle(TimelineEvent::FitSelectedItemsToView {
+            viewport_width: 1_000.0,
+        });
+        assert!(timeline.origin_tick < 1_000);
+        let selected_end_x = (1_500 - timeline.origin_tick) as f32 * timeline.pixels_per_tick;
+        assert!(selected_end_x < 1_000.0);
+        assert!(timeline.pixels_per_tick > 0.5);
+
+        timeline.time_selection = TimeSelection::normalized(8_000, 9_000);
+        timeline.handle(TimelineEvent::FitSelectionToView {
+            viewport_width: 1_000.0,
+        });
+        assert!(timeline.origin_tick < 8_000);
+        let selection_end_x = (9_000 - timeline.origin_tick) as f32 * timeline.pixels_per_tick;
+        assert!(selection_end_x < 1_000.0);
+    }
+
+    #[test]
+    #[cfg(feature = "audio-device")]
+    fn follow_playhead_scrolls_at_edges_without_jittering_near_the_center() {
+        let mut timeline = TimelineState {
+            pixels_per_tick: 1.0,
+            ..TimelineState::default()
+        };
+        timeline.handle(TimelineEvent::SetFollowPlayhead {
+            enabled: true,
+            viewport_width: 800.0,
+        });
+
+        timeline.follow_playhead_to_tick(700);
+        assert_eq!(timeline.origin_tick, 220);
+        timeline.follow_playhead_to_tick(710);
+        assert_eq!(timeline.origin_tick, 220);
+        timeline.follow_playhead_to_tick(100);
+        assert_eq!(timeline.origin_tick, 20);
+
+        timeline.handle(TimelineEvent::SetFollowPlayhead {
+            enabled: false,
+            viewport_width: 800.0,
+        });
+        timeline.follow_playhead_to_tick(900);
+        assert_eq!(timeline.origin_tick, 20);
+    }
 
     #[test]
     fn ruler_click_publishes_edit_cursor_tick() {
