@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zlib
 from pathlib import Path
 
@@ -88,6 +89,49 @@ def recognize_text(path: Path) -> str:
     return result.stdout
 
 
+def recognize_workspace_label(
+    width: int,
+    height: int,
+    rows: list[bytes],
+    label: str,
+) -> str:
+    # The compact shell places its two workspace buttons below the menu bar.
+    # Crop each button separately so the full-screen OCR layout heuristic does
+    # not skip their large, high-contrast labels on the emulator screenshot.
+    horizontal_bounds = {
+        "Arrange": (0.02, 0.24),
+        "Mixer": (0.25, 0.44),
+    }
+    left, right = horizontal_bounds[label]
+    x0, x1 = int(width * left), int(width * right)
+    y0, y1 = int(height * 0.085), int(height * 0.16)
+    scale = 2
+    crop_width = x1 - x0
+    crop_height = y1 - y0
+
+    ppm = bytearray(f"P6\n{crop_width * scale} {crop_height * scale}\n255\n".encode())
+    for row in rows[y0:y1]:
+        pixels = bytearray()
+        for index in range(x0 * 4, x1 * 4, 4):
+            pixels.extend(row[index : index + 3] * scale)
+        for _ in range(scale):
+            ppm.extend(pixels)
+
+    if shutil.which("tesseract") is None:
+        raise RuntimeError("tesseract is required to verify Android screen text")
+    with tempfile.TemporaryDirectory(prefix="aaadaw-android-ocr-") as directory:
+        crop_path = Path(directory) / "workspace-label.ppm"
+        crop_path.write_bytes(ppm)
+        result = subprocess.run(
+            ["tesseract", str(crop_path), "stdout", "--psm", "7"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    return result.stdout
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: check_android_screenshot.py <screenshot.png>", file=sys.stderr)
@@ -124,10 +168,19 @@ def main() -> int:
         print("Android screenshot shows the System UI not-responding dialog", file=sys.stderr)
         return 1
 
+    try:
+        workspace_text = {
+            label: recognize_workspace_label(width, height, rows, label)
+            for label in ("Arrange", "Mixer")
+        }
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"Android workspace label check failed: {error}", file=sys.stderr)
+        return 1
+
     missing_labels = [
         label
-        for label in ("Arrange", "Mixer")
-        if re.search(rf"\b{label}\b", recognized_text, re.IGNORECASE) is None
+        for label, label_text in workspace_text.items()
+        if re.search(rf"\b{label}\b", label_text, re.IGNORECASE) is None
     ]
     if missing_labels:
         print(
@@ -136,6 +189,8 @@ def main() -> int:
         )
         if recognized_text.strip():
             print(f"Recognized screenshot text: {recognized_text.strip()}", file=sys.stderr)
+        for label, label_text in workspace_text.items():
+            print(f"Recognized {label} crop: {label_text.strip()!r}", file=sys.stderr)
         return 1
 
     print(
