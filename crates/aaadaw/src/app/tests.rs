@@ -11,8 +11,8 @@ use super::project_io::{
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, MainMenu, MainWorkspace, MenuNavigation, Message, PathPickerTarget,
-    keyboard_shortcut_event, menu_navigation_event, midi_editor_shortcut_event,
-    midi_expression_context_menu_event, shortcut_message,
+    fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
+    midi_editor_shortcut_event, midi_expression_context_menu_event, shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -183,6 +183,35 @@ fn left_click_in_midi_editor_dismisses_expression_context_menus_globally() {
         midi_editor_window_id,
     ));
     assert_eq!(app.midi_expression_context_menu_epoch, 1);
+}
+
+#[test]
+fn passive_pointer_cleanup_events_keep_main_menu_open() {
+    let main_window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window_id),
+        ..App::default()
+    };
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Actions));
+
+    let dismissal = midi_expression_context_menu_event(
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+        iced::event::Status::Ignored,
+        main_window_id,
+    )
+    .expect("a left click should dismiss MIDI expression context menus");
+    let _ = app.update(dismissal);
+    let release_cleanup = fx_chain_plugin_drag_event(
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+            iced::mouse::Button::Left,
+        )),
+        iced::event::Status::Ignored,
+        main_window_id,
+    )
+    .expect("a left button release should finish FX drag cleanup");
+    let _ = app.update(release_cleanup);
+
+    assert_eq!(app.active_menu, Some(MainMenu::Actions));
 }
 
 #[cfg(feature = "audio-device")]
