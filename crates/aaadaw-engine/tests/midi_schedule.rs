@@ -161,6 +161,113 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
 }
 
 #[test]
+fn event_plan_applies_midi_source_offset_at_the_visible_start() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 480,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 600,
+                    duration: 720,
+                    velocity: 90,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 1,
+                    tick: 120,
+                    value: 10,
+                },
+                MidiControllerData {
+                    controller: 1,
+                    tick: 600,
+                    value: 80,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    tick: 120,
+                    value: 9_000,
+                },
+                MidiPitchBendData {
+                    tick: 600,
+                    value: 11_000,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::TrimMidiItemStart {
+            item_id,
+            start_tick: 720,
+            length_ticks: 720,
+            source_offset_ticks: 240,
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let start = project.sample_at_tick(720).unwrap();
+    let end = project.sample_at_tick(1_440).unwrap();
+    let mut events = [None; 8];
+    let count = plan
+        .events_for_block(start, end as usize - start as usize + 1, &mut events)
+        .unwrap();
+    let visible = &events[..count];
+    assert_eq!(count, 4);
+    assert!(
+        visible
+            .iter()
+            .flatten()
+            .all(|event| event.sample_offset as u64 <= end - start)
+    );
+    assert!(visible.iter().any(|event| {
+        event.is_some_and(|event| event.pitch == 64 && event.kind == MidiEventKind::NoteOn)
+    }));
+    assert!(!visible.iter().any(|event| {
+        event.is_some_and(|event| event.pitch == 60 && event.kind == MidiEventKind::NoteOn)
+    }));
+    assert!(visible.iter().any(|event| {
+        event.is_some_and(|event| event.controller == Some(1) && event.velocity == 80)
+    }));
+    assert!(!visible.iter().any(|event| {
+        event.is_some_and(|event| event.controller == Some(1) && event.velocity == 10)
+    }));
+}
+
+#[test]
 fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
     let (mut project, track_id) = project_with_note(69, 480, 240);
     let item_id = project.midi_items()[0].id();

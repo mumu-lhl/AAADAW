@@ -144,7 +144,7 @@ fn splitting_a_midi_item_carries_the_active_pitch_bend_forward() {
 }
 
 #[test]
-fn shrinking_a_midi_item_preserves_hidden_pitch_bend_points() {
+fn shrinking_a_midi_item_keeps_hidden_pitch_bend_points_for_expansion() {
     let (mut project, item_id) = project_with_midi_item();
     project
         .apply(DawAction::SetMidiPitchBends {
@@ -155,13 +155,14 @@ fn shrinking_a_midi_item_preserves_hidden_pitch_bend_points() {
             }],
         })
         .expect("pitch bend should be accepted");
+    let before = project.snapshot();
     project
         .apply(DawAction::EditMidiItem {
             item_id,
             start_tick: 0,
             length_ticks: 1_920,
         })
-        .expect("trimming the clip should preserve hidden pitch bends");
+        .expect("non-destructive clip shrink should keep hidden events");
     assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
     assert_eq!(
         project.midi_items()[0].pitch_bends(),
@@ -171,10 +172,10 @@ fn shrinking_a_midi_item_preserves_hidden_pitch_bend_points() {
         }]
     );
     let trimmed_snapshot = project.snapshot();
-
     assert!(project.undo().expect("clip trim should undo"));
-    assert_eq!(project.midi_items()[0].length_ticks(), 3_840);
+    assert_eq!(project.snapshot(), before);
     assert!(project.redo().expect("clip trim should redo"));
+    assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
     assert_eq!(project.snapshot(), trimmed_snapshot);
     assert_eq!(
         Project::from_snapshot(trimmed_snapshot.clone())

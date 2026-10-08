@@ -163,6 +163,64 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
 }
 
 #[test]
+fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events() {
+    let (mut project, _, item_id) = project_with_midi_item();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    pitch: 72,
+                    tick: 2_100,
+                    duration: 480,
+                    velocity: 100,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::TrimMidiItemStart {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 2_880,
+            source_offset_ticks: 960,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SplitMidiItem {
+            item_id,
+            split_ticks: vec![2_880],
+        })
+        .unwrap();
+
+    let first = &project.midi_items()[0];
+    assert_eq!(first.start_tick(), 1_920);
+    assert_eq!(first.length_ticks(), 960);
+    assert_eq!(first.source_offset_ticks(), 960);
+    assert!(first.notes().iter().any(|note| note.tick() == 120));
+
+    let second = &project.midi_items()[1];
+    assert_eq!(second.start_tick(), 2_880);
+    assert_eq!(second.source_offset_ticks(), 0);
+    let continued = second
+        .notes()
+        .iter()
+        .find(|note| note.pitch() == 72)
+        .unwrap();
+    assert_eq!((continued.tick(), continued.duration()), (180, 480));
+    assert_eq!(
+        second.project_tick_at_content_tick(continued.tick()),
+        Some(3_060)
+    );
+}
+
+#[test]
 fn midi_split_without_an_internal_boundary_leaves_project_and_history_unchanged() {
     let (mut project, _, item_id) = project_with_midi_item();
     let before = project.snapshot();

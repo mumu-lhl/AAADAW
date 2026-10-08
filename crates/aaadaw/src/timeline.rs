@@ -434,6 +434,19 @@ impl TimelineCache {
                 midi_notes: item
                     .notes()
                     .iter()
+                    .filter_map(|note| {
+                        let start_tick = note.tick();
+                        let end_tick = start_tick.checked_add(note.duration())?;
+                        let source_start_tick = item.source_offset_ticks();
+                        let source_end_tick = source_start_tick.saturating_add(item.length_ticks());
+                        (source_start_tick..source_end_tick)
+                            .contains(&start_tick)
+                            .then(|| MidiNotePreview {
+                                tick: start_tick - source_start_tick,
+                                duration: end_tick.min(source_end_tick) - start_tick,
+                                pitch: note.pitch(),
+                            })
+                    })
                     .step_by(
                         item.notes()
                             .len()
@@ -441,11 +454,6 @@ impl TimelineCache {
                             .max(1),
                     )
                     .take(MAX_MIDI_ITEM_PREVIEW_NOTES)
-                    .map(|note| MidiNotePreview {
-                        tick: note.tick(),
-                        duration: note.duration(),
-                        pitch: note.pitch(),
-                    })
                     .collect(),
                 start_sample: 0,
                 length_samples: 0,
@@ -4011,6 +4019,59 @@ mod tests {
             item_trim_edge_at_x(&cache, 0, 1_440.0, 0, 1.0),
             Some((item_id, ItemTrimEdge::End))
         );
+    }
+
+    #[test]
+    fn midi_item_preview_uses_the_trimmed_source_offset() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 1_920,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    aaadaw_core::MidiNoteData {
+                        pitch: 60,
+                        tick: 120,
+                        duration: 120,
+                        velocity: 90,
+                    },
+                    aaadaw_core::MidiNoteData {
+                        pitch: 64,
+                        tick: 720,
+                        duration: 240,
+                        velocity: 90,
+                    },
+                ],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::TrimMidiItemStart {
+                item_id,
+                start_tick: 480,
+                length_ticks: 1_440,
+                source_offset_ticks: 480,
+            })
+            .unwrap();
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+        let item = cache.items.iter().find(|item| item.id == item_id).unwrap();
+        assert_eq!(item.midi_notes.len(), 1);
+        assert_eq!(item.midi_notes[0].tick, 240);
     }
 
     #[test]

@@ -59,11 +59,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_atd
+          target: default
           arch: x86_64
           profile: pixel_2
           cores: 4
-          ram-size: 2048M
+          ram-size: 4096M
           emulator-boot-timeout: 900
           disable-animations: false
           script: |
@@ -73,11 +73,18 @@ jobs:
             adb shell am force-stop org.aaadaw.app
             adb shell am start -W -n org.aaadaw.app/org.aaadaw.app.MainActivity
             timeout 120s sh -c 'attempt=0; while [ "$attempt" -lt 90 ]; do pid="$(adb shell pidof org.aaadaw.app 2>/dev/null | tr -d "[:space:]")"; case "$pid" in ""|*[!0-9]*) ;; *) exit 0 ;; esac; sleep 1; attempt=$((attempt + 1)); done; exit 1'
-            timeout 60s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { adb shell dumpsys activity activities; adb logcat -d -v threadtime | tail -n 400; exit 1; }
+            dump_android_state() {
+              adb shell pidof org.aaadaw.app || true
+              adb shell dumpsys activity activities | tail -n 200 || true
+              adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" || true
+              adb logcat -d -v threadtime -b all | grep -E 'org\.aaadaw|ActivityTaskManager|ActivityManager|AndroidRuntime|NativeActivity|Fatal signal|panic|ANR in' | tail -n 700 || true
+              adb shell run-as org.aaadaw.app sh -c 'find files -type f -name "aaadaw*" -print -exec cat {} \;' || true
+            }
+            timeout 90s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { dump_android_state; exit 1; }
             sleep 5
             adb shell screencap -p /data/local/tmp/aaadaw-portrait.png
             adb pull /data/local/tmp/aaadaw-portrait.png ./aaadaw-portrait.png
-            python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { adb shell dumpsys activity activities; adb logcat -d -v threadtime | tail -n 400; exit 1; }
+            python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { dump_android_state; exit 1; }
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 1
             sleep 5

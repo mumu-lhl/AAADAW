@@ -1866,7 +1866,9 @@ impl App {
                         let default_paste_tick =
                             self.midi_editor_edit_cursor_tick.unwrap_or_else(|| {
                                 snap_tick_up(
-                                    first_tick.saturating_add(self.midi_note_clipboard.span_ticks),
+                                    first_tick
+                                        .saturating_sub(item.source_offset_ticks())
+                                        .saturating_add(self.midi_note_clipboard.span_ticks),
                                     copy_grid,
                                 )
                             });
@@ -1897,6 +1899,8 @@ impl App {
                     return task;
                 }
                 let grid = self.midi_editor_snap_interval();
+                let source_start_tick = item.source_offset_ticks();
+                let item_end_tick = source_start_tick.saturating_add(item.length_ticks());
                 let item_length = item.length_ticks();
                 let tick = self
                     .midi_note_clipboard
@@ -1916,14 +1920,16 @@ impl App {
                     .notes
                     .iter()
                     .map(|note| aaadaw_core::MidiNoteData {
-                        tick: tick.saturating_add(note.tick),
+                        tick: source_start_tick
+                            .saturating_add(tick)
+                            .saturating_add(note.tick),
                         ..*note
                     })
                     .collect::<Vec<_>>();
-                if notes
-                    .iter()
-                    .any(|note| note.tick.saturating_add(note.duration) > item.length_ticks())
-                {
+                if notes.iter().any(|note| {
+                    note.tick < source_start_tick
+                        || note.tick.saturating_add(note.duration) > item_end_tick
+                }) {
                     let feedback = "Paste rejected: notes would extend beyond the MIDI item";
                     self.status = feedback.to_owned();
                     self.midi_editor_feedback = Some(feedback.to_owned());
@@ -4227,16 +4233,26 @@ impl App {
             return;
         };
         let ppq = u64::from(self.project.settings().ppq());
-        let first_tick = item
+        let source_start_tick = item.source_offset_ticks();
+        let source_end_tick = source_start_tick.saturating_add(item.length_ticks());
+        let visible_notes = item
             .notes()
             .iter()
-            .map(|note| note.tick())
+            .filter(|note| (source_start_tick..source_end_tick).contains(&note.tick()))
+            .collect::<Vec<_>>();
+        let first_tick = visible_notes
+            .iter()
+            .map(|note| note.tick().saturating_sub(source_start_tick))
             .min()
             .unwrap_or(0);
-        let last_tick = item
-            .notes()
+        let last_tick = visible_notes
             .iter()
-            .map(|note| note.tick().saturating_add(note.duration()))
+            .map(|note| {
+                note.tick()
+                    .saturating_add(note.duration())
+                    .min(source_end_tick)
+                    .saturating_sub(source_start_tick)
+            })
             .max()
             .unwrap_or(ppq.saturating_mul(4));
         let margin = ppq / 4;
@@ -4250,8 +4266,8 @@ impl App {
         let beats = visible_ticks as f32 / ppq.max(1) as f32;
         self.midi_editor_origin_tick = origin_tick;
         self.midi_editor_pixels_per_beat = (content_width / beats).clamp(1.0, 300.0);
-        let highest_pitch = item.notes().iter().map(|note| note.pitch()).max();
-        let lowest_pitch = item.notes().iter().map(|note| note.pitch()).min();
+        let highest_pitch = visible_notes.iter().map(|note| note.pitch()).max();
+        let lowest_pitch = visible_notes.iter().map(|note| note.pitch()).min();
         if let (Some(lowest_pitch), Some(highest_pitch)) = (lowest_pitch, highest_pitch) {
             let high_pitch = highest_pitch.saturating_add(2).min(127);
             let low_pitch = lowest_pitch.saturating_sub(2);
@@ -5875,8 +5891,13 @@ impl App {
             .iter()
             .any(|item| item.id() == preview.item_id)
         {
-            return preview.edge != timeline::ItemTrimEdge::Start
-                && preview.start_tick < preview.end_tick;
+            let item = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == preview.item_id)
+                .expect("MIDI item was just found");
+            return self.midi_item_trim_bounds(item, preview).is_ok();
         }
         let Some(item) = self
             .project
@@ -5899,28 +5920,29 @@ impl App {
             .iter()
             .find(|item| item.id() == preview.item_id)
         {
-            if preview.edge == timeline::ItemTrimEdge::Start {
-                return Err(
-                    "MIDI start-edge trim needs a source offset to preserve note positions"
-                        .to_owned(),
-                );
-            }
-            let length_ticks = preview
-                .end_tick
-                .checked_sub(preview.start_tick)
-                .filter(|length| *length > 0)
-                .ok_or_else(|| "MIDI Items must remain at least one tick long".to_owned())?;
-            if item.start_tick() == preview.start_tick && item.length_ticks() == length_ticks {
+            let (start_tick, length_ticks, source_offset_ticks) =
+                self.midi_item_trim_bounds(item, preview)?;
+            if item.start_tick() == start_tick
+                && item.length_ticks() == length_ticks
+                && item.source_offset_ticks() == source_offset_ticks
+            {
                 return Ok(None);
             }
-            return Ok(Some((
+            let action = if preview.edge == timeline::ItemTrimEdge::Start {
+                DawAction::TrimMidiItemStart {
+                    item_id: item.id(),
+                    start_tick,
+                    length_ticks,
+                    source_offset_ticks,
+                }
+            } else {
                 DawAction::EditMidiItem {
                     item_id: item.id(),
-                    start_tick: preview.start_tick,
+                    start_tick,
                     length_ticks,
-                },
-                "MIDI item trimmed",
-            )));
+                }
+            };
+            return Ok(Some((action, "MIDI item trimmed")));
         }
         let item = self
             .project
@@ -5997,6 +6019,29 @@ impl App {
         }
         let length_samples = end_sample - start_sample;
         Ok(Some((start_sample, source_offset_samples, length_samples)))
+    }
+
+    fn midi_item_trim_bounds(
+        &self,
+        item: &aaadaw_core::MidiItem,
+        preview: timeline::ItemTrimPreview,
+    ) -> Result<(u64, u64, u64), String> {
+        let length_ticks = preview
+            .end_tick
+            .checked_sub(preview.start_tick)
+            .filter(|length| *length > 0)
+            .ok_or_else(|| "MIDI Items must remain at least one tick long".to_owned())?;
+        let source_offset_ticks = if preview.edge == timeline::ItemTrimEdge::Start {
+            let delta = i128::from(preview.start_tick) - i128::from(item.start_tick());
+            u64::try_from(i128::from(item.source_offset_ticks()) + delta)
+                .map_err(|_| "MIDI trim cannot extend before the source content".to_owned())?
+        } else {
+            item.source_offset_ticks()
+        };
+        source_offset_ticks
+            .checked_add(length_ticks)
+            .ok_or_else(|| "MIDI trim exceeds the source content range".to_owned())?;
+        Ok((preview.start_tick, length_ticks, source_offset_ticks))
     }
 
     fn playback_busy(&self) -> bool {
@@ -6448,7 +6493,7 @@ impl App {
                         && note.duration() == copied.duration
                         && note.velocity() == copied.velocity
                 });
-        matches_clipboard.then_some(start_tick)
+        matches_clipboard.then_some(start_tick.saturating_sub(item.source_offset_ticks()))
     }
 
     fn duplicate_selected_midi_notes(&mut self, item_id: ItemId) {
@@ -6460,6 +6505,8 @@ impl App {
         else {
             return;
         };
+        let source_start_tick = item.source_offset_ticks();
+        let item_end_tick = source_start_tick.saturating_add(item.length_ticks());
         let item_length = item.length_ticks();
         let selected = item
             .notes()
@@ -6495,10 +6542,9 @@ impl App {
                 ..*note
             })
             .collect::<Vec<_>>();
-        if duplicates
-            .iter()
-            .any(|note| note.tick.saturating_add(note.duration) > item_length)
-        {
+        if duplicates.iter().any(|note| {
+            note.tick < source_start_tick || note.tick.saturating_add(note.duration) > item_end_tick
+        }) {
             let feedback = "Duplicate rejected: notes would extend beyond the MIDI item";
             self.status = feedback.to_owned();
             self.midi_editor_feedback = Some(feedback.to_owned());
@@ -6534,8 +6580,11 @@ impl App {
                     .collect();
             }
             self.midi_note_clipboard.last_paste = None;
-            self.midi_editor_edit_cursor_tick =
-                Some(snap_tick_up(target.saturating_add(span), grid).min(item_length));
+            self.midi_editor_edit_cursor_tick = Some(
+                snap_tick_up(target.saturating_add(span), grid)
+                    .saturating_sub(source_start_tick)
+                    .min(item_length),
+            );
         }
     }
 
