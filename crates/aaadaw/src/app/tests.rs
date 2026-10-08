@@ -5,7 +5,8 @@ use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
 use super::prepare_project_playback_file;
 use super::project_io::{
-    load_project_file, load_project_session, save_project_file, save_project_session_file,
+    load_project_file, load_project_session, save_project_file,
+    save_project_session_file_with_media,
 };
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
@@ -23,6 +24,7 @@ use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -1009,7 +1011,7 @@ fn new_project_is_in_file_menu_and_prompts_before_discarding_dirty_work() {
     assert!(app.project_path_query.is_empty());
     assert_eq!(app.revision, 0);
     assert_eq!(app.saved_revision, 0);
-    assert_eq!(app.status, "New project created");
+    assert!(app.status.starts_with("New project created"));
 }
 
 #[test]
@@ -1032,6 +1034,14 @@ fn dirty_main_window_close_offers_save_discard_or_cancel_without_closing() {
     let _ = app.update(Message::CancelProjectTransition);
     assert_eq!(app.pending_project_transition, None);
     assert!(app.is_dirty());
+}
+
+#[test]
+fn new_project_status_keeps_temporary_storage_failures_visible() {
+    assert_eq!(
+        super::new_project_status(Some("permission denied")),
+        "New project created, but temporary media storage is unavailable: permission denied"
+    );
 }
 
 #[test]
@@ -1745,7 +1755,18 @@ fn cancelling_save_dialog_clears_the_wait_for_dialog_status() {
         Message::SaveProject,
         Message::PickPath(PathPickerTarget::SaveProject),
     ] {
-        let mut app = App::default();
+        let temporary_dir = tempfile::tempdir().unwrap();
+        let session_media_path = temporary_dir.path().join("session.aaadaw");
+        std::fs::write(&session_media_path, b"").unwrap();
+        let session_media_dir = super::UnsavedSessionMedia {
+            directory: temporary_dir.keep(),
+            lock: Some(super::ProjectSessionLock::acquire(&session_media_path).unwrap()),
+        };
+        let mut app = App {
+            session_media_dir: Some(session_media_dir),
+            ..App::default()
+        };
+        assert_eq!(app.media_store_path(), Some(session_media_path.clone()));
         let _ = app.update(trigger);
         assert!(app.path_picker_busy);
 
@@ -1755,6 +1776,8 @@ fn cancelling_save_dialog_clears_the_wait_for_dialog_status() {
         let _ = app.update(Message::PathPicked(PathPickerTarget::SaveProject, Ok(None)));
         assert!(!app.path_picker_busy);
         assert_eq!(app.status, "");
+        assert_eq!(app.media_store_path(), Some(session_media_path.clone()));
+        assert!(session_media_path.is_file());
     }
 }
 
@@ -1803,6 +1826,23 @@ fn native_picker_results_fill_the_requested_path_fields() {
 }
 
 #[test]
+fn saving_waits_for_an_unsaved_session_recovery_snapshot() {
+    let mut app = App {
+        project_path: Some(PathBuf::from("project.aaadaw")),
+        unsaved_session_snapshot_busy: true,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::SaveProject);
+
+    assert!(!app.io_busy);
+    assert_eq!(
+        app.status,
+        "Wait for the unsaved session recovery snapshot to finish"
+    );
+}
+
+#[test]
 fn insert_menu_audio_picker_runs_the_import_path_and_keeps_save_guard() {
     let mut app = App {
         path_picker_busy: true,
@@ -1818,7 +1858,7 @@ fn insert_menu_audio_picker_runs_the_import_path_and_keeps_save_guard() {
     assert_eq!(app.audio_file_path_query, audio_path.to_string_lossy());
     assert!(!app.path_picker_busy);
     assert!(!app.import_busy);
-    assert_eq!(app.status, "Save the project before importing audio");
+    assert_eq!(app.status, "Temporary project media storage is unavailable");
 }
 
 #[test]
@@ -3716,12 +3756,13 @@ fn saving_a_new_project_publishes_it_with_the_session_identity_lock_held() {
         })
         .unwrap();
 
-    save_project_session_file(
+    save_project_session_file_with_media(
         path.clone(),
         project.snapshot(),
         ArrangementViewState::default(),
         false,
         Some(&mut session_lock),
+        None,
     )
     .unwrap();
 
@@ -3742,6 +3783,164 @@ fn saving_a_new_project_publishes_it_with_the_session_identity_lock_held() {
             .count(),
         0
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn first_save_migrates_unsaved_audio_assets_before_publishing_the_project() {
+    use std::io::{Cursor, Read};
+
+    let directory = tempfile::tempdir().unwrap();
+    let source_dir = tempfile::tempdir().unwrap();
+    let source_path = source_dir.path().join("session.aaadaw");
+    let destination = directory.path().join("first-save.aaadaw");
+    let mut source_store = ProjectStore::open(&source_path).unwrap();
+    source_store
+        .import_audio_asset(
+            "asset://unsaved-take",
+            "take.wav",
+            Cursor::new(b"audio created before first save"),
+        )
+        .unwrap();
+    source_store.close().unwrap();
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Unsaved audio".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://unsaved-take".to_owned(),
+            start_sample: 120,
+            source_offset_samples: 0,
+            length_samples: 960,
+        })
+        .unwrap();
+    let mut session_lock = ProjectSessionLock::acquire(&destination).unwrap();
+
+    save_project_session_file_with_media(
+        destination.clone(),
+        project.snapshot(),
+        ArrangementViewState::default(),
+        false,
+        Some(&mut session_lock),
+        Some(source_path.clone()),
+    )
+    .unwrap();
+
+    let destination_store = ProjectStore::open(&destination).unwrap();
+    let persisted = destination_store.load().unwrap();
+    assert_eq!(persisted.audio_items().len(), 1);
+    assert_eq!(
+        persisted.audio_items()[0].media_ref(),
+        "asset://unsaved-take"
+    );
+    let aaadaw_storage::ResolvedAudioAsset::Embedded(mut reader) = destination_store
+        .resolve_audio_asset("asset://unsaved-take")
+        .unwrap()
+    else {
+        panic!("the migrated take should remain embedded");
+    };
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"audio created before first save");
+    drop(reader);
+    destination_store.close().unwrap();
+
+    let source_store = ProjectStore::open(source_path).unwrap();
+    let aaadaw_storage::ResolvedAudioAsset::Embedded(mut reader) = source_store
+        .resolve_audio_asset("asset://unsaved-take")
+        .unwrap()
+    else {
+        panic!("the source take must remain available until migration succeeds");
+    };
+    let mut source_bytes = Vec::new();
+    reader.read_to_end(&mut source_bytes).unwrap();
+    assert_eq!(source_bytes, b"audio created before first save");
+    drop(reader);
+    source_store.close().unwrap();
+}
+
+#[test]
+fn abandoned_unsaved_sessions_are_scanned_and_recovered_but_live_sessions_are_skipped() {
+    let root = tempfile::tempdir().unwrap();
+    let active_session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let active_directory = active_session.directory.clone();
+
+    let abandoned_directory = root.path().join("session-abandoned");
+    std::fs::create_dir(&abandoned_directory).unwrap();
+    let abandoned_path = abandoned_directory.join("session.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Recovered track".to_owned(),
+        })
+        .unwrap();
+    super::project_io::save_unsaved_session_snapshot(
+        abandoned_path.clone(),
+        project.snapshot(),
+        ArrangementViewState::default(),
+    )
+    .unwrap();
+
+    let candidates = super::project_io::scan_unsaved_session_recoveries(
+        root.path().to_path_buf(),
+        active_directory,
+    )
+    .unwrap();
+    assert_eq!(candidates, vec![abandoned_path.clone()]);
+
+    let live_lock = ProjectSessionLock::acquire(&abandoned_path).unwrap();
+    assert!(
+        super::project_io::scan_unsaved_session_recoveries(
+            root.path().to_path_buf(),
+            active_session.directory.clone(),
+        )
+        .unwrap()
+        .is_empty()
+    );
+    drop(live_lock);
+
+    let (recovered, view_state, lock) = load_project_session(abandoned_path.clone()).unwrap();
+    assert_eq!(recovered.tracks()[0].name(), "Recovered track");
+    assert_eq!(view_state, Some(ArrangementViewState::default()));
+
+    let mut app = App {
+        session_media_dir: Some(active_session),
+        unsaved_session_recovery_candidates: vec![abandoned_path.clone()],
+        ..App::default()
+    };
+    let result = std::sync::Arc::new(std::sync::Mutex::new(Some(Ok((
+        recovered, view_state, lock,
+    )))));
+    let _ = app.update(Message::UnsavedSessionRecovered(
+        abandoned_path.clone(),
+        result,
+    ));
+    assert_eq!(app.media_store_path(), Some(abandoned_path));
+    assert_eq!(app.project.tracks()[0].name(), "Recovered track");
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn edits_in_an_unsaved_session_schedule_a_recovery_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(directory.path()).unwrap();
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::AddTrack);
+
+    assert!(app.unsaved_session_snapshot_at.is_some());
+    assert_eq!(app.revision, 1);
 }
 
 #[cfg(unix)]
@@ -3781,12 +3980,13 @@ fn project_session_round_trip_restores_arrangement_view_state() {
         }],
     };
     let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
-    save_project_session_file(
+    save_project_session_file_with_media(
         path.clone(),
         project.snapshot(),
         view_state.clone(),
         false,
         Some(&mut session_lock),
+        None,
     )
     .unwrap();
     drop(session_lock);
@@ -5994,6 +6194,71 @@ fn completed_audio_import_places_item_through_project_action() {
     assert_eq!(app.project.audio_items()[0].length_samples(), 128);
     assert_eq!(app.revision, 2);
     assert!(!app.import_busy);
+}
+
+#[test]
+fn unsaved_session_can_start_audio_import_into_its_temporary_store() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let source_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/first-project/melody.wav");
+    let mut app = App {
+        session_media_dir: Some(session),
+        audio_file_path_query: source_path.to_string_lossy().into_owned(),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+
+    let _task = app.start_audio_import();
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path.clone()));
+    assert!(store_path.is_file());
+    assert!(app.import_busy);
+    assert!(app.status.starts_with("Starting import of "));
+}
+
+#[test]
+fn unsaved_session_can_queue_project_rendering() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let destination = root.path().join("render.wav");
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+
+    let _task = app.start_offline_render(destination);
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path));
+    assert!(app.offline_render_busy);
+    assert!(!app.io_busy);
+    assert_eq!(app.status, "Render render.wav…");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn unsaved_session_can_start_recording_preparation() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let _ = app.update(Message::ToggleRecordArm(track_id));
+
+    let _task = app.update(Message::StartRecording);
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path));
+    assert!(app.recording_starting);
+    assert!(app.playback_busy);
 }
 
 #[test]

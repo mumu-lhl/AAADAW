@@ -1287,6 +1287,61 @@ impl ProjectStore {
         Ok(media_ref)
     }
 
+    /// Copies every published embedded or externally linked audio asset from another project.
+    ///
+    /// Media references remain stable, so snapshots that already point at these assets need no
+    /// rewriting. The copy commits all assets together and ignores unpublished imports.
+    pub fn copy_audio_assets_from(&mut self, source: &ProjectStore) -> Result<(), StorageError> {
+        if source.database_path == Path::new(":memory:") {
+            return Err(StorageError::InvalidStoredData(
+                "in-memory database cannot be copied",
+            ));
+        }
+        if self.database_path == source.database_path {
+            return Ok(());
+        }
+
+        let source_path = source.database_path.to_string_lossy().into_owned();
+        self.connection
+            .execute("ATTACH DATABASE ?1 AS source_assets", [&source_path])?;
+
+        let copy_result = (|| {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "INSERT INTO main.audio_assets
+                 SELECT * FROM source_assets.audio_assets WHERE import_state = 1;
+                 INSERT INTO main.audio_asset_storage_chunks
+                 SELECT chunks.* FROM source_assets.audio_asset_storage_chunks AS chunks
+                 JOIN source_assets.audio_assets AS assets
+                   ON assets.storage_key = chunks.storage_key
+                 WHERE assets.import_state = 1;
+                 INSERT INTO main.audio_asset_metadata
+                 SELECT metadata.* FROM source_assets.audio_asset_metadata AS metadata
+                 JOIN source_assets.audio_assets AS assets
+                   ON assets.media_ref = metadata.media_ref
+                 WHERE assets.import_state = 1;
+                 INSERT INTO main.audio_asset_links
+                 SELECT * FROM source_assets.audio_asset_links;
+                 INSERT INTO main.audio_asset_chunks
+                 SELECT chunks.* FROM source_assets.audio_asset_chunks AS chunks
+                 JOIN source_assets.audio_assets AS assets
+                   ON assets.media_ref = chunks.media_ref
+                 WHERE assets.import_state = 1;",
+            )?;
+            transaction.commit()?;
+            Ok::<_, StorageError>(())
+        })();
+
+        let detach_result = self
+            .connection
+            .execute_batch("DETACH DATABASE source_assets");
+        copy_result?;
+        detach_result?;
+        Ok(())
+    }
+
     /// Registers a live external-file reference without copying its audio bytes into the project.
     ///
     /// The file's canonical absolute path is persisted. Use this opt-in mode for shared or very
@@ -2154,6 +2209,17 @@ impl ProjectStore {
             meter_points,
         })
         .map_err(StorageError::Snapshot)
+    }
+
+    /// Returns whether a project snapshot has been written to this database.
+    pub fn has_saved_snapshot(&self) -> Result<bool, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_meta WHERE singleton = 1)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::from)
     }
 
     /// Checkpoints the WAL, keeping the database usable while this store remains open.
@@ -3064,4 +3130,74 @@ fn from_sql_u16(value: i64) -> Result<u16, StorageError> {
 
 fn from_sql_u8(value: i64) -> Result<u8, StorageError> {
     u8::try_from(value).map_err(|_| StorageError::InvalidStoredData("MIDI value is out of range"))
+}
+
+#[cfg(test)]
+mod audio_asset_copy_tests {
+    use super::{ProjectStore, ResolvedAudioAsset};
+    use std::io::{Cursor, Read};
+
+    #[test]
+    fn copying_audio_assets_preserves_embedded_content_and_external_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let source_path = directory.path().join("unsaved.aaadaw");
+        let destination_path = directory.path().join("saved.aaadaw");
+        let linked_path = directory.path().join("linked.wav");
+        std::fs::write(&linked_path, b"external audio").unwrap();
+
+        let mut source = ProjectStore::open(&source_path).unwrap();
+        source
+            .import_audio_asset(
+                "asset://embedded",
+                "take.wav",
+                Cursor::new(b"embedded audio"),
+            )
+            .unwrap();
+        let linked_ref = source.link_external_audio_file(&linked_path).unwrap();
+
+        let mut destination = ProjectStore::open(&destination_path).unwrap();
+        destination.copy_audio_assets_from(&source).unwrap();
+
+        let ResolvedAudioAsset::Embedded(mut reader) =
+            destination.resolve_audio_asset("asset://embedded").unwrap()
+        else {
+            panic!("embedded asset should remain embedded");
+        };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"embedded audio");
+        drop(reader);
+
+        let ResolvedAudioAsset::LinkedFile {
+            path,
+            original_name,
+        } = destination.resolve_audio_asset(&linked_ref).unwrap()
+        else {
+            panic!("linked asset should remain linked");
+        };
+        assert_eq!(path, linked_path.canonicalize().unwrap());
+        assert_eq!(original_name, "linked.wav");
+
+        destination.close().unwrap();
+        source.close().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod saved_snapshot_tests {
+    use super::ProjectStore;
+    use aaadaw_core::Project;
+
+    #[test]
+    fn empty_session_store_is_distinguishable_from_a_recoverable_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+
+        assert!(!store.has_saved_snapshot().unwrap());
+        store.save(&Project::new()).unwrap();
+        assert!(store.has_saved_snapshot().unwrap());
+
+        store.close().unwrap();
+    }
 }

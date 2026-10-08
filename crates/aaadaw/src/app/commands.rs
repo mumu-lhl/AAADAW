@@ -1311,7 +1311,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::OpenSettings => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
-            app.project_path.is_some()
+            app.media_store_path().is_some()
                 && !recording_busy(app)
                 && app.offline_job_submission_allowed()
         }
@@ -1354,7 +1354,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
                 && !app.project.tracks().is_empty()
-                && app.project_path.is_some()
+                && app.media_store_path().is_some()
         }
         CommandKind::DuplicateSelectedAudioItem => {
             !project_edit_busy(app)

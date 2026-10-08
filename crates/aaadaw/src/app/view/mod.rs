@@ -162,6 +162,36 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING),
         );
     }
+    if app.project_path.is_none()
+        && let Some(candidate) = app.unsaved_session_recovery_candidates.first()
+    {
+        let count = app.unsaved_session_recovery_candidates.len();
+        let mut notice = row![
+            text("An unsaved project session was left by an earlier run.").size(12),
+            button(text("Recover").size(12))
+                .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+                .on_press_maybe(
+                    (!app.unsaved_session_recovery_busy && !app.is_dirty())
+                        .then_some(Message::RecoverUnsavedSession(candidate.clone()))
+                ),
+            button(text("Discard").size(12))
+                .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+                .on_press_maybe(
+                    (!app.unsaved_session_recovery_busy)
+                        .then_some(Message::DiscardUnsavedSession(candidate.clone()))
+                ),
+        ]
+        .spacing(tokens::SECTION_GAP)
+        .align_y(Alignment::Center);
+        if count > 1 {
+            notice = notice.push(text(format!("{count} sessions")).size(11));
+        }
+        content = content.push(
+            container(notice)
+                .width(Length::Fill)
+                .padding(tokens::PANEL_PADDING),
+        );
+    }
     let transport = container(transport_view(app))
         .width(Length::Fill)
         .padding(tokens::PANEL_PADDING)
