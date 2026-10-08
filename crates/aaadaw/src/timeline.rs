@@ -1385,12 +1385,15 @@ impl TimelineState {
                 self.pan_fractional_tick = 0.0;
             }
             TimelineEvent::FitProjectToView { viewport_width } => {
-                let range: Option<(u64, u64)> = self.cache.items.iter().fold(None, |range, item| {
-                    Some(match range {
-                        Some((start, end)) => (start.min(item.start_tick), end.max(item.end_tick)),
-                        None => (item.start_tick, item.end_tick),
-                    })
-                });
+                let range: Option<(u64, u64)> =
+                    self.cache.items.iter().fold(None, |range, item| {
+                        Some(match range {
+                            Some((start, end)) => {
+                                (start.min(item.start_tick), end.max(item.end_tick))
+                            }
+                            None => (item.start_tick, item.end_tick),
+                        })
+                    });
                 self.fit_tick_range(range, viewport_width);
             }
             TimelineEvent::FitSelectionToView { viewport_width } => {
@@ -3906,8 +3909,10 @@ fn fit_tick_range(range: Option<(u64, u64)>, viewport_width: f32) -> Option<(u64
     let margin = span * 0.05;
     let origin_tick = (start_tick as f64 - margin).max(0.0).floor() as u64;
     let visible_span = end_tick as f64 + margin - origin_tick as f64;
-    let pixels_per_tick = (f64::from(viewport_width) / visible_span)
-        .clamp(f64::from(MIN_PIXELS_PER_TICK), f64::from(MAX_PIXELS_PER_TICK)) as f32;
+    let pixels_per_tick = (f64::from(viewport_width) / visible_span).clamp(
+        f64::from(MIN_PIXELS_PER_TICK),
+        f64::from(MAX_PIXELS_PER_TICK),
+    ) as f32;
     Some((origin_tick, pixels_per_tick))
 }
 
