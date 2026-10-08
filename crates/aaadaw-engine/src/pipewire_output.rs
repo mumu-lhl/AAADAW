@@ -778,11 +778,14 @@ fn inspect_pipewire_routes(
                     let sample_rate = properties
                         .get("audio.rate")
                         .and_then(|rate| rate.parse::<u32>().ok());
-                    listener_snapshot.borrow_mut().nodes.push(PipeWireRouteNode {
-                        id: global.id,
-                        name,
-                        sample_rate_hz: sample_rate,
-                    });
+                    listener_snapshot
+                        .borrow_mut()
+                        .nodes
+                        .push(PipeWireRouteNode {
+                            id: global.id,
+                            name,
+                            sample_rate_hz: sample_rate,
+                        });
                 }
                 pw::types::ObjectType::Port => {
                     let Some(node_id) = properties
@@ -796,11 +799,14 @@ fn inspect_pipewire_routes(
                         .or_else(|| properties.get("port.name"))
                         .unwrap_or("Unknown PipeWire port")
                         .to_owned();
-                    listener_snapshot.borrow_mut().ports.push(PipeWireRoutePort {
-                        id: global.id,
-                        node_id,
-                        name,
-                    });
+                    listener_snapshot
+                        .borrow_mut()
+                        .ports
+                        .push(PipeWireRoutePort {
+                            id: global.id,
+                            node_id,
+                            name,
+                        });
                 }
                 pw::types::ObjectType::Link => {
                     let Some(output_node_id) = properties
@@ -908,16 +914,12 @@ fn pipewire_route_summaries(
         .iter()
         .filter_map(|link| {
             let (own_port_id, peer_node_id, peer_port_id) = match direction {
-                PipeWireRouteDirection::Input if link.input_node_id == node_id => (
-                    link.input_port_id,
-                    link.output_node_id,
-                    link.output_port_id,
-                ),
-                PipeWireRouteDirection::Output if link.output_node_id == node_id => (
-                    link.output_port_id,
-                    link.input_node_id,
-                    link.input_port_id,
-                ),
+                PipeWireRouteDirection::Input if link.input_node_id == node_id => {
+                    (link.input_port_id, link.output_node_id, link.output_port_id)
+                }
+                PipeWireRouteDirection::Output if link.output_node_id == node_id => {
+                    (link.output_port_id, link.input_node_id, link.input_port_id)
+                }
                 _ => return None,
             };
             let own_port = ports
@@ -1005,23 +1007,11 @@ mod tests {
             },
         ];
         assert_eq!(
-            pipewire_route_summaries(
-                &nodes,
-                &ports,
-                &links,
-                20,
-                PipeWireRouteDirection::Input
-            ),
+            pipewire_route_summaries(&nodes, &ports, &links, 20, PipeWireRouteDirection::Input),
             vec!["Microphone:capture_FL → AAADAW:input_FL".to_owned()]
         );
         assert_eq!(
-            pipewire_route_summaries(
-                &nodes,
-                &ports,
-                &links,
-                20,
-                PipeWireRouteDirection::Output
-            ),
+            pipewire_route_summaries(&nodes, &ports, &links, 20, PipeWireRouteDirection::Output),
             vec!["AAADAW:output_FL → Speakers:playback_FL".to_owned()]
         );
     }
