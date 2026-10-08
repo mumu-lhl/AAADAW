@@ -73,7 +73,14 @@ pub(super) fn playback_diagnostic_suffix(
 }
 
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
-    if app.settings_window_id == Some(window_id) {
+    if app.main_window_id == Some(window_id)
+        && app.mobile_panel == super::MobilePanel::MidiEditor
+    {
+        let size = app
+            .main_window_size
+            .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
+        mobile_view(app, size.width, size.height)
+    } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.render_window_id == Some(window_id) {
         render::view(app)
@@ -92,7 +99,7 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     responsive(move |size| {
-        if size.width < 720.0 {
+        if cfg!(target_os = "android") || size.width < 720.0 {
             mobile_view(app, size.width, size.height)
         } else {
             desktop_view(app)
@@ -367,6 +374,7 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
             MainWorkspace::Arrangement => arrangement::mobile_view(app),
             MainWorkspace::Mixer => mixer::mobile_view(app),
         },
+        super::MobilePanel::MidiEditor => midi_editor::mobile_view(app),
         super::MobilePanel::MediaBrowser => media::mobile_view(app),
         super::MobilePanel::Settings => settings::view(app),
         super::MobilePanel::TimeMap => tempo_map::mobile_view(app),

@@ -229,11 +229,12 @@
 - [x] 为小于 720 dp 的窗口提供单栏触控布局：菜单可横向浏览，Arrange 改为时间线优先，轨道控制与选中 Item 的 Inspector 共用空间，Transport 收敛为常用操作；桌面窄窗可预览此布局。
 - [x] 建立 Android NativeActivity/APK 启动壳，接通 Iced/winit 原生 event loop，并在 API 35 模拟器验证安装、启动、重启、字体缩放与旋转（[`android-app/`](android-app/)、[`平台支持说明`](docs/platforms.md)）。
 - [x] 通过 Android SAF 打开/保存 `.aaadaw` 工程、导入音频和选择 WAV 导出目标；工程在应用私有目录 staging，保存后同步回用户授权的文档 URI（[Issue #217](https://github.com/mumu-lhl/AAADAW/issues/217)）。
-- [x] 接入 CPAL Android AAudio 播放/录音；录音请求麦克风权限并运行麦克风前台服务，播放运行媒体播放前台服务，使音频流在 Activity 进入后台后仍可运行。
+- [x] 接入 CPAL Android AAudio 播放/录音；录音请求麦克风权限并运行麦克风前台服务，播放运行媒体播放前台服务，使音频流在 Activity 进入后台后仍可运行；窗口失焦时暂停 UI 轮询，避免后台计时消息积压，重新聚焦后恢复。
 - [x] 检测到播放输出流丢失时，关闭失效流并从当前播放位置重建输出、尝试继续播放；设备仍不可用时安全停止并报告状态。
 - [x] Android 录音输入路由丢失时，关闭旧流并尝试重开所选输入；使用单生产者有界队列切换并按捕获时钟写入静音间隔，重开失败时收尾已有音频，超过 10 秒的中断保留恢复数据并报告时序错误。
 - [x] 为小屏触控提供单栏 Arrange、可横向浏览的菜单和轨道选择器、选中轨道/Item Inspector、常用 Transport 控件及放大的音量、声像和轨道按钮。
-- [x] 手机端 Media、Settings、Tempo/Meter Map、FX chain 和 CLAP picker 使用单面板导航；返回时保留工程、轨道选择、编辑光标与播放状态。
+- [x] Android 的 Media、Settings、Tempo/Meter Map、FX chain、CLAP picker 和 MIDI piano roll 使用单窗口单面板导航；返回时保留工程、轨道选择、编辑光标与播放状态。
+- [x] 为手机 MIDI piano roll 提供 Select/Draw/Erase 触控工具、48 dp 音符命中区和横向浏览的控制器 lane。
 - [x] 接入 Android ARM64 CLAP 插件导入、扫描和进程内乐器/效果宿主；通过 SAF 导入至应用私有目录，插件编辑器窗口暂不支持。
 - [x] 接入 Android MIDI 1.0 USB/已配对蓝牙设备端口；播放时将输入送到所选乐器轨并向已连接输出端口发送工程 MIDI。当前通道固定为 MIDI Channel 1，输入暂不录入 MIDI Item；详见[平台说明](docs/platforms.md)。
 - [ ] 在支持的 USB/蓝牙 MIDI 设备上验证输入监听和输出；不以模拟器构建代替设备验收。

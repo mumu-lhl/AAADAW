@@ -68,7 +68,7 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, MobilePanel,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, MidiEditorTool, MobilePanel,
     PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
@@ -260,6 +260,7 @@ struct App {
     mobile_panel: MobilePanel,
     mobile_panel_history: Vec<MobilePanel>,
     main_window_size: Option<iced::Size>,
+    android_app_unfocused: bool,
     project_path_query: String,
     project_path: Option<PathBuf>,
     session_media_dir: Option<UnsavedSessionMedia>,
@@ -324,6 +325,7 @@ struct App {
     midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_lane: MidiEditorLane,
+    midi_editor_tool: MidiEditorTool,
     midi_editor_origin_tick: u64,
     midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
@@ -1000,9 +1002,10 @@ fn duplicate_item_actions(
 
 impl App {
     fn is_mobile_main_window(&self) -> bool {
-        self.main_window_size
-            .map(|size| size.width < 720.0)
-            .unwrap_or(cfg!(target_os = "android"))
+        cfg!(target_os = "android")
+            || self
+                .main_window_size
+                .is_some_and(|size| size.width < 720.0)
     }
 
     fn show_mobile_panel(&mut self, panel: MobilePanel) {
@@ -1018,6 +1021,14 @@ impl App {
     }
 
     fn navigate_back_mobile_panel(&mut self) {
+        if self.mobile_panel == MobilePanel::MidiEditor {
+            self.release_midi_preview();
+            self.midi_editor_window_id = None;
+            self.midi_editor_item_id = None;
+            self.midi_editor_feedback = None;
+            self.midi_editor_selected_notes.clear();
+            self.midi_editor_edit_cursor_tick = None;
+        }
         self.cancel_shortcut_capture();
         self.mobile_panel = self
             .mobile_panel_history
@@ -1270,38 +1281,41 @@ impl App {
         } else {
             Duration::from_millis(100)
         };
-        let background_ticks = if self.import_busy
-            || playback_active
-            || recording_active
-            || {
-                #[cfg(all(feature = "audio-device", target_os = "android"))]
-                {
-                    self.settings_category == SettingsCategory::Audio
+        let app_can_poll = !cfg!(target_os = "android") || !self.android_app_unfocused;
+        let background_ticks = if app_can_poll
+            && (self.import_busy
+                || playback_active
+                || recording_active
+                || {
+                    #[cfg(all(feature = "audio-device", target_os = "android"))]
+                    {
+                        self.settings_category == SettingsCategory::Audio
+                    }
+                    #[cfg(not(all(feature = "audio-device", target_os = "android")))]
+                    {
+                        false
+                    }
                 }
-                #[cfg(not(all(feature = "audio-device", target_os = "android")))]
-                {
-                    false
-                }
-            }
-            || fx_automation_finishing
-            || self.offline_render_busy
-            || !self.offline_job_queue.is_empty()
-            || self.audio_asset_management_busy
-            || self.audio_waveform_worker.is_some()
-            || self.track_mix_gesture.is_some()
-            || self.unsaved_session_snapshot_at.is_some()
+                || fx_automation_finishing
+                || self.offline_render_busy
+                || !self.offline_job_queue.is_empty()
+                || self.audio_asset_management_busy
+                || self.audio_waveform_worker.is_some()
+                || self.track_mix_gesture.is_some()
+                || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
         };
-        let meter_ticks = if playback_active {
+        let meter_ticks = if app_can_poll && playback_active {
             iced::time::every(Duration::from_millis(33)).map(|_| Message::MeterTick)
         } else {
             iced::Subscription::none()
         };
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
+            iced::event::listen_with(android_app_focus_event),
             iced::event::listen_with(midi_expression_context_menu_event),
             iced::event::listen_with(fx_chain_plugin_drag_event),
             iced::window::close_events().map(Message::WindowClosed),
@@ -1471,6 +1485,9 @@ impl App {
                     | Message::OpenPluginPicker
                     | Message::OpenMidiEditor(_)
                     | Message::CloseMidiEditor
+                    | Message::SelectMidiEditorLane(_)
+                    | Message::SelectMidiEditorTool(_)
+                    | Message::AndroidAppFocusChanged(_)
                     | Message::CloseTrackFxChain
                     | Message::ClosePluginPicker
                     | Message::PluginPickerSearchChanged(_)
@@ -1877,7 +1894,9 @@ impl App {
                     self.plugin_picker_track_id = None;
                     self.plugin_picker_instrument_track_id = None;
                     self.plugin_picker_search.clear();
-                } else if self.midi_editor_window_id == Some(window_id) {
+                } else if self.midi_editor_window_id == Some(window_id)
+                    && self.main_window_id != Some(window_id)
+                {
                     self.release_midi_preview();
                     self.midi_editor_window_id = None;
                     self.midi_editor_item_id = None;
@@ -1911,13 +1930,20 @@ impl App {
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_edit_cursor_tick = None;
-                    task = iced::window::close(window_id);
+                    if self.main_window_id == Some(window_id)
+                        && self.mobile_panel == MobilePanel::MidiEditor
+                    {
+                        self.navigate_back_mobile_panel();
+                    } else {
+                        task = iced::window::close(window_id);
+                    }
                 }
             }
             Message::SelectMidiEditorLane(lane) => {
                 self.release_midi_preview();
                 self.midi_editor_lane = lane;
             }
+            Message::SelectMidiEditorTool(tool) => self.midi_editor_tool = tool,
             Message::PreviewMidiNote(track_id, pitch) => {
                 #[cfg(feature = "audio-device")]
                 if self.midi_editor_window_id.is_some()
@@ -2382,6 +2408,9 @@ impl App {
                     self.fx_chain_window_size = size;
                     self.resize_fx_editor_host();
                 }
+            }
+            Message::AndroidAppFocusChanged(focused) => {
+                self.android_app_unfocused = !focused;
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
@@ -4487,6 +4516,30 @@ impl App {
             .any(|item| item.id() == item_id)
         {
             self.status = "The selected MIDI item no longer exists".to_owned();
+            return Task::none();
+        }
+        if cfg!(target_os = "android") {
+            let Some(window_id) = self.main_window_id else {
+                self.status = "The Android editor window is not ready".to_owned();
+                return Task::none();
+            };
+            let item_changed = self.midi_editor_item_id != Some(item_id);
+            if item_changed {
+                self.release_midi_preview();
+                self.midi_editor_origin_tick = 0;
+                self.midi_editor_edit_cursor_tick = None;
+            }
+            self.midi_editor_window_id = Some(window_id);
+            self.midi_editor_item_id = Some(item_id);
+            self.midi_editor_window_size = self
+                .main_window_size
+                .unwrap_or(iced::Size::new(420.0, 640.0));
+            self.midi_editor_feedback = None;
+            self.midi_editor_selected_notes.clear();
+            if item_changed {
+                self.fit_midi_editor_to_item(item_id);
+            }
+            self.show_mobile_panel(MobilePanel::MidiEditor);
             return Task::none();
         }
         if let Some(window_id) = self.midi_editor_window_id {
@@ -8163,6 +8216,25 @@ fn runtime_keyboard_event(
 ) -> Option<Message> {
     matches!(event, iced::Event::Keyboard(_))
         .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
+}
+
+fn android_app_focus_event(
+    event: iced::Event,
+    _status: iced::event::Status,
+    _window_id: iced::window::Id,
+) -> Option<Message> {
+    if !cfg!(target_os = "android") {
+        return None;
+    }
+    match event {
+        iced::Event::Window(iced::window::Event::Focused) => {
+            Some(Message::AndroidAppFocusChanged(true))
+        }
+        iced::Event::Window(iced::window::Event::Unfocused) => {
+            Some(Message::AndroidAppFocusChanged(false))
+        }
+        _ => None,
+    }
 }
 
 fn midi_expression_context_menu_event(

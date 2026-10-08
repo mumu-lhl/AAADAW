@@ -11,7 +11,8 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, MenuNavigation, Message, MobilePanel, PathPickerTarget,
+    App, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool, MobilePanel,
+    PathPickerTarget,
     fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
     midi_editor_shortcut_event, midi_expression_context_menu_event, mobile_back_event,
     shortcut_message,
@@ -42,6 +43,27 @@ fn transport_details_can_toggle_during_project_io() {
     assert!(app.transport_details_open);
     let _ = app.update(Message::ToggleTransportDetails);
     assert!(!app.transport_details_open);
+}
+
+#[test]
+fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        midi_editor_window_id: Some(window_id),
+        mobile_panel: MobilePanel::MidiEditor,
+        mobile_panel_history: vec![MobilePanel::Editor],
+        ..App::default()
+    };
+
+    let _ = app.update(Message::SelectMidiEditorTool(MidiEditorTool::Draw));
+    assert_eq!(app.midi_editor_tool, MidiEditorTool::Draw);
+
+    let _ = app.update(Message::CloseMidiEditor);
+
+    assert_eq!(app.main_window_id, Some(window_id));
+    assert_eq!(app.midi_editor_window_id, None);
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
 }
 
 #[test]

@@ -84,11 +84,13 @@ distribution remains a release task.
 
 ## Android
 
-The Android app uses NativeActivity with the Iced/winit event loop and an
-Android-specific compact touch layout below 720 logical pixels. Project open
-and save use the Storage Access Framework (SAF): documents are staged in the
-app's private storage while open, and saved project/WAV files are copied back
-to the user-selected URI. Audio import is staged before it enters the project.
+The Android app uses NativeActivity with the Iced/winit event loop and a
+single-window touch shell. Widths below 720 logical pixels use the compact
+phone layout. Wider Android windows keep the same single-window navigation.
+Project open and save use the Storage Access Framework (SAF): documents are
+staged in the app's private storage while open, and saved project/WAV files are
+copied back to the user-selected URI. Audio import is staged before it enters
+the project.
 The Android audio feature uses CPAL's AAudio backend for playback and capture;
 API 28 and newer request AAudio's unprocessed input preset when the symbol is
 available, while API 26/27 retain the platform default. Recording asks for
@@ -99,18 +101,21 @@ the Activity moves to the background. While either mode is active, the shared
 service holds a partial wake lock and releases it when both modes end. If an
 output stream is lost while playing, AAADAW closes it and tries to reopen
 playback at the last reported sample. If no output is available, playback stops
-with an error.
+with an error. When the Android window loses focus, UI polling pauses so meter
+and progress ticks do not build up while the activity is suspended; polling
+resumes when a window regains focus.
 If an input route fails while recording, AAADAW closes the old stream and tries
 to reopen the selected input. The capture writer preserves the outage as silence
 between timestamped audio blocks. If reopening fails, AAADAW finalizes the audio
 captured before the route loss. Gaps longer than ten seconds fail the timing
 check and leave the recoverable recording data available for recovery.
 
-On phone-sized windows, Media Browser, Settings, Tempo/Meter Map, the track FX
-chain, and the CLAP picker use single-panel navigation in the main window. The
-Back action returns to the prior panel while retaining the project, selected
-track, edit cursor, and playback state. Native CLAP editor windows remain
-unsupported on Android.
+On Android, Media Browser, Settings, Tempo/Meter Map, the track FX chain, the
+CLAP picker, and the MIDI piano roll use single-panel navigation in the main
+window. The MIDI editor provides touch Select, Draw, and Erase tools, 48 dp
+note hit targets, and horizontally browsable controls. The Back action returns
+to the prior panel while retaining the project, selected track, edit cursor,
+and playback state. Native CLAP editor windows remain unsupported on Android.
 
 Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:

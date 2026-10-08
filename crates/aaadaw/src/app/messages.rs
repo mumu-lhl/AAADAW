@@ -76,6 +76,7 @@ pub(crate) enum MainWorkspace {
 pub(crate) enum MobilePanel {
     #[default]
     Editor,
+    MidiEditor,
     MediaBrowser,
     Settings,
     TimeMap,
@@ -87,6 +88,7 @@ impl MobilePanel {
     pub(crate) const fn title(self) -> &'static str {
         match self {
             Self::Editor => "Editor",
+            Self::MidiEditor => "MIDI Editor",
             Self::MediaBrowser => "Media Browser",
             Self::Settings => "Settings",
             Self::TimeMap => "Time Map",
@@ -133,6 +135,14 @@ pub(crate) enum MidiEditorLane {
     Modulation,
     Expression,
     PitchBend,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorTool {
+    #[default]
+    Select,
+    Draw,
+    Erase,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +195,7 @@ pub(crate) enum Message {
     PreviewMidiNote(TrackId, u8),
     ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
+    SelectMidiEditorTool(MidiEditorTool),
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
@@ -239,6 +250,7 @@ pub(crate) enum Message {
     FxChainWindowNativeHandle(iced::window::Id, Option<u64>),
     FxChainWindowScaleFactor(iced::window::Id, f32),
     WindowResized(iced::window::Id, iced::Size),
+    AndroidAppFocusChanged(bool),
     WindowCloseRequested(iced::window::Id),
     WindowClosed(iced::window::Id),
     StartShortcutCapture(String),
