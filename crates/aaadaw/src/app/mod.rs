@@ -3434,7 +3434,7 @@ impl App {
         );
         self.timeline.handle(event);
         if item_trim_preview_changed && let Some(preview) = self.timeline.item_trim_preview() {
-            let valid = self.item_trim_action(preview).is_ok();
+            let valid = self.item_trim_preview_is_valid(preview);
             self.timeline.set_item_trim_valid(valid);
         }
         #[cfg(feature = "audio-device")]
@@ -5544,22 +5544,94 @@ impl App {
             return;
         };
         match self.item_trim_action(preview) {
-            Ok(Some(action)) => self.apply_action(action, "Audio item trimmed"),
+            Ok(Some((action, status))) => self.apply_action(action, status),
             Ok(None) => {}
             Err(error) => self.status = format!("Trim rejected: {error}"),
         }
     }
 
+    fn item_trim_preview_is_valid(&self, preview: timeline::ItemTrimPreview) -> bool {
+        if self
+            .project
+            .midi_items()
+            .iter()
+            .any(|item| item.id() == preview.item_id)
+        {
+            return preview.edge != timeline::ItemTrimEdge::Start
+                && preview.start_tick < preview.end_tick;
+        }
+        let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == preview.item_id)
+        else {
+            return false;
+        };
+        self.audio_item_trim_bounds(item, preview).is_ok()
+    }
+
     fn item_trim_action(
         &self,
         preview: timeline::ItemTrimPreview,
-    ) -> Result<Option<DawAction>, String> {
+    ) -> Result<Option<(DawAction, &'static str)>, String> {
+        if let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == preview.item_id)
+        {
+            if preview.edge == timeline::ItemTrimEdge::Start {
+                return Err(
+                    "MIDI start-edge trim needs a source offset to preserve note positions"
+                        .to_owned(),
+                );
+            }
+            let length_ticks = preview
+                .end_tick
+                .checked_sub(preview.start_tick)
+                .filter(|length| *length > 0)
+                .ok_or_else(|| "MIDI Items must remain at least one tick long".to_owned())?;
+            if item.start_tick() == preview.start_tick && item.length_ticks() == length_ticks {
+                return Ok(None);
+            }
+            return Ok(Some((
+                DawAction::EditMidiItem {
+                    item_id: item.id(),
+                    start_tick: preview.start_tick,
+                    length_ticks,
+                },
+                "MIDI item trimmed",
+            )));
+        }
         let item = self
             .project
             .audio_items()
             .iter()
             .find(|item| item.id() == preview.item_id)
-            .ok_or_else(|| format!("audio item {} no longer exists", preview.item_id.value()))?;
+            .ok_or_else(|| format!("item {} no longer exists", preview.item_id.value()))?;
+        let Some((start_sample, source_offset_samples, length_samples)) =
+            self.audio_item_trim_bounds(item, preview)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((
+            DawAction::EditAudioItem {
+                item_id: preview.item_id,
+                media_ref: item.media_ref().to_owned(),
+                start_sample,
+                source_offset_samples,
+                length_samples,
+            },
+            "Audio item trimmed",
+        )))
+    }
+
+    fn audio_item_trim_bounds(
+        &self,
+        item: &aaadaw_core::AudioItem,
+        preview: timeline::ItemTrimPreview,
+    ) -> Result<Option<(u64, u64, u64)>, String> {
         let old_start = item.start_sample();
         let old_end = old_start
             .checked_add(item.length_samples())
@@ -5606,13 +5678,7 @@ impl App {
             return Err("Audio trim must stay within the source media".to_owned());
         }
         let length_samples = end_sample - start_sample;
-        Ok(Some(DawAction::EditAudioItem {
-            item_id: preview.item_id,
-            media_ref: item.media_ref().to_owned(),
-            start_sample,
-            source_offset_samples,
-            length_samples,
-        }))
+        Ok(Some((start_sample, source_offset_samples, length_samples)))
     }
 
     fn playback_busy(&self) -> bool {
