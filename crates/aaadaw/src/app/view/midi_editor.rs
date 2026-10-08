@@ -4174,8 +4174,8 @@ mod tests {
                 HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
             ),
         );
-        let start = Point::new(KEY_WIDTH + 40.0, HEADER_HEIGHT);
-        let end = Point::new(KEY_WIDTH + 90.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT);
+        let start = Point::new(KEY_WIDTH + 10.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let end = Point::new(KEY_WIDTH + 90.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         let moved = Event::Mouse(mouse::Event::CursorMoved { position: end });
