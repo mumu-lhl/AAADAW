@@ -132,6 +132,11 @@ impl ClapIpcAudioPort {
         self.region().discard_stale_requests(generation);
     }
 
+    /// Frees completed responses from an obsolete generation without waiting for the helper.
+    pub(crate) fn discard_stale_responses(&self, generation: u64) {
+        self.region().discard_stale_responses(generation);
+    }
+
     /// Allocates a fixed-size reader on a control thread for variable callback frame counts.
     pub fn reader(
         &self,
@@ -1379,6 +1384,33 @@ impl ClapIpcRegion {
         }
     }
 
+    fn discard_stale_responses(&self, generation: u64) {
+        for slot in &self.slots {
+            if slot
+                .state
+                .compare_exchange(
+                    SLOT_RESPONSE_READY,
+                    SLOT_READING,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            // SAFETY: RESPONSE_READY -> READING grants exclusive access to the response header.
+            let response_generation = unsafe { (&*slot.payload.get()).generation };
+            slot.state.store(
+                if response_generation == generation {
+                    SLOT_RESPONSE_READY
+                } else {
+                    SLOT_FREE
+                },
+                Ordering::Release,
+            );
+        }
+    }
+
     pub fn underrun_count(&self) -> u64 {
         self.underruns.load(Ordering::Relaxed)
     }
@@ -1774,6 +1806,31 @@ mod tests {
             true
         }));
         assert!(region.has_response(5, 0, 256));
+    }
+
+    #[test]
+    fn stale_responses_completed_after_generation_reset_are_reclaimed() {
+        let region = region();
+        region.try_submit(4, 0, 128, &[], 8).unwrap();
+        let old_request = region.try_claim_request().unwrap();
+
+        // A generation reset cannot reclaim a slot while the helper owns it.
+        region.discard_stale_responses(5);
+        assert_eq!(
+            region.slots[0].state.load(Ordering::Acquire),
+            SLOT_PROCESSING
+        );
+
+        // The helper can finish after that reset, leaving a stale ready response behind.
+        assert!(old_request.process(|_| true));
+        assert_eq!(
+            region.slots[0].state.load(Ordering::Acquire),
+            SLOT_RESPONSE_READY
+        );
+        region.discard_stale_responses(5);
+        assert_eq!(region.slots[0].state.load(Ordering::Acquire), SLOT_FREE);
+
+        region.try_submit(5, 0, 256, &[], 8).unwrap();
     }
 
     #[test]
