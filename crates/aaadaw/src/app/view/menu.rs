@@ -6,6 +6,8 @@ use iced::{Alignment, Background, Border, Color, Element, Length};
 
 const MENU_LEFT: f32 = tokens::SPACING_LG;
 const MENU_BAR_HEIGHT: f32 = 30.0;
+const MENU_KEYBOARD_HINT_HEIGHT: f32 = 16.0;
+const MOBILE_ACTION_MENU_CHROME_HEIGHT: f32 = 72.0;
 
 #[derive(Clone, Copy)]
 struct MenuLayout {
@@ -187,7 +189,11 @@ fn menu_commands(
         } else {
             0.0
         }
-        + if touch_targets { 16.0 } else { 0.0 };
+        + if touch_targets {
+            MENU_KEYBOARD_HINT_HEIGHT
+        } else {
+            0.0
+        };
     let max_content_height = (max_height - tokens::PANEL_PADDING * 2.0).max(1.0);
     let mut contents = column![].spacing(tokens::ROW_GAP);
     for entry in entries {
@@ -341,9 +347,8 @@ fn actions_menu(app: &App, max_height: f32, touch_targets: bool) -> Element<'_, 
         results = results.push(command(entry, selected, touch_targets));
     }
     let results_height = if touch_targets {
-        (max_height - tokens::PANEL_PADDING * 2.0 - 72.0)
-            .max(1.0)
-            .min(284.0)
+        (max_height - tokens::PANEL_PADDING * 2.0 - MOBILE_ACTION_MENU_CHROME_HEIGHT)
+            .clamp(1.0, 284.0)
     } else {
         284.0
     };
