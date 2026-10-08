@@ -1206,6 +1206,20 @@ mod tests {
             .read_to_end(&mut bytes)
             .expect("export should be readable");
         assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 24);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            u32::try_from(bytes.len() - 8).unwrap()
+        );
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[12..16], b"fmt ");
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            project.settings().sample_rate()
+        );
+        assert_eq!(&bytes[36..40], b"data");
+        assert_eq!(bytes.len(), 44 + 4 * 2 * 3);
         let expected = (0.5_f64 * std::f64::consts::FRAC_1_SQRT_2 * 8_388_608.0).round() as i32;
         let sample = &bytes[44..47];
         assert_eq!(sample, &expected.to_le_bytes()[..3]);
