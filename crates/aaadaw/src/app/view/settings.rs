@@ -201,50 +201,54 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
     let linux_diagnostics = linux_audio_diagnostics(app);
     #[cfg(not(all(target_os = "linux", feature = "audio-device")))]
     let linux_diagnostics: Element<'_, Message> = text("").into();
-    column![
-        text("Audio output and recording").size(17),
-        linux_diagnostics,
-        cpal_output,
-        cpal_input,
-        text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
-        row![
-            column![
-            text("Master sample-peak ceiling").size(13),
-            text("Always active · default -1 dBFS").size(10),
+    scrollable(
+        column![
+            text("Audio output and recording").size(17),
+            linux_diagnostics,
+            cpal_output,
+            cpal_input,
+            text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
+            row![
+                column![
+                    text("Master sample-peak ceiling").size(13),
+                    text("Always active · default -1 dBFS").size(10),
+                ]
+                .width(Length::Fill)
+                .spacing(tokens::SPACING_XS),
+                iced::widget::pick_list(
+                    master_ceiling_choices(),
+                    Some(app.audio_settings.master_output_ceiling),
+                    Message::SetMasterOutputCeilingDbfs,
+                )
+                .placeholder("Ceiling")
+                .width(Length::Fixed(128.0)),
             ]
-            .width(Length::Fill)
-            .spacing(tokens::SPACING_XS),
-            iced::widget::pick_list(
-                master_ceiling_choices(),
-                Some(app.audio_settings.master_output_ceiling),
-                Message::SetMasterOutputCeilingDbfs,
-            )
-            .placeholder("Ceiling")
-            .width(Length::Fixed(128.0)),
-        ]
-    .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
-        row![
-            column![
-                text("Recording placement offset (ms)").size(13),
-                text("Positive moves the take later; negative moves it earlier. JACK's precise reported capture latency is applied automatically when available; this value calibrates the remaining offset.").size(10),
+            .spacing(tokens::SPACING_SM)
+            .align_y(Alignment::Center),
+            row![
+                column![
+                    text("Recording placement offset (ms)").size(13),
+                    text("Positive moves the take later; negative moves it earlier. JACK's precise reported capture latency is applied automatically when available; this value calibrates the remaining offset.").size(10),
+                ]
+                .width(Length::Fill)
+                .spacing(tokens::SPACING_XS),
+                text_input("0.000", &recording_offset)
+                    .on_input(Message::RecordingOffsetTextChanged)
+                    .width(Length::Fixed(108.0)),
+                button("Apply").on_press(Message::ApplyRecordingOffset),
             ]
-            .width(Length::Fill)
-            .spacing(tokens::SPACING_XS),
-            text_input("0.000", &recording_offset)
-                .on_input(Message::RecordingOffsetTextChanged)
-                .width(Length::Fixed(108.0)),
-            button("Apply")
-                .on_press(Message::ApplyRecordingOffset),
+            .spacing(tokens::SPACING_SM)
+            .align_y(Alignment::Center),
+            text("This bounds sample values at the Master output and silences non-finite samples.")
+                .size(11),
+            text("This is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
+                .size(11),
+            text(app.audio_settings_feedback.clone()).size(11),
         ]
         .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
-        text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
-            .size(11),
-        text(app.audio_settings_feedback.clone()).size(11),
-    ]
-    .spacing(tokens::SPACING_SM)
-    .width(Length::Fill)
+        .width(Length::Fill),
+    )
+    .height(Length::Fill)
     .into()
 }
 
