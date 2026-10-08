@@ -2868,9 +2868,14 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         response_for(3)["result"]["structuredContent"],
         json!({"item_id": item_id.value(), "start_tick": 960, "length_ticks": 5760})
     );
-    for id in [4, 5, 6, 7] {
+    for id in [4, 5, 7] {
         assert_eq!(response_for(id)["result"]["isError"], true);
     }
+    assert_eq!(response_for(6)["result"]["isError"], false);
+    assert_eq!(
+        response_for(6)["result"]["structuredContent"],
+        json!({"item_id": item_id.value(), "start_tick": 960, "length_ticks": 2400})
+    );
     assert_eq!(
         response_for(8)["result"]["structuredContent"]["notes"],
         json!([
@@ -2898,7 +2903,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
     );
     assert_eq!(
         response_for(10)["result"]["structuredContent"]["notes"][0]["tick"],
-        120
+        1080
     );
     assert_eq!(
         response_for(11)["result"]["structuredContent"]["changed"],
@@ -2916,7 +2921,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         .find(|item| item.id() == item_id)
         .unwrap();
     assert_eq!(saved_item.start_tick(), 960);
-    assert_eq!(saved_item.length_ticks(), 5760);
+    assert_eq!(saved_item.length_ticks(), 2400);
     assert_eq!(
         saved_item
             .notes()
