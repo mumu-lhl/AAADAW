@@ -102,6 +102,7 @@ pub struct MidiItem {
     pub(crate) track_id: TrackId,
     pub(crate) name: String,
     pub(crate) start_tick: u64,
+    pub(crate) source_offset_ticks: u64,
     pub(crate) length_ticks: u64,
     pub(crate) notes: Arc<Vec<MidiNote>>,
     pub(crate) controllers: Arc<Vec<MidiControllerData>>,
@@ -127,6 +128,18 @@ impl MidiItem {
     /// Returns the item's start position in project ticks.
     pub fn start_tick(&self) -> u64 {
         self.start_tick
+    }
+
+    /// Returns how far the visible clip start is trimmed into its stored MIDI content.
+    pub fn source_offset_ticks(&self) -> u64 {
+        self.source_offset_ticks
+    }
+
+    /// Maps a stored event tick to its project position, if it fits the project timeline.
+    pub fn project_tick_at_content_tick(&self, content_tick: u64) -> Option<u64> {
+        let project_tick = i128::from(self.start_tick) + i128::from(content_tick)
+            - i128::from(self.source_offset_ticks);
+        u64::try_from(project_tick).ok()
     }
 
     /// Returns the item's duration in project ticks.

@@ -120,6 +120,7 @@ pub struct MidiItemSnapshot {
     pub track_id: u64,
     pub name: String,
     pub start_tick: u64,
+    pub source_offset_ticks: u64,
     pub length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,

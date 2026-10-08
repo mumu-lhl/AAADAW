@@ -2425,7 +2425,13 @@ fn scoped_query_notes(
         .filter(|item| item.track_id() == track_id)
     {
         for note in item.notes() {
-            let absolute_tick = item.start_tick().saturating_add(note.tick());
+            let Some(absolute_tick) = item.project_tick_at_content_tick(note.tick()) else {
+                continue;
+            };
+            let item_end_tick = item.start_tick().saturating_add(item.length_ticks());
+            if absolute_tick < item.start_tick() || absolute_tick >= item_end_tick {
+                continue;
+            }
             if !(start_tick..end_tick).contains(&absolute_tick) {
                 continue;
             }
@@ -2434,7 +2440,7 @@ fn scoped_query_notes(
                 item_id: item.id().value(),
                 note_id: note.id().value(),
                 pitch: note.pitch(),
-                duration: note.duration(),
+                duration: note.duration().min(item_end_tick - absolute_tick),
                 velocity: note.velocity(),
             };
             if notes.len() < limit {
@@ -2595,17 +2601,29 @@ fn track_midi_summary(project: &Project, track_id: TrackId) -> Value {
     let (item_count, note_count, tick_range) = items.fold(
         (0usize, 0usize, None::<(u64, u64)>),
         |(item_count, note_count, range), item| {
-            let next_range = item.notes().iter().fold(range, |range, note| {
-                let start = item.start_tick().saturating_add(note.tick());
-                let end = start.saturating_add(note.duration());
-                Some(match range {
-                    Some((minimum, maximum)) => (minimum.min(start), maximum.max(end)),
-                    None => (start, end),
-                })
-            });
+            let item_end_tick = item.start_tick().saturating_add(item.length_ticks());
+            let (visible_note_count, next_range) =
+                item.notes()
+                    .iter()
+                    .fold((0usize, range), |(visible_note_count, range), note| {
+                        let Some(start) = item.project_tick_at_content_tick(note.tick()) else {
+                            return (visible_note_count, range);
+                        };
+                        if start < item.start_tick() || start >= item_end_tick {
+                            return (visible_note_count, range);
+                        }
+                        let end = start.saturating_add(note.duration()).min(item_end_tick);
+                        (
+                            visible_note_count.saturating_add(1),
+                            Some(match range {
+                                Some((minimum, maximum)) => (minimum.min(start), maximum.max(end)),
+                                None => (start, end),
+                            }),
+                        )
+                    });
             (
                 item_count.saturating_add(1),
-                note_count.saturating_add(item.notes().len()),
+                note_count.saturating_add(visible_note_count),
                 next_range,
             )
         },
@@ -3147,6 +3165,89 @@ mod tests {
         assert_eq!(summary["note_tick_range"]["start"], 1080);
         assert_eq!(summary["note_tick_range"]["end"], 1920);
         assert!(summary.get("notes").is_none());
+    }
+
+    #[test]
+    fn midi_queries_and_summary_exclude_trimmed_content_and_clip_note_ends() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Trimmed".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 1_600,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    MidiNoteData {
+                        pitch: 55,
+                        tick: 50,
+                        duration: 100,
+                        velocity: 90,
+                    },
+                    MidiNoteData {
+                        pitch: 60,
+                        tick: 150,
+                        duration: 100,
+                        velocity: 100,
+                    },
+                    MidiNoteData {
+                        pitch: 64,
+                        tick: 200,
+                        duration: 200,
+                        velocity: 100,
+                    },
+                    MidiNoteData {
+                        pitch: 67,
+                        tick: 1_100,
+                        duration: 300,
+                        velocity: 100,
+                    },
+                    MidiNoteData {
+                        pitch: 72,
+                        tick: 1_300,
+                        duration: 100,
+                        velocity: 100,
+                    },
+                ],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::TrimMidiItemStart {
+                item_id,
+                start_tick: 100,
+                length_ticks: 1_100,
+                source_offset_ticks: 100,
+            })
+            .unwrap();
+
+        let result = scoped_query_notes(&project, track_id.value(), 0, 2_000, 10).unwrap();
+        let notes = result["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[0]["tick"], 150);
+        assert_eq!(notes[0]["pitch"], 60);
+        assert_eq!(notes[0]["duration"], 100);
+        assert_eq!(notes[1]["tick"], 200);
+        assert_eq!(notes[1]["pitch"], 64);
+        assert_eq!(notes[1]["duration"], 200);
+        assert_eq!(notes[2]["tick"], 1_100);
+        assert_eq!(notes[2]["pitch"], 67);
+        assert_eq!(notes[2]["duration"], 100);
+
+        let summary = track_midi_summary(&project, track_id);
+        assert_eq!(summary["note_count"], 3);
+        assert_eq!(summary["note_tick_range"]["start"], 150);
+        assert_eq!(summary["note_tick_range"]["end"], 1_200);
     }
 
     fn project_with_notes(notes: Vec<MidiNoteData>) -> (Project, aaadaw_core::TrackId) {

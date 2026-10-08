@@ -186,11 +186,10 @@ impl MidiEventPlan {
                 .checked_add(item.length_ticks())
                 .ok_or(MidiScheduleError::PositionOutOfRange)?;
             for note in item.notes() {
-                let start_tick = item
-                    .start_tick()
-                    .checked_add(note.tick())
-                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
-                if start_tick >= clip_end_tick {
+                let Some(start_tick) = item.project_tick_at_content_tick(note.tick()) else {
+                    continue;
+                };
+                if start_tick < item.start_tick() || start_tick >= clip_end_tick {
                     continue;
                 }
                 let end_tick = start_tick
@@ -233,13 +232,12 @@ impl MidiEventPlan {
                 });
             }
             for controller in item.controllers() {
-                if controller.tick >= item.length_ticks() {
+                let Some(absolute_tick) = item.project_tick_at_content_tick(controller.tick) else {
+                    continue;
+                };
+                if absolute_tick < item.start_tick() || absolute_tick >= clip_end_tick {
                     continue;
                 }
-                let absolute_tick = item
-                    .start_tick()
-                    .checked_add(controller.tick)
-                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
                 let absolute_sample = project
                     .sample_at_tick(absolute_tick)
                     .map_err(MidiScheduleError::Timebase)?;
@@ -275,13 +273,12 @@ impl MidiEventPlan {
                 });
             }
             for bend in item.pitch_bends() {
-                if bend.tick >= item.length_ticks() {
+                let Some(absolute_tick) = item.project_tick_at_content_tick(bend.tick) else {
+                    continue;
+                };
+                if absolute_tick < item.start_tick() || absolute_tick >= clip_end_tick {
                     continue;
                 }
-                let absolute_tick = item
-                    .start_tick()
-                    .checked_add(bend.tick)
-                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
                 let absolute_sample = project
                     .sample_at_tick(absolute_tick)
                     .map_err(MidiScheduleError::Timebase)?;

@@ -22,7 +22,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 16;
+pub const CURRENT_SCHEMA_VERSION: u32 = 17;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -231,6 +231,11 @@ ALTER TABLE tracks ADD COLUMN frozen_audio_item_id INTEGER
 const MIGRATION_16: &str = r#"
 ALTER TABLE items ADD COLUMN name TEXT NOT NULL DEFAULT 'MIDI'
     CHECK (length(trim(name)) BETWEEN 1 AND 128);
+"#;
+
+const MIGRATION_17: &str = r#"
+ALTER TABLE items ADD COLUMN source_offset_ticks INTEGER NOT NULL DEFAULT 0
+    CHECK (source_offset_ticks >= 0);
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -2285,6 +2290,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             14 => transaction.execute_batch(MIGRATION_14)?,
             15 => transaction.execute_batch(MIGRATION_15)?,
             16 => transaction.execute_batch(MIGRATION_16)?,
+            17 => transaction.execute_batch(MIGRATION_17)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2430,15 +2436,16 @@ fn write_snapshot(
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
                 to_sql_integer(item.start_tick)?,
                 to_sql_integer(item.length_ticks)?,
-                item.name
+                item.name,
+                to_sql_integer(item.source_offset_ticks)?
             ],
         )?;
         for (position, note) in item.notes.iter().enumerate() {
@@ -2928,7 +2935,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, length_ticks, name \
+        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -2940,11 +2947,12 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut items = Vec::with_capacity(item_rows.len());
-    for (id, track_id, position, start_tick, length_ticks, name) in item_rows {
+    for (id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) in item_rows {
         let id = from_sql_u64(id)?;
         let _ = from_sql_u64(position)?;
         let notes = notes_by_item.remove(&id).unwrap_or_default();
@@ -2955,6 +2963,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             track_id: from_sql_u64(track_id)?,
             name,
             start_tick: from_sql_u64(start_tick)?,
+            source_offset_ticks: from_sql_u64(source_offset_ticks)?,
             length_ticks: from_sql_u64(length_ticks)?,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
             controllers: controllers.into_iter().map(|(_, event)| event).collect(),

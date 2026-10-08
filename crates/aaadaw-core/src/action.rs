@@ -118,6 +118,13 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Trim the visible start of a MIDI item without moving its stored events.
+    TrimMidiItemStart {
+        item_id: ItemId,
+        start_tick: u64,
+        length_ticks: u64,
+        source_offset_ticks: u64,
+    },
     /// Duplicate a MIDI item immediately after its source, assigning fresh item and note IDs.
     DuplicateMidiItem { item_id: ItemId },
     /// Duplicate a MIDI item at a specific project tick, assigning fresh item and note IDs.
