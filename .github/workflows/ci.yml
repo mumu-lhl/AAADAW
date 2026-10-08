@@ -67,7 +67,7 @@ jobs:
           target: default
           arch: x86_64
           profile: pixel_2
-          cores: 4
+          cores: 2
           ram-size: 4096M
           emulator-boot-timeout: 900
           disable-animations: false
@@ -78,15 +78,16 @@ jobs:
             adb shell am force-stop org.aaadaw.app
             adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
             timeout 120s sh -c 'attempt=0; while [ "$attempt" -lt 90 ]; do pid="$(adb shell pidof org.aaadaw.app 2>/dev/null | tr -d "[:space:]")"; case "$pid" in ""|*[!0-9]*) ;; *) exit 0 ;; esac; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { sh scripts/dump_android_state.sh; exit 1; }
-            timeout 90s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { sh scripts/dump_android_state.sh; exit 1; }
             sleep 5
             adb shell screencap -p /data/local/tmp/aaadaw-portrait.png
             adb pull /data/local/tmp/aaadaw-portrait.png ./aaadaw-portrait.png
             python3 scripts/check_android_screenshot.py aaadaw-portrait.png || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
+            adb shell run-as org.aaadaw.app test -d files/aaadaw/unsaved-sessions || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
+            timeout 90s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -Eq "mCurrentFocus=Window.*org\\.aaadaw\\.app/org\\.aaadaw\\.app\\.MainActivity"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 1
             sleep 5
-            adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" | grep -q "org.aaadaw.app" || { sh scripts/dump_android_state.sh; exit 1; }
+            adb shell dumpsys window | grep -Eq "mCurrentFocus=Window.*org\\.aaadaw\\.app/org\\.aaadaw\\.app\\.MainActivity" || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             adb shell settings put system user_rotation 0
             adb shell settings put system font_scale 1.0
             adb logcat -d -v threadtime -b all > android-logcat.txt
