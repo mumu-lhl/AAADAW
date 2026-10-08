@@ -371,24 +371,51 @@ fn timeline_content_at_width(app: &App, viewport_width: f32) -> Element<'_, Mess
     let fit_selected_items = (!app.timeline.selected_items.is_empty()).then_some(Message::Timeline(
         TimelineEvent::FitSelectedItemsToView { viewport_width },
     ));
+    #[cfg(feature = "audio-device")]
+    let follow_playhead_button = button(if app.timeline.follow_playhead {
+        "Follow on"
+    } else {
+        "Follow playhead"
+    })
+    .style(if app.timeline.follow_playhead {
+        iced::widget::button::success
+    } else {
+        iced::widget::button::secondary
+    })
+    .padding([2, 4])
+    .on_press(Message::Timeline(TimelineEvent::SetFollowPlayhead {
+        enabled: !app.timeline.follow_playhead,
+        viewport_width,
+    }));
+    #[cfg(not(feature = "audio-device"))]
+    let follow_playhead_button = button("Follow unavailable")
+        .style(iced::widget::button::secondary)
+        .padding([2, 4])
+        .on_press_maybe(None::<Message>);
     let navigation = row![
         button("Fit project")
             .style(iced::widget::button::secondary)
+            .padding([2, 4])
             .on_press_maybe(fit_project),
         button("Fit selection")
             .style(iced::widget::button::secondary)
+            .padding([2, 4])
             .on_press_maybe(fit_selection),
         button("Fit items")
             .style(iced::widget::button::secondary)
+            .padding([2, 4])
             .on_press_maybe(fit_selected_items),
+        follow_playhead_button,
         button("−")
             .style(iced::widget::button::secondary)
+            .padding([2, 4])
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {
                 factor: 0.8,
                 anchor_x: viewport_width / 2.0,
             })),
         button("+")
             .style(iced::widget::button::secondary)
+            .padding([2, 4])
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {
                 factor: 1.25,
                 anchor_x: viewport_width / 2.0,
