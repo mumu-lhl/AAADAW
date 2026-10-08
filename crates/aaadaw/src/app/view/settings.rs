@@ -369,11 +369,11 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
 #[cfg(all(target_os = "linux", feature = "audio-device"))]
 fn capture_route_summary(input_routes: &[String], capture_routes_inspected: bool) -> String {
     if input_routes.is_empty() && capture_routes_inspected {
-        "No connected capture input route was detected for the active recording.".to_owned()
+        "The last capture route inspection found no connected input route.".to_owned()
     } else if !capture_routes_inspected {
         "Capture input routes are shown while recording.".to_owned()
     } else {
-        format!("Connected capture inputs: {}", input_routes.join(" · "))
+        format!("Last inspected capture routes: {}", input_routes.join(" · "))
     }
 }
 
@@ -819,12 +819,12 @@ mod linux_audio_diagnostics_tests {
     use aaadaw_app::PlaybackBackend;
 
     #[test]
-    fn active_capture_without_routes_is_reported_as_disconnected() {
-        assert!(capture_route_summary(&[], true).contains("No connected capture input route"));
+    fn capture_route_summary_distinguishes_unavailable_and_empty_inspections() {
+        assert!(capture_route_summary(&[], true).contains("found no connected input route"));
         assert!(capture_route_summary(&[], false).contains("shown while recording"));
         assert_eq!(
             capture_route_summary(&["Input:Mic → AAADAW:In".to_owned()], true),
-            "Connected capture inputs: Input:Mic → AAADAW:In"
+            "Last inspected capture routes: Input:Mic → AAADAW:In"
         );
     }
 
