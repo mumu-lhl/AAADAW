@@ -27,7 +27,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .map(|(category, label)| -> Element<'_, Message> {
                 button(text(label).size(12))
                     .height(Length::Fixed(48.0))
-                    .padding([10, 12])
+                    .padding([tokens::SPACING_SM, tokens::SPACING_MD])
                     .style(if app.settings_category == category {
                         button::primary
                     } else {
@@ -49,7 +49,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .height(Length::Fill),
             ]
             .spacing(tokens::SPACING_SM)
-            .padding([8, 10])
+            .padding(tokens::PANEL_PADDING)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -700,8 +700,8 @@ fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
             .width(Length::Fixed(if compact { 72.0 } else { 68.0 }))
             .on_press(Message::RestoreShortcutDefault(action_id));
         let row: Element<'_, Message> = if compact {
-            column![label, row![binding, clear, restore].spacing(4)]
-                .spacing(4)
+            column![label, row![binding, clear, restore].spacing(tokens::ROW_GAP)]
+                .spacing(tokens::ROW_GAP)
                 .into()
         } else {
             row![label, binding, clear, restore]

@@ -16,22 +16,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let last_index = app.tempo_map_edits.len().saturating_sub(1);
     for (index, point) in app.tempo_map_edits.iter().enumerate() {
         let is_initial = point.original_tick == Some(0);
-        let musical_position = point
-            .tick
-            .parse::<u64>()
-            .ok()
-            .and_then(|tick| app.project.musical_position_at_tick(tick).ok())
-            .map_or_else(
-                || "—".to_owned(),
-                |position| {
-                    format!(
-                        "{}.{}.{}",
-                        position.measure(),
-                        position.beat(),
-                        position.tick_in_beat()
-                    )
-                },
-            );
+        let musical_position = musical_position_label(app, &point.tick);
         let mut entry = row![
             text_input("Start tick", &point.tick)
                 .on_input(move |value| Message::TempoPointTickChanged(index, value))
@@ -105,27 +90,29 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
     }
 }
 
+fn musical_position_label(app: &App, tick: &str) -> String {
+    tick.parse::<u64>()
+        .ok()
+        .and_then(|tick| app.project.musical_position_at_tick(tick).ok())
+        .map_or_else(
+            || "—".to_owned(),
+            |position| {
+                format!(
+                    "{}.{}.{}",
+                    position.measure(),
+                    position.beat(),
+                    position.tick_in_beat()
+                )
+            },
+        )
+}
+
 fn mobile_tempo_view(app: &App) -> Element<'_, Message> {
     let last_index = app.tempo_map_edits.len().saturating_sub(1);
     let mut rows = column![].spacing(tokens::ROW_GAP);
     for (index, point) in app.tempo_map_edits.iter().enumerate() {
         let is_initial = point.original_tick == Some(0);
-        let musical_position = point
-            .tick
-            .parse::<u64>()
-            .ok()
-            .and_then(|tick| app.project.musical_position_at_tick(tick).ok())
-            .map_or_else(
-                || "—".to_owned(),
-                |position| {
-                    format!(
-                        "{}.{}.{}",
-                        position.measure(),
-                        position.beat(),
-                        position.tick_in_beat()
-                    )
-                },
-            );
+        let musical_position = musical_position_label(app, &point.tick);
         let mut actions = row![]
             .spacing(tokens::SPACING_XS)
             .align_y(Alignment::Center);
@@ -208,22 +195,7 @@ fn mobile_meter_view(app: &App) -> Element<'_, Message> {
     let mut rows = column![].spacing(tokens::ROW_GAP);
     for (index, point) in app.meter_map_edits.iter().enumerate() {
         let is_initial = point.original_tick == Some(0);
-        let musical_position = point
-            .tick
-            .parse::<u64>()
-            .ok()
-            .and_then(|tick| app.project.musical_position_at_tick(tick).ok())
-            .map_or_else(
-                || "—".to_owned(),
-                |position| {
-                    format!(
-                        "{}.{}.{}",
-                        position.measure(),
-                        position.beat(),
-                        position.tick_in_beat()
-                    )
-                },
-            );
+        let musical_position = musical_position_label(app, &point.tick);
         let numeric_fields = row![
             column![
                 text("Beats").size(10),
@@ -328,22 +300,7 @@ fn meter_view(app: &App) -> Element<'_, Message> {
     let mut rows = column![].spacing(tokens::ROW_GAP);
     for (index, point) in app.meter_map_edits.iter().enumerate() {
         let is_initial = point.original_tick == Some(0);
-        let musical_position = point
-            .tick
-            .parse::<u64>()
-            .ok()
-            .and_then(|tick| app.project.musical_position_at_tick(tick).ok())
-            .map_or_else(
-                || "—".to_owned(),
-                |position| {
-                    format!(
-                        "{}.{}.{}",
-                        position.measure(),
-                        position.beat(),
-                        position.tick_in_beat()
-                    )
-                },
-            );
+        let musical_position = musical_position_label(app, &point.tick);
         rows = rows.push(
             row![
                 text_input("Project tick", &point.tick)
