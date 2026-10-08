@@ -499,12 +499,8 @@ pub fn render_project_file_with_settings(
         project.settings().sample_rate(),
         settings.output_sample_rate,
     )?;
-    let export = WavExport::create(
-        destination.as_ref(),
-        settings.output_sample_rate,
-        options,
-    )
-    .map_err(OfflineRenderError::WavExport)?;
+    let export = WavExport::create(destination.as_ref(), settings.output_sample_rate, options)
+        .map_err(OfflineRenderError::WavExport)?;
     let export = ResampledOfflineWavWriter {
         writer: export,
         resampler: StereoPcmResampler::new(
@@ -1145,8 +1141,14 @@ mod tests {
 
     #[test]
     fn output_frame_count_tracks_the_requested_sample_rate() {
-        assert_eq!(resampled_frame_count(48_000, 48_000, 44_100).unwrap(), 44_100);
-        assert_eq!(resampled_frame_count(48_000, 48_000, 96_000).unwrap(), 96_000);
+        assert_eq!(
+            resampled_frame_count(48_000, 48_000, 44_100).unwrap(),
+            44_100
+        );
+        assert_eq!(
+            resampled_frame_count(48_000, 48_000, 96_000).unwrap(),
+            96_000
+        );
         assert_eq!(resampled_frame_count(1, 48_000, 44_100).unwrap(), 1);
     }
 
