@@ -634,6 +634,7 @@ fn duplicate_midi_item_to_track(
         track_id,
         name: original.name.clone(),
         start_tick,
+        source_offset_ticks: original.source_offset_ticks,
         length_ticks: item_end - start_tick,
         notes: Arc::new(notes),
         controllers: Arc::clone(&original.controllers),
@@ -902,6 +903,7 @@ impl Project {
                     track_id: item.track_id.value(),
                     name: item.name.clone(),
                     start_tick: item.start_tick,
+                    source_offset_ticks: item.source_offset_ticks,
                     length_ticks: item.length_ticks,
                     notes: item
                         .notes
@@ -1109,6 +1111,10 @@ impl Project {
                 || item.name.chars().count() > 128
                 || item.length_ticks == 0
                 || item.start_tick.checked_add(item.length_ticks).is_none()
+                || item
+                    .source_offset_ticks
+                    .checked_add(item.length_ticks)
+                    .is_none()
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -1145,6 +1151,7 @@ impl Project {
                 track_id: TrackId::from_raw(item.track_id),
                 name: item.name,
                 start_tick: item.start_tick,
+                source_offset_ticks: item.source_offset_ticks,
                 length_ticks: item.length_ticks,
                 notes: Arc::new(notes),
                 controllers: Arc::new(controllers),
@@ -1878,6 +1885,7 @@ impl Project {
                     track_id,
                     name: "MIDI".to_owned(),
                     start_tick,
+                    source_offset_ticks: 0,
                     length_ticks,
                     notes: Arc::new(Vec::new()),
                     controllers: Arc::new(Vec::new()),
@@ -1930,6 +1938,40 @@ impl Project {
                 let before = item.clone();
                 let after = MidiItem {
                     start_tick,
+                    length_ticks,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::TrimMidiItemStart {
+                item_id,
+                start_tick,
+                length_ticks,
+                source_offset_ticks,
+            } => {
+                if length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(length_ticks).is_none()
+                    || source_offset_ticks.checked_add(length_ticks).is_none()
+                {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let expected_source_offset = i128::from(item.source_offset_ticks)
+                    + i128::from(start_tick)
+                    - i128::from(item.start_tick);
+                if u64::try_from(expected_source_offset).ok() != Some(source_offset_ticks) {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick,
+                    source_offset_ticks,
                     length_ticks,
                     ..before.clone()
                 };
@@ -1988,6 +2030,10 @@ impl Project {
                     .iter()
                     .map(|tick| tick - original.start_tick)
                     .collect::<Vec<_>>();
+                let content_points = relative_points
+                    .iter()
+                    .map(|tick| original.source_offset_ticks.saturating_add(*tick))
+                    .collect::<Vec<_>>();
                 let mut segment_notes = vec![Vec::new(); absolute_points.len() - 1];
                 let mut next_note_id = ids.next_note_id;
                 for note in original.notes.iter() {
@@ -1996,8 +2042,9 @@ impl Project {
                         .checked_add(note.data.duration)
                         .ok_or(ActionError::InvalidMidiNote)?;
                     let mut first_piece = true;
-                    for (segment_index, segment) in relative_points.windows(2).enumerate() {
-                        let overlap_start = note_start.max(segment[0]);
+                    for (segment_index, segment) in content_points.windows(2).enumerate() {
+                        let segment_source_start = if segment_index == 0 { 0 } else { segment[0] };
+                        let overlap_start = note_start.max(segment_source_start);
                         let is_last_segment = segment_index + 1 == segment_notes.len();
                         let overlap_end = if is_last_segment {
                             note_end
@@ -2021,7 +2068,11 @@ impl Project {
                             id: note_id,
                             data: crate::MidiNoteData {
                                 pitch: note.data.pitch,
-                                tick: overlap_start - segment[0],
+                                tick: if segment_index == 0 {
+                                    overlap_start
+                                } else {
+                                    overlap_start - segment_source_start
+                                },
                                 duration: overlap_end - overlap_start,
                                 velocity: note.data.velocity,
                             },
@@ -2049,18 +2100,23 @@ impl Project {
                         track_id: original.track_id,
                         name: original.name.clone(),
                         start_tick: segment_start,
+                        source_offset_ticks: if index == 0 {
+                            original.source_offset_ticks
+                        } else {
+                            0
+                        },
                         length_ticks: segment_end - segment_start,
                         notes: Arc::new(notes),
                         controllers: Arc::new(controllers_for_segment(
                             &original.controllers,
-                            relative_points[index],
-                            relative_points[index + 1],
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
                             index + 1 == segment_count,
                         )),
                         pitch_bends: Arc::new(pitch_bends_for_segment(
                             &original.pitch_bends,
-                            relative_points[index],
-                            relative_points[index + 1],
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
                             index + 1 == segment_count,
                         )),
                     });
@@ -2096,10 +2152,10 @@ impl Project {
                     if data.pitch > 127
                         || data.velocity > 127
                         || data.duration == 0
-                        || data
-                            .tick
-                            .checked_add(data.duration)
-                            .is_none_or(|end| end > item.length_ticks)
+                        || data.tick < item.source_offset_ticks
+                        || data.tick.checked_add(data.duration).is_none_or(|end| {
+                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
+                        })
                     {
                         return Err(ActionError::InvalidMidiNote);
                     }
@@ -2136,10 +2192,10 @@ impl Project {
                 if data.pitch > 127
                     || data.velocity > 127
                     || data.duration == 0
-                    || data
-                        .tick
-                        .checked_add(data.duration)
-                        .is_none_or(|end| end > item.length_ticks)
+                    || data.tick < item.source_offset_ticks
+                    || data.tick.checked_add(data.duration).is_none_or(|end| {
+                        end > item.source_offset_ticks.saturating_add(item.length_ticks)
+                    })
                 {
                     return Err(ActionError::InvalidMidiNote);
                 }
@@ -2192,7 +2248,14 @@ impl Project {
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 controllers
                     .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
-                if !valid_midi_controllers(&controllers) {
+                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                if !valid_midi_controllers(&controllers)
+                    || controllers.iter().any(|controller| {
+                        (controller.tick < item.source_offset_ticks
+                            || controller.tick >= source_end_tick)
+                            && !item.controllers.contains(controller)
+                    })
+                {
                     return Err(ActionError::InvalidMidiController);
                 }
                 ProjectEvent::MidiControllersChanged {
@@ -2211,7 +2274,13 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 pitch_bends.sort_unstable_by_key(|bend| bend.tick);
-                if !valid_midi_pitch_bends(&pitch_bends) {
+                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                if !valid_midi_pitch_bends(&pitch_bends)
+                    || pitch_bends.iter().any(|bend| {
+                        (bend.tick < item.source_offset_ticks || bend.tick >= source_end_tick)
+                            && !item.pitch_bends.contains(bend)
+                    })
+                {
                     return Err(ActionError::InvalidMidiPitchBend);
                 }
                 ProjectEvent::MidiPitchBendsChanged {
@@ -2239,8 +2308,7 @@ impl Project {
                 let mut changes = Vec::new();
                 for note in item.notes.iter() {
                     let absolute_tick = item
-                        .start_tick
-                        .checked_add(note.data.tick)
+                        .project_tick_at_content_tick(note.data.tick)
                         .ok_or(ActionError::InvalidMidiNote)?;
                     let lower = absolute_tick / grid_ticks * grid_ticks;
                     let remainder = absolute_tick - lower;
@@ -2254,11 +2322,13 @@ impl Project {
                     let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
                     let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
                         .map_err(|_| ActionError::InvalidMidiNote)?;
-                    let tick = quantized_absolute.saturating_sub(item.start_tick);
-                    if tick
-                        .checked_add(note.data.duration)
-                        .is_none_or(|end| end > item.length_ticks)
-                    {
+                    let tick = quantized_absolute
+                        .saturating_sub(item.start_tick)
+                        .saturating_add(item.source_offset_ticks);
+                    if tick.checked_add(note.data.duration).is_none_or(|end| {
+                        tick < item.source_offset_ticks
+                            || end > item.source_offset_ticks.saturating_add(item.length_ticks)
+                    }) {
                         return Err(ActionError::InvalidMidiNote);
                     }
                     if tick != note.data.tick {
@@ -2779,6 +2849,10 @@ impl Project {
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || after.length_ticks == 0
                     || after.start_tick.checked_add(after.length_ticks).is_none()
+                    || after
+                        .source_offset_ticks
+                        .checked_add(after.length_ticks)
+                        .is_none()
                     || !valid_midi_controllers(&after.controllers)
                     || !valid_midi_pitch_bends(&after.pitch_bends)
                 {
@@ -2823,6 +2897,10 @@ impl Project {
                         !state.tracks.iter().any(|track| track.id == item.track_id)
                             || item.length_ticks == 0
                             || item.start_tick.checked_add(item.length_ticks).is_none()
+                            || item
+                                .source_offset_ticks
+                                .checked_add(item.length_ticks)
+                                .is_none()
                             || !valid_midi_controllers(&item.controllers)
                             || !valid_midi_pitch_bends(&item.pitch_bends)
                             || !existing_item_ids.insert(item.id)
@@ -2883,11 +2961,14 @@ impl Project {
                     || after.data.pitch > 127
                     || after.data.velocity > 127
                     || after.data.duration == 0
+                    || after.data.tick < item.source_offset_ticks
                     || after
                         .data
                         .tick
                         .checked_add(after.data.duration)
-                        .is_none_or(|end| end > item.length_ticks)
+                        .is_none_or(|end| {
+                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
+                        })
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
@@ -2936,7 +3017,8 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                let length_ticks = item.length_ticks;
+                let source_offset_ticks = item.source_offset_ticks;
+                let source_end_tick = source_offset_ticks.saturating_add(item.length_ticks);
                 let current_notes = Arc::make_mut(&mut item.notes);
                 for (note_id, before, after) in changes {
                     let note = current_notes
@@ -2944,9 +3026,10 @@ impl Project {
                         .find(|note| note.id == *note_id)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
                     if note.data.tick != *before
+                        || *after < source_offset_ticks
                         || after
                             .checked_add(note.data.duration)
-                            .is_none_or(|end| end > length_ticks)
+                            .is_none_or(|end| end > source_end_tick)
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
@@ -3010,6 +3093,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetTrackFxParameterAutomation { track_id, .. }
         | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
         DawAction::EditMidiItem { item_id, .. }
+        | DawAction::TrimMidiItemStart { item_id, .. }
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }
         | DawAction::DuplicateMidiItemToTrack { item_id, .. }

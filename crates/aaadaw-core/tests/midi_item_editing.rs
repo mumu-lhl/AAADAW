@@ -206,3 +206,66 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
     assert_eq!(reopened.midi_items()[0].notes(), notes);
     assert_eq!(reopened.midi_items()[0].controllers(), controllers);
 }
+
+#[test]
+fn trimming_a_midi_clip_start_preserves_event_positions_and_source_bounds() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                tick: 960,
+                duration: 480,
+                velocity: 96,
+            }],
+        })
+        .unwrap();
+
+    project
+        .apply(DawAction::TrimMidiItemStart {
+            item_id,
+            start_tick: 480,
+            length_ticks: 1_440,
+            source_offset_ticks: 480,
+        })
+        .unwrap();
+    let trimmed = &project.midi_items()[0];
+    assert_eq!(trimmed.start_tick(), 480);
+    assert_eq!(trimmed.source_offset_ticks(), 480);
+    assert_eq!(trimmed.project_tick_at_content_tick(960), Some(960));
+
+    assert!(project.undo().unwrap());
+    assert_eq!(project.midi_items()[0].source_offset_ticks(), 0);
+    assert!(project.redo().unwrap());
+    project
+        .apply(DawAction::TrimMidiItemStart {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+            source_offset_ticks: 0,
+        })
+        .unwrap();
+    let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(reopened.midi_items()[0].start_tick(), 0);
+    assert_eq!(reopened.midi_items()[0].source_offset_ticks(), 0);
+    assert_eq!(
+        reopened.midi_items()[0].project_tick_at_content_tick(960),
+        Some(960)
+    );
+}

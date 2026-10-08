@@ -3905,6 +3905,60 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
 }
 
 #[test]
+fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::EditMidiItem {
+            item_id,
+            start_tick: 0,
+            length_ticks: 5_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 20,
+                    tick: 300,
+                    duration: 240,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 1_200,
+                    duration: 240,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 120,
+                    tick: 4_200,
+                    duration: 120,
+                    velocity: 100,
+                },
+            ],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::TrimMidiItemStart {
+            item_id,
+            start_tick: 480,
+            length_ticks: 3_360,
+            source_offset_ticks: 480,
+        })
+        .unwrap();
+
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    assert_eq!(app.midi_editor_origin_tick, 480);
+    assert_eq!(app.midi_editor_high_pitch, 66);
+    assert_eq!(app.midi_editor_pitch_rows, 5);
+}
+
+#[test]
 fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -5189,6 +5243,72 @@ fn midi_item_edge_trim_keeps_hidden_events_and_is_undoable() {
         app.project.midi_items()[0].controllers(),
         original.controllers()
     );
+}
+
+#[test]
+fn midi_item_start_trim_preserves_content_position_and_can_expand_back() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 960,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                tick: 1_200,
+                duration: 240,
+                velocity: 96,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::BeginItemTrim {
+        item_id,
+        edge: crate::timeline::ItemTrimEdge::Start,
+        target_tick: 480,
+        ignore_snap: true,
+    });
+    assert!(!app.timeline.item_trim_preview().unwrap().valid);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::CancelItemTrim);
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::BeginItemTrim {
+        item_id,
+        edge: crate::timeline::ItemTrimEdge::Start,
+        target_tick: 1_440,
+        ignore_snap: true,
+    });
+    assert!(app.timeline.item_trim_preview().unwrap().valid);
+    app.finish_item_trim();
+    let trimmed = &app.project.midi_items()[0];
+    assert_eq!(trimmed.start_tick(), 1_440);
+    assert_eq!(trimmed.length_ticks(), 1_440);
+    assert_eq!(trimmed.source_offset_ticks(), 480);
+    assert_eq!(trimmed.project_tick_at_content_tick(1_200), Some(2_160));
+    assert_eq!(trimmed.notes(), original.notes());
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::BeginItemTrim {
+        item_id,
+        edge: crate::timeline::ItemTrimEdge::Start,
+        target_tick: 960,
+        ignore_snap: true,
+    });
+    assert!(app.timeline.item_trim_preview().unwrap().valid);
+    app.finish_item_trim();
+    let expanded = &app.project.midi_items()[0];
+    assert_eq!(expanded.start_tick(), 960);
+    assert_eq!(expanded.source_offset_ticks(), 0);
+    assert_eq!(expanded.project_tick_at_content_tick(1_200), Some(2_160));
 }
 
 #[test]

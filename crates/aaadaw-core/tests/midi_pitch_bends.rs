@@ -148,7 +148,7 @@ fn splitting_a_midi_item_carries_the_active_pitch_bend_forward() {
 }
 
 #[test]
-fn shrinking_a_midi_item_cannot_discard_pitch_bend_points() {
+fn shrinking_a_midi_item_keeps_hidden_pitch_bend_points_for_expansion() {
     let (mut project, item_id) = project_with_midi_item();
     project
         .apply(DawAction::SetMidiPitchBends {
@@ -160,13 +160,17 @@ fn shrinking_a_midi_item_cannot_discard_pitch_bend_points() {
         })
         .expect("pitch bend should be accepted");
     let before = project.snapshot();
-    assert_eq!(
-        project.apply(DawAction::EditMidiItem {
+    project
+        .apply(DawAction::EditMidiItem {
             item_id,
             start_tick: 0,
             length_ticks: 1_920,
-        }),
-        Err(ActionError::InvalidMidiPitchBend)
-    );
+        })
+        .expect("non-destructive clip shrink should keep hidden events");
+    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 2_400);
+    assert!(project.undo().unwrap());
     assert_eq!(project.snapshot(), before);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
+    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 2_400);
 }
