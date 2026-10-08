@@ -1179,7 +1179,11 @@ impl App {
         let preserve_menu_state = preserve_context_targets
             || matches!(
                 &message,
-                Message::ActionQueryChanged(_)
+                // These global pointer listeners run for ordinary menu clicks too; they clean up
+                // unrelated MIDI/FX gestures and do not mean the pointer left the menu.
+                Message::DismissMidiExpressionContextMenus(_)
+                    | Message::FinishFxChainPluginDrag
+                    | Message::ActionQueryChanged(_)
                     | Message::ToggleTransportDetails
                     | Message::ActionMenuScrolled(_)
                     | Message::RunActionQuery
