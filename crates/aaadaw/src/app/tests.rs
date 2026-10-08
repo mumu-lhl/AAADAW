@@ -16,6 +16,7 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{DawAction, MidiNoteData, Project, TrackFxPlugin};
+use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
@@ -23,6 +24,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
+
+fn silent_test_waveform(sample_rate: u32, frame_count: u32) -> std::sync::Arc<AudioWaveform> {
+    let data_len = frame_count * 2;
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&16_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(44 + data_len as usize, 0);
+    let mut decoder = AudioStreamDecoder::from_reader(
+        std::io::Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+    )
+    .unwrap();
+    std::sync::Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap())
+}
 
 #[test]
 fn midi_item_name_draft_commits_as_one_undoable_project_action() {
@@ -4953,6 +4979,10 @@ fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
             length_samples: end - start,
         })
         .unwrap();
+    app.audio_waveforms.insert(
+        "asset://trim-test".to_owned(),
+        silent_test_waveform(44_100, 100_000),
+    );
     let item_id = app.project.audio_items()[0].id();
     let original = app.project.audio_items()[0].clone();
     app.timeline.rebuild(&app.project);
@@ -4986,7 +5016,7 @@ fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
     let trimmed_start = app.project.sample_at_tick(720).unwrap();
     let trimmed_source_offset = trimmed.source_offset_samples();
     assert_eq!(trimmed.start_sample(), trimmed_start);
-    assert_eq!(trimmed.source_offset_samples(), 256 + trimmed_start - start);
+    assert_eq!(trimmed.source_offset_samples(), 5_769);
     assert_eq!(trimmed.start_sample() + trimmed.length_samples(), end);
     assert_eq!(app.revision, 2);
 
@@ -5004,12 +5034,55 @@ fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
         });
     app.finish_item_trim();
     let right_trimmed = &app.project.audio_items()[0];
-    assert_eq!(right_trimmed.start_sample(), trimmed_start);
-    assert_eq!(right_trimmed.source_offset_samples(), trimmed_source_offset);
+    let right_trimmed_start = right_trimmed.start_sample();
+    let right_trimmed_offset = right_trimmed.source_offset_samples();
+    assert_eq!(right_trimmed_start, trimmed_start);
+    assert_eq!(right_trimmed_offset, trimmed_source_offset);
     assert_eq!(
         right_trimmed.start_sample() + right_trimmed.length_samples(),
         app.project.sample_at_tick(1_200).unwrap()
     );
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::Start,
+            target_tick: 600,
+            ignore_snap: true,
+        });
+    app.finish_item_trim();
+    let restored_left = &app.project.audio_items()[0];
+    let restored_start = app.project.sample_at_tick(600).unwrap();
+    assert_eq!(restored_left.start_sample(), restored_start);
+    assert_eq!(restored_left.source_offset_samples(), 3_013);
+    assert_eq!(
+        restored_left.source_offset_samples()
+            + u64::try_from(
+                super::scale_project_samples_to_source_frames_nearest(
+                    i128::from(trimmed_start - restored_start),
+                    44_100,
+                    48_000,
+                )
+                .unwrap()
+            )
+            .unwrap(),
+        right_trimmed_offset
+    );
+
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::BeginItemTrim {
+            item_id,
+            edge: crate::timeline::ItemTrimEdge::End,
+            target_tick: 1_300,
+            ignore_snap: true,
+        });
+    app.finish_item_trim();
+    let restored_right = &app.project.audio_items()[0];
+    assert_eq!(
+        restored_right.start_sample() + restored_right.length_samples(),
+        app.project.sample_at_tick(1_300).unwrap()
+    );
+    assert_eq!(restored_right.source_offset_samples(), 3_013);
 }
 
 #[test]
@@ -5033,7 +5106,7 @@ fn invalid_audio_item_trim_changes_neither_project_nor_history() {
         .handle(crate::timeline::TimelineEvent::BeginItemTrim {
             item_id,
             edge: crate::timeline::ItemTrimEdge::Start,
-            target_tick: 0,
+            target_tick: 100,
             ignore_snap: true,
         });
     assert!(!app.timeline.item_trim_preview().unwrap().valid);
@@ -5042,6 +5115,60 @@ fn invalid_audio_item_trim_changes_neither_project_nor_history() {
     assert_eq!(app.project.audio_items()[0], original);
     assert_eq!(app.revision, revision);
     assert!(app.status.contains("at least one sample"));
+}
+
+#[test]
+fn audio_item_trim_cannot_extend_past_the_source_media() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let start = app.project.sample_at_tick(480).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://trim-boundary".to_owned(),
+            start_sample: start,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = app.project.audio_items()[0].clone();
+    app.audio_waveforms.insert(
+        "asset://trim-boundary".to_owned(),
+        silent_test_waveform(48_000, 30_000),
+    );
+    app.timeline.rebuild(&app.project);
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::BeginItemTrim {
+        item_id,
+        edge: crate::timeline::ItemTrimEdge::End,
+        target_tick: 2_000,
+        ignore_snap: true,
+    });
+    assert!(!app.timeline.item_trim_preview().unwrap().valid);
+    let revision = app.revision;
+    app.finish_item_trim();
+
+    assert_eq!(app.project.audio_items()[0], original);
+    assert_eq!(app.revision, revision);
+    assert!(app.status.contains("within the source media"));
+}
+
+#[test]
+fn audio_trim_maps_project_time_into_source_sample_rate() {
+    assert_eq!(
+        super::scale_project_samples_to_source_frames_nearest(6_000, 44_100, 48_000).unwrap(),
+        5_513
+    );
+    assert_eq!(
+        super::scale_project_samples_to_source_frames_ceil(6_000, 44_100, 48_000).unwrap(),
+        5_513
+    );
+    assert_eq!(
+        super::scale_project_samples_to_source_frames_nearest(-3_000, 44_100, 48_000).unwrap(),
+        -2_756
+    );
 }
 
 #[test]
