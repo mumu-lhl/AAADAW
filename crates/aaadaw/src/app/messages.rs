@@ -51,6 +51,20 @@ pub(crate) enum MainMenu {
     Actions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MenuNavigation {
+    Open,
+    NextMenu,
+    PreviousMenu,
+    NextCommand,
+    PreviousCommand,
+    Activate,
+}
+
+pub(crate) fn action_search_input_id() -> iced::widget::Id {
+    iced::widget::Id::from("aaadaw-action-search")
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MainWorkspace {
     #[default]
@@ -107,6 +121,7 @@ pub(crate) enum TimeMapTab {
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     ToggleMainMenu(MainMenu),
+    MenuKeyboard(MenuNavigation),
     DismissMainMenu,
     ToggleOfflineJobsPanel,
     Escape,
@@ -281,6 +296,7 @@ pub(crate) enum Message {
     Undo,
     Redo,
     ActionQueryChanged(String),
+    ActionMenuScrolled(f32),
     ActionMacroNameChanged(String),
     ActionMacroStepSelected(String),
     AddActionMacroStep,

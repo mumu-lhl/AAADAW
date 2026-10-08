@@ -705,6 +705,14 @@ pub(super) fn for_actions_menu(app: &App) -> Vec<CommandEntry> {
         .collect()
 }
 
+pub(super) fn matching_actions_menu(app: &App, query: &str) -> Vec<CommandEntry> {
+    let query = query.trim().to_ascii_lowercase();
+    for_actions_menu(app)
+        .into_iter()
+        .filter(|entry| query.is_empty() || entry.matches_query(&query))
+        .collect()
+}
+
 pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
     let mut entries = COMMANDS
         .iter()

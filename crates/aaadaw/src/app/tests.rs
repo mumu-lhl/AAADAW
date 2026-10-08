@@ -10,8 +10,9 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
-    midi_editor_shortcut_event, midi_expression_context_menu_event, shortcut_message,
+    App, MainMenu, MainWorkspace, MenuNavigation, Message, PathPickerTarget,
+    keyboard_shortcut_event, menu_navigation_event, midi_editor_shortcut_event,
+    midi_expression_context_menu_event, shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -3086,6 +3087,218 @@ fn action_search_dispatches_supported_commands() {
     let _ = app.update(Message::ActionQueryChanged("undo".to_owned()));
     let _ = app.update(Message::RunActionQuery);
     assert!(app.project.midi_items().is_empty());
+}
+
+#[test]
+fn menu_keyboard_opens_from_f10_and_accepts_enter_while_actions_search_has_focus() {
+    let window_id = iced::window::Id::unique();
+    let f10 = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::F10),
+        modified_key: Key::Named(iced::keyboard::key::Named::F10),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F10),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        menu_navigation_event(
+            &f10,
+            iced::event::Status::Ignored,
+            window_id,
+            Some(window_id),
+            None,
+        ),
+        Some(Message::MenuKeyboard(MenuNavigation::Open))
+    ));
+
+    let right = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::ArrowRight),
+        modified_key: Key::Named(iced::keyboard::key::Named::ArrowRight),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowRight),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        menu_navigation_event(
+            &right,
+            iced::event::Status::Ignored,
+            window_id,
+            Some(window_id),
+            Some(MainMenu::File),
+        ),
+        Some(Message::MenuKeyboard(MenuNavigation::NextMenu))
+    ));
+
+    let enter = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::Enter),
+        modified_key: Key::Named(iced::keyboard::key::Named::Enter),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        menu_navigation_event(
+            &enter,
+            iced::event::Status::Captured,
+            window_id,
+            Some(window_id),
+            Some(MainMenu::Actions),
+        ),
+        Some(Message::RunActionQuery)
+    ));
+}
+
+#[test]
+fn action_search_enter_executes_the_selected_visible_match() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        ..App::default()
+    };
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Actions));
+    let _ = app.update(Message::ActionQueryChanged("track".to_owned()));
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Captured,
+        window_id,
+    ));
+
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.active_menu, None);
+}
+
+#[test]
+fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
+    let mut app = App::default();
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::Open));
+    assert_eq!(app.active_menu, Some(MainMenu::File));
+    let first = app.menu_selected_command;
+    assert!(first.is_some());
+
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_ne!(app.menu_selected_command, first);
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousCommand));
+    assert_eq!(app.menu_selected_command, first);
+
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
+    assert_eq!(app.active_menu, Some(MainMenu::Edit));
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
+    assert_eq!(app.active_menu, Some(MainMenu::File));
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.active_menu, None);
+    assert_eq!(app.menu_selected_command, None);
+}
+
+#[test]
+fn action_search_keyboard_selection_scrolls_past_the_visible_rows() {
+    let app = App::default();
+    let entries = super::commands::matching_actions_menu(&app, "");
+    let selected = entries
+        .iter()
+        .filter(|entry| entry.enabled)
+        .last()
+        .expect("Actions menu has an enabled command")
+        .id;
+
+    assert!(
+        super::actions_menu_selection_scroll_offset(&entries, selected, 0.0)
+            .expect("selected command is in the Actions results")
+            > 0.0
+    );
+}
+
+#[test]
+fn action_search_keeps_visible_rows_stationary_and_scrolls_at_viewport_edges() {
+    let app = App::default();
+    let entries = super::commands::matching_actions_menu(&app, "");
+    let ids = entries
+        .iter()
+        .filter(|entry| entry.enabled)
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    let first = ids[0];
+    let middle = ids[3];
+    let last = *ids.last().expect("Actions menu has enabled commands");
+
+    assert_eq!(
+        super::actions_menu_selection_scroll_offset(&entries, first, 0.0),
+        None
+    );
+    assert_eq!(
+        super::actions_menu_selection_scroll_offset(&entries, middle, 0.0),
+        None
+    );
+    assert_eq!(
+        super::actions_menu_selection_scroll_offset(&entries, first, 150.0),
+        Some(20.0)
+    );
+    let max_offset = super::actions_menu_selection_scroll_offset(&entries, last, 0.0)
+        .expect("last result extends below the viewport");
+    assert!(max_offset > 0.0);
+    assert_eq!(
+        super::actions_menu_selection_scroll_offset(&entries, last, max_offset),
+        None
+    );
+}
+
+#[test]
+fn menu_search_and_navigation_stay_available_during_a_file_dialog() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        path_picker_busy: true,
+        ..App::default()
+    };
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::Actions));
+    let _ = app.update(Message::ActionQueryChanged(String::new()));
+    let first = app.menu_selected_command;
+    assert!(first.is_some());
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(iced::keyboard::key::Named::ArrowDown),
+            modified_key: Key::Named(iced::keyboard::key::Named::ArrowDown),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowDown),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Captured,
+        window_id,
+    ));
+    assert_ne!(app.menu_selected_command, first);
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Captured,
+        window_id,
+    ));
+    assert!(app.project.tracks().is_empty());
+    assert_eq!(app.active_menu, Some(MainMenu::Actions));
+    assert_eq!(app.status, "Wait for the file dialog to finish");
 }
 
 #[test]

@@ -137,12 +137,7 @@ fn dropdown_with_max_width(
     touch_targets: bool,
 ) -> Element<'_, Message> {
     let contents = if menu == MainMenu::Actions {
-        actions_menu(
-            app,
-            commands::for_actions_menu(app),
-            max_height,
-            touch_targets,
-        )
+        actions_menu(app, max_height, touch_targets)
     } else {
         menu_commands(
             app,
@@ -191,18 +186,22 @@ fn menu_commands(
             32.0
         } else {
             0.0
-        };
+        }
+        + if touch_targets { 16.0 } else { 0.0 };
     let max_content_height = (max_height - tokens::PANEL_PADDING * 2.0).max(1.0);
     let mut contents = column![].spacing(tokens::ROW_GAP);
     for entry in entries {
         if entry.separator_before {
             contents = contents.push(rule::horizontal(1));
         }
-        contents = contents.push(command(entry, touch_targets));
+        let selected = app.menu_selected_command == Some(entry.id);
+        contents = contents.push(command(entry, selected, touch_targets));
     }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
     }
+    contents =
+        contents.push(text("↑/↓ select · ←/→ switch sections · Enter run · Esc close").size(9));
     if touch_targets {
         scrollable(contents)
             .height(Length::Fixed(estimated_height.min(max_content_height)))
@@ -326,17 +325,8 @@ fn offline_jobs_panel_with_width(
         .into()
 }
 
-fn actions_menu(
-    app: &App,
-    entries: Vec<CommandEntry>,
-    max_height: f32,
-    touch_targets: bool,
-) -> Element<'_, Message> {
-    let query = app.action_query.trim().to_ascii_lowercase();
-    let entries = entries
-        .into_iter()
-        .filter(|entry| query.is_empty() || entry.matches_query(&query))
-        .collect::<Vec<_>>();
+fn actions_menu(app: &App, max_height: f32, touch_targets: bool) -> Element<'_, Message> {
+    let entries = commands::matching_actions_menu(app, &app.action_query);
     let mut results = column![].spacing(tokens::ROW_GAP);
     let mut category = None;
     for entry in entries {
@@ -347,36 +337,50 @@ fn actions_menu(
         if entry.separator_before {
             results = results.push(rule::horizontal(1));
         }
-        results = results.push(command(entry, touch_targets));
+        let selected = app.menu_selected_command == Some(entry.id);
+        results = results.push(command(entry, selected, touch_targets));
     }
+    let results_height = if touch_targets {
+        (max_height - tokens::PANEL_PADDING * 2.0 - 72.0)
+            .max(1.0)
+            .min(284.0)
+    } else {
+        284.0
+    };
     let results: Element<'_, Message> = if category.is_some() {
-        let results_height = if touch_targets {
-            (max_height - tokens::PANEL_PADDING * 2.0 - 56.0).clamp(tokens::TOUCH_TARGET_MIN, 284.0)
-        } else {
-            284.0
-        };
         scrollable(results)
             .height(Length::Fixed(results_height))
+            .id(iced::widget::Id::new("aaadaw-actions-menu-results"))
+            .on_scroll(|viewport| Message::ActionMenuScrolled(viewport.absolute_offset().y))
             .into()
     } else {
         container(text("No matching commands").size(12))
-            .height(Length::Fixed(44.0))
-            .center_y(Length::Fixed(44.0))
+            .height(Length::Fixed(results_height.min(44.0)))
+            .center_y(Length::Fixed(results_height.min(44.0)))
             .into()
     };
     column![
         text_input("Search actions…", &app.action_query)
+            .id(super::super::messages::action_search_input_id())
             .on_input(Message::ActionQueryChanged)
-            .on_submit(Message::RunActionQuery)
             .width(Length::Fill),
+        text("↑/↓ results · Enter run · Alt+←/→ switch menus · Esc close").size(9),
         rule::horizontal(1),
         results,
     ]
-    .spacing(tokens::SECTION_GAP)
+    .spacing(if touch_targets {
+        tokens::SPACING_XS
+    } else {
+        tokens::SECTION_GAP
+    })
     .into()
 }
 
-fn command<'a>(entry: CommandEntry, touch_targets: bool) -> iced::widget::Button<'a, Message> {
+fn command<'a>(
+    entry: CommandEntry,
+    selected: bool,
+    touch_targets: bool,
+) -> iced::widget::Button<'a, Message> {
     let message = Message::ExecuteCommand(entry.id);
     let destructive = entry.destructive;
     let button = button(
@@ -388,7 +392,7 @@ fn command<'a>(entry: CommandEntry, touch_targets: bool) -> iced::widget::Button
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .style(move |_, status| menu_item_style(status, destructive))
+    .style(move |_, status| menu_item_style(status, destructive, selected))
     .on_press_maybe(entry.enabled.then_some(message));
     touch_button(button, touch_targets)
 }
@@ -441,7 +445,7 @@ fn menu_bar_style(active: bool, status: button::Status) -> button::Style {
     }
 }
 
-fn menu_item_style(status: button::Status, destructive: bool) -> button::Style {
+fn menu_item_style(status: button::Status, destructive: bool, selected: bool) -> button::Style {
     let (background, text_color) = match status {
         button::Status::Disabled => (Color::TRANSPARENT, Color::from_rgb8(116, 122, 126)),
         button::Status::Hovered | button::Status::Pressed => (
@@ -450,6 +454,10 @@ fn menu_item_style(status: button::Status, destructive: bool) -> button::Style {
             } else {
                 Color::from_rgb8(67, 91, 103)
             },
+            Color::from_rgb8(248, 249, 250),
+        ),
+        _ if selected => (
+            Color::from_rgb8(67, 91, 103),
             Color::from_rgb8(248, 249, 250),
         ),
         _ => (
