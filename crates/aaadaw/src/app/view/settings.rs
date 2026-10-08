@@ -122,7 +122,7 @@ fn desktop_settings<'a>(app: &App, details: Element<'a, Message>) -> Element<'a,
             })
             .on_press(Message::SelectSettingsCategory(SettingsCategory::Audio)),
     ]
-    .spacing(4);
+    .spacing(tokens::ROW_GAP);
 
     let content = row![
         container(navigation)
@@ -147,7 +147,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
         .action_macro_step
         .as_ref()
         .and_then(|id| choices.iter().find(|choice| &choice.id == id).cloned());
-    let mut step_rows = column![].spacing(4);
+    let mut step_rows = column![].spacing(tokens::ROW_GAP);
     for (index, id) in app.action_macro_steps.iter().enumerate() {
         step_rows = step_rows.push(
             row![
@@ -181,7 +181,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
                     })
                     .on_press(Message::RemoveActionMacroStep(index)),
             ]
-            .spacing(4)
+            .spacing(tokens::ROW_GAP)
             .align_y(Alignment::Center),
         );
     }
@@ -189,7 +189,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
         step_rows = step_rows.push(text("Add at least one supported action.").size(11));
     }
 
-    let mut saved_macros = column![].spacing(4);
+    let mut saved_macros = column![].spacing(tokens::ROW_GAP);
     for action_macro in &app.action_macros {
         let id = action_macro.id;
         saved_macros = saved_macros.push(
@@ -199,7 +199,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
                     text(format!("{} actions", action_macro.steps.len())).size(10),
                 ]
                 .width(Length::Fill)
-                .spacing(2),
+                .spacing(tokens::SPACING_TIGHT),
                 button("Edit")
                     .height(if compact {
                         Length::Fixed(48.0)
@@ -217,7 +217,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
                     .style(button::text)
                     .on_press(Message::DeleteActionMacro(id)),
             ]
-            .spacing(6)
+            .spacing(tokens::SPACING_COMPACT)
             .align_y(Alignment::Center),
         );
     }
@@ -284,7 +284,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
                 .style(button::secondary)
                 .on_press(Message::NewActionMacro),
         ]
-        .spacing(6),
+        .spacing(tokens::SPACING_COMPACT),
         text(app.action_macro_feedback.clone()).size(11),
         rule::horizontal(1),
         text("Saved macros").size(13),
@@ -754,7 +754,7 @@ fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
 }
 
 fn clap_plugins(app: &App, compact: bool) -> Element<'_, Message> {
-    let mut paths = column![].spacing(3);
+    let mut paths = column![].spacing(tokens::SPACING_TIGHT);
     for path in &app.clap_plugin_paths {
         let path_message = path.clone();
         let is_default = app.clap_plugin_default_paths.contains(path);
@@ -776,7 +776,7 @@ fn clap_plugins(app: &App, compact: bool) -> Element<'_, Message> {
                             .then_some(Message::RemoveClapPluginPath(path_message)),
                     ),
             ]
-            .spacing(6)
+            .spacing(tokens::SPACING_COMPACT)
             .align_y(Alignment::Center),
         );
     }

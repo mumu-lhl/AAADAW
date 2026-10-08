@@ -72,7 +72,7 @@ fn panel_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
         6.0
     });
 
-    let mut source_rows = column![].spacing(4);
+    let mut source_rows = column![].spacing(tokens::ROW_GAP);
     let mut entries = app.audio_asset_source_statuses.values().collect::<Vec<_>>();
     entries.sort_unstable_by(|left, right| left.media_ref.cmp(&right.media_ref));
     if entries.is_empty() {
@@ -94,7 +94,11 @@ fn panel_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 touch_targets,
             ));
         }
-        source_rows = source_rows.push(source_row.spacing(4).align_y(Alignment::Center));
+        source_rows = source_rows.push(
+            source_row
+                .spacing(tokens::ROW_GAP)
+                .align_y(Alignment::Center),
+        );
     }
 
     let panel_heading: Element<'_, Message> = if touch_targets {

@@ -119,7 +119,7 @@ fn picker_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 .size(10)
                 .width(Length::Fill),
         ]
-        .spacing(2)
+        .spacing(tokens::SPACING_TIGHT)
         .width(Length::Fill);
         let plugin_action = button(button_label)
             .style(button::primary)

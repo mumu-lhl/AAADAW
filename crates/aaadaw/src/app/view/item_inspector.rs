@@ -45,7 +45,7 @@ fn view_with_touch_targets(app: &App, touch_targets: bool) -> Element<'_, Messag
     container(content)
         .width(Length::Fill)
         .height(Length::Fixed(height))
-        .padding([8, 10])
+        .padding([tokens::PANEL_PADDING, tokens::PANEL_PADDING])
         .style(|_| container::Style {
             background: Some(iced::Color::from_rgb8(30, 34, 37).into()),
             ..container::Style::default()
