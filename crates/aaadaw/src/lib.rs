@@ -18,4 +18,5 @@ fn android_main(android_app: android_activity::AndroidApp) {
     if let Err(error) = app::run() {
         tracing::error!(error = %error, "AAADAW Android activity stopped with an error");
     }
+    tracing::warn!("AAADAW Android event loop returned");
 }
