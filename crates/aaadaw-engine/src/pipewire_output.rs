@@ -806,14 +806,12 @@ fn inspect_pipewire_routes(
         .nodes
         .iter()
         .find(|(id, _, _)| *id == node_id)
-        .ok_or_else(|| {
-            match direction {
-                PipeWireRouteDirection::Input => {
-                    "AAADAW's PipeWire capture stream is no longer available".to_owned()
-                }
-                PipeWireRouteDirection::Output => {
-                    "AAADAW's PipeWire playback stream is no longer available".to_owned()
-                }
+        .ok_or_else(|| match direction {
+            PipeWireRouteDirection::Input => {
+                "AAADAW's PipeWire capture stream is no longer available".to_owned()
+            }
+            PipeWireRouteDirection::Output => {
+                "AAADAW's PipeWire playback stream is no longer available".to_owned()
             }
         })?;
     let mut routes = linked_pipewire_route_nodes(&snapshot.links, node_id, direction)
@@ -846,12 +844,10 @@ fn linked_pipewire_route_nodes(
 ) -> Vec<u32> {
     let mut nodes = links
         .iter()
-        .filter_map(|(source, destination)| {
-            match direction {
-                PipeWireRouteDirection::Input if *destination == Some(node_id) => *source,
-                PipeWireRouteDirection::Output if *source == Some(node_id) => *destination,
-                _ => None,
-            }
+        .filter_map(|(source, destination)| match direction {
+            PipeWireRouteDirection::Input if *destination == Some(node_id) => *source,
+            PipeWireRouteDirection::Output if *source == Some(node_id) => *destination,
+            _ => None,
         })
         .collect::<Vec<_>>();
     nodes.sort_unstable();
