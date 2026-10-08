@@ -271,6 +271,27 @@ fn picker_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
             "Choose an entry to add it to the track FX chain"
         }
     };
+    let discovery_summary = text(format!(
+        "{} discovered · {} instruments · {} effects · {} other",
+        app.clap_plugin_scan.plugins.len(),
+        counts.instruments,
+        counts.effects,
+        counts.other
+    ))
+    .size(10);
+    let footer: Element<'_, Message> = if touch_targets {
+        discovery_summary.into()
+    } else {
+        row![
+            discovery_summary,
+            iced::widget::Space::new().width(Length::Fill),
+            button("Cancel")
+                .style(button::secondary)
+                .on_press(Message::ClosePluginPicker),
+        ]
+        .align_y(Alignment::Center)
+        .into()
+    };
     let contents = column![
         column![
             text(if picking_instrument {
@@ -302,34 +323,7 @@ fn picker_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
         rule::horizontal(1),
         scrollable(container(entries).padding(iced::Padding::default().right(8.0)))
             .height(Length::Fill),
-        if touch_targets {
-            text(format!(
-                "{} discovered · {} instruments · {} effects · {} other",
-                app.clap_plugin_scan.plugins.len(),
-                counts.instruments,
-                counts.effects,
-                counts.other
-            ))
-            .size(10)
-            .into()
-        } else {
-            row![
-                text(format!(
-                    "{} discovered · {} instruments · {} effects · {} other",
-                    app.clap_plugin_scan.plugins.len(),
-                    counts.instruments,
-                    counts.effects,
-                    counts.other
-                ))
-                .size(10),
-                iced::widget::Space::new().width(Length::Fill),
-                button("Cancel")
-                    .style(button::secondary)
-                    .on_press(Message::ClosePluginPicker),
-            ]
-            .align_y(Alignment::Center)
-            .into()
-        },
+        footer,
     ]
     .spacing(if touch_targets {
         tokens::SPACING_SM
