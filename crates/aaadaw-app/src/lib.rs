@@ -161,6 +161,10 @@ impl StandbyAudioInput {
     pub fn shutdown(self) {
         self.input.shutdown();
     }
+
+    pub fn take_input_peak(&self) -> [f32; 2] {
+        self.control.take_input_peak()
+    }
 }
 
 /// Result of mapping the output clock into the active input clock domain.
@@ -809,6 +813,13 @@ impl RunningAudioPlayback {
 
     pub fn has_standby_input(&self) -> bool {
         self.standby_input.is_some()
+    }
+
+    /// Takes the accumulated peaks from an armed track's standby input monitor.
+    pub fn take_standby_input_peak(&self) -> Option<[f32; 2]> {
+        self.standby_input
+            .as_ref()
+            .map(StandbyAudioInput::take_input_peak)
     }
 
     pub fn has_enabled_input_monitor(&self) -> bool {
