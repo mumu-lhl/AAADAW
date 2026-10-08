@@ -1,10 +1,19 @@
 use super::super::{App, Message};
+use super::tokens;
 use aaadaw_app::ClapPluginDescriptor;
 use aaadaw_core::TrackId;
-use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, rule, scrollable, text, text_input, tooltip};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    picker_view(app, false)
+}
+
+pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
+    picker_view(app, true)
+}
+
+fn picker_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let picking_instrument = app.plugin_picker_instrument_track_id.is_some();
     let target_track_id = app
         .plugin_picker_instrument_track_id
@@ -60,6 +69,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 )
         })
         .unwrap_or_else(|| "None".to_owned());
+    let target_label: Element<'_, Message> = if touch_targets {
+        tooltip::Tooltip::new(
+            text(format!(
+                "To: {}",
+                super::arrangement::truncate_track_name(track_name, 18)
+            ))
+            .size(11)
+            .width(Length::Fill),
+            text(track_name).size(12),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    } else {
+        text(format!("To: {track_name}")).size(11).into()
+    };
 
     let mut entries = column![].spacing(2);
     for plugin in plugins.iter().copied() {
@@ -71,28 +95,58 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Message::AddScannedPlugin(plugin_id)
         };
         let button_label = if picking_instrument { "Assign" } else { "Add" };
-        entries = entries
-            .push(
-                row![
-                    column![
-                        row![
-                            text(plugin.name.clone()).size(13),
-                            iced::widget::Space::new().width(Length::Fill),
-                            text(plugin_kind(plugin)).size(10),
-                        ]
-                        .align_y(Alignment::Center),
-                        text(format!("{vendor} · {}", plugin.plugin_id)).size(10),
-                        text(plugin.entry_path.display().to_string()).size(10),
-                    ]
-                    .spacing(2)
+        let plugin_name: Element<'_, Message> = if touch_targets {
+            tooltip::Tooltip::new(
+                text(super::arrangement::truncate_track_name(&plugin.name, 28))
+                    .size(13)
                     .width(Length::Fill),
-                    button(button_label).style(button::primary).on_press(action),
-                ]
+                text(plugin.name.clone()).size(12),
+                tooltip::Position::Bottom,
+            )
+            .into()
+        } else {
+            text(plugin.name.clone()).size(13).into()
+        };
+        let details = column![
+            row![
+                plugin_name,
+                iced::widget::Space::new().width(Length::Fill),
+                text(plugin_kind(plugin)).size(10),
+            ]
+            .align_y(Alignment::Center),
+            text(format!("{vendor} · {}", plugin.plugin_id)).size(10),
+            text(plugin.entry_path.display().to_string())
+                .size(10)
+                .width(Length::Fill),
+        ]
+        .spacing(2)
+        .width(Length::Fill);
+        let plugin_action = button(button_label)
+            .style(button::primary)
+            .height(if touch_targets {
+                Length::Fixed(tokens::TOUCH_TARGET_MIN)
+            } else {
+                Length::Shrink
+            })
+            .width(if touch_targets {
+                Length::Fill
+            } else {
+                Length::Shrink
+            })
+            .on_press(action);
+        let entry: Element<'_, Message> = if touch_targets {
+            column![details, plugin_action]
+                .spacing(tokens::SPACING_XS)
+                .padding([tokens::SPACING_SM, tokens::SPACING_XS])
+                .into()
+        } else {
+            row![details, plugin_action]
                 .spacing(8)
                 .align_y(Alignment::Center)
-                .padding([5, 3]),
-            )
-            .push(rule::horizontal(1));
+                .padding([5, 3])
+                .into()
+        };
+        entries = entries.push(entry).push(rule::horizontal(1));
     }
     if plugins.is_empty() {
         if app.clap_plugin_scan_busy {
@@ -112,7 +166,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 if matching_counts.instruments > 0
                     && let Some(track_id) = app.plugin_picker_track_id
                 {
-                    no_match = no_match.push(instrument_picker_button(track_id));
+                    no_match = no_match.push(instrument_picker_button(track_id, touch_targets));
                 }
             } else {
                 no_match = no_match.push(
@@ -129,6 +183,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .push(
                         button("Clear search")
                             .style(button::secondary)
+                            .height(if touch_targets {
+                                Length::Fixed(tokens::TOUCH_TARGET_MIN)
+                            } else {
+                                Length::Shrink
+                            })
+                            .width(if touch_targets {
+                                Length::Fill
+                            } else {
+                                Length::Shrink
+                            })
                             .on_press(Message::PluginPickerSearchChanged(String::new())),
                     )
                     .padding([12, 4]),
@@ -144,6 +208,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .size(12),
                     button("Open CLAP plugin settings")
                         .style(button::secondary)
+                        .height(if touch_targets {
+                            Length::Fixed(tokens::TOUCH_TARGET_MIN)
+                        } else {
+                            Length::Shrink
+                        })
+                        .width(if touch_targets {
+                            Length::Fill
+                        } else {
+                            Length::Shrink
+                        })
                         .on_press(Message::OpenClapPluginSettings),
                 ]
                 .spacing(8)
@@ -163,11 +237,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             if counts.instruments > 0
                 && let Some(track_id) = app.plugin_picker_track_id
             {
-                guidance = guidance.push(instrument_picker_button(track_id));
+                guidance = guidance.push(instrument_picker_button(track_id, touch_targets));
             }
             guidance = guidance.push(
                 button("Open CLAP plugin settings")
                     .style(button::secondary)
+                    .height(if touch_targets {
+                        Length::Fixed(tokens::TOUCH_TARGET_MIN)
+                    } else {
+                        Length::Shrink
+                    })
+                    .width(if touch_targets {
+                        Length::Fill
+                    } else {
+                        Length::Shrink
+                    })
                     .on_press(Message::OpenClapPluginSettings),
             );
             entries = entries.push(guidance.padding([12, 4]));
@@ -195,7 +279,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 "Add plugin"
             })
             .size(16),
-            text(format!("To: {track_name}")).size(11),
+            target_label,
             if picking_instrument {
                 text(format!("Current: {current_instrument}")).size(10)
             } else {
@@ -209,12 +293,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             &app.plugin_picker_search
         )
         .on_input(Message::PluginPickerSearchChanged)
-        .padding([6, 8]),
+        .padding(if touch_targets {
+            [tokens::SPACING_LG, tokens::SPACING_SM]
+        } else {
+            [6, 8]
+        }),
         text(format!("{scan_state} · {} shown", plugins.len())).size(10),
         rule::horizontal(1),
         scrollable(container(entries).padding(iced::Padding::default().right(8.0)))
             .height(Length::Fill),
-        row![
+        if touch_targets {
             text(format!(
                 "{} discovered · {} instruments · {} effects · {} other",
                 app.clap_plugin_scan.plugins.len(),
@@ -222,16 +310,37 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 counts.effects,
                 counts.other
             ))
-            .size(10),
-            iced::widget::Space::new().width(Length::Fill),
-            button("Cancel")
-                .style(button::secondary)
-                .on_press(Message::ClosePluginPicker),
-        ]
-        .align_y(Alignment::Center),
+            .size(10)
+            .into()
+        } else {
+            row![
+                text(format!(
+                    "{} discovered · {} instruments · {} effects · {} other",
+                    app.clap_plugin_scan.plugins.len(),
+                    counts.instruments,
+                    counts.effects,
+                    counts.other
+                ))
+                .size(10),
+                iced::widget::Space::new().width(Length::Fill),
+                button("Cancel")
+                    .style(button::secondary)
+                    .on_press(Message::ClosePluginPicker),
+            ]
+            .align_y(Alignment::Center)
+            .into()
+        },
     ]
-    .spacing(8)
-    .padding(12)
+    .spacing(if touch_targets {
+        tokens::SPACING_SM
+    } else {
+        8.0
+    })
+    .padding(if touch_targets {
+        tokens::PANEL_PADDING
+    } else {
+        12.0
+    })
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -273,9 +382,19 @@ fn picker_type(picking_instrument: bool) -> &'static str {
     }
 }
 
-fn instrument_picker_button(track_id: TrackId) -> Element<'static, Message> {
+fn instrument_picker_button(track_id: TrackId, touch_targets: bool) -> Element<'static, Message> {
     button("Choose an instrument for this track")
         .style(button::primary)
+        .height(if touch_targets {
+            Length::Fixed(tokens::TOUCH_TARGET_MIN)
+        } else {
+            Length::Shrink
+        })
+        .width(if touch_targets {
+            Length::Fill
+        } else {
+            Length::Shrink
+        })
         .on_press(Message::OpenTrackInstrumentPicker(track_id))
         .into()
 }

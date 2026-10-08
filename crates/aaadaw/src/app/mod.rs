@@ -68,8 +68,8 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, PathPickerTarget,
-    PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, MobilePanel,
+    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 pub(crate) fn run() -> iced::Result {
@@ -229,6 +229,9 @@ struct App {
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
     main_workspace: MainWorkspace,
+    mobile_panel: MobilePanel,
+    mobile_panel_history: Vec<MobilePanel>,
+    main_window_size: Option<iced::Size>,
     project_path_query: String,
     project_path: Option<PathBuf>,
     pending_project_transition: Option<PendingProjectTransition>,
@@ -960,10 +963,51 @@ fn duplicate_item_actions(
 }
 
 impl App {
+    fn is_mobile_main_window(&self) -> bool {
+        self.main_window_size
+            .map(|size| size.width < 720.0)
+            .unwrap_or(cfg!(target_os = "android"))
+    }
+
+    fn show_mobile_panel(&mut self, panel: MobilePanel) {
+        if self.mobile_panel != panel {
+            if panel != MobilePanel::Settings {
+                self.cancel_shortcut_capture();
+            }
+            self.mobile_panel_history.push(self.mobile_panel);
+            self.mobile_panel = panel;
+        }
+        self.active_menu = None;
+        self.offline_jobs_panel_open = false;
+    }
+
+    fn navigate_back_mobile_panel(&mut self) {
+        self.cancel_shortcut_capture();
+        self.mobile_panel = self
+            .mobile_panel_history
+            .pop()
+            .unwrap_or(MobilePanel::Editor);
+        self.active_menu = None;
+        self.offline_jobs_panel_open = false;
+    }
+
+    fn cancel_shortcut_capture(&mut self) -> bool {
+        if self.shortcut_capture_id.take().is_some() {
+            self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
+            true
+        } else {
+            false
+        }
+    }
+
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
         let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(1280.0, 800.0),
+            size: if cfg!(target_os = "android") {
+                iced::Size::new(420.0, 800.0)
+            } else {
+                iced::Size::new(1280.0, 800.0)
+            },
             min_size: Some(if cfg!(target_os = "android") {
                 iced::Size::new(360.0, 480.0)
             } else {
@@ -973,6 +1017,11 @@ impl App {
             ..iced::window::Settings::default()
         });
         app.main_window_id = Some(main_window_id);
+        app.main_window_size = Some(if cfg!(target_os = "android") {
+            iced::Size::new(420.0, 800.0)
+        } else {
+            iced::Size::new(1280.0, 800.0)
+        });
         let main_window_task = main_window_task.discard();
         match action_macros::load().and_then(commands::validate_action_macros) {
             Ok(macros) => app.action_macros = macros,
@@ -1294,6 +1343,7 @@ impl App {
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
+                    | Message::MobileNavigateBack
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -1620,9 +1670,13 @@ impl App {
                 task = self.navigate_main_menu(navigation);
             }
             Message::ShowMainWorkspace(workspace) => {
+                self.cancel_shortcut_capture();
                 self.main_workspace = workspace;
+                self.mobile_panel = MobilePanel::Editor;
+                self.mobile_panel_history.clear();
                 self.active_menu = None;
             }
+            Message::MobileNavigateBack => self.navigate_back_mobile_panel(),
             Message::OpenSettings => task = self.open_settings(),
             Message::OpenClapPluginSettings => {
                 self.settings_category = SettingsCategory::ClapPlugins;
@@ -2198,6 +2252,9 @@ impl App {
                 }
             }
             Message::WindowResized(window_id, size) => {
+                if self.main_window_id == Some(window_id) {
+                    self.main_window_size = Some(size);
+                }
                 if self.midi_editor_window_id == Some(window_id) {
                     self.midi_editor_window_size = size;
                 }
@@ -2392,6 +2449,14 @@ impl App {
                     self.active_menu,
                 )
                 .or_else(|| {
+                    mobile_back_event(
+                        &event,
+                        window_id,
+                        self.main_window_id,
+                        self.is_mobile_main_window() && self.mobile_panel != MobilePanel::Editor,
+                    )
+                })
+                .or_else(|| {
                     plugin_window_escape_message(
                         &event,
                         status,
@@ -2436,23 +2501,30 @@ impl App {
                 self.offline_jobs_panel_open = !self.offline_jobs_panel_open;
             }
             Message::Escape => {
-                if self.pending_project_transition.is_some() {
-                    self.pending_project_transition = None;
-                } else if self.offline_jobs_panel_open {
-                    self.offline_jobs_panel_open = false;
-                } else if self.active_menu.take().is_some() {
-                    self.menu_selected_command = None;
-                } else if !self.cancel_active_track_draft() {
-                    let dismissed_item_menu = self.timeline.context_item.take().is_some();
-                    let dismissed_track_menu = self.timeline.context_track.take().is_some();
-                    let dismissed_automation_menu =
-                        self.timeline.context_automation_point.take().is_some();
-                    if dismissed_item_menu || dismissed_track_menu || dismissed_automation_menu {
-                        self.timeline.context_item_position = None;
-                        self.timeline.context_automation_position = None;
-                    } else {
-                        self.timeline
-                            .handle(timeline::TimelineEvent::ClearTimeSelection);
+                if !self.cancel_shortcut_capture() {
+                    if self.pending_project_transition.is_some() {
+                        self.pending_project_transition = None;
+                    } else if self.offline_jobs_panel_open {
+                        self.offline_jobs_panel_open = false;
+                    } else if self.active_menu.take().is_some() {
+                        self.menu_selected_command = None;
+                    } else if !self.cancel_active_track_draft() {
+                        let dismissed_item_menu = self.timeline.context_item.take().is_some();
+                        let dismissed_track_menu = self.timeline.context_track.take().is_some();
+                        let dismissed_automation_menu =
+                            self.timeline.context_automation_point.take().is_some();
+                        if dismissed_item_menu || dismissed_track_menu || dismissed_automation_menu
+                        {
+                            self.timeline.context_item_position = None;
+                            self.timeline.context_automation_position = None;
+                        } else if self.is_mobile_main_window()
+                            && self.mobile_panel != MobilePanel::Editor
+                        {
+                            self.navigate_back_mobile_panel();
+                        } else {
+                            self.timeline
+                                .handle(timeline::TimelineEvent::ClearTimeSelection);
+                        }
                     }
                 }
             }
@@ -2989,7 +3061,17 @@ impl App {
                     task = commands::dispatch(self, command);
                 }
             }
-            Message::ToggleMediaBrowserPanel => self.media_panel_dock.toggle(),
+            Message::ToggleMediaBrowserPanel => {
+                if self.is_mobile_main_window() {
+                    if self.mobile_panel == MobilePanel::MediaBrowser {
+                        self.navigate_back_mobile_panel();
+                    } else {
+                        self.show_mobile_panel(MobilePanel::MediaBrowser);
+                    }
+                } else {
+                    self.media_panel_dock.toggle();
+                }
+            }
             Message::MediaPanelResized(split, ratio) => {
                 self.media_panel_dock.resize(split, ratio);
             }
@@ -3709,6 +3791,22 @@ impl App {
     }
 
     fn open_settings(&mut self) -> Task<Message> {
+        if self.is_mobile_main_window() {
+            self.show_mobile_panel(MobilePanel::Settings);
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos", target_os = "android")
+            ))]
+            return Task::batch([
+                self.refresh_cpal_output_devices(),
+                self.refresh_cpal_input_devices(),
+            ]);
+            #[cfg(not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos", target_os = "android")
+            )))]
+            return Task::none();
+        }
         if let Some(window_id) = self.settings_window_id {
             let focus = iced::window::gain_focus(window_id);
             #[cfg(all(
@@ -3835,6 +3933,12 @@ impl App {
 
     fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
         self.time_map_tab = tab;
+        if self.is_mobile_main_window() {
+            self.refresh_tempo_map_edits();
+            self.refresh_meter_map_edits();
+            self.show_mobile_panel(MobilePanel::TimeMap);
+            return Task::none();
+        }
         if let Some(window_id) = self.tempo_map_window_id {
             return iced::window::gain_focus(window_id);
         }
@@ -7664,7 +7768,8 @@ fn keyboard_shortcut_event(
     settings_window_id: Option<iced::window::Id>,
     shortcut_capture_id: Option<&str>,
 ) -> Option<Message> {
-    if settings_window_id == Some(window_id)
+    if (settings_window_id == Some(window_id)
+        || (settings_window_id.is_none() && main_window_id == Some(window_id)))
         && let Some(action_id) = shortcut_capture_id
     {
         let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -7754,6 +7859,29 @@ fn keyboard_shortcut_event(
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
         _ => None,
     }
+}
+
+fn mobile_back_event(
+    event: &iced::Event,
+    window_id: iced::window::Id,
+    main_window_id: Option<iced::window::Id>,
+    mobile_panel_open: bool,
+) -> Option<Message> {
+    if main_window_id != Some(window_id) || !mobile_panel_open {
+        return None;
+    }
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key:
+            iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::BrowserBack | iced::keyboard::key::Named::GoBack,
+            ),
+        repeat: false,
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    Some(Message::MobileNavigateBack)
 }
 
 fn midi_editor_shortcut_event(

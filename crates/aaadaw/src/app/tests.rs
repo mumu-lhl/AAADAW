@@ -10,9 +10,9 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, MenuNavigation, Message, PathPickerTarget,
+    App, MainMenu, MainWorkspace, MenuNavigation, Message, MobilePanel, PathPickerTarget,
     keyboard_shortcut_event, menu_navigation_event, midi_editor_shortcut_event,
-    midi_expression_context_menu_event, shortcut_message,
+    midi_expression_context_menu_event, mobile_back_event, shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
@@ -509,6 +509,163 @@ fn switching_arrange_and_mixer_preserves_track_selection_and_transport_position(
     assert_eq!(app.timeline.edit_cursor_tick, 1_920);
     #[cfg(feature = "audio-device")]
     assert_eq!(app.playhead_sample, 24_000);
+}
+
+#[test]
+fn mobile_utility_routes_keep_editor_state_and_use_one_main_window() {
+    let mut app = App {
+        main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.timeline.selected_track = Some(track_id);
+    app.timeline.edit_cursor_tick = 1_920;
+    app.clap_plugin_scan.plugins = vec![
+        aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test-effect.clap"),
+            plugin_id: "org.example.test-effect".to_owned(),
+            name: "Test Effect".to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["audio-effect".to_owned()],
+        },
+        aaadaw_app::ClapPluginDescriptor {
+            entry_path: std::path::PathBuf::from("/plugins/test-instrument.clap"),
+            plugin_id: "org.example.test-instrument".to_owned(),
+            name: "Test Instrument".to_owned(),
+            vendor: Some("Example".to_owned()),
+            features: vec!["instrument".to_owned()],
+        },
+    ];
+
+    let _ = app.update(Message::OpenSettings);
+    assert_eq!(app.mobile_panel, MobilePanel::Settings);
+    assert_eq!(app.settings_window_id, None);
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
+
+    let _ = app.update(Message::OpenTempoMap);
+    assert_eq!(app.mobile_panel, MobilePanel::TimeMap);
+    assert_eq!(app.tempo_map_window_id, None);
+    let _ = app.update(Message::MobileNavigateBack);
+    let _ = app.update(Message::OpenMeterMap);
+    assert_eq!(app.mobile_panel, MobilePanel::TimeMap);
+    assert_eq!(app.time_map_tab, super::TimeMapTab::Meter);
+    let _ = app.update(Message::MobileNavigateBack);
+
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    assert_eq!(app.mobile_panel, MobilePanel::MediaBrowser);
+    let _ = app.update(Message::MobileNavigateBack);
+
+    let _ = app.update(Message::OpenTrackFxChain(track_id));
+    assert_eq!(app.mobile_panel, MobilePanel::FxChain);
+    assert_eq!(app.fx_chain_window_id, None);
+    let _ = app.update(Message::OpenPluginPicker);
+    assert_eq!(app.mobile_panel, MobilePanel::PluginPicker);
+    assert_eq!(app.plugin_picker_window_id, None);
+
+    let _ = app.update(Message::OpenClapPluginSettings);
+    assert_eq!(app.mobile_panel, MobilePanel::Settings);
+    assert_eq!(app.settings_category, super::SettingsCategory::ClapPlugins);
+    let _ = app.update(Message::MobileNavigateBack);
+    assert_eq!(app.mobile_panel, MobilePanel::PluginPicker);
+    assert_eq!(app.plugin_picker_track_id, Some(track_id));
+
+    let _ = app.update(Message::AddScannedPlugin(
+        "org.example.test-effect".to_owned(),
+    ));
+    assert_eq!(app.mobile_panel, MobilePanel::FxChain);
+    assert_eq!(app.project.tracks()[0].fx_chain().len(), 1);
+    assert_eq!(app.fx_chain_selected_index, Some(0));
+    assert_eq!(app.fx_chain_window_id, None);
+    assert_eq!(app.plugin_picker_window_id, None);
+
+    let _ = app.update(Message::MobileNavigateBack);
+    let _ = app.update(Message::OpenTrackInstrumentPicker(track_id));
+    assert_eq!(app.mobile_panel, MobilePanel::PluginPicker);
+    let _ = app.update(Message::SelectScannedInstrument(
+        "org.example.test-instrument".to_owned(),
+    ));
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
+    assert_eq!(app.plugin_picker_window_id, None);
+    assert_eq!(
+        app.project.tracks()[0]
+            .instrument()
+            .map(|instrument| instrument.plugin_id()),
+        Some("org.example.test-instrument")
+    );
+
+    assert_eq!(app.timeline.selected_track, Some(track_id));
+    assert_eq!(app.timeline.edit_cursor_tick, 1_920);
+}
+
+#[test]
+fn mobile_settings_shortcut_capture_and_system_back_are_handled() {
+    let main_window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window_id),
+        main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        ..App::default()
+    };
+    let _ = app.update(Message::OpenSettings);
+    let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
+
+    let key = Key::Character("k".into());
+    let key_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyK),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::COMMAND,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        keyboard_shortcut_event(
+            key_event,
+            iced::event::Status::Captured,
+            main_window_id,
+            Some(main_window_id),
+            None,
+            app.shortcut_capture_id.as_deref(),
+        ),
+        Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
+            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+    ));
+
+    let _ = app.update(Message::Escape);
+    assert!(app.shortcut_capture_id.is_none());
+    assert_eq!(app.mobile_panel, MobilePanel::Settings);
+
+    let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
+    let _ = app.update(Message::MobileNavigateBack);
+    assert!(app.shortcut_capture_id.is_none());
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
+
+    let _ = app.update(Message::OpenSettings);
+    let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    assert!(app.shortcut_capture_id.is_none());
+    assert_eq!(app.mobile_panel, MobilePanel::MediaBrowser);
+    let _ = app.update(Message::MobileNavigateBack);
+
+    let _ = app.update(Message::OpenSettings);
+    let back_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::BrowserBack),
+        modified_key: Key::Named(iced::keyboard::key::Named::BrowserBack),
+        physical_key: iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        ),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::NONE,
+        text: None,
+        repeat: false,
+    });
+    assert!(matches!(
+        mobile_back_event(&back_event, main_window_id, Some(main_window_id), true,),
+        Some(Message::MobileNavigateBack)
+    ));
+    assert!(mobile_back_event(&back_event, main_window_id, Some(main_window_id), false,).is_none());
 }
 
 #[test]

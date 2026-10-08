@@ -361,9 +361,30 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
     ]
     .spacing(tokens::SPACING_SM);
 
-    let workspace: Element<'_, Message> = match app.main_workspace {
-        MainWorkspace::Arrangement => arrangement::mobile_view(app),
-        MainWorkspace::Mixer => mixer::mobile_view(app),
+    let workspace: Element<'_, Message> = match app.mobile_panel {
+        super::MobilePanel::Editor => match app.main_workspace {
+            MainWorkspace::Arrangement => arrangement::mobile_view(app),
+            MainWorkspace::Mixer => mixer::mobile_view(app),
+        },
+        super::MobilePanel::MediaBrowser => media::mobile_view(app),
+        super::MobilePanel::Settings => settings::view(app),
+        super::MobilePanel::TimeMap => tempo_map::mobile_view(app),
+        super::MobilePanel::FxChain => fx_chain::mobile_view(app),
+        super::MobilePanel::PluginPicker => plugin_picker::mobile_view(app),
+    };
+    let panel_navigation: Element<'_, Message> = if app.mobile_panel == super::MobilePanel::Editor {
+        workspace_switcher.into()
+    } else {
+        row![
+            button("← Back")
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_SM, tokens::SPACING_MD])
+                .on_press(Message::MobileNavigateBack),
+            text(app.mobile_panel.title()).size(14).width(Length::Fill),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
     };
     let transport = container(
         column![
@@ -390,7 +411,7 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
     .padding(tokens::PANEL_PADDING)
     .style(iced::widget::container::rounded_box);
 
-    let mut content = column![menu_row, workspace_switcher]
+    let mut content = column![menu_row, panel_navigation]
         .spacing(tokens::SPACING_SM)
         .padding(tokens::SPACING_SM)
         .height(Length::Fill);

@@ -72,6 +72,30 @@ pub(crate) enum MainWorkspace {
     Mixer,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MobilePanel {
+    #[default]
+    Editor,
+    MediaBrowser,
+    Settings,
+    TimeMap,
+    FxChain,
+    PluginPicker,
+}
+
+impl MobilePanel {
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Editor => "Editor",
+            Self::MediaBrowser => "Media Browser",
+            Self::Settings => "Settings",
+            Self::TimeMap => "Time Map",
+            Self::FxChain => "Track Effects",
+            Self::PluginPicker => "Choose Plugin",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PathPickerTarget {
     OpenProject,
@@ -128,6 +152,7 @@ pub(crate) enum Message {
     DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,
     ShowMainWorkspace(MainWorkspace),
+    MobileNavigateBack,
     ToggleMediaBrowserPanel,
     OpenSettings,
     OpenClapPluginSettings,

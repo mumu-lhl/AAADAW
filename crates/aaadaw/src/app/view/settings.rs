@@ -11,6 +11,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         let compact = size.width < 720.0;
         let details = settings_details(app, compact);
         if compact {
+            let detail_content: Element<'_, Message> =
+                if app.settings_category == SettingsCategory::Audio {
+                    details
+                } else {
+                    scrollable(details).height(Length::Fill).into()
+                };
             let categories = [
                 (SettingsCategory::KeyboardShortcuts, "Keyboard Shortcuts"),
                 (SettingsCategory::ActionMacros, "Actions & Macros"),
@@ -38,7 +44,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             column![
                 navigation,
                 rule::horizontal(1),
-                container(details).width(Length::Fill).height(Length::Fill),
+                container(detail_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
             ]
             .spacing(tokens::SPACING_SM)
             .padding([8, 10])
@@ -242,6 +250,7 @@ fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
         column![
             text_input("Macro name", &app.action_macro_name)
                 .on_input(Message::ActionMacroNameChanged)
+                .padding([tokens::SPACING_LG, tokens::SPACING_SM])
                 .width(Length::Fill),
             step_picker,
             add_step,
@@ -381,6 +390,11 @@ fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
     .spacing(tokens::SPACING_XS);
     let offset_input = text_input("0.000", &recording_offset)
         .on_input(Message::RecordingOffsetTextChanged)
+        .padding(if compact {
+            [tokens::SPACING_LG, tokens::SPACING_SM]
+        } else {
+            [6, 8]
+        })
         .width(if compact {
             Length::Fill
         } else {

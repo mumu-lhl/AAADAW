@@ -189,6 +189,10 @@ impl App {
         self.plugin_picker_track_id = None;
         self.plugin_picker_instrument_track_id = Some(track_id);
         self.plugin_picker_search.clear();
+        if self.is_mobile_main_window() {
+            self.show_mobile_panel(super::MobilePanel::PluginPicker);
+            return Task::none();
+        }
         if self.plugin_picker_window_id.is_some() {
             return Task::none();
         }
@@ -275,6 +279,10 @@ impl App {
     fn close_instrument_picker(&mut self) -> Task<Message> {
         self.plugin_picker_instrument_track_id = None;
         self.plugin_picker_search.clear();
+        if self.is_mobile_main_window() {
+            self.navigate_back_mobile_panel();
+            return Task::none();
+        }
         self.plugin_picker_window_id
             .take()
             .map_or_else(Task::none, iced::window::close)

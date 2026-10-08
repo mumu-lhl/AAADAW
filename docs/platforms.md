@@ -103,6 +103,12 @@ between timestamped audio blocks. If reopening fails, AAADAW finalizes the audio
 captured before the route loss. Gaps longer than ten seconds fail the timing
 check and leave the recoverable recording data available for recovery.
 
+On phone-sized windows, Media Browser, Settings, Tempo/Meter Map, the track FX
+chain, and the CLAP picker use single-panel navigation in the main window. The
+Back action returns to the prior panel while retaining the project, selected
+track, edit cursor, and playback state. Native CLAP editor windows remain
+unsupported on Android.
+
 Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
 35, Android NDK, and the `aarch64-linux-android` Rust target:
 

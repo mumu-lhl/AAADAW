@@ -18,7 +18,7 @@ use std::fmt;
 const MOBILE_TRACK_NAME_MAX_CHARS: usize = 9;
 const MOBILE_TRACK_SELECTOR_BUTTON_WIDTH: f32 = 160.0;
 
-fn truncate_track_name(name: &str, max_chars: usize) -> String {
+pub(super) fn truncate_track_name(name: &str, max_chars: usize) -> String {
     let mut chars = name.chars();
     let truncated = chars.by_ref().take(max_chars).collect::<String>();
     if chars.next().is_some() {
@@ -175,13 +175,16 @@ pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
         super::item_inspector::touch_view(app)
     } else if let Some(track) = selected_track {
         let (volume, pan) = track_mix_controls(app, track, TrackMixLayout::TouchCompact);
+        let track_name = tooltip::Tooltip::new(
+            text(truncate_track_name(track.name(), 20))
+                .size(15)
+                .width(Length::Fill),
+            text(track.name()).size(12),
+            tooltip::Position::Bottom,
+        );
         container(
             column![
-                row![
-                    text(track.name()).size(15).width(Length::Fill),
-                    track_peak_meter(app, track),
-                ]
-                .align_y(Alignment::Center),
+                row![track_name, track_peak_meter(app, track),].align_y(Alignment::Center),
                 volume,
                 pan,
             ]
@@ -1115,6 +1118,11 @@ pub(super) fn track_mix_controls<'a>(
     .step(0.1_f32)
     .shift_step(0.01_f32)
     .on_release(Message::CommitTrackVolume(track_id))
+    .height(if touch {
+        tokens::TOUCH_TARGET_MIN
+    } else {
+        16.0
+    })
     .width(Length::Fill);
     let volume = slider_interaction(
         volume_slider.into(),
@@ -1135,6 +1143,11 @@ pub(super) fn track_mix_controls<'a>(
     .step(0.01_f32)
     .shift_step(0.001_f32)
     .on_release(Message::CommitTrackPan(track_id))
+    .height(if touch {
+        tokens::TOUCH_TARGET_MIN
+    } else {
+        16.0
+    })
     .width(Length::Fill);
     let pan_slider = slider_interaction(
         pan_slider.into(),
