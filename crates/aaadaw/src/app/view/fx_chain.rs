@@ -427,7 +427,7 @@ fn selected_plugin_details<'a>(
         .padding(if touch_targets {
             [tokens::SPACING_LG, tokens::SPACING_SM]
         } else {
-            [6, 8]
+            [6.0, 8.0]
         })
         .width(if touch_targets {
             Length::Fill

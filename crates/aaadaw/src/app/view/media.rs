@@ -126,7 +126,7 @@ fn panel_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
             .padding(if touch_targets {
                 [tokens::SPACING_LG, tokens::SPACING_SM]
             } else {
-                [6, 8]
+                [6.0, 8.0]
             })
             .width(Length::Fill),
         import_buttons,
@@ -139,7 +139,7 @@ fn panel_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
             .padding(if touch_targets {
                 [tokens::SPACING_LG, tokens::SPACING_SM]
             } else {
-                [6, 8]
+                [6.0, 8.0]
             })
             .width(Length::Fill),
         action_button(

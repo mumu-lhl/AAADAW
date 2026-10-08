@@ -393,7 +393,7 @@ fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
         .padding(if compact {
             [tokens::SPACING_LG, tokens::SPACING_SM]
         } else {
-            [6, 8]
+            [6.0, 8.0]
         })
         .width(if compact {
             Length::Fill

@@ -296,7 +296,7 @@ fn picker_view(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .padding(if touch_targets {
             [tokens::SPACING_LG, tokens::SPACING_SM]
         } else {
-            [6, 8]
+            [6.0, 8.0]
         }),
         text(format!("{scan_state} · {} shown", plugins.len())).size(10),
         rule::horizontal(1),
