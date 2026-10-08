@@ -172,9 +172,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     // finished stack would also put the menu popup inside the dismiss surface,
     // so clicks in Actions search or on a menu command would close it before
     // the popup could handle the interaction.
-    let mut layered: Element<'_, Message> = mouse_area(base)
-        .on_press(Message::DismissMainMenu)
-        .into();
+    let mut layered: Element<'_, Message> =
+        mouse_area(base).on_press(Message::DismissMainMenu).into();
     if app.offline_jobs_panel_open {
         let popup = float(menu::offline_jobs_panel(app)).translate(|bounds, viewport| {
             let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
