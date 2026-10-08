@@ -78,22 +78,7 @@ jobs:
             adb shell am force-stop org.aaadaw.app
             adb shell am start -n org.aaadaw.app/org.aaadaw.app.MainActivity
             timeout 120s sh -c 'attempt=0; while [ "$attempt" -lt 90 ]; do pid="$(adb shell pidof org.aaadaw.app 2>/dev/null | tr -d "[:space:]")"; case "$pid" in ""|*[!0-9]*) ;; *) exit 0 ;; esac; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { sh scripts/dump_android_state.sh; exit 1; }
-            attempt=0
-            while [ "$attempt" -lt 30 ]; do
-              adb shell screencap -p /data/local/tmp/aaadaw-portrait.png
-              adb pull /data/local/tmp/aaadaw-portrait.png ./aaadaw-portrait.png
-              if python3 scripts/check_android_screenshot.py aaadaw-portrait.png > /tmp/aaadaw-screenshot-check.log 2>&1; then
-                break
-              fi
-              sleep 3
-              attempt=$((attempt + 1))
-            done
-            if [ "$attempt" -eq 30 ]; then
-              cat /tmp/aaadaw-screenshot-check.log
-              adb logcat -d -v threadtime -b all > android-logcat.txt
-              sh scripts/dump_android_state.sh
-              exit 1
-            fi
+            sh scripts/wait_for_android_screenshot.sh || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             adb shell run-as org.aaadaw.app test -d files/aaadaw/unsaved-sessions || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             timeout 90s sh -c 'attempt=0; while [ "$attempt" -lt 30 ]; do if adb shell dumpsys window 2>/dev/null | grep -Eq "mCurrentFocus=Window.*org\\.aaadaw\\.app/org\\.aaadaw\\.app\\.MainActivity"; then exit 0; fi; sleep 1; attempt=$((attempt + 1)); done; exit 1' || { adb logcat -d -v threadtime -b all > android-logcat.txt; sh scripts/dump_android_state.sh; exit 1; }
             adb shell settings put system accelerometer_rotation 0
