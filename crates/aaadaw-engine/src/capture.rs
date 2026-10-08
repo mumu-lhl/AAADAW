@@ -463,8 +463,13 @@ impl AudioCaptureProducer {
                 monitor.write_frame(frame);
             }
             if let Err(PushError::Full(_)) = self.producer.push(frame) {
+                let mut dropped_frames = 1_u64;
+                for frame in frames {
+                    peak[0] = peak[0].max(sample_peak(frame[0]));
+                    peak[1] = peak[1].max(sample_peak(frame[1]));
+                    dropped_frames = dropped_frames.saturating_add(1);
+                }
                 self.state.observe_input_peak(peak);
-                let dropped_frames = 1_u64.saturating_add(frames.count() as u64);
                 if frame_count > 0 && !self.publish_block(first_frame, frame_count) {
                     self.fail_overflow(dropped_frames.saturating_add(frame_count as u64));
                     return 0;
@@ -617,6 +622,17 @@ mod tests {
         assert_eq!(block.frame_count, 2);
         assert_eq!(output[..2], [[0.1, -0.1], [0.2, -0.2]]);
         assert!(consumer.pop_timed_frames(&mut output).is_none());
+    }
+
+    #[test]
+    fn input_meter_includes_peaks_after_capture_queue_overflow() {
+        let (mut producer, _consumer, control) = super::audio_capture_stream_with_capacity(2, 2);
+        control.start();
+        producer.push_frames_at(0, [[0.1, 0.2], [0.3, 0.4], [0.2, 0.5], [0.6, -1.4]]);
+
+        assert!(control.has_overflowed());
+        assert_eq!(control.overflow_frames(), 2);
+        assert_eq!(control.take_input_peak(), [0.6, 1.4]);
     }
 
     #[test]
