@@ -9,6 +9,7 @@ pub enum AudioOutputConnectionState {
 }
 
 impl AudioOutputConnectionState {
+    #[cfg(feature = "pipewire-backend")]
     pub(crate) fn from_atomic_value(value: u8) -> Self {
         match value {
             1 => Self::Connected,
