@@ -351,9 +351,7 @@ fn actions_menu(
     }
     let results: Element<'_, Message> = if category.is_some() {
         let results_height = if touch_targets {
-            (max_height - tokens::PANEL_PADDING * 2.0 - 56.0)
-                .max(tokens::TOUCH_TARGET_MIN)
-                .min(284.0)
+            (max_height - tokens::PANEL_PADDING * 2.0 - 56.0).clamp(tokens::TOUCH_TARGET_MIN, 284.0)
         } else {
             284.0
         };

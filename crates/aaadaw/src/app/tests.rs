@@ -1,3 +1,5 @@
+#[cfg(feature = "audio-device")]
+use super::StereoPeakHold;
 use super::commands::{self, CommandId, TrackCommand};
 use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
@@ -8,9 +10,8 @@ use super::project_io::{
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, Message, PathPickerTarget, StereoPeakHold,
-    keyboard_shortcut_event, midi_editor_shortcut_event, midi_expression_context_menu_event,
-    shortcut_message,
+    App, MainMenu, MainWorkspace, Message, PathPickerTarget, keyboard_shortcut_event,
+    midi_editor_shortcut_event, midi_expression_context_menu_event, shortcut_message,
 };
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]

@@ -1233,7 +1233,7 @@ pub(super) fn track_mix_controls<'a>(
         tokens::SPACING_TIGHT
     })
     .align_y(Alignment::Center);
-    (volume_controls.into(), pan_controls.into())
+    (volume_controls, pan_controls.into())
 }
 
 struct SliderInteractionState {
