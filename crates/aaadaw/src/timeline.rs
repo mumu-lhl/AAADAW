@@ -144,6 +144,10 @@ pub(crate) enum TimelineEvent {
     FitSelectedItemsToView {
         viewport_width: f32,
     },
+    SetFollowPlayhead {
+        enabled: bool,
+        viewport_width: f32,
+    },
     SelectItem {
         item_id: Option<ItemId>,
         additive: bool,
@@ -731,6 +735,8 @@ pub(crate) struct TimelineState {
     pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) follow_playhead: bool,
+    viewport_width: f32,
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
@@ -903,6 +909,8 @@ impl Default for TimelineState {
             selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
+            follow_playhead: false,
+            viewport_width: 480.0,
             time_selection: None,
             context_track: None,
             context_item: None,
@@ -1407,6 +1415,15 @@ impl TimelineState {
                     });
                 self.fit_tick_range(range, viewport_width);
             }
+            TimelineEvent::SetFollowPlayhead {
+                enabled,
+                viewport_width,
+            } => {
+                self.follow_playhead = enabled;
+                if viewport_width.is_finite() && viewport_width > 1.0 {
+                    self.viewport_width = viewport_width;
+                }
+            }
             TimelineEvent::SelectItem {
                 item_id,
                 additive,
@@ -1669,12 +1686,44 @@ impl TimelineState {
     }
 
     fn fit_tick_range(&mut self, range: Option<(u64, u64)>, viewport_width: f32) {
+        if viewport_width.is_finite() && viewport_width > 1.0 {
+            self.viewport_width = viewport_width;
+        }
         let Some((origin_tick, pixels_per_tick)) = fit_tick_range(range, viewport_width) else {
             return;
         };
         self.origin_tick = origin_tick;
         self.pixels_per_tick = pixels_per_tick;
         self.pan_fractional_tick = 0.0;
+    }
+
+    pub(crate) fn follow_playhead_to_tick(&mut self, tick: u64) {
+        if !self.follow_playhead
+            || !self.viewport_width.is_finite()
+            || self.viewport_width <= 1.0
+            || !self.pixels_per_tick.is_finite()
+            || self.pixels_per_tick <= 0.0
+        {
+            return;
+        }
+
+        let visible_ticks = f64::from(self.viewport_width) / f64::from(self.pixels_per_tick);
+        let head_x = (i128::from(tick) - i128::from(self.origin_tick)) as f64
+            * f64::from(self.pixels_per_tick);
+        let (target_x, should_scroll) = if head_x >= f64::from(self.viewport_width) * 0.8 {
+            (0.6, true)
+        } else if head_x < f64::from(self.viewport_width) * 0.1 {
+            (0.1, true)
+        } else {
+            (0.0, false)
+        };
+        if should_scroll {
+            self.origin_tick = (tick as f64 - visible_ticks * target_x)
+                .max(0.0)
+                .min(u64::MAX as f64)
+                .round() as u64;
+            self.pan_fractional_tick = 0.0;
+        }
     }
 
     pub(crate) fn is_track_selected(&self, track_id: TrackId) -> bool {
@@ -4087,6 +4136,32 @@ mod tests {
         assert!(timeline.origin_tick < 8_000);
         let selection_end_x = (9_000 - timeline.origin_tick) as f32 * timeline.pixels_per_tick;
         assert!(selection_end_x < 1_000.0);
+    }
+
+    #[test]
+    fn follow_playhead_scrolls_at_edges_without_jittering_near_the_center() {
+        let mut timeline = TimelineState {
+            pixels_per_tick: 1.0,
+            ..TimelineState::default()
+        };
+        timeline.handle(TimelineEvent::SetFollowPlayhead {
+            enabled: true,
+            viewport_width: 800.0,
+        });
+
+        timeline.follow_playhead_to_tick(700);
+        assert_eq!(timeline.origin_tick, 220);
+        timeline.follow_playhead_to_tick(710);
+        assert_eq!(timeline.origin_tick, 220);
+        timeline.follow_playhead_to_tick(100);
+        assert_eq!(timeline.origin_tick, 20);
+
+        timeline.handle(TimelineEvent::SetFollowPlayhead {
+            enabled: false,
+            viewport_width: 800.0,
+        });
+        timeline.follow_playhead_to_tick(900);
+        assert_eq!(timeline.origin_tick, 20);
     }
 
     #[test]
