@@ -54,6 +54,33 @@ impl App {
         let backend = self.selected_playback_backend();
         let recording_offset_us = self.audio_settings.recording_offset_us;
         let cpal_input_device_id = self.audio_settings.cpal_input_device_id.clone();
+        #[cfg(target_os = "android")]
+        {
+            match crate::android_platform::request_microphone_permission() {
+                Ok(Some(receiver)) => {
+                    self.recording_starting = true;
+                    self.recording_cancel_requested = false;
+                    self.status = "Allow microphone access to record audio".to_owned();
+                    return Task::perform(
+                        async move {
+                            receiver.await.map_err(|_| {
+                                "Android permission request was interrupted".to_owned()
+                            })
+                        },
+                        |result| Message::MicrophonePermissionResult(result),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.status = format!("Microphone permission unavailable: {error}");
+                    return Task::none();
+                }
+            }
+            if let Err(error) = crate::android_platform::start_recording_service() {
+                self.status = format!("Could not start Android recording service: {error}");
+                return Task::none();
+            }
+        }
         if self.playback.is_none() {
             self.recording_starting = true;
             self.recording_cancel_requested = false;
@@ -146,7 +173,7 @@ impl App {
                 };
                 match input {
                     Ok(input) => Ok(ActiveRecording {
-                        input,
+                        input: Some(input),
                         writer,
                         control,
                         placement_correction:
@@ -381,7 +408,9 @@ impl App {
         Task::perform(
             run_blocking("aaadaw-recording-input-discard", move || {
                 recording.control.stop();
-                recording.input.shutdown();
+                if let Some(input) = recording.input {
+                    input.shutdown();
+                }
                 recording.writer.cancel();
                 Ok(())
             }),
@@ -394,6 +423,8 @@ impl App {
         match result {
             Some(Ok(recording)) => {
                 if self.recording_cancel_requested {
+                    #[cfg(target_os = "android")]
+                    crate::android_platform::stop_recording_service();
                     self.recording_cancel_requested = false;
                     self.recording_starting = false;
                     self.recording_tracks.clear();
@@ -414,6 +445,8 @@ impl App {
                             .playhead_sample;
                         if let Err(error) = self.playback.as_mut().expect("playback exists").play()
                         {
+                            #[cfg(target_os = "android")]
+                            crate::android_platform::stop_recording_service();
                             tracing::error!(backend = self.playback_name(), error = %error, "playback could not start for recording");
                             self.recording_starting = false;
                             self.recording_tracks.clear();
@@ -423,11 +456,19 @@ impl App {
                         }
                         self.playback_playing = true;
                         self.playback_paused = false;
+                        #[cfg(target_os = "android")]
+                        if let Err(error) = crate::android_platform::start_playback_service() {
+                            self.status = format!(
+                                "Recording is active, but Android playback background service could not start: {error}"
+                            );
+                        }
                     }
                     self.begin_recording(recording)
                 }
             }
             Some(Err(error)) => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
                 self.recording_tracks.clear();
@@ -439,6 +480,8 @@ impl App {
                 Task::none()
             }
             None => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!("recording setup result was unavailable");
                 self.recording_starting = false;
                 self.recording_cancel_requested = false;
@@ -483,7 +526,9 @@ impl App {
         self.status = "Finalizing take…".to_owned();
         Task::perform(
             run_blocking("aaadaw-recording-finish", move || {
-                recording.input.shutdown();
+                if let Some(input) = recording.input {
+                    input.shutdown();
+                }
                 let start_sample = match (
                     recording.capture_timeline_anchor,
                     recording.control.first_capture_frame(),
@@ -508,6 +553,8 @@ impl App {
     }
 
     pub(super) fn finish_recording_stop(&mut self, result: SharedRecordingStop) -> Task<Message> {
+        #[cfg(target_os = "android")]
+        crate::android_platform::stop_recording_service();
         self.recording_stopping = false;
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
@@ -551,6 +598,10 @@ impl App {
                 self.import_bytes = 0;
                 self.import_total_bytes = None;
                 self.status = "Embedding recorded take…".to_owned();
+                if let Some(notice) = self.recording_notice.take() {
+                    self.status.push_str(" · ");
+                    self.status.push_str(&notice);
+                }
                 Task::perform(
                     run_blocking("aaadaw-recording-import-start", move || {
                         start_audio_item_import(
@@ -574,6 +625,10 @@ impl App {
                 self.recording_tracks.clear();
                 self.status =
                     format!("Recording stopped with an error; recoverable take retained: {error}");
+                if let Some(notice) = self.recording_notice.take() {
+                    self.status.push_str(" · ");
+                    self.status.push_str(&notice);
+                }
                 Task::none()
             }
             None => {
@@ -590,6 +645,8 @@ impl App {
             return Task::none();
         };
         if self.recording_cancel_requested {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_cancel_requested = false;
             self.recording_starting = false;
             self.recording_tracks.clear();
@@ -597,6 +654,8 @@ impl App {
             return self.discard_recording_async(recording);
         }
         if !self.playback_playing {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_starting = false;
             self.recording_tracks.clear();
             self.status = format!(
@@ -609,6 +668,7 @@ impl App {
     }
 
     fn begin_recording(&mut self, recording: ActiveRecording) -> Task<Message> {
+        self.recording_notice = None;
         let transport_sample = self
             .playback
             .as_ref()
@@ -619,6 +679,8 @@ impl App {
             .placement_correction
             .apply(transport_sample, self.project.settings().sample_rate())
         else {
+            #[cfg(target_os = "android")]
+            crate::android_platform::stop_recording_service();
             self.recording_starting = false;
             self.recording_tracks.clear();
             self.status =
@@ -645,6 +707,93 @@ impl App {
         )
     }
 
+    #[cfg(target_os = "android")]
+    pub(super) fn recover_recording_input_if_needed(&mut self) -> Task<Message> {
+        let Some(recording) = self.recording.as_mut() else {
+            return Task::none();
+        };
+        if self.recording_stopping
+            || recording.input.is_none()
+            || !recording.control.has_device_error()
+        {
+            return Task::none();
+        }
+        let Some(old_input) = recording.input.take() else {
+            return Task::none();
+        };
+        let control = recording.control.clone();
+        let backend = self.selected_playback_backend();
+        let sample_rate = self.project.settings().sample_rate();
+        let device_id = self.audio_settings.cpal_input_device_id.clone();
+        self.status =
+            "Android input route changed; reopening input and preserving the gap…".to_owned();
+        let result = Arc::new(Mutex::new(None));
+        let message_result = Arc::clone(&result);
+        Task::perform(
+            run_blocking("aaadaw-recording-input-recovery", move || {
+                old_input.shutdown();
+                let producer = control.replacement_producer(sample_rate);
+                control.prepare_device_recovery();
+                let input = open_audio_input(
+                    backend,
+                    producer,
+                    None,
+                    control.clone(),
+                    sample_rate,
+                    device_id.as_deref(),
+                )?;
+                if control.has_device_error() {
+                    input.shutdown();
+                    return Err("the replacement input route failed to start".to_owned());
+                }
+                control.resume_after_device_recovery();
+                Ok(input)
+            }),
+            move |opened| {
+                *message_result
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(opened);
+                Message::RecordingInputReconnected(super::SharedRecordingInputRecovery(Arc::clone(
+                    &result,
+                )))
+            },
+        )
+    }
+
+    #[cfg(target_os = "android")]
+    pub(super) fn finish_recording_input_recovery(
+        &mut self,
+        result: super::SharedRecordingInputRecovery,
+    ) -> Task<Message> {
+        let result = result.0.lock().ok().and_then(|mut result| result.take());
+        match result {
+            Some(Ok(input)) => {
+                if let Some(recording) = self.recording.as_mut()
+                    && !self.recording_stopping
+                {
+                    recording.input = Some(input);
+                    self.status =
+                        "Input route restored; the interrupted section is preserved as silence"
+                            .to_owned();
+                } else {
+                    input.shutdown();
+                }
+                Task::none()
+            }
+            Some(Err(error)) => {
+                if self.recording.is_some() {
+                    self.recording_notice = Some(format!(
+                        "Input route recovery failed ({error}); the take was finalized at the last available audio"
+                    ));
+                    self.stop_recording()
+                } else {
+                    Task::none()
+                }
+            }
+            None => Task::none(),
+        }
+    }
+
     pub(super) fn finish_recording_position_saved(
         &mut self,
         result: super::SharedRecordingPositionSaved,
@@ -652,6 +801,8 @@ impl App {
         let result = result.0.lock().ok().and_then(|mut result| result.take());
         match result {
             Some(Ok((recording, _start_sample))) if self.recording_cancel_requested => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
                 self.recording_tracks.clear();
@@ -660,16 +811,25 @@ impl App {
             }
             Some(Ok((recording, _provisional_start_sample))) => {
                 let mut recording = recording;
-                recording.placement_correction = recording
-                    .placement_correction
-                    .with_capture_latency_frames(recording.input.reported_capture_latency_frames());
+                recording.placement_correction =
+                    recording.placement_correction.with_capture_latency_frames(
+                        recording
+                            .input
+                            .as_ref()
+                            .and_then(|input| input.reported_capture_latency_frames()),
+                    );
                 let placement_correction = recording.placement_correction;
                 let playback_stats = self.playback.as_ref().map(|playback| playback.stats());
                 let jack_clock_anchor =
                     playback_stats.and_then(|stats| stats.transport_clock_anchor);
-                let frame_clock_mapping = recording
-                    .input
-                    .map_shared_frame_time(jack_clock_anchor.map(|anchor| anchor.backend_frame));
+                let frame_clock_mapping = recording.input.as_ref().map_or(
+                    aaadaw_app::SharedFrameClockMapping::Unsupported,
+                    |input| {
+                        input.map_shared_frame_time(
+                            jack_clock_anchor.map(|anchor| anchor.backend_frame),
+                        )
+                    },
+                );
                 let (transport_sample, capture_frame) = match frame_clock_mapping {
                     aaadaw_app::SharedFrameClockMapping::Mapped(frame) => (
                         jack_clock_anchor
@@ -766,6 +926,8 @@ impl App {
                 Task::none()
             }
             Some(Err(error)) => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!(error = %error, "recording recovery metadata persistence failed");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
@@ -777,6 +939,8 @@ impl App {
                 Task::none()
             }
             None => {
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_recording_service();
                 tracing::error!("recording recovery metadata result was unavailable");
                 self.recording_cancel_requested = false;
                 self.recording_starting = false;
@@ -841,7 +1005,9 @@ impl App {
 
 fn discard_recording(recording: ActiveRecording) {
     recording.control.stop();
-    recording.input.shutdown();
+    if let Some(input) = recording.input {
+        input.shutdown();
+    }
     recording.writer.cancel();
 }
 

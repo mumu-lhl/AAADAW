@@ -40,6 +40,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(super) fn add_clap_plugin_path(&mut self, path: PathBuf) -> Task<Message> {
         if !path.is_dir() {
             self.clap_plugin_settings_feedback =

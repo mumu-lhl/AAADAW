@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+mod android_platform;
 mod app;
 mod clap_scanner;
 mod logging;

@@ -68,16 +68,22 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, PathPickerTarget,
-    PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, MidiEditorTool, MobilePanel,
+    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 pub(crate) fn run() -> iced::Result {
-    iced::daemon(App::new, App::update, view::view_for_window)
+    let application = iced::daemon(App::new, App::update, view::view_for_window)
         .title(App::window_title)
         .theme(|_: &App, _| iced::Theme::Dark)
-        .subscription(App::subscription)
-        .run()
+        .subscription(App::subscription);
+
+    #[cfg(target_os = "android")]
+    let application = application
+        .default_font(iced::Font::with_name("Roboto"))
+        .font(include_bytes!("../../assets/Roboto-Variable.ttf").as_slice());
+
+    application.run()
 }
 
 #[cfg(feature = "audio-device")]
@@ -178,7 +184,7 @@ struct MidiNoteClipboard {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CpalDeviceChoice {
@@ -188,7 +194,7 @@ struct CpalDeviceChoice {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 impl std::fmt::Display for CpalDeviceChoice {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -251,6 +257,10 @@ struct App {
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
     main_workspace: MainWorkspace,
+    mobile_panel: MobilePanel,
+    mobile_panel_history: Vec<MobilePanel>,
+    main_window_size: Option<iced::Size>,
+    android_app_unfocused: bool,
     project_path_query: String,
     project_path: Option<PathBuf>,
     session_media_dir: Option<UnsavedSessionMedia>,
@@ -315,6 +325,7 @@ struct App {
     midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_lane: MidiEditorLane,
+    midi_editor_tool: MidiEditorTool,
     midi_editor_origin_tick: u64,
     midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
@@ -334,34 +345,40 @@ struct App {
     audio_settings: audio_config::AudioSettings,
     audio_recording_offset_query: Option<String>,
     audio_settings_feedback: String,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_input_ports: usize,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_output_ports: usize,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    android_midi_feedback: String,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices: Vec<aaadaw_engine::CpalOutputDeviceInfo>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices_loading: bool,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_output_devices_error: Option<String>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices: Vec<aaadaw_engine::CpalInputDeviceInfo>,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices_loading: bool,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     cpal_input_devices_error: Option<String>,
     clap_plugin_paths: Vec<PathBuf>,
@@ -426,6 +443,8 @@ struct App {
     #[cfg(feature = "audio-device")]
     recording_tracks: Vec<TrackId>,
     #[cfg(feature = "audio-device")]
+    recording_notice: Option<String>,
+    #[cfg(feature = "audio-device")]
     standby_monitor_track: Option<TrackId>,
     #[cfg(feature = "audio-device")]
     standby_monitor_starting: bool,
@@ -456,12 +475,12 @@ struct App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     playback_backend: PlaybackBackend,
@@ -641,7 +660,7 @@ struct PendingAudioImport {
 
 #[cfg(feature = "audio-device")]
 struct ActiveRecording {
-    input: RunningAudioInput,
+    input: Option<RunningAudioInput>,
     writer: AudioRecordingWorker,
     control: AudioCaptureControl,
     placement_correction: audio_config::RecordingPlacementCorrection,
@@ -678,6 +697,12 @@ pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, 
 
 #[cfg(feature = "audio-device")]
 #[derive(Clone)]
+pub(super) struct SharedRecordingInputRecovery(
+    Arc<Mutex<Option<Result<RunningAudioInput, String>>>>,
+);
+
+#[cfg(feature = "audio-device")]
+#[derive(Clone)]
 pub(super) struct SharedStandbyInput(
     Arc<Mutex<Option<Result<aaadaw_app::StandbyAudioInput, String>>>>,
 );
@@ -693,6 +718,13 @@ impl std::fmt::Debug for SharedStandbyInput {
 impl std::fmt::Debug for SharedRecordingStart {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingStart(..)")
+    }
+}
+
+#[cfg(feature = "audio-device")]
+impl std::fmt::Debug for SharedRecordingInputRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRecordingInputRecovery(..)")
     }
 }
 
@@ -969,6 +1001,49 @@ fn duplicate_item_actions(
 }
 
 impl App {
+    fn is_mobile_main_window(&self) -> bool {
+        cfg!(target_os = "android") || self.main_window_size.is_some_and(|size| size.width < 720.0)
+    }
+
+    fn show_mobile_panel(&mut self, panel: MobilePanel) {
+        if self.mobile_panel != panel {
+            if panel != MobilePanel::Settings {
+                self.cancel_shortcut_capture();
+            }
+            self.mobile_panel_history.push(self.mobile_panel);
+            self.mobile_panel = panel;
+        }
+        self.active_menu = None;
+        self.offline_jobs_panel_open = false;
+    }
+
+    fn navigate_back_mobile_panel(&mut self) {
+        if self.mobile_panel == MobilePanel::MidiEditor {
+            self.release_midi_preview();
+            self.midi_editor_window_id = None;
+            self.midi_editor_item_id = None;
+            self.midi_editor_feedback = None;
+            self.midi_editor_selected_notes.clear();
+            self.midi_editor_edit_cursor_tick = None;
+        }
+        self.cancel_shortcut_capture();
+        self.mobile_panel = self
+            .mobile_panel_history
+            .pop()
+            .unwrap_or(MobilePanel::Editor);
+        self.active_menu = None;
+        self.offline_jobs_panel_open = false;
+    }
+
+    fn cancel_shortcut_capture(&mut self) -> bool {
+        if self.shortcut_capture_id.take().is_some() {
+            self.shortcut_editor_feedback = "Shortcut recording cancelled".to_owned();
+            true
+        } else {
+            false
+        }
+    }
+
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
         match create_unsaved_project_session_dir() {
@@ -978,12 +1053,25 @@ impl App {
             }
         }
         let (main_window_id, main_window_task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(1280.0, 800.0),
-            min_size: Some(iced::Size::new(900.0, 620.0)),
+            size: if cfg!(target_os = "android") {
+                iced::Size::new(420.0, 800.0)
+            } else {
+                iced::Size::new(1280.0, 800.0)
+            },
+            min_size: Some(if cfg!(target_os = "android") {
+                iced::Size::new(360.0, 480.0)
+            } else {
+                iced::Size::new(900.0, 620.0)
+            }),
             exit_on_close_request: false,
             ..iced::window::Settings::default()
         });
         app.main_window_id = Some(main_window_id);
+        app.main_window_size = Some(if cfg!(target_os = "android") {
+            iced::Size::new(420.0, 800.0)
+        } else {
+            iced::Size::new(1280.0, 800.0)
+        });
         let main_window_task = main_window_task.discard();
         match action_macros::load().and_then(commands::validate_action_macros) {
             Ok(macros) => app.action_macros = macros,
@@ -1017,12 +1105,12 @@ impl App {
                     all(
                         feature = "jack-backend",
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     ),
                     all(
                         feature = "pipewire-backend",
                         feature = "cpal-backend",
-                        any(target_os = "windows", target_os = "macos")
+                        any(target_os = "windows", target_os = "macos", target_os = "android")
                     )
                 ))]
                 app.restore_playback_backend(settings.playback_backend);
@@ -1033,7 +1121,18 @@ impl App {
                     format!("Audio config unavailable; using defaults ({error})");
             }
         }
-        let default_plugin_paths = default_clap_search_paths();
+        #[allow(unused_mut)]
+        let mut default_plugin_paths = default_clap_search_paths();
+        #[cfg(target_os = "android")]
+        if let Some(app_data) = crate::android_platform::app_data_directory() {
+            let plugin_directory = app_data.join("plugins");
+            if let Err(error) = std::fs::create_dir_all(&plugin_directory) {
+                app.clap_plugin_warnings
+                    .push(format!("Could not create Android CLAP directory: {error}"));
+            } else {
+                default_plugin_paths.push(plugin_directory);
+            }
+        }
         app.clap_plugin_default_paths = default_plugin_paths.iter().cloned().collect();
         app.clap_plugin_paths = default_plugin_paths;
         let mut plugin_settings_warnings = Vec::new();
@@ -1179,28 +1278,41 @@ impl App {
         } else {
             Duration::from_millis(100)
         };
-        let background_ticks = if self.import_busy
-            || playback_active
-            || recording_active
-            || fx_automation_finishing
-            || self.offline_render_busy
-            || !self.offline_job_queue.is_empty()
-            || self.audio_asset_management_busy
-            || self.audio_waveform_worker.is_some()
-            || self.track_mix_gesture.is_some()
-            || self.unsaved_session_snapshot_at.is_some()
+        let app_can_poll = !cfg!(target_os = "android") || !self.android_app_unfocused;
+        let background_ticks = if app_can_poll
+            && (self.import_busy
+                || playback_active
+                || recording_active
+                || {
+                    #[cfg(all(feature = "audio-device", target_os = "android"))]
+                    {
+                        self.settings_category == SettingsCategory::Audio
+                    }
+                    #[cfg(not(all(feature = "audio-device", target_os = "android")))]
+                    {
+                        false
+                    }
+                }
+                || fx_automation_finishing
+                || self.offline_render_busy
+                || !self.offline_job_queue.is_empty()
+                || self.audio_asset_management_busy
+                || self.audio_waveform_worker.is_some()
+                || self.track_mix_gesture.is_some()
+                || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
         } else {
             iced::Subscription::none()
         };
-        let meter_ticks = if playback_active {
+        let meter_ticks = if app_can_poll && playback_active {
             iced::time::every(Duration::from_millis(33)).map(|_| Message::MeterTick)
         } else {
             iced::Subscription::none()
         };
         iced::Subscription::batch([
             iced::event::listen_with(runtime_keyboard_event),
+            iced::event::listen_with(android_app_focus_event),
             iced::event::listen_with(midi_expression_context_menu_event),
             iced::event::listen_with(fx_chain_plugin_drag_event),
             iced::window::close_events().map(Message::WindowClosed),
@@ -1349,6 +1461,7 @@ impl App {
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
+                    | Message::MobileNavigateBack
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -1369,6 +1482,9 @@ impl App {
                     | Message::OpenPluginPicker
                     | Message::OpenMidiEditor(_)
                     | Message::CloseMidiEditor
+                    | Message::SelectMidiEditorLane(_)
+                    | Message::SelectMidiEditorTool(_)
+                    | Message::AndroidAppFocusChanged(_)
                     | Message::CloseTrackFxChain
                     | Message::ClosePluginPicker
                     | Message::PluginPickerSearchChanged(_)
@@ -1678,9 +1794,13 @@ impl App {
                 task = self.navigate_main_menu(navigation);
             }
             Message::ShowMainWorkspace(workspace) => {
+                self.cancel_shortcut_capture();
                 self.main_workspace = workspace;
+                self.mobile_panel = MobilePanel::Editor;
+                self.mobile_panel_history.clear();
                 self.active_menu = None;
             }
+            Message::MobileNavigateBack => self.navigate_back_mobile_panel(),
             Message::OpenSettings => task = self.open_settings(),
             Message::OpenClapPluginSettings => {
                 self.settings_category = SettingsCategory::ClapPlugins;
@@ -1771,13 +1891,17 @@ impl App {
                     self.plugin_picker_track_id = None;
                     self.plugin_picker_instrument_track_id = None;
                     self.plugin_picker_search.clear();
-                } else if self.midi_editor_window_id == Some(window_id) {
+                } else if self.midi_editor_window_id == Some(window_id)
+                    && self.main_window_id != Some(window_id)
+                {
                     self.release_midi_preview();
                     self.midi_editor_window_id = None;
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                 } else if self.main_window_id == Some(window_id) {
+                    #[cfg(target_os = "android")]
+                    tracing::warn!(?window_id, "Android main window closed");
                     self.close_fx_editor_resources();
                     task = iced::exit();
                 }
@@ -1786,6 +1910,8 @@ impl App {
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                 } else if self.main_window_id == Some(window_id) {
+                    #[cfg(target_os = "android")]
+                    tracing::warn!(?window_id, "Android main window close requested");
                     self.release_midi_preview();
                     task = self.begin_project_transition(
                         PendingProjectTransition::CloseMainWindow(window_id),
@@ -1801,13 +1927,20 @@ impl App {
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_edit_cursor_tick = None;
-                    task = iced::window::close(window_id);
+                    if self.main_window_id == Some(window_id)
+                        && self.mobile_panel == MobilePanel::MidiEditor
+                    {
+                        self.navigate_back_mobile_panel();
+                    } else {
+                        task = iced::window::close(window_id);
+                    }
                 }
             }
             Message::SelectMidiEditorLane(lane) => {
                 self.release_midi_preview();
                 self.midi_editor_lane = lane;
             }
+            Message::SelectMidiEditorTool(tool) => self.midi_editor_tool = tool,
             Message::PreviewMidiNote(track_id, pitch) => {
                 #[cfg(feature = "audio-device")]
                 if self.midi_editor_window_id.is_some()
@@ -2262,6 +2395,9 @@ impl App {
                 }
             }
             Message::WindowResized(window_id, size) => {
+                if self.main_window_id == Some(window_id) {
+                    self.main_window_size = Some(size);
+                }
                 if self.midi_editor_window_id == Some(window_id) {
                     self.midi_editor_window_size = size;
                 }
@@ -2269,6 +2405,9 @@ impl App {
                     self.fx_chain_window_size = size;
                     self.resize_fx_editor_host();
                 }
+            }
+            Message::AndroidAppFocusChanged(focused) => {
+                self.android_app_unfocused = !focused;
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
@@ -2284,13 +2423,20 @@ impl App {
                 }
                 #[cfg(all(
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 ))]
                 if category == SettingsCategory::Audio {
                     task = Task::batch([
                         self.refresh_cpal_output_devices(),
                         self.refresh_cpal_input_devices(),
                     ]);
+                }
+                #[cfg(all(feature = "audio-device", target_os = "android"))]
+                if category == SettingsCategory::Audio {
+                    self.android_midi_feedback.clear();
+                    if let Err(error) = crate::android_platform::refresh_midi_devices() {
+                        self.android_midi_feedback = format!("MIDI scan failed: {error}");
+                    }
                 }
             }
             Message::SetMasterOutputCeilingDbfs(ceiling_dbfs) => {
@@ -2310,23 +2456,30 @@ impl App {
                 self.audio_recording_offset_query = Some(value);
             }
             Message::ApplyRecordingOffset => self.apply_recording_offset(),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::RefreshAndroidMidiDevices => {
+                self.android_midi_feedback = match crate::android_platform::refresh_midi_devices() {
+                    Ok(()) => "Scanning USB and paired Bluetooth MIDI devices…".to_owned(),
+                    Err(error) => format!("MIDI scan failed: {error}"),
+                };
+            }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::CpalOutputDevicesLoaded(result) => {
                 self.finish_cpal_output_device_enumeration(result);
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::RefreshCpalOutputDevices => {
                 task = self.refresh_cpal_output_devices();
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::SelectCpalOutputDevice(device_id) => {
                 let settings = audio_config::AudioSettings {
@@ -2354,21 +2507,21 @@ impl App {
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::CpalInputDevicesLoaded(result) => {
                 self.finish_cpal_input_device_enumeration(result);
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::RefreshCpalInputDevices => {
                 task = self.refresh_cpal_input_devices();
             }
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             Message::SelectCpalInputDevice(device_id) => {
                 let input_changed = self.audio_settings.cpal_input_device_id != device_id;
@@ -2442,6 +2595,14 @@ impl App {
                     self.active_menu,
                 )
                 .or_else(|| {
+                    mobile_back_event(
+                        &event,
+                        window_id,
+                        self.main_window_id,
+                        self.is_mobile_main_window() && self.mobile_panel != MobilePanel::Editor,
+                    )
+                })
+                .or_else(|| {
                     plugin_window_escape_message(
                         &event,
                         status,
@@ -2489,23 +2650,30 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
-                if self.pending_project_transition.is_some() {
-                    self.pending_project_transition = None;
-                } else if self.offline_jobs_panel_open {
-                    self.offline_jobs_panel_open = false;
-                } else if self.active_menu.take().is_some() {
-                    self.menu_selected_command = None;
-                } else if !self.cancel_active_track_draft() {
-                    let dismissed_item_menu = self.timeline.context_item.take().is_some();
-                    let dismissed_track_menu = self.timeline.context_track.take().is_some();
-                    let dismissed_automation_menu =
-                        self.timeline.context_automation_point.take().is_some();
-                    if dismissed_item_menu || dismissed_track_menu || dismissed_automation_menu {
-                        self.timeline.context_item_position = None;
-                        self.timeline.context_automation_position = None;
-                    } else {
-                        self.timeline
-                            .handle(timeline::TimelineEvent::ClearTimeSelection);
+                if !self.cancel_shortcut_capture() {
+                    if self.pending_project_transition.is_some() {
+                        self.pending_project_transition = None;
+                    } else if self.offline_jobs_panel_open {
+                        self.offline_jobs_panel_open = false;
+                    } else if self.active_menu.take().is_some() {
+                        self.menu_selected_command = None;
+                    } else if !self.cancel_active_track_draft() {
+                        let dismissed_item_menu = self.timeline.context_item.take().is_some();
+                        let dismissed_track_menu = self.timeline.context_track.take().is_some();
+                        let dismissed_automation_menu =
+                            self.timeline.context_automation_point.take().is_some();
+                        if dismissed_item_menu || dismissed_track_menu || dismissed_automation_menu
+                        {
+                            self.timeline.context_item_position = None;
+                            self.timeline.context_automation_position = None;
+                        } else if self.is_mobile_main_window()
+                            && self.mobile_panel != MobilePanel::Editor
+                        {
+                            self.navigate_back_mobile_panel();
+                        } else {
+                            self.timeline
+                                .handle(timeline::TimelineEvent::ClearTimeSelection);
+                        }
                     }
                 }
             }
@@ -3042,7 +3210,17 @@ impl App {
                     task = commands::dispatch(self, command);
                 }
             }
-            Message::ToggleMediaBrowserPanel => self.media_panel_dock.toggle(),
+            Message::ToggleMediaBrowserPanel => {
+                if self.is_mobile_main_window() {
+                    if self.mobile_panel == MobilePanel::MediaBrowser {
+                        self.navigate_back_mobile_panel();
+                    } else {
+                        self.show_mobile_panel(MobilePanel::MediaBrowser);
+                    }
+                } else {
+                    self.media_panel_dock.toggle();
+                }
+            }
             Message::MediaPanelResized(split, ratio) => {
                 self.media_panel_dock.resize(split, ratio);
             }
@@ -3094,6 +3272,19 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                #[cfg(all(feature = "audio-device", target_os = "android"))]
+                if self.settings_category == SettingsCategory::Audio {
+                    match crate::android_platform::midi_port_counts() {
+                        Ok((inputs, outputs)) => {
+                            self.android_midi_input_ports = inputs;
+                            self.android_midi_output_ports = outputs;
+                        }
+                        Err(error) => {
+                            self.android_midi_feedback =
+                                format!("MIDI status unavailable: {error}");
+                        }
+                    }
+                }
                 let offline_queue_task = self.resume_offline_job_queue();
                 let unsaved_snapshot_task = if self
                     .unsaved_session_snapshot_at
@@ -3131,7 +3322,11 @@ impl App {
                     if let Some(change) = self.pending_fx_parameter_sync {
                         self.sync_fx_parameter_change(change);
                     }
-                    self.update_playback_stats();
+                    #[cfg(target_os = "android")]
+                    for owner in self.clap_instrument_owners.values_mut() {
+                        owner.service_main_thread_callback();
+                    }
+                    let output_device_lost = self.update_playback_stats();
                     self.follow_midi_editor_playhead();
                     let recording_failed = self
                         .recording
@@ -3139,7 +3334,12 @@ impl App {
                         .is_some_and(|recording| recording.control.has_failed())
                         && !self.recording_stopping;
                     self.update_audio_waveforms();
-                    task = if recording_failed {
+                    let cleanup_output = if output_device_lost {
+                        self.handle_playback_device_lost()
+                    } else {
+                        Task::none()
+                    };
+                    let mut background_tasks = if recording_failed {
                         Task::batch([
                             self.stop_recording(),
                             self.update_audio_import(),
@@ -3151,6 +3351,14 @@ impl App {
                             self.update_audio_asset_management(),
                         ])
                     };
+                    #[cfg(target_os = "android")]
+                    if !recording_failed {
+                        background_tasks = Task::batch([
+                            background_tasks,
+                            self.recover_recording_input_if_needed(),
+                        ]);
+                    }
+                    task = Task::batch([cleanup_output, background_tasks]);
                 }
                 #[cfg(not(feature = "audio-device"))]
                 {
@@ -3517,10 +3725,32 @@ impl App {
             Message::PanicMidi => self.panic_midi(),
             #[cfg(feature = "audio-device")]
             Message::StartRecording => task = self.start_recording(),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::MicrophonePermissionResult(result) => {
+                self.recording_starting = false;
+                if self.recording_cancel_requested {
+                    self.recording_cancel_requested = false;
+                    self.status = "Recording setup cancelled".to_owned();
+                } else {
+                    match result {
+                        Ok(true) => task = self.start_recording(),
+                        Ok(false) => {
+                            self.status = "Microphone permission is required to record".to_owned();
+                        }
+                        Err(error) => {
+                            self.status = format!("Microphone permission failed: {error}")
+                        }
+                    }
+                }
+            }
             #[cfg(feature = "audio-device")]
             Message::StopRecording => task = self.stop_recording(),
             #[cfg(feature = "audio-device")]
             Message::RecordingStarted(result) => task = self.finish_recording_start(result),
+            #[cfg(all(feature = "audio-device", target_os = "android"))]
+            Message::RecordingInputReconnected(result) => {
+                task = self.finish_recording_input_recovery(result);
+            }
             #[cfg(feature = "audio-device")]
             Message::StandbyInputStarted(track_id, generation, result) => {
                 task = self.finish_standby_input_start(track_id, generation, result);
@@ -3566,6 +3796,10 @@ impl App {
                     task = self.begin_pending_recording();
                 } else if self.recording_starting && self.recording.is_none() {
                     if self.recording_cancel_requested || self.playback.is_none() {
+                        #[cfg(target_os = "android")]
+                        if self.playback.is_none() {
+                            crate::android_platform::stop_recording_service();
+                        }
                         self.recording_starting = false;
                         self.recording_cancel_requested = false;
                         self.recording_cancelled_transport_start = false;
@@ -3608,12 +3842,12 @@ impl App {
                 all(
                     feature = "jack-backend",
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 ),
                 all(
                     feature = "pipewire-backend",
                     feature = "cpal-backend",
-                    any(target_os = "windows", target_os = "macos")
+                    any(target_os = "windows", target_os = "macos", target_os = "android")
                 )
             ))]
             Message::SelectPlaybackBackend(backend) => {
@@ -3643,6 +3877,8 @@ impl App {
                 }
             }
         }
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        crate::android_platform::set_midi_input_target_track(self.selected_midi_input_track_id());
         if self.revision > revision_before_message
             && self.project_path.is_none()
             && self.session_media_dir.is_some()
@@ -3888,11 +4124,27 @@ impl App {
     }
 
     fn open_settings(&mut self) -> Task<Message> {
+        if self.is_mobile_main_window() {
+            self.show_mobile_panel(MobilePanel::Settings);
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos", target_os = "android")
+            ))]
+            return Task::batch([
+                self.refresh_cpal_output_devices(),
+                self.refresh_cpal_input_devices(),
+            ]);
+            #[cfg(not(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos", target_os = "android")
+            )))]
+            return Task::none();
+        }
         if let Some(window_id) = self.settings_window_id {
             let focus = iced::window::gain_focus(window_id);
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             return Task::batch([
                 focus,
@@ -3901,19 +4153,27 @@ impl App {
             ]);
             #[cfg(not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )))]
             return focus;
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(760.0, 620.0),
-            min_size: Some(iced::Size::new(640.0, 460.0)),
+            size: if cfg!(target_os = "android") {
+                iced::Size::new(420.0, 640.0)
+            } else {
+                iced::Size::new(760.0, 620.0)
+            },
+            min_size: Some(if cfg!(target_os = "android") {
+                iced::Size::new(360.0, 480.0)
+            } else {
+                iced::Size::new(640.0, 460.0)
+            }),
             ..iced::window::Settings::default()
         });
         self.settings_window_id = Some(window_id);
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         return Task::batch([
             task.discard(),
@@ -3922,7 +4182,7 @@ impl App {
         ]);
         #[cfg(not(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )))]
         task.discard()
     }
@@ -3942,7 +4202,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn refresh_cpal_output_devices(&mut self) -> Task<Message> {
         start_cpal_device_enumeration(
@@ -3956,7 +4216,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn finish_cpal_output_device_enumeration(
         &mut self,
@@ -3974,7 +4234,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn refresh_cpal_input_devices(&mut self) -> Task<Message> {
         start_cpal_device_enumeration(
@@ -3988,7 +4248,7 @@ impl App {
 
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     fn finish_cpal_input_device_enumeration(
         &mut self,
@@ -4006,6 +4266,12 @@ impl App {
 
     fn open_tempo_map(&mut self, tab: TimeMapTab) -> Task<Message> {
         self.time_map_tab = tab;
+        if self.is_mobile_main_window() {
+            self.refresh_tempo_map_edits();
+            self.refresh_meter_map_edits();
+            self.show_mobile_panel(MobilePanel::TimeMap);
+            return Task::none();
+        }
         if let Some(window_id) = self.tempo_map_window_id {
             return iced::window::gain_focus(window_id);
         }
@@ -4249,6 +4515,30 @@ impl App {
             self.status = "The selected MIDI item no longer exists".to_owned();
             return Task::none();
         }
+        if cfg!(target_os = "android") {
+            let Some(window_id) = self.main_window_id else {
+                self.status = "The Android editor window is not ready".to_owned();
+                return Task::none();
+            };
+            let item_changed = self.midi_editor_item_id != Some(item_id);
+            if item_changed {
+                self.release_midi_preview();
+                self.midi_editor_origin_tick = 0;
+                self.midi_editor_edit_cursor_tick = None;
+            }
+            self.midi_editor_window_id = Some(window_id);
+            self.midi_editor_item_id = Some(item_id);
+            self.midi_editor_window_size = self
+                .main_window_size
+                .unwrap_or(iced::Size::new(420.0, 640.0));
+            self.midi_editor_feedback = None;
+            self.midi_editor_selected_notes.clear();
+            if item_changed {
+                self.fit_midi_editor_to_item(item_id);
+            }
+            self.show_mobile_panel(MobilePanel::MidiEditor);
+            return Task::none();
+        }
         if let Some(window_id) = self.midi_editor_window_id {
             let item_changed = self.midi_editor_item_id != Some(item_id);
             if item_changed {
@@ -4472,12 +4762,12 @@ impl App {
             all(
                 feature = "jack-backend",
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ),
             all(
                 feature = "pipewire-backend",
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             )
         ))]
         {
@@ -4488,7 +4778,7 @@ impl App {
             not(feature = "pipewire-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -4499,7 +4789,7 @@ impl App {
             not(feature = "jack-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -4507,7 +4797,7 @@ impl App {
         }
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos"),
+            any(target_os = "windows", target_os = "macos", target_os = "android"),
             not(feature = "jack-backend"),
             not(feature = "pipewire-backend")
         ))]
@@ -4519,7 +4809,7 @@ impl App {
             not(feature = "pipewire-backend"),
             not(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))
         ))]
         {
@@ -4532,12 +4822,12 @@ impl App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     fn playback_backend_setting(backend: PlaybackBackend) -> audio_config::PlaybackBackendSetting {
@@ -4548,7 +4838,7 @@ impl App {
             PlaybackBackend::PipeWire => audio_config::PlaybackBackendSetting::PipeWire,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             PlaybackBackend::Cpal => audio_config::PlaybackBackendSetting::Cpal,
         }
@@ -4559,12 +4849,12 @@ impl App {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     fn restore_playback_backend(&mut self, setting: Option<audio_config::PlaybackBackendSetting>) {
@@ -4578,7 +4868,7 @@ impl App {
             audio_config::PlaybackBackendSetting::PipeWire => PlaybackBackend::PipeWire,
             #[cfg(all(
                 feature = "cpal-backend",
-                any(target_os = "windows", target_os = "macos")
+                any(target_os = "windows", target_os = "macos", target_os = "android")
             ))]
             audio_config::PlaybackBackendSetting::Cpal => PlaybackBackend::Cpal,
             _ => self.playback_backend,
@@ -4618,6 +4908,14 @@ impl App {
         if let Some(playback) = self.playback.as_mut() {
             return match playback.play() {
                 Ok(()) => {
+                    #[cfg(target_os = "android")]
+                    if let Err(error) = crate::android_platform::start_playback_service() {
+                        let _ = playback.stop();
+                        self.status = format!(
+                            "Could not keep Android playback active in background: {error}"
+                        );
+                        return Task::none();
+                    }
                     self.playback_playing = true;
                     self.playback_paused = false;
                     self.status = "Playback started".to_owned();
@@ -4628,6 +4926,8 @@ impl App {
                     Task::none()
                 }
                 Err(error) => {
+                    #[cfg(target_os = "android")]
+                    crate::android_platform::stop_playback_service();
                     tracing::error!(backend = self.playback_name(), error = %error, "playback start failed");
                     self.status = format!("{} play failed: {error}", self.playback_name());
                     Task::none()
@@ -4649,6 +4949,8 @@ impl App {
                 self.playback_playing = false;
                 self.playback_paused = true;
                 self.playhead_sample = playback.stats().playhead_sample;
+                #[cfg(target_os = "android")]
+                crate::android_platform::stop_playback_service();
                 self.status = "Playback paused".to_owned();
             }
             Err(error) => {
@@ -4724,6 +5026,11 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     fn close_playback(&mut self) -> Task<Message> {
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        {
+            crate::android_platform::set_midi_input_sender(None);
+            crate::android_platform::set_midi_output_receiver(None);
+        }
         self.release_midi_preview();
         self.standby_monitor_track = None;
         self.standby_monitor_generation = self.standby_monitor_generation.wrapping_add(1);
@@ -4777,6 +5084,8 @@ impl App {
         self.playback_playing = false;
         self.playback_paused = false;
         self.playback_position_dirty = false;
+        #[cfg(target_os = "android")]
+        crate::android_platform::stop_playback_service();
         self.playhead_sample = 0;
         self.playback_start_sample = 0;
         self.seek_sample_query = "0".to_owned();
@@ -4909,8 +5218,27 @@ impl App {
                     self.reset_track_meters();
                     if let Err(error) = play_result {
                         self.playback_playing = false;
+                        #[cfg(target_os = "android")]
+                        crate::android_platform::stop_playback_service();
                         self.status = format!("{} play failed: {error}", self.playback_name());
                         return;
+                    }
+                    #[cfg(target_os = "android")]
+                    if start_when_ready
+                        && let Err(error) = crate::android_platform::start_playback_service()
+                    {
+                        if let Some(playback) = self.playback.as_mut() {
+                            let _ = playback.stop();
+                        }
+                        self.playback_playing = false;
+                        self.status = format!(
+                            "Could not keep Android playback active in background: {error}"
+                        );
+                        return;
+                    }
+                    #[cfg(target_os = "android")]
+                    if !start_when_ready {
+                        crate::android_platform::stop_playback_service();
                     }
                     self.playback_playing = start_when_ready;
                     self.playback_paused = !start_when_ready && self.playback_paused;
@@ -4938,7 +5266,7 @@ impl App {
 
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         let output_result = prepared.into_output(
             self.selected_playback_backend(),
@@ -4946,7 +5274,7 @@ impl App {
         );
         #[cfg(not(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )))]
         let output_result = prepared.into_output(self.selected_playback_backend(), None);
         let mut playback = match output_result {
@@ -4974,7 +5302,26 @@ impl App {
         } else {
             None
         };
+        #[cfg(target_os = "android")]
+        let service_error = if start_when_ready && play_error.is_none() {
+            crate::android_platform::start_playback_service().err()
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let service_error: Option<String> = None;
+        if service_error.is_some() {
+            let _ = playback.stop();
+        }
         self.playback = Some(playback);
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        let midi_input_target_track = self.selected_midi_input_track_id();
+        #[cfg(all(feature = "audio-device", target_os = "android"))]
+        if let Some(playback) = self.playback.as_mut() {
+            crate::android_platform::set_midi_input_target_track(midi_input_target_track);
+            crate::android_platform::set_midi_input_sender(playback.take_midi_input_sender());
+            crate::android_platform::set_midi_output_receiver(playback.take_midi_output_receiver());
+        }
         let retired_helper_ids = self
             .clap_instrument_helper_owners
             .keys()
@@ -4999,6 +5346,11 @@ impl App {
             self.status = format!("{} play failed: {error}", self.playback_name());
             return;
         }
+        if let Some(error) = service_error {
+            self.playback_playing = false;
+            self.status = format!("Could not keep Android playback active in background: {error}");
+            return;
+        }
         self.status = if start_when_ready {
             "Playback started".to_owned()
         } else {
@@ -5011,7 +5363,7 @@ impl App {
     }
 
     #[cfg(feature = "audio-device")]
-    fn update_playback_stats(&mut self) {
+    fn update_playback_stats(&mut self) -> bool {
         let (retired_instruments, retired_effects, output_device_lost) =
             if let Some(playback) = self.playback.as_mut() {
                 let stats = playback.stats();
@@ -5099,21 +5451,47 @@ impl App {
             self.status.push_str("; ");
             self.status.push_str(&new_helper_failures.join("; "));
         }
-        if output_device_lost {
-            self.handle_playback_device_lost();
-        }
+        output_device_lost
     }
 
     #[cfg(feature = "audio-device")]
-    fn handle_playback_device_lost(&mut self) {
+    fn handle_playback_device_lost(&mut self) -> Task<Message> {
         tracing::error!(
             backend = self.playback_name(),
             "playback output device was lost"
         );
+        let resume_sample = Self::route_loss_resume_sample(
+            cfg!(target_os = "android"),
+            self.playback_playing,
+            self.playhead_sample,
+        );
         self.playback_playing = false;
         self.playback_paused = false;
         self.reset_track_meters();
-        self.status = "System audio output device unavailable; playback stopped. Close playback and reopen it after selecting an available device".to_owned();
+        let cleanup = self.close_playback();
+
+        if let Some(resume_sample) = resume_sample
+            && self.project_path.is_some()
+        {
+            self.playhead_sample = resume_sample;
+            self.status = format!(
+                "Android audio route changed; reopening output and resuming from sample {resume_sample}…"
+            );
+            let recovery = self.prepare_playback(resume_sample, true);
+            return Task::batch([cleanup, recovery]);
+        }
+
+        self.status = "System audio output device unavailable after a route change; playback stopped and stream closed. Reconnect or select an output, then start playback again".to_owned();
+        cleanup
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn route_loss_resume_sample(
+        is_android: bool,
+        playback_was_running: bool,
+        playhead_sample: u64,
+    ) -> Option<u64> {
+        (is_android && playback_was_running).then_some(playhead_sample)
     }
 
     #[cfg(feature = "audio-device")]
@@ -6999,6 +7377,16 @@ impl App {
         })
     }
 
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    fn selected_midi_input_track_id(&self) -> Option<TrackId> {
+        let track_id = self.selected_track_id()?;
+        self.project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id && track.instrument().is_some())
+            .map(|track| track.id())
+    }
+
     fn begin_track_name_edit(&mut self, track_id: TrackId) -> Task<Message> {
         let Some(track) = self
             .project
@@ -7531,9 +7919,15 @@ fn create_unsaved_project_session_dir() -> Result<UnsavedSessionMedia, String> {
 }
 
 fn unsaved_sessions_root() -> Result<PathBuf, String> {
-    let directories = directories::ProjectDirs::from("org", "AAADAW", "AAADAW")
-        .ok_or_else(|| "application data directory is unavailable".to_owned())?;
-    Ok(directories.data_local_dir().join("unsaved-sessions"))
+    #[cfg(target_os = "android")]
+    let data_directory = crate::android_platform::app_data_directory();
+    #[cfg(not(target_os = "android"))]
+    let data_directory = directories::ProjectDirs::from("org", "AAADAW", "AAADAW")
+        .map(|directories| directories.data_local_dir().to_path_buf());
+
+    data_directory
+        .map(|directory| directory.join("unsaved-sessions"))
+        .ok_or_else(|| "application data directory is unavailable".to_owned())
 }
 
 fn create_unsaved_project_session_dir_in(
@@ -7678,7 +8072,7 @@ async fn run_blocking<T: Send + 'static>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn start_cpal_device_enumeration<T: Send + 'static>(
     loading: &mut bool,
@@ -7697,7 +8091,7 @@ fn start_cpal_device_enumeration<T: Send + 'static>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn finish_cpal_device_enumeration<T>(
     devices: &mut Vec<T>,
@@ -7821,6 +8215,25 @@ fn runtime_keyboard_event(
         .then_some(Message::RuntimeKeyboardEvent(event, status, window_id))
 }
 
+fn android_app_focus_event(
+    event: iced::Event,
+    _status: iced::event::Status,
+    _window_id: iced::window::Id,
+) -> Option<Message> {
+    if !cfg!(target_os = "android") {
+        return None;
+    }
+    match event {
+        iced::Event::Window(iced::window::Event::Focused) => {
+            Some(Message::AndroidAppFocusChanged(true))
+        }
+        iced::Event::Window(iced::window::Event::Unfocused) => {
+            Some(Message::AndroidAppFocusChanged(false))
+        }
+        _ => None,
+    }
+}
+
 fn midi_expression_context_menu_event(
     event: iced::Event,
     _status: iced::event::Status,
@@ -7883,7 +8296,8 @@ fn keyboard_shortcut_event(
     settings_window_id: Option<iced::window::Id>,
     shortcut_capture_id: Option<&str>,
 ) -> Option<Message> {
-    if settings_window_id == Some(window_id)
+    if (settings_window_id == Some(window_id)
+        || (settings_window_id.is_none() && main_window_id == Some(window_id)))
         && let Some(action_id) = shortcut_capture_id
     {
         let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -7973,6 +8387,29 @@ fn keyboard_shortcut_event(
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
         _ => None,
     }
+}
+
+fn mobile_back_event(
+    event: &iced::Event,
+    window_id: iced::window::Id,
+    main_window_id: Option<iced::window::Id>,
+    mobile_panel_open: bool,
+) -> Option<Message> {
+    if main_window_id != Some(window_id) || !mobile_panel_open {
+        return None;
+    }
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key:
+            iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::BrowserBack | iced::keyboard::key::Named::GoBack,
+            ),
+        repeat: false,
+        ..
+    }) = event
+    else {
+        return None;
+    };
+    Some(Message::MobileNavigateBack)
 }
 
 fn midi_editor_shortcut_event(

@@ -72,6 +72,32 @@ pub(crate) enum MainWorkspace {
     Mixer,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MobilePanel {
+    #[default]
+    Editor,
+    MidiEditor,
+    MediaBrowser,
+    Settings,
+    TimeMap,
+    FxChain,
+    PluginPicker,
+}
+
+impl MobilePanel {
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Editor => "Editor",
+            Self::MidiEditor => "MIDI Editor",
+            Self::MediaBrowser => "Media Browser",
+            Self::Settings => "Settings",
+            Self::TimeMap => "Time Map",
+            Self::FxChain => "Track Effects",
+            Self::PluginPicker => "Choose Plugin",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PathPickerTarget {
     OpenProject,
@@ -112,6 +138,14 @@ pub(crate) enum MidiEditorLane {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorTool {
+    #[default]
+    Select,
+    Draw,
+    Erase,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimeMapTab {
     #[default]
     Tempo,
@@ -129,6 +163,7 @@ pub(crate) enum Message {
     DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,
     ShowMainWorkspace(MainWorkspace),
+    MobileNavigateBack,
     ToggleMediaBrowserPanel,
     OpenSettings,
     OpenClapPluginSettings,
@@ -160,6 +195,7 @@ pub(crate) enum Message {
     PreviewMidiNote(TrackId, u8),
     ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
+    SelectMidiEditorTool(MidiEditorTool),
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
@@ -214,6 +250,7 @@ pub(crate) enum Message {
     FxChainWindowNativeHandle(iced::window::Id, Option<u64>),
     FxChainWindowScaleFactor(iced::window::Id, f32),
     WindowResized(iced::window::Id, iced::Size),
+    AndroidAppFocusChanged(bool),
     WindowCloseRequested(iced::window::Id),
     WindowClosed(iced::window::Id),
     StartShortcutCapture(String),
@@ -373,10 +410,14 @@ pub(crate) enum Message {
     PanicMidi,
     #[cfg(feature = "audio-device")]
     StartRecording,
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    MicrophonePermissionResult(Result<bool, String>),
     #[cfg(feature = "audio-device")]
     StopRecording,
     #[cfg(feature = "audio-device")]
     RecordingStarted(super::SharedRecordingStart),
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    RecordingInputReconnected(super::SharedRecordingInputRecovery),
     #[cfg(feature = "audio-device")]
     StandbyInputStarted(TrackId, u64, super::SharedStandbyInput),
     #[cfg(feature = "audio-device")]
@@ -407,45 +448,47 @@ pub(crate) enum Message {
     },
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     CpalOutputDevicesLoaded(Result<Vec<aaadaw_engine::CpalOutputDeviceInfo>, String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     RefreshCpalOutputDevices,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     SelectCpalOutputDevice(Option<String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     CpalInputDevicesLoaded(Result<Vec<aaadaw_engine::CpalInputDeviceInfo>, String>),
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     RefreshCpalInputDevices,
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
     SelectCpalInputDevice(Option<String>),
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    RefreshAndroidMidiDevices,
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     SelectPlaybackBackend(aaadaw_app::PlaybackBackend),

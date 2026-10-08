@@ -91,13 +91,15 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
                 Some(ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?)
             };
             save_project_session_file_with_media(
-                path,
+                path.clone(),
                 snapshot,
                 arrangement_view_state,
                 can_overwrite,
                 new_lock.as_mut(),
                 source_media_path,
             )?;
+            #[cfg(target_os = "android")]
+            crate::android_platform::sync_saf_document(&path)?;
             Ok(new_lock)
         }),
         move |result| {

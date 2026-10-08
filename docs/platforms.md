@@ -82,6 +82,69 @@ exercise physical CoreAudio devices, microphone permission prompts, playback
 quality, or latency. The bundle is unsigned and not notarized; Gatekeeper-ready
 distribution remains a release task.
 
+## Android
+
+The Android app uses NativeActivity with the Iced/winit event loop and a
+single-window touch shell. Widths below 720 logical pixels use the compact
+phone layout. Wider Android windows keep the same single-window navigation.
+Project open and save use the Storage Access Framework (SAF): documents are
+staged in the app's private storage while open, and saved project/WAV files are
+copied back to the user-selected URI. Audio import is staged before it enters
+the project.
+The Android audio feature uses CPAL's AAudio backend for playback and capture;
+API 28 and newer request AAudio's unprocessed input preset when the symbol is
+available, while API 26/27 retain the platform default. Recording asks for
+microphone permission at runtime and starts a microphone
+foreground service with an ongoing notification. Playback starts a media
+playback foreground service, so Android can keep the audio stream alive when
+the Activity moves to the background. While either mode is active, the shared
+service holds a partial wake lock and releases it when both modes end. If an
+output stream is lost while playing, AAADAW closes it and tries to reopen
+playback at the last reported sample. If no output is available, playback stops
+with an error. When the Android window loses focus, UI polling pauses so meter
+and progress ticks do not build up while the activity is suspended; polling
+resumes when a window regains focus.
+If an input route fails while recording, AAADAW closes the old stream and tries
+to reopen the selected input. The capture writer preserves the outage as silence
+between timestamped audio blocks. If reopening fails, AAADAW finalizes the audio
+captured before the route loss. Gaps longer than ten seconds fail the timing
+check and leave the recoverable recording data available for recovery.
+
+On Android, Media Browser, Settings, Tempo/Meter Map, the track FX chain, the
+CLAP picker, and the MIDI piano roll use single-panel navigation in the main
+window. The MIDI editor provides touch Select, Draw, and Erase tools, 48 dp
+note hit targets, and horizontally browsable controls. The Back action returns
+to the prior panel while retaining the project, selected track, edit cursor,
+and playback state. Native CLAP editor windows remain unsupported on Android.
+
+Build the ARM64 native library and debug APK with JDK 17, Android SDK platform
+35, Android NDK, and the `aarch64-linux-android` Rust target:
+
+```sh
+ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar" cargo ndk -t arm64-v8a -P 26 -o android-app/app/src/main/jniLibs build --release -p aaadaw --lib --features android-backend
+cd android-app
+gradle assembleDebug
+```
+
+The APK targets ARM64 phones/tablets and x86_64 emulators. Import an Android ARM64 `.clap` library
+through Settings to copy it into app-private storage. Android scans and hosts
+these plugins in-process; plugin code can crash the app, so install only trusted
+libraries. Android plugin editor windows are not supported.
+
+Android's MIDI manager opens USB and paired Bluetooth MIDI 1.0 ports. While an
+audio output is open, input reaches the selected instrument track and scheduled
+project MIDI is sent to connected output ports. The current track model is
+channel-agnostic, so events use MIDI channel 1; live input is not recorded into
+MIDI clips. Refresh the External MIDI section in Audio settings after connecting
+or pairing a device. Attached-device MIDI behavior still needs validation.
+
+GitHub Actions builds ARM64 and x86_64 native libraries, assembles the APK, and
+launches it on an API 35 x86_64 emulator, including relaunch, larger font scale,
+orientation changes, and screenshot capture. This checks packaging and the
+small-screen shell, not physical audio routing or SAF-provider behavior.
+Physical-device checks remain open for SAF providers, route recovery behavior,
+background recording, MIDI devices, system bars, and screen/font scaling.
+
 ## Packaging status
 
 CI creates the validation packages described in [native installer notes](native-installers.md)

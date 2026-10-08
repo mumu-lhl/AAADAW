@@ -211,6 +211,8 @@ impl App {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
+                            #[cfg(target_os = "android")]
+                            crate::android_platform::sync_saf_document(&destination)?;
                             Ok(result_path)
                         }),
                         Message::OfflineRenderFinished,

@@ -1,12 +1,14 @@
-use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane};
-use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_XS};
+use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane, MidiEditorTool};
+use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent};
 use aaadaw_core::{
     ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
-use iced::widget::{button, canvas as canvas_widget, column, container, pick_list, row, text};
+use iced::widget::{
+    button, canvas as canvas_widget, column, container, pick_list, row, scrollable, text,
+};
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
@@ -66,6 +68,14 @@ impl Default for MidiSnap {
 }
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    view_with_profile(app, false)
+}
+
+pub(super) fn mobile_view(app: &App) -> Element<'_, Message> {
+    view_with_profile(app, true)
+}
+
+fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let Some(item_id) = app.midi_editor_item_id else {
         return container(text("No MIDI item selected"))
             .width(Length::Fill)
@@ -90,103 +100,185 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .find(|track| track.id() == item.track_id())
         .map_or("Track", |track| track.name());
     let playhead_tick = app.midi_editor_playhead_tick(item);
-    let edit_toolbar = row![
-        text(format!(
-            "Piano roll · Track {title} · {} notes",
-            item.notes().len()
-        ))
-        .width(Length::Fill),
-        button("Copy")
-            .style(iced::widget::button::secondary)
-            .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
-                Message::CopyMidiNotes(
-                    item_id,
-                    app.midi_editor_selected_notes.iter().copied().collect()
-                ),
+    let edit_toolbar: Element<'_, Message> = if touch_targets {
+        row![
+            text(format!("Piano roll · {} notes", item.notes().len())).width(Length::Fill),
+            button("Done")
+                .height(Length::Fixed(TOUCH_TARGET_MIN))
+                .on_press(Message::CloseMidiEditor),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        row![
+            text(format!(
+                "Piano roll · Track {title} · {} notes",
+                item.notes().len()
             ))
-            .padding([SPACING_XS / 2.0, SPACING_XS]),
-        button("Paste")
-            .style(iced::widget::button::secondary)
-            .on_press_maybe(
-                (!app.midi_note_clipboard.notes.is_empty())
-                    .then_some(Message::PasteMidiNotes(item_id))
-            )
-            .padding([SPACING_XS / 2.0, SPACING_XS]),
-        button("Duplicate")
-            .style(iced::widget::button::secondary)
-            .on_press_maybe(
-                (!app.midi_editor_selected_notes.is_empty())
-                    .then_some(Message::DuplicateMidiNotes(item_id))
-            )
-            .padding([SPACING_XS / 2.0, SPACING_XS]),
-        button("Delete notes")
-            .style(iced::widget::button::danger)
-            .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
-                Message::DeleteMidiNotes(
-                    item_id,
-                    app.midi_editor_selected_notes.iter().copied().collect(),
+            .width(Length::Fill),
+            button("Copy")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
+                    Message::CopyMidiNotes(
+                        item_id,
+                        app.midi_editor_selected_notes.iter().copied().collect(),
+                    ),
+                ))
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Paste")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    (!app.midi_note_clipboard.notes.is_empty())
+                        .then_some(Message::PasteMidiNotes(item_id)),
                 )
-            ))
-            .padding([SPACING_XS / 2.0, SPACING_XS]),
-        roll_button("×", Message::CloseMidiEditor),
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Duplicate")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    (!app.midi_editor_selected_notes.is_empty())
+                        .then_some(Message::DuplicateMidiNotes(item_id)),
+                )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Delete notes")
+                .style(iced::widget::button::danger)
+                .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(
+                    Message::DeleteMidiNotes(
+                        item_id,
+                        app.midi_editor_selected_notes.iter().copied().collect(),
+                    ),
+                ))
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            roll_button("×", Message::CloseMidiEditor),
+        ]
+        .spacing(ROW_GAP)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let navigation_toolbar: Element<'_, Message> = if touch_targets {
+        scrollable(
+            row![
+                touch_roll_button("Fit", Message::FitPianoRollToNotes(item_id)),
+                touch_roll_button("− Beat", Message::PianoRollPan(-1)),
+                touch_roll_button("+ Beat", Message::PianoRollPan(1)),
+                touch_roll_button("Zoom −", Message::PianoRollZoom(0.8)),
+                touch_roll_button("Zoom +", Message::PianoRollZoom(1.25)),
+                touch_roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
+                touch_roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
+            ]
+            .spacing(SPACING_XS),
+        )
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::default(),
+        ))
+        .height(Length::Fixed(TOUCH_TARGET_MIN))
+        .into()
+    } else {
+        row![
+            roll_button("Fit notes", Message::FitPianoRollToNotes(item_id)),
+            roll_button(
+                if app.midi_editor_follow_playhead {
+                    "Follow on"
+                } else {
+                    "Follow off"
+                },
+                Message::TogglePianoRollFollowPlayhead,
+            ),
+            roll_button("− Beat", Message::PianoRollPan(-1)),
+            roll_button("+ Beat", Message::PianoRollPan(1)),
+            roll_button("Zoom −", Message::PianoRollZoom(0.8)),
+            roll_button("Zoom +", Message::PianoRollZoom(1.25)),
+            roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
+            roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
+        ]
+        .spacing(ROW_GAP)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let touch_tool_toolbar: Element<'_, Message> = row![
+        tool_button("Select", MidiEditorTool::Select, app.midi_editor_tool),
+        tool_button("Draw", MidiEditorTool::Draw, app.midi_editor_tool),
+        tool_button("Erase", MidiEditorTool::Erase, app.midi_editor_tool),
     ]
-    .spacing(ROW_GAP)
-    .align_y(iced::Alignment::Center);
-    let navigation_toolbar = row![
-        roll_button("Fit notes", Message::FitPianoRollToNotes(item_id)),
-        roll_button(
-            if app.midi_editor_follow_playhead {
-                "Follow on"
+    .spacing(SPACING_XS)
+    .into();
+    let grid_toolbar: Element<'_, Message> = if touch_targets {
+        scrollable(
+            row![
+                button(if !app.timeline.has_snap_grid() {
+                    "Snap unavailable"
+                } else if app.timeline.snap_enabled {
+                    "Snap On"
+                } else {
+                    "Snap Off"
+                })
+                .height(Length::Fixed(TOUCH_TARGET_MIN))
+                .style(if app.timeline.snap_enabled {
+                    iced::widget::button::warning
+                } else {
+                    iced::widget::button::secondary
+                })
+                .on_press_maybe(
+                    app.timeline
+                        .has_snap_grid()
+                        .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+                ),
+                pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
+                    Message::Timeline(TimelineEvent::SetSnapGrid(grid))
+                })
+                .padding([SPACING_LG, SPACING_XS])
+                .width(Length::Fixed(120.0)),
+            ]
+            .spacing(SPACING_XS),
+        )
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::default(),
+        ))
+        .height(Length::Fixed(TOUCH_TARGET_MIN + SPACING_LG))
+        .into()
+    } else {
+        row![
+            text("Shared grid").size(12),
+            button(if !app.timeline.has_snap_grid() {
+                "Snap unavailable"
+            } else if app.timeline.snap_enabled {
+                "Snap On"
             } else {
-                "Follow off"
-            },
-            Message::TogglePianoRollFollowPlayhead,
-        ),
-        roll_button("− Beat", Message::PianoRollPan(-1)),
-        roll_button("+ Beat", Message::PianoRollPan(1)),
-        roll_button("Zoom −", Message::PianoRollZoom(0.8)),
-        roll_button("Zoom +", Message::PianoRollZoom(1.25)),
-        roll_button("− Oct", Message::PianoRollPitchScroll(-12)),
-        roll_button("+ Oct", Message::PianoRollPitchScroll(12)),
-    ]
-    .spacing(ROW_GAP)
-    .align_y(iced::Alignment::Center);
-    let grid_toolbar = row![
-        text("Shared grid").size(12),
-        button(if !app.timeline.has_snap_grid() {
-            "Snap unavailable"
-        } else if app.timeline.snap_enabled {
-            "Snap On"
-        } else {
-            "Snap Off"
-        })
-        .style(if app.timeline.snap_enabled {
-            iced::widget::button::warning
-        } else {
-            iced::widget::button::secondary
-        })
-        .on_press_maybe(
-            app.timeline
-                .has_snap_grid()
-                .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
-        ),
-        pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
-            Message::Timeline(TimelineEvent::SetSnapGrid(grid))
-        },)
-        .width(Length::Fixed(112.0)),
-        text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom").size(11),
-    ]
-    .spacing(ROW_GAP)
-    .align_y(iced::Alignment::Center);
-    let gesture_hints = column![
-        text("Notes: click positions cursor · double-click inserts · empty-space drag selects · Ctrl/Cmd-click toggles · Shift-click ranges")
-            .size(10)
-            .width(Length::Fill),
-        text("Ctrl/Cmd-drag copies · Shift-drag bypasses Snap · Esc cancels · click ruler sets paste target")
-            .size(10)
-            .width(Length::Fill),
-    ]
-    .spacing(2);
+                "Snap Off"
+            })
+            .style(if app.timeline.snap_enabled {
+                iced::widget::button::warning
+            } else {
+                iced::widget::button::secondary
+            })
+            .on_press_maybe(
+                app.timeline
+                    .has_snap_grid()
+                    .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+            ),
+            pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
+                Message::Timeline(TimelineEvent::SetSnapGrid(grid))
+            })
+            .width(Length::Fixed(112.0)),
+            text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom").size(11),
+        ]
+        .spacing(ROW_GAP)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let gesture_hints: Element<'_, Message> = if touch_targets {
+        iced::widget::Space::new().into()
+    } else {
+        column![
+            text("Notes: click positions cursor · double-click inserts · empty-space drag selects · Ctrl/Cmd-click toggles · Shift-click ranges")
+                .size(10)
+                .width(Length::Fill),
+            text("Ctrl/Cmd-drag copies · Shift-drag bypasses Snap · Esc cancels · click ruler sets paste target")
+                .size(10)
+                .width(Length::Fill),
+        ]
+        .spacing(2)
+        .into()
+    };
     let midi_snap = MidiSnap {
         grid: app.timeline.snap_grid,
         enabled: app.timeline.snap_enabled,
@@ -213,28 +305,66 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         },
         playhead_tick,
         region: RollRegion::Pitch,
+        tool: app.midi_editor_tool,
     })
     .width(Length::Fill)
     .height(Length::Fill);
     let lane_toolbar = row![
-        lane_button("Velocity", MidiEditorLane::Velocity, app.midi_editor_lane),
-        lane_button("Sustain", MidiEditorLane::Sustain, app.midi_editor_lane),
-        lane_button("Volume CC7", MidiEditorLane::Volume, app.midi_editor_lane),
-        lane_button("Pan CC10", MidiEditorLane::Pan, app.midi_editor_lane),
+        lane_button(
+            "Velocity",
+            MidiEditorLane::Velocity,
+            app.midi_editor_lane,
+            touch_targets,
+        ),
+        lane_button(
+            "Sustain",
+            MidiEditorLane::Sustain,
+            app.midi_editor_lane,
+            touch_targets,
+        ),
+        lane_button(
+            "Volume CC7",
+            MidiEditorLane::Volume,
+            app.midi_editor_lane,
+            touch_targets,
+        ),
+        lane_button(
+            "Pan CC10",
+            MidiEditorLane::Pan,
+            app.midi_editor_lane,
+            touch_targets,
+        ),
         lane_button(
             "Pitch Bend",
             MidiEditorLane::PitchBend,
-            app.midi_editor_lane
+            app.midi_editor_lane,
+            touch_targets,
         ),
-        lane_button("Mod CC1", MidiEditorLane::Modulation, app.midi_editor_lane),
+        lane_button(
+            "Mod CC1",
+            MidiEditorLane::Modulation,
+            app.midi_editor_lane,
+            touch_targets,
+        ),
         lane_button(
             "Expression",
             MidiEditorLane::Expression,
-            app.midi_editor_lane
+            app.midi_editor_lane,
+            touch_targets,
         ),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let lane_toolbar: Element<'_, Message> = if touch_targets {
+        scrollable(lane_toolbar)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .height(Length::Fixed(TOUCH_TARGET_MIN))
+            .into()
+    } else {
+        lane_toolbar.into()
+    };
     let active_lane: Element<'_, Message> = match app.midi_editor_lane {
         MidiEditorLane::Velocity => {
             let canvas = canvas_widget::Canvas::new(PianoRoll {
@@ -251,6 +381,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 snap: midi_snap,
                 playhead_tick,
                 region: RollRegion::Velocity,
+                tool: app.midi_editor_tool,
             })
             .width(Length::Fill)
             .height(Length::Fixed(VELOCITY_LANE_HEIGHT));
@@ -309,15 +440,22 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     if let Some(feedback) = app.midi_editor_feedback.as_deref() {
         content = content.push(text(feedback).size(12));
     }
+    content = content.push(navigation_toolbar);
+    if touch_targets {
+        content = content.push(touch_tool_toolbar);
+    }
     content
-        .push(navigation_toolbar)
         .push(grid_toolbar)
         .push(gesture_hints)
         .push(lane_toolbar)
         .push(pitch_canvas)
         .push(active_lane)
         .spacing(ROW_GAP)
-        .padding(PANEL_PADDING)
+        .padding(if touch_targets {
+            SPACING_XS
+        } else {
+            PANEL_PADDING
+        })
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -327,6 +465,7 @@ fn lane_button(
     label: &'static str,
     lane: MidiEditorLane,
     selected: MidiEditorLane,
+    touch_targets: bool,
 ) -> iced::widget::Button<'static, Message> {
     button(label)
         .style(if lane == selected {
@@ -335,7 +474,36 @@ fn lane_button(
             iced::widget::button::secondary
         })
         .on_press(Message::SelectMidiEditorLane(lane))
+        .height(Length::Fixed(if touch_targets {
+            TOUCH_TARGET_MIN
+        } else {
+            32.0
+        }))
         .padding([SPACING_XS / 2.0, SPACING_XS])
+}
+
+fn tool_button(
+    label: &'static str,
+    tool: MidiEditorTool,
+    selected: MidiEditorTool,
+) -> iced::widget::Button<'static, Message> {
+    button(label)
+        .height(Length::Fixed(TOUCH_TARGET_MIN))
+        .style(if tool == selected {
+            iced::widget::button::primary
+        } else {
+            iced::widget::button::secondary
+        })
+        .on_press(Message::SelectMidiEditorTool(tool))
+}
+
+fn touch_roll_button(
+    label: &'static str,
+    message: Message,
+) -> iced::widget::Button<'static, Message> {
+    button(label)
+        .height(Length::Fixed(TOUCH_TARGET_MIN))
+        .on_press(message)
 }
 
 fn lane_row<'a>(
@@ -1358,6 +1526,7 @@ struct PianoRoll<'a> {
     snap: MidiSnap,
     playhead_tick: Option<u64>,
     region: RollRegion,
+    tool: MidiEditorTool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1628,8 +1797,47 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         canvas::Action::publish(Message::SelectMidiNotes(note_ids)).and_capture(),
                     );
                 }
+                let touch_targets = cfg!(target_os = "android") || bounds.width < 720.0;
+                let note_hit = self.note_at_point(point, touch_targets);
+                if self.region == RollRegion::Pitch && self.tool == MidiEditorTool::Erase {
+                    state.last_empty_click = None;
+                    return Some(note_hit.map_or_else(canvas::Action::capture, |(note, _)| {
+                        canvas::Action::publish(Message::DeleteMidiNotes(
+                            self.item_id,
+                            vec![note.id()],
+                        ))
+                    }));
+                }
+                if self.region == RollRegion::Pitch
+                    && self.tool == MidiEditorTool::Draw
+                    && note_hit.is_none()
+                {
+                    state.last_empty_click = None;
+                    let mapping = self.mapping();
+                    let data = MidiNoteData {
+                        pitch: mapping.pitch_at_y(point.y),
+                        tick: self
+                            .item
+                            .source_offset_ticks()
+                            .saturating_add(mapping.snap_tick(mapping.tick_at_x(point.x), false)),
+                        duration: mapping.grid_ticks(),
+                        velocity: 96,
+                    };
+                    if data.tick.saturating_add(data.duration)
+                        <= self
+                            .item
+                            .source_offset_ticks()
+                            .saturating_add(self.item.length_ticks())
+                    {
+                        return Some(canvas::Action::publish(Message::AddMidiNoteAt(
+                            self.item_id,
+                            data,
+                        )));
+                    }
+                    return Some(canvas::Action::capture());
+                }
                 let mapping = self.mapping();
-                let Some((note, resize)) = self.note_at_point(point) else {
+                let Some((note, resize)) = note_hit else {
                     let now = Instant::now();
                     let double_click = state.last_empty_click.take().is_some_and(
                         |(previous_time, previous_point)| {
@@ -2216,7 +2424,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 && let Some(position) = cursor.position_in(bounds)
             {
                 let point = Point::new(position.x - KEY_WIDTH, position.y - HEADER_HEIGHT);
-                if let Some((_, resize)) = self.note_at_point(point) {
+                let touch_targets = cfg!(target_os = "android") || bounds.width < 720.0;
+                if let Some((_, resize)) = self.note_at_point(point, touch_targets) {
                     return if resize {
                         mouse::Interaction::ResizingHorizontally
                     } else {
@@ -2321,26 +2530,61 @@ impl PianoRoll<'_> {
         }
     }
 
-    fn note_at_point(&self, point: Point) -> Option<(&aaadaw_core::MidiNote, bool)> {
+    fn note_at_point(
+        &self,
+        point: Point,
+        touch_targets: bool,
+    ) -> Option<(&aaadaw_core::MidiNote, bool)> {
         let mapping = self.content_mapping();
-        self.item.notes().iter().rev().find_map(|note| {
-            if !source_tick_is_visible(self.item, note.tick()) {
-                return None;
-            }
+        let note_bounds = |note: &aaadaw_core::MidiNote| {
             let left = mapping.x_at_tick(note.tick());
             let width = note_width_pixels(
                 visible_note_duration(self.item, note),
                 self.ticks_per_beat,
                 self.pixels_per_beat,
             );
-            let right = left + width;
             let top = mapping.y_at_pitch(note.pitch());
-            let hit = point.x >= left
-                && point.x <= right
+            (left, width, top)
+        };
+        if let Some(note) = self.item.notes().iter().rev().find(|note| {
+            if !source_tick_is_visible(self.item, note.tick()) {
+                return false;
+            }
+            let (left, width, top) = note_bounds(note);
+            point.x >= left
+                && point.x <= left + width
                 && point.y >= top
-                && point.y < top + self.pitch_row_height;
-            hit.then_some((note, right - point.x <= resize_handle_width(width)))
-        })
+                && point.y < top + self.pitch_row_height
+        }) {
+            let (left, width, _) = note_bounds(note);
+            return Some((note, point.x >= left + width - resize_handle_width(width)));
+        }
+        if !touch_targets {
+            return None;
+        }
+        self.item
+            .notes()
+            .iter()
+            .rev()
+            .filter(|note| source_tick_is_visible(self.item, note.tick()))
+            .filter_map(|note| {
+                let (left, width, top) = note_bounds(note);
+                let hit_width = width.max(48.0);
+                let hit_height = self.pitch_row_height.max(48.0);
+                let hit_left = left - (hit_width - width) / 2.0;
+                let hit_top = top - (hit_height - self.pitch_row_height) / 2.0;
+                let in_touch_target = point.x >= hit_left
+                    && point.x <= hit_left + hit_width
+                    && point.y >= hit_top
+                    && point.y <= hit_top + hit_height;
+                in_touch_target.then_some((
+                    note,
+                    (point.x - (left + width / 2.0))
+                        .hypot(point.y - (top + self.pitch_row_height / 2.0)),
+                ))
+            })
+            .min_by(|(_, left), (_, right)| left.total_cmp(right))
+            .map(|(note, _)| (note, false))
     }
 
     fn draw_velocity(
@@ -2689,6 +2933,34 @@ fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
 mod tests {
     use super::*;
 
+    fn piano_roll_for_test<'a>(
+        project: &'a Project,
+        item_id: ItemId,
+        selected: &'a HashSet<NoteId>,
+        tool: MidiEditorTool,
+    ) -> PianoRoll<'a> {
+        PianoRoll {
+            project,
+            item: project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .unwrap(),
+            item_id,
+            selected,
+            origin_tick: 0,
+            high_pitch: 60,
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            snap: MidiSnap::default(),
+            playhead_tick: None,
+            region: RollRegion::Pitch,
+            tool,
+        }
+    }
+
     #[test]
     fn context_menu_epoch_change_clears_canvas_local_menu() {
         let mut menu = Some((2, Point::new(16.0, 24.0)));
@@ -2716,6 +2988,90 @@ mod tests {
     }
 
     #[test]
+    fn touch_hitboxes_reach_48dp_without_changing_desktop_hits() {
+        let (project, item_id, _) = project_with_note(
+            3_840,
+            MidiNoteData {
+                pitch: 60,
+                tick: 480,
+                duration: 120,
+                velocity: 96,
+            },
+        );
+        let selected = HashSet::new();
+        let roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Select);
+        let point = Point::new(70.0, 24.0);
+
+        assert!(roll.note_at_point(point, false).is_none());
+        assert!(roll.note_at_point(point, true).is_some());
+    }
+
+    #[test]
+    fn touch_draw_and_erase_tools_edit_notes_with_single_taps() {
+        let (project, item_id, _) = project_with_note(
+            3_840,
+            MidiNoteData {
+                pitch: 60,
+                tick: 2_880,
+                duration: 240,
+                velocity: 96,
+            },
+        );
+        let selected = HashSet::new();
+        let draw_roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Draw);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(640.0, 600.0));
+        let blank_note = Point::new(KEY_WIDTH + 48.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let draw = draw_roll
+            .update(
+                &mut Interaction::default(),
+                &press,
+                bounds,
+                mouse::Cursor::Available(blank_note),
+            )
+            .expect("draw tap should add a note");
+        assert!(matches!(
+            draw.into_inner().0,
+            Some(Message::AddMidiNoteAt(changed_item, data))
+                if changed_item == item_id
+                    && data.tick == 480
+                    && data.pitch == 60
+                    && data.duration == 240
+        ));
+
+        let (project, item_id, note_id) = project_with_note(
+            3_840,
+            MidiNoteData {
+                pitch: 60,
+                tick: 480,
+                duration: 240,
+                velocity: 96,
+            },
+        );
+        let selected = HashSet::new();
+        let erase_roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Erase);
+        let note = &project.midi_items()[0].notes()[0];
+        let erase_note = Point::new(
+            KEY_WIDTH + 48.0 + 12.0,
+            HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0,
+        );
+        let erase = erase_roll
+            .update(
+                &mut Interaction::default(),
+                &press,
+                bounds,
+                mouse::Cursor::Available(erase_note),
+            )
+            .expect("erase tap should delete a note");
+        assert!(matches!(
+            erase.into_inner().0,
+            Some(Message::DeleteMidiNotes(changed_item, note_ids))
+                if changed_item == item_id && note_ids == vec![note_id]
+        ));
+        assert_eq!(note.id(), note_id);
+    }
+
+    #[test]
     fn piano_keys_audition_on_drag_across_pitches_and_release_outside_the_strip() {
         let (project, item_id, _) = project_with_note(
             960,
@@ -2728,6 +3084,7 @@ mod tests {
         );
         let item = &project.midi_items()[0];
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             project: &project,
             item,
             item_id,
@@ -2844,6 +3201,7 @@ mod tests {
         let item = &project.midi_items()[0];
         let selected = HashSet::new();
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -2957,6 +3315,7 @@ mod tests {
         };
         let (project, item_id, _) = project_with_note(960, note);
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3011,6 +3370,7 @@ mod tests {
         let item = &project.midi_items()[0];
         let selected = HashSet::new();
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3130,6 +3490,7 @@ mod tests {
             ..Interaction::default()
         };
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3655,6 +4016,7 @@ mod tests {
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3706,6 +4068,7 @@ mod tests {
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3789,6 +4152,7 @@ mod tests {
         let (project, item_id, note_id) = project_with_note(3_840, note);
         let selected = HashSet::new();
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3810,8 +4174,8 @@ mod tests {
                 HEADER_HEIGHT + f32::from(PITCH_COUNT) * NOTE_ROW_HEIGHT,
             ),
         );
-        let start = Point::new(KEY_WIDTH + 40.0, HEADER_HEIGHT);
-        let end = Point::new(KEY_WIDTH + 90.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT);
+        let start = Point::new(KEY_WIDTH + 10.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
+        let end = Point::new(KEY_WIDTH + 90.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
         let moved = Event::Mouse(mouse::Event::CursorMoved { position: end });
@@ -3883,6 +4247,7 @@ mod tests {
         let (project, item_id, note_id) = project_with_note(3_840, note);
         let selected = HashSet::from([note_id]);
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -3996,6 +4361,7 @@ mod tests {
         ));
 
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,
@@ -4957,6 +5323,7 @@ mod tests {
             .map(|note| note.id())
             .collect::<HashSet<_>>();
         let roll = PianoRoll {
+            tool: MidiEditorTool::Select,
             pitch_rows: PITCH_COUNT,
             pitch_row_height: NOTE_ROW_HEIGHT,
             project: &project,

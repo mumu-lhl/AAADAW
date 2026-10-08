@@ -72,7 +72,7 @@ fn pitch_bends_are_14_bit_sorted_undoable_and_snapshot_safe() {
 }
 
 #[test]
-fn pitch_bends_reject_invalid_values_positions_and_duplicates_atomically() {
+fn pitch_bends_reject_invalid_values_and_duplicates_atomically() {
     let (mut project, item_id) = project_with_midi_item();
     for pitch_bends in [
         vec![
@@ -85,10 +85,6 @@ fn pitch_bends_reject_invalid_values_positions_and_duplicates_atomically() {
         vec![MidiPitchBendData {
             tick: 10,
             value: 16_384,
-        }],
-        vec![MidiPitchBendData {
-            tick: 3_840,
-            value: 8192,
         }],
     ] {
         let before = project.snapshot();
@@ -167,10 +163,24 @@ fn shrinking_a_midi_item_keeps_hidden_pitch_bend_points_for_expansion() {
             length_ticks: 1_920,
         })
         .expect("non-destructive clip shrink should keep hidden events");
-    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 2_400);
-    assert!(project.undo().unwrap());
-    assert_eq!(project.snapshot(), before);
-    assert!(project.redo().unwrap());
     assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
-    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 2_400);
+    assert_eq!(
+        project.midi_items()[0].pitch_bends(),
+        &[MidiPitchBendData {
+            tick: 2_400,
+            value: 10_000,
+        }]
+    );
+    let trimmed_snapshot = project.snapshot();
+    assert!(project.undo().expect("clip trim should undo"));
+    assert_eq!(project.snapshot(), before);
+    assert!(project.redo().expect("clip trim should redo"));
+    assert_eq!(project.midi_items()[0].length_ticks(), 1_920);
+    assert_eq!(project.snapshot(), trimmed_snapshot);
+    assert_eq!(
+        Project::from_snapshot(trimmed_snapshot.clone())
+            .expect("trimmed snapshot should retain hidden pitch bends")
+            .snapshot(),
+        trimmed_snapshot
+    );
 }

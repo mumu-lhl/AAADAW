@@ -9,19 +9,19 @@ mod clap_gui;
 mod clap_helper_process;
 mod clap_instrument;
 mod clap_ipc;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 mod cpal_common;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 mod cpal_input;
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 mod cpal_output;
 #[cfg(feature = "jack-backend")]
@@ -58,17 +58,19 @@ pub use clap_ipc::{
     ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion,
     ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError, run_clap_ipc_instrument_helper,
 };
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 pub use cpal_input::{
     CpalAudioInput, CpalInputDeviceInfo, CpalInputError,
     enumerate_input_devices as enumerate_cpal_input_devices,
 };
-#[cfg(any(
-    all(feature = "cpal-backend", target_os = "windows"),
-    all(feature = "cpal-backend", target_os = "macos")
+#[cfg(all(feature = "cpal-backend", target_os = "android"))]
+pub use cpal_output::{AndroidMidiOutputMessage, CpalMidiInputSender, CpalMidiOutputReceiver};
+#[cfg(all(
+    feature = "cpal-backend",
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 pub use cpal_output::{
     CpalAudioOutput, CpalOutputDeviceInfo, CpalOutputError, CpalOutputStats,
@@ -82,7 +84,10 @@ pub use master_output::{
     MASTER_OUTPUT_DEFAULT_CEILING_DBFS, MasterOutputCeiling, MasterOutputSafetyController,
     MasterOutputSafetyError,
 };
-pub use midi::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
+pub use midi::{
+    MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage, MidiScheduleError,
+    ScheduledMidiEvent,
+};
 
 /// Lock-free control for auditioning one note through a prepared track instrument.
 ///
@@ -1061,6 +1066,10 @@ pub enum AudioGraphError {
         maximum: usize,
     },
     MidiSchedule(MidiScheduleError),
+    MidiInputEventBufferFull {
+        requested: usize,
+        maximum: usize,
+    },
     InstrumentEventBufferFull {
         track_id: TrackId,
     },
@@ -1089,6 +1098,10 @@ impl fmt::Display for AudioGraphError {
                 )
             }
             Self::MidiSchedule(error) => write!(formatter, "MIDI scheduling failed: {error}"),
+            Self::MidiInputEventBufferFull { requested, maximum } => write!(
+                formatter,
+                "live MIDI input block has {requested} events; maximum is {maximum}"
+            ),
             Self::InstrumentEventBufferFull { track_id } => write!(
                 formatter,
                 "MIDI event buffer for track {} is too small",
@@ -1804,6 +1817,9 @@ pub struct AudioRenderGraph {
     input_monitor_states: Vec<(TrackId, usize, Arc<AtomicBool>)>,
 }
 
+/// Maximum number of queued live MIDI messages consumed during one audio callback.
+pub const MIDI_INPUT_EVENTS_PER_BLOCK: usize = 256;
+
 impl AudioRenderGraph {
     /// Compiles one continuously streamed PCM source per project track.
     pub fn new(
@@ -2027,7 +2043,14 @@ impl AudioRenderGraph {
         let scratch = (0..sources.streams.len())
             .map(|_| vec![[0.0, 0.0]; max_block_frames])
             .collect();
-        let midi_scratch = vec![None; midi_plan.len().saturating_add(2).max(2)];
+        let midi_scratch = vec![
+            None;
+            midi_plan
+                .len()
+                .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+                .saturating_add(2)
+                .max(2)
+        ];
         let track_has_stereo_input = vec![false; project.tracks().len()];
         let solo_audible_tracks = vec![false; project.tracks().len()];
         let solo_bus_subtrees = vec![false; project.tracks().len()];
@@ -2079,6 +2102,11 @@ impl AudioRenderGraph {
     /// Returns the maximum frames accepted by the preallocated callback buffers.
     pub fn max_block_frames(&self) -> usize {
         self.mixer.max_block_frames
+    }
+
+    /// Returns the prepared MIDI event capacity for one render block.
+    pub fn midi_event_capacity(&self) -> usize {
+        self.midi_scratch.len()
     }
 
     /// Returns an AudioItem whose PCM queue cannot yet supply the next render block.
@@ -2279,7 +2307,11 @@ impl AudioRenderGraph {
                 track_id: instrument.track_id,
                 track_index,
                 instance_id: instrument.instance_id,
-                midi_events: Vec::with_capacity(available_events),
+                midi_events: Vec::with_capacity(
+                    available_events
+                        .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+                        .saturating_add(2),
+                ),
                 audio: vec![[0.0, 0.0]; self.max_block_frames()],
                 processor: None,
                 isolated_port: None,
@@ -2311,9 +2343,13 @@ impl AudioRenderGraph {
         }
         self.instruments.append(&mut routes);
         self.instruments.sort_by_key(|route| route.track_index);
-        if self.midi_scratch.len() < self.midi_plan.len().saturating_add(2) {
-            self.midi_scratch
-                .resize(self.midi_plan.len().saturating_add(2), None);
+        let midi_capacity = self
+            .midi_plan
+            .len()
+            .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
+            .saturating_add(2);
+        if self.midi_scratch.len() < midi_capacity {
+            self.midi_scratch.resize(midi_capacity, None);
         }
         Ok(())
     }
@@ -2572,7 +2608,7 @@ impl AudioRenderGraph {
         &mut self,
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(false, &mut [], output)
+        self.render_block(false, &[], &mut [], output)
     }
 
     /// Renders audio and writes note events for the same half-open callback
@@ -2582,12 +2618,26 @@ impl AudioRenderGraph {
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(true, midi_output, output)
+        self.render_block(true, &[], midi_output, output)
+    }
+
+    /// Renders scheduled MIDI output and injects bounded live input into matching instruments.
+    ///
+    /// Live events are delivered at the start of the current block. The caller provides storage
+    /// prepared on the control thread; the audio callback does not allocate or lock.
+    pub fn render_with_midi_input(
+        &mut self,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        midi_input: &[Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_block(true, midi_input, midi_output, output)
     }
 
     fn render_block(
         &mut self,
         include_midi: bool,
+        midi_input: &[Option<ScheduledMidiEvent>],
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
@@ -2622,7 +2672,8 @@ impl AudioRenderGraph {
 
         let was_playing = self.transport.is_playing();
         let chase_generation = self.transport.chase_generation();
-        let midi_is_processed = !self.instruments.is_empty() || include_midi;
+        let midi_is_processed =
+            !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
         let mut midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
             let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
                 != Some(block_start_sample)
@@ -2791,12 +2842,45 @@ impl AudioRenderGraph {
                 .zip(self.midi_scratch.iter().take(midi_event_count))
                 .for_each(|(destination, source)| *destination = *source);
         }
+        if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
+            return Err(AudioGraphError::MidiInputEventBufferFull {
+                requested: midi_input.len(),
+                maximum: MIDI_INPUT_EVENTS_PER_BLOCK,
+            });
+        }
+        if !midi_input.is_empty() {
+            let input_end = midi_event_count + midi_input.len();
+            if input_end > self.midi_scratch.len() {
+                return Err(AudioGraphError::MidiInputEventBufferFull {
+                    requested: midi_input.len(),
+                    maximum: self.midi_scratch.len().saturating_sub(midi_event_count),
+                });
+            }
+            for (slot, event) in self.midi_scratch[midi_event_count..input_end]
+                .iter_mut()
+                .zip(midi_input)
+            {
+                *slot = *event;
+            }
+            self.midi_scratch[..input_end].sort_unstable_by_key(|event| {
+                let event = event.expect("rendered MIDI event slots are initialized");
+                (
+                    event.sample_offset,
+                    event.sort_priority(),
+                    event.track_id.value(),
+                    event.controller.unwrap_or(event.pitch),
+                    event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                )
+            });
+        }
+        let midi_processing_count = midi_event_count + midi_input.len();
         let monitor_active = self
             .input_monitor_gate
             .as_ref()
             .is_some_and(AudioInputMonitorGate::is_enabled);
         if !block.is_playing
             && !monitor_active
+            && midi_input.is_empty()
             && self.preview_track_index.is_none()
             && self.preview_tail_frames == 0
         {
@@ -2904,9 +2988,10 @@ impl AudioRenderGraph {
                 }
             }
         }
-        let scheduled_events = self.midi_scratch.iter().take(midi_event_count);
+        let scheduled_events = self.midi_scratch.iter().take(midi_processing_count);
         for route in &mut self.instruments {
-            if !block.is_playing && !self.preview_routes[route.track_index] {
+            let receives_live_midi = !midi_input.is_empty() && route.isolated_reader.is_none();
+            if !block.is_playing && !self.preview_routes[route.track_index] && !receives_live_midi {
                 continue;
             }
             self.track_has_stereo_input[route.track_index] = true;

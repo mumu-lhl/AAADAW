@@ -14,6 +14,95 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 impl App {
+    #[cfg(target_os = "android")]
+    pub(super) fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
+        if self.path_picker_busy {
+            self.status = "A document picker is already open".to_owned();
+            return Task::none();
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let completion =
+            move |result: robius_file_picker::Result<Option<robius_file_picker::PickedFile>>| {
+                let _ = sender.send(result.map_err(|error| error.to_string()));
+            };
+        let picker_result = match target {
+            PathPickerTarget::OpenProject => robius_file_picker::FileDialog::new()
+                .set_title("Open AAADAW project")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project", &["aaadaw"])
+                .pick_file(completion),
+            PathPickerTarget::SaveProject => robius_file_picker::FileDialog::new()
+                .set_title("Save AAADAW project")
+                .set_file_name("project.aaadaw")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project", &["aaadaw"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportWav => robius_file_picker::FileDialog::new()
+                .set_title("Render project to WAV")
+                .set_file_name("render.wav")
+                .set_mime_type("audio/wav")
+                .add_filter("WAV audio", &["wav"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ImportAudio
+            | PathPickerTarget::ImportAudioToProject
+            | PathPickerTarget::RelinkAudio => robius_file_picker::FileDialog::new()
+                .set_title(match target {
+                    PathPickerTarget::RelinkAudio => "Choose replacement audio",
+                    _ => "Choose audio to import",
+                })
+                .set_mime_type("audio/*")
+                .add_filter(
+                    "Audio files",
+                    &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
+                )
+                .pick_file(completion),
+            PathPickerTarget::AddClapPluginPath => robius_file_picker::FileDialog::new()
+                .set_title("Install a trusted Android ARM64 CLAP plugin")
+                .set_mime_type("application/octet-stream")
+                .add_filter("Android CLAP plugin", &["clap"])
+                .pick_file(completion),
+        };
+        if let Err(error) = picker_result {
+            self.status = format!("Document picker failed to open: {error}");
+            return Task::none();
+        }
+        self.path_picker_busy = true;
+        self.active_menu = None;
+        Task::perform(
+            async move {
+                let picked = receiver.await.unwrap_or_else(|_| {
+                    Err("document picker closed without a result".to_owned())
+                })?;
+                let Some(file) = picked else {
+                    return Ok(None);
+                };
+                let result = run_blocking("aaadaw-document-stage", move || {
+                    let path = match target {
+                        PathPickerTarget::SaveProject | PathPickerTarget::ExportWav => {
+                            crate::android_platform::prepare_saf_save(
+                                file,
+                                matches!(target, PathPickerTarget::SaveProject),
+                            )
+                        }
+                        PathPickerTarget::AddClapPluginPath => {
+                            crate::android_platform::stage_clap_plugin_file(file)
+                                .map(|plugin| plugin.parent().unwrap_or(&plugin).to_owned())
+                        }
+                        _ => crate::android_platform::stage_picked_file(
+                            file,
+                            matches!(target, PathPickerTarget::OpenProject),
+                        ),
+                    }?;
+                    Ok(Some(path))
+                })
+                .await;
+                result
+            },
+            move |result| Message::PathPicked(target, result),
+        )
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(super) fn pick_path(&mut self, target: PathPickerTarget) -> Task<Message> {
         if self.path_picker_busy {
             self.status = "A file dialog is already open".to_owned();
@@ -95,7 +184,19 @@ impl App {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();
                     Task::none()
                 }
-                PathPickerTarget::AddClapPluginPath => self.add_clap_plugin_path(path),
+                PathPickerTarget::AddClapPluginPath => {
+                    #[cfg(target_os = "android")]
+                    {
+                        let _ = path;
+                        self.clap_plugin_settings_feedback =
+                            "Imported Android plugin; scanning app storage".to_owned();
+                        self.start_clap_plugin_scan(true)
+                    }
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        self.add_clap_plugin_path(path)
+                    }
+                }
             },
             Ok(None) => {
                 if matches!(target, PathPickerTarget::OpenProject) {

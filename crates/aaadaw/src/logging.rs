@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "android"))]
 use directories::ProjectDirs;
 use std::{
     env, fs, io,
@@ -61,6 +62,9 @@ pub fn initialize() -> WorkerGuard {
 
 fn default_log_directory() -> Result<PathBuf, String> {
     let override_directory = env::var_os(LOG_DIRECTORY_ENV).map(PathBuf::from);
+    #[cfg(target_os = "android")]
+    let platform_data_directory = crate::android_platform::app_data_directory();
+    #[cfg(not(target_os = "android"))]
     let platform_data_directory = ProjectDirs::from("org", "AAADAW", "AAADAW")
         .map(|directories| directories.data_local_dir().to_path_buf());
     choose_log_directory(override_directory, platform_data_directory)

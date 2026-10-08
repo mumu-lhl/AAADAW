@@ -507,6 +507,12 @@ impl App {
         };
         self.fx_chain_track_id = Some(track_id);
         self.fx_chain_selected_index = (!track.fx_chain().is_empty()).then_some(0);
+        if self.is_mobile_main_window() {
+            self.fx_chain_editor_status =
+                "Native CLAP editor windows are unavailable in the mobile workspace.".to_owned();
+            self.show_mobile_panel(super::MobilePanel::FxChain);
+            return Task::none();
+        }
         if self.fx_chain_window_id.is_some() {
             self.close_selected_fx_plugin_gui();
             return self.open_selected_fx_plugin_gui();
@@ -550,6 +556,10 @@ impl App {
         self.plugin_picker_track_id = Some(track_id);
         self.plugin_picker_instrument_track_id = None;
         self.plugin_picker_search.clear();
+        if self.is_mobile_main_window() {
+            self.show_mobile_panel(super::MobilePanel::PluginPicker);
+            return Task::none();
+        }
         if self.plugin_picker_window_id.is_some() {
             return Task::none();
         }
@@ -619,6 +629,12 @@ impl App {
             .plugin_picker_window_id
             .take()
             .map_or_else(Task::none, iced::window::close::<Message>);
+        if self.is_mobile_main_window() {
+            self.fx_chain_editor_status =
+                "Native CLAP editor windows are unavailable in the mobile workspace.".to_owned();
+            self.navigate_back_mobile_panel();
+            return close_picker;
+        }
         Task::batch([close_picker, self.open_selected_fx_plugin_gui()])
     }
 
@@ -872,6 +888,12 @@ impl App {
     }
 
     pub(super) fn open_selected_fx_plugin_gui(&mut self) -> Task<Message> {
+        if self.is_mobile_main_window() {
+            self.close_selected_fx_plugin_gui();
+            self.fx_chain_editor_status =
+                "Native CLAP editor windows are unavailable in the mobile workspace.".to_owned();
+            return Task::none();
+        }
         let (Some(track_id), Some(index)) = (self.fx_chain_track_id, self.fx_chain_selected_index)
         else {
             self.close_selected_fx_plugin_gui();

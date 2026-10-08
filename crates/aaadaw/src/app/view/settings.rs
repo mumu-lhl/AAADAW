@@ -1,10 +1,82 @@
 use super::super::{App, Message, PathPickerTarget, SettingsCategory, commands};
 use super::tokens;
 use aaadaw_engine::MasterOutputCeiling;
-use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
+use iced::widget::{
+    button, column, container, responsive, row, rule, scrollable, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    responsive(move |size| {
+        let compact = size.width < 720.0;
+        let details = settings_details(app, compact);
+        if compact {
+            let detail_content: Element<'_, Message> =
+                if app.settings_category == SettingsCategory::Audio {
+                    details
+                } else {
+                    scrollable(details).height(Length::Fill).into()
+                };
+            let categories = [
+                (SettingsCategory::KeyboardShortcuts, "Keyboard Shortcuts"),
+                (SettingsCategory::ActionMacros, "Actions & Macros"),
+                (SettingsCategory::ClapPlugins, "CLAP Plugins"),
+                (SettingsCategory::Audio, "Audio"),
+            ]
+            .into_iter()
+            .map(|(category, label)| -> Element<'_, Message> {
+                button(text(label).size(12))
+                    .height(Length::Fixed(48.0))
+                    .padding([tokens::SPACING_SM, tokens::SPACING_MD])
+                    .style(if app.settings_category == category {
+                        button::primary
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::SelectSettingsCategory(category))
+                    .into()
+            });
+            let navigation = scrollable(row(categories).spacing(tokens::SPACING_XS))
+                .direction(iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::default(),
+                ))
+                .height(Length::Fixed(52.0));
+            column![
+                navigation,
+                rule::horizontal(1),
+                container(detail_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            ]
+            .spacing(tokens::SPACING_SM)
+            .padding(tokens::PANEL_PADDING)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            desktop_settings(app, details)
+        }
+    })
+    .into()
+}
+
+fn settings_details(app: &App, compact: bool) -> Element<'_, Message> {
+    match app.settings_category {
+        SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app, compact),
+        SettingsCategory::ActionMacros => action_macros(app, compact),
+        SettingsCategory::ClapPlugins => clap_plugins(app, compact),
+        SettingsCategory::Audio => {
+            let settings = audio_settings(app, compact);
+            if compact {
+                scrollable(settings).height(Length::Fill).into()
+            } else {
+                settings
+            }
+        }
+    }
+}
+
+fn desktop_settings<'a>(app: &App, details: Element<'a, Message>) -> Element<'a, Message> {
     let keyboard_selected = app.settings_category == SettingsCategory::KeyboardShortcuts;
     let macros_selected = app.settings_category == SettingsCategory::ActionMacros;
     let plugins_selected = app.settings_category == SettingsCategory::ClapPlugins;
@@ -50,14 +122,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             })
             .on_press(Message::SelectSettingsCategory(SettingsCategory::Audio)),
     ]
-    .spacing(4);
-
-    let details = match app.settings_category {
-        SettingsCategory::KeyboardShortcuts => keyboard_shortcuts(app),
-        SettingsCategory::ActionMacros => action_macros(app),
-        SettingsCategory::ClapPlugins => clap_plugins(app),
-        SettingsCategory::Audio => audio_settings(app),
-    };
+    .spacing(tokens::ROW_GAP);
 
     let content = row![
         container(navigation)
@@ -76,13 +141,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-fn action_macros(app: &App) -> Element<'_, Message> {
+fn action_macros(app: &App, compact: bool) -> Element<'_, Message> {
     let choices = commands::macro_step_choices();
     let selected = app
         .action_macro_step
         .as_ref()
         .and_then(|id| choices.iter().find(|choice| &choice.id == id).cloned());
-    let mut step_rows = column![].spacing(4);
+    let mut step_rows = column![].spacing(tokens::ROW_GAP);
     for (index, id) in app.action_macro_steps.iter().enumerate() {
         step_rows = step_rows.push(
             row![
@@ -90,16 +155,33 @@ fn action_macros(app: &App) -> Element<'_, Message> {
                     .width(Length::Fill),
                 button("↑")
                     .style(button::text)
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
                     .on_press_maybe((index > 0).then_some(Message::MoveActionMacroStep(index, -1))),
-                button("↓").style(button::text).on_press_maybe(
-                    (index + 1 < app.action_macro_steps.len())
-                        .then_some(Message::MoveActionMacroStep(index, 1),)
-                ),
+                button("↓")
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
+                    .style(button::text)
+                    .on_press_maybe(
+                        (index + 1 < app.action_macro_steps.len())
+                            .then_some(Message::MoveActionMacroStep(index, 1),)
+                    ),
                 button("Remove")
                     .style(button::text)
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
                     .on_press(Message::RemoveActionMacroStep(index)),
             ]
-            .spacing(4)
+            .spacing(tokens::ROW_GAP)
             .align_y(Alignment::Center),
         );
     }
@@ -107,7 +189,7 @@ fn action_macros(app: &App) -> Element<'_, Message> {
         step_rows = step_rows.push(text("Add at least one supported action.").size(11));
     }
 
-    let mut saved_macros = column![].spacing(4);
+    let mut saved_macros = column![].spacing(tokens::ROW_GAP);
     for action_macro in &app.action_macros {
         let id = action_macro.id;
         saved_macros = saved_macros.push(
@@ -117,15 +199,25 @@ fn action_macros(app: &App) -> Element<'_, Message> {
                     text(format!("{} actions", action_macro.steps.len())).size(10),
                 ]
                 .width(Length::Fill)
-                .spacing(2),
+                .spacing(tokens::SPACING_TIGHT),
                 button("Edit")
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
                     .style(button::secondary)
                     .on_press(Message::EditActionMacro(id)),
                 button("Delete")
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
                     .style(button::text)
                     .on_press(Message::DeleteActionMacro(id)),
             ]
-            .spacing(6)
+            .spacing(tokens::SPACING_COMPACT)
             .align_y(Alignment::Center),
         );
     }
@@ -134,33 +226,65 @@ fn action_macros(app: &App) -> Element<'_, Message> {
     }
 
     let is_editing = app.action_macro_editing_id.is_some();
-    column![
-        text("Actions & Macros").size(17),
-        text("Build an ordered macro from supported commands. Macros run the same actions shown in the Actions menu and can be assigned shortcuts below.").size(11),
-        rule::horizontal(1),
+    let step_picker = iced::widget::pick_list(choices, selected, |choice| {
+        Message::ActionMacroStepSelected(choice.id)
+    })
+    .placeholder("Choose action")
+    .width(if compact {
+        Length::Fill
+    } else {
+        Length::Fixed(220.0)
+    });
+    let add_step = button("Add step")
+        .height(if compact {
+            Length::Fixed(48.0)
+        } else {
+            Length::Shrink
+        })
+        .on_press_maybe(
+            app.action_macro_step
+                .is_some()
+                .then_some(Message::AddActionMacroStep),
+        );
+    let step_form: Element<'_, Message> = if compact {
+        column![
+            text_input("Macro name", &app.action_macro_name)
+                .on_input(Message::ActionMacroNameChanged)
+                .padding([tokens::SPACING_LG, tokens::SPACING_SM])
+                .width(Length::Fill),
+            step_picker,
+            add_step,
+        ]
+        .spacing(tokens::SPACING_SM)
+        .into()
+    } else {
         row![
             text_input("Macro name", &app.action_macro_name)
                 .on_input(Message::ActionMacroNameChanged)
                 .width(Length::Fill),
-            iced::widget::pick_list(choices, selected, |choice| {
-                Message::ActionMacroStepSelected(choice.id)
-            })
-            .placeholder("Choose action")
-            .width(Length::Fixed(220.0)),
-            button("Add step")
-                .on_press_maybe(app.action_macro_step.is_some().then_some(Message::AddActionMacroStep)),
+            step_picker,
+            add_step,
         ]
         .spacing(6)
-        .align_y(Alignment::Center),
-        scrollable(step_rows).height(Length::Fixed(112.0)),
+        .align_y(Alignment::Center)
+        .into()
+    };
+    column![
+        text("Actions & Macros").size(17),
+        text("Build an ordered macro from supported commands. Macros run the same actions shown in the Actions menu and can be assigned shortcuts below.").size(11),
+        rule::horizontal(1),
+        step_form,
+        scrollable(step_rows).height(Length::Fixed(if compact { 88.0 } else { 112.0 })),
         row![
             button(if is_editing { "Save changes" } else { "Create macro" })
+                .height(if compact { Length::Fixed(48.0) } else { Length::Shrink })
                 .on_press_maybe((app.action_macro_config_error.is_none() && !app.action_macro_name.trim().is_empty() && !app.action_macro_steps.is_empty()).then_some(Message::SaveActionMacro)),
             button("New")
+                .height(if compact { Length::Fixed(48.0) } else { Length::Shrink })
                 .style(button::secondary)
                 .on_press(Message::NewActionMacro),
         ]
-        .spacing(6),
+        .spacing(tokens::SPACING_COMPACT),
         text(app.action_macro_feedback.clone()).size(11),
         rule::horizontal(1),
         text("Saved macros").size(13),
@@ -171,7 +295,7 @@ fn action_macros(app: &App) -> Element<'_, Message> {
     .into()
 }
 
-fn audio_settings(app: &App) -> Element<'_, Message> {
+fn audio_settings(app: &App, compact: bool) -> Element<'_, Message> {
     let recording_offset = app.audio_recording_offset_query.clone().unwrap_or_else(|| {
         super::super::audio_config::format_recording_offset_ms(
             app.audio_settings.recording_offset_us,
@@ -179,61 +303,128 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
     });
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
-    let cpal_output = cpal_output_settings(app);
+    let cpal_output = cpal_output_settings(app, compact);
     #[cfg(not(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )))]
     let cpal_output: Element<'_, Message> = text("").into();
     #[cfg(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ))]
-    let cpal_input = cpal_input_settings(app);
+    let cpal_input = cpal_input_settings(app, compact);
     #[cfg(not(all(
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )))]
     let cpal_input: Element<'_, Message> = text("").into();
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    let android_midi: Element<'_, Message> = {
+        let description = column![
+            text("External MIDI").size(13),
+            text(format!(
+                "Inputs: {} · Outputs: {}",
+                app.android_midi_input_ports, app.android_midi_output_ports
+            ))
+            .size(11),
+            text("USB and paired Bluetooth MIDI 1.0 devices. Input is monitored through the selected instrument track while playback is open; MIDI recording is not available yet.")
+                .size(10),
+        ]
+        .width(Length::Fill)
+        .spacing(tokens::SPACING_XS);
+        let refresh = button("Refresh MIDI devices")
+            .height(Length::Fixed(48.0))
+            .on_press(Message::RefreshAndroidMidiDevices);
+        let layout: Element<'_, Message> = if compact {
+            column![description, refresh.width(Length::Fill)]
+                .spacing(tokens::SPACING_SM)
+                .into()
+        } else {
+            row![description, refresh]
+                .spacing(tokens::SPACING_SM)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        column![layout, text(app.android_midi_feedback.clone()).size(10)]
+            .spacing(tokens::SPACING_XS)
+            .width(Length::Fill)
+            .into()
+    };
+    #[cfg(not(all(feature = "audio-device", target_os = "android")))]
+    let android_midi: Element<'_, Message> = text("").into();
+    let master_description = column![
+        text("Master sample-peak ceiling").size(13),
+        text("Always active · default -1 dBFS").size(10),
+    ]
+    .width(Length::Fill)
+    .spacing(tokens::SPACING_XS);
+    let ceiling_picker = iced::widget::pick_list(
+        master_ceiling_choices(),
+        Some(app.audio_settings.master_output_ceiling),
+        Message::SetMasterOutputCeilingDbfs,
+    )
+    .placeholder("Ceiling")
+    .width(if compact {
+        Length::Fill
+    } else {
+        Length::Fixed(128.0)
+    });
+    let ceiling_control: Element<'_, Message> = if compact {
+        column![master_description, ceiling_picker]
+            .spacing(tokens::SPACING_SM)
+            .into()
+    } else {
+        row![master_description, ceiling_picker]
+            .spacing(tokens::SPACING_SM)
+            .align_y(Alignment::Center)
+            .into()
+    };
+    let recording_description = column![
+        text("Recording placement offset (ms)").size(13),
+        text("Positive moves the take later; negative moves it earlier. JACK's precise reported capture latency is applied automatically when available; this value calibrates the remaining offset.").size(10),
+    ]
+    .width(Length::Fill)
+    .spacing(tokens::SPACING_XS);
+    let offset_input = text_input("0.000", &recording_offset)
+        .on_input(Message::RecordingOffsetTextChanged)
+        .padding(if compact {
+            [tokens::SPACING_LG, tokens::SPACING_SM]
+        } else {
+            [6.0, 8.0]
+        })
+        .width(if compact {
+            Length::Fill
+        } else {
+            Length::Fixed(108.0)
+        });
+    let apply_offset = button("Apply")
+        .height(if compact {
+            Length::Fixed(48.0)
+        } else {
+            Length::Shrink
+        })
+        .on_press(Message::ApplyRecordingOffset);
+    let recording_control: Element<'_, Message> = if compact {
+        column![recording_description, offset_input, apply_offset]
+            .spacing(tokens::SPACING_SM)
+            .into()
+    } else {
+        row![recording_description, offset_input, apply_offset]
+            .spacing(tokens::SPACING_SM)
+            .align_y(Alignment::Center)
+            .into()
+    };
     column![
         text("Audio output and recording").size(17),
         cpal_output,
         cpal_input,
+        android_midi,
         text("Set the final digital sample-peak ceiling. Changes apply during playback and are saved to this user account.").size(11),
-        row![
-            column![
-            text("Master sample-peak ceiling").size(13),
-            text("Always active · default -1 dBFS").size(10),
-            ]
-            .width(Length::Fill)
-            .spacing(tokens::SPACING_XS),
-            iced::widget::pick_list(
-                master_ceiling_choices(),
-                Some(app.audio_settings.master_output_ceiling),
-                Message::SetMasterOutputCeilingDbfs,
-            )
-            .placeholder("Ceiling")
-            .width(Length::Fixed(128.0)),
-        ]
-    .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
-        row![
-            column![
-                text("Recording placement offset (ms)").size(13),
-                text("Positive moves the take later; negative moves it earlier. JACK's precise reported capture latency is applied automatically when available; this value calibrates the remaining offset.").size(10),
-            ]
-            .width(Length::Fill)
-            .spacing(tokens::SPACING_XS),
-            text_input("0.000", &recording_offset)
-                .on_input(Message::RecordingOffsetTextChanged)
-                .width(Length::Fixed(108.0)),
-            button("Apply")
-                .on_press(Message::ApplyRecordingOffset),
-        ]
-        .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
+        ceiling_control,
+        recording_control,
         text("This bounds sample values at the Master output and silences non-finite samples. It is not a true-peak or loudness limiter and does not guarantee safe speaker level or hearing exposure.")
             .size(11),
         text(app.audio_settings_feedback.clone()).size(11),
@@ -245,9 +436,9 @@ fn audio_settings(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
-fn cpal_output_settings(app: &App) -> Element<'_, Message> {
+fn cpal_output_settings(app: &App, compact: bool) -> Element<'_, Message> {
     let saved_id = app.audio_settings.cpal_output_device_id.as_deref();
     let enumeration_feedback = if app.cpal_output_devices_loading {
         "Listing audio output devices…".to_owned()
@@ -283,14 +474,15 @@ fn cpal_output_settings(app: &App) -> Element<'_, Message> {
         enumeration_feedback,
         Message::RefreshCpalOutputDevices,
         Message::SelectCpalOutputDevice,
+        compact,
     )
 }
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
-fn cpal_input_settings(app: &App) -> Element<'_, Message> {
+fn cpal_input_settings(app: &App, compact: bool) -> Element<'_, Message> {
     let saved_id = app.audio_settings.cpal_input_device_id.as_deref();
     let enumeration_feedback = if app.cpal_input_devices_loading {
         "Listing audio input devices…".to_owned()
@@ -326,12 +518,13 @@ fn cpal_input_settings(app: &App) -> Element<'_, Message> {
         enumeration_feedback,
         Message::RefreshCpalInputDevices,
         Message::SelectCpalInputDevice,
+        compact,
     )
 }
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 fn cpal_device_choices<'a>(
     devices: impl Iterator<Item = (&'a str, &'a str)>,
@@ -383,7 +576,7 @@ fn cpal_device_choices<'a>(
 
 #[cfg(all(
     feature = "cpal-backend",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 #[allow(clippy::too_many_arguments)]
 fn cpal_device_settings(
@@ -396,29 +589,43 @@ fn cpal_device_settings(
     enumeration_feedback: String,
     refresh_message: Message,
     select_message: fn(Option<String>) -> Message,
+    compact: bool,
 ) -> Element<'static, Message> {
     use super::super::CpalDeviceChoice;
 
-    column![
-        row![
-            column![text(title).size(13), text(description).size(10),]
-                .width(Length::Fill)
-                .spacing(tokens::SPACING_XS),
-            iced::widget::pick_list(choices, selected, move |choice: CpalDeviceChoice| {
-                select_message(choice.id)
-            },)
-            .placeholder(placeholder)
-            .width(Length::Fixed(260.0)),
-            button(if loading { "Loading…" } else { "Refresh" })
-                .on_press_maybe((!loading).then_some(refresh_message)),
-        ]
-        .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
-        text(enumeration_feedback).size(10),
-    ]
-    .spacing(tokens::SPACING_XS)
-    .width(Length::Fill)
-    .into()
+    let description = column![text(title).size(13), text(description).size(10),]
+        .width(Length::Fill)
+        .spacing(tokens::SPACING_XS);
+    let picker = iced::widget::pick_list(choices, selected, move |choice: CpalDeviceChoice| {
+        select_message(choice.id)
+    })
+    .placeholder(placeholder)
+    .width(if compact {
+        Length::Fill
+    } else {
+        Length::Fixed(260.0)
+    });
+    let refresh = button(if loading { "Loading…" } else { "Refresh" })
+        .height(if compact {
+            Length::Fixed(48.0)
+        } else {
+            Length::Shrink
+        })
+        .on_press_maybe((!loading).then_some(refresh_message));
+    let controls: Element<'static, Message> = if compact {
+        column![description, picker, refresh]
+            .spacing(tokens::SPACING_SM)
+            .into()
+    } else {
+        row![description, picker, refresh]
+            .spacing(tokens::SPACING_SM)
+            .align_y(Alignment::Center)
+            .into()
+    };
+    column![controls, text(enumeration_feedback).size(10),]
+        .spacing(tokens::SPACING_XS)
+        .width(Length::Fill)
+        .into()
 }
 
 fn master_ceiling_choices() -> [MasterOutputCeiling; 13] {
@@ -428,7 +635,7 @@ fn master_ceiling_choices() -> [MasterOutputCeiling; 13] {
     })
 }
 
-fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
+fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
     let entries = commands::shortcut_entries(app);
 
     let mut bindings = column![].spacing(5);
@@ -454,40 +661,73 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
         } else {
             format!("Default: {}", entry.default_binding)
         };
-        bindings = bindings.push(
-            row![
-                column![text(entry.label).size(13), text(default_binding).size(10)]
-                    .width(Length::Fill)
-                    .spacing(2),
-                button(text(shown_binding))
-                    .style(if recording {
-                        button::warning
-                    } else {
-                        button::secondary
-                    })
-                    .width(Length::Fixed(150.0))
-                    .on_press(Message::StartShortcutCapture(action_id.clone())),
-                button("Clear")
-                    .style(button::text)
-                    .width(Length::Fixed(48.0))
-                    .on_press(Message::ClearShortcutBinding(action_id.clone())),
-                button("Default")
-                    .style(button::text)
-                    .width(Length::Fixed(68.0))
-                    .on_press(Message::RestoreShortcutDefault(action_id)),
+        let label = column![text(entry.label).size(13), text(default_binding).size(10)]
+            .width(Length::Fill)
+            .spacing(2);
+        let binding = button(text(shown_binding))
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
+            })
+            .style(if recording {
+                button::warning
+            } else {
+                button::secondary
+            })
+            .width(if compact {
+                Length::Fill
+            } else {
+                Length::Fixed(150.0)
+            })
+            .on_press(Message::StartShortcutCapture(action_id.clone()));
+        let clear = button("Clear")
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
+            })
+            .style(button::text)
+            .width(Length::Fixed(if compact { 64.0 } else { 48.0 }))
+            .on_press(Message::ClearShortcutBinding(action_id.clone()));
+        let restore = button("Default")
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
+            })
+            .style(button::text)
+            .width(Length::Fixed(if compact { 72.0 } else { 68.0 }))
+            .on_press(Message::RestoreShortcutDefault(action_id));
+        let row: Element<'_, Message> = if compact {
+            column![
+                label,
+                row![binding, clear, restore].spacing(tokens::ROW_GAP)
             ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        );
+            .spacing(tokens::ROW_GAP)
+            .into()
+        } else {
+            row![label, binding, clear, restore]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        bindings = bindings.push(row);
     }
 
-    column![
-        text("Keyboard shortcuts").size(17),
-        text(commands::shortcut_capture_help()).size(12),
-        rule::horizontal(1),
-        scrollable(container(bindings).padding(iced::Padding::default().right(12.0)))
-            .height(Length::Fill),
-        text(app.shortcut_editor_feedback.clone()).size(12),
+    let save_controls: Element<'_, Message> = if compact {
+        column![
+            button("Restore all defaults")
+                .height(Length::Fixed(48.0))
+                .style(button::secondary)
+                .on_press(Message::ResetShortcutBindings),
+            button("Save changes")
+                .height(Length::Fixed(48.0))
+                .on_press(Message::SaveShortcutBindings),
+        ]
+        .spacing(tokens::SPACING_XS)
+        .into()
+    } else {
         row![
             button("Restore all defaults")
                 .style(button::secondary)
@@ -496,15 +736,25 @@ fn keyboard_shortcuts(app: &App) -> Element<'_, Message> {
             button("Save changes").on_press(Message::SaveShortcutBindings),
         ]
         .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Center)
+        .into()
+    };
+    column![
+        text("Keyboard shortcuts").size(17),
+        text(commands::shortcut_capture_help()).size(12),
+        rule::horizontal(1),
+        scrollable(container(bindings).padding(iced::Padding::default().right(12.0)))
+            .height(Length::Fill),
+        text(app.shortcut_editor_feedback.clone()).size(12),
+        save_controls,
     ]
     .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
 }
 
-fn clap_plugins(app: &App) -> Element<'_, Message> {
-    let mut paths = column![].spacing(3);
+fn clap_plugins(app: &App, compact: bool) -> Element<'_, Message> {
+    let mut paths = column![].spacing(tokens::SPACING_TIGHT);
     for path in &app.clap_plugin_paths {
         let path_message = path.clone();
         let is_default = app.clap_plugin_default_paths.contains(path);
@@ -515,13 +765,18 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
                     .size(11)
                     .width(Length::Fill),
                 button(if is_default { "Default" } else { "Remove" })
+                    .height(if compact {
+                        Length::Fixed(48.0)
+                    } else {
+                        Length::Shrink
+                    })
                     .style(button::text)
                     .on_press_maybe(
                         (!app.clap_plugin_scan_busy && !is_default)
                             .then_some(Message::RemoveClapPluginPath(path_message)),
                     ),
             ]
-            .spacing(6)
+            .spacing(tokens::SPACING_COMPACT)
             .align_y(Alignment::Center),
         );
     }
@@ -584,10 +839,25 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
 
     column![
         text("CLAP plug-ins").size(17),
-        text("Search configured folders recursively.").size(11),
+        text(if cfg!(target_os = "android") {
+            "Import Android ARM64 .clap libraries into app storage. Only install trusted plugins."
+        } else {
+            "Search configured folders recursively."
+        })
+        .size(11),
         text(super::CLAP_PLUGIN_RISK).size(11),
         row![
-            button("Add search path…").on_press_maybe(
+            button(if cfg!(target_os = "android") {
+                "Import plugin…"
+            } else {
+                "Add search path…"
+            })
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
+            })
+            .on_press_maybe(
                 (!app.clap_plugin_scan_busy)
                     .then_some(Message::PickPath(PathPickerTarget::AddClapPluginPath,))
             ),
@@ -595,6 +865,11 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
                 "Scanning…"
             } else {
                 "Rescan"
+            })
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
             })
             .style(button::secondary)
             .on_press_maybe((!app.clap_plugin_scan_busy).then_some(Message::RescanClapPlugins)),

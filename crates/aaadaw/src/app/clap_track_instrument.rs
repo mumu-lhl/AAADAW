@@ -2,10 +2,12 @@ use super::{App, Message};
 #[cfg(feature = "audio-device")]
 use aaadaw_app::PreparedAudioPlayback;
 use aaadaw_core::{DawAction, TrackId, TrackInstrument};
-#[cfg(feature = "audio-device")]
+#[cfg(all(feature = "audio-device", not(target_os = "android")))]
 use aaadaw_engine::{CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS, ClapIpcConfig};
-#[cfg(feature = "audio-device")]
+#[cfg(all(feature = "audio-device", not(target_os = "android")))]
 use aaadaw_engine::{ClapInstrumentHelperProcess, TrackIsolatedInstrument};
+#[cfg(all(feature = "audio-device", target_os = "android"))]
+use aaadaw_engine::{ClapInstrumentOwner, TrackInstrumentProcessor};
 use iced::Task;
 #[cfg(feature = "audio-device")]
 use std::path::PathBuf;
@@ -59,7 +61,12 @@ impl App {
     }
 
     pub(super) fn set_track_instrument_gui(&mut self, track_id: TrackId, open: bool, parent: u64) {
-        #[cfg(feature = "audio-device")]
+        #[cfg(target_os = "android")]
+        {
+            let _ = (track_id, open, parent);
+            self.status = "Android CLAP plugin editors are not supported".to_owned();
+        }
+        #[cfg(all(feature = "audio-device", not(target_os = "android")))]
         {
             let Some(instrument) = self
                 .project
@@ -162,7 +169,7 @@ impl App {
                 Err(error) => format!("Could not change instrument editor state: {error}"),
             };
         }
-        #[cfg(not(feature = "audio-device"))]
+        #[cfg(all(not(feature = "audio-device"), not(target_os = "android")))]
         {
             let _ = (track_id, open, parent);
             self.status = "CLAP editor windows require an audio-device build".to_owned();
@@ -182,6 +189,10 @@ impl App {
         self.plugin_picker_track_id = None;
         self.plugin_picker_instrument_track_id = Some(track_id);
         self.plugin_picker_search.clear();
+        if self.is_mobile_main_window() {
+            self.show_mobile_panel(super::MobilePanel::PluginPicker);
+            return Task::none();
+        }
         if self.plugin_picker_window_id.is_some() {
             return Task::none();
         }
@@ -268,6 +279,10 @@ impl App {
     fn close_instrument_picker(&mut self) -> Task<Message> {
         self.plugin_picker_instrument_track_id = None;
         self.plugin_picker_search.clear();
+        if self.is_mobile_main_window() {
+            self.navigate_back_mobile_panel();
+            return Task::none();
+        }
         self.plugin_picker_window_id
             .take()
             .map_or_else(Task::none, iced::window::close)
@@ -275,6 +290,21 @@ impl App {
 
     #[cfg(feature = "audio-device")]
     pub(super) fn install_track_instrument_processors(
+        &mut self,
+        prepared: &mut PreparedAudioPlayback,
+    ) -> Result<Vec<u64>, String> {
+        #[cfg(target_os = "android")]
+        {
+            self.install_android_track_instrument_processors(prepared)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.install_desktop_track_instrument_processors(prepared)
+        }
+    }
+
+    #[cfg(all(feature = "audio-device", not(target_os = "android")))]
+    fn install_desktop_track_instrument_processors(
         &mut self,
         prepared: &mut PreparedAudioPlayback,
     ) -> Result<Vec<u64>, String> {
@@ -411,10 +441,133 @@ impl App {
         Ok(ids)
     }
 
+    #[cfg(all(feature = "audio-device", target_os = "android"))]
+    fn install_android_track_instrument_processors(
+        &mut self,
+        prepared: &mut PreparedAudioPlayback,
+    ) -> Result<Vec<u64>, String> {
+        if !self
+            .project
+            .tracks()
+            .iter()
+            .any(|track| track.instrument().is_some())
+        {
+            return Ok(Vec::new());
+        }
+
+        let sample_rate = self.project.settings().sample_rate();
+        let max_block_frames = prepared.graph().max_block_frames();
+        let mut processors = Vec::new();
+        let mut owners = Vec::new();
+        let mut targets = Vec::new();
+        let mut active_ids = Vec::new();
+
+        for track in self.project.tracks() {
+            if track.is_frozen() {
+                continue;
+            }
+            let Some(instrument) = track.instrument() else {
+                continue;
+            };
+            let entry_path = PathBuf::from(instrument.bundle_path());
+            let event_capacity = prepared
+                .graph()
+                .midi_event_capacity_for_track(track.id())
+                .saturating_add(64)
+                .max(64);
+            // SAFETY: Android plugins enter app-private storage only through an explicit user
+            // import. CLAP code runs in-process and can still crash AAADAW; import trusted plugins.
+            let loaded = unsafe {
+                ClapInstrumentOwner::load_with_state(
+                    &entry_path,
+                    instrument.plugin_id(),
+                    instrument.state(),
+                    sample_rate,
+                    max_block_frames,
+                    event_capacity,
+                )
+            };
+            let loaded = match loaded {
+                Err(error) if error.is_state_restore_error() => {
+                    self.clap_plugin_warnings.push(format!(
+                        "{} state could not be restored; using its default state ({error})",
+                        instrument.plugin_id()
+                    ));
+                    // SAFETY: same user-imported Android plugin entry as the first attempt.
+                    unsafe {
+                        ClapInstrumentOwner::load_with_state(
+                            &entry_path,
+                            instrument.plugin_id(),
+                            None,
+                            sample_rate,
+                            max_block_frames,
+                            event_capacity,
+                        )
+                    }
+                }
+                result => result,
+            };
+
+            match loaded {
+                Ok((owner, processor)) => {
+                    let instance_id = owner.instance_id();
+                    processors.push(TrackInstrumentProcessor::new(track.id(), processor));
+                    targets.push((instance_id, track.id()));
+                    active_ids.push(instance_id);
+                    owners.push((instance_id, owner));
+                }
+                Err(error) => self.clap_plugin_warnings.push(format!(
+                    "Could not activate Android CLAP instrument {}; its track will be silent ({error})",
+                    instrument.plugin_id()
+                )),
+            }
+        }
+
+        if let Err(error) = prepared
+            .graph_mut()
+            .install_instrument_processors(&self.project, &mut processors)
+        {
+            drop(processors);
+            for (_, owner) in &mut owners {
+                let _ = owner.try_deactivate_unused();
+            }
+            return Err(format!(
+                "Could not prepare Android CLAP instruments: {error}"
+            ));
+        }
+
+        for (instance_id, target) in targets {
+            self.clap_instrument_targets.insert(instance_id, target);
+        }
+        for (instance_id, owner) in owners {
+            self.clap_instrument_owners.insert(instance_id, owner);
+        }
+        Ok(active_ids)
+    }
+
     #[cfg(feature = "audio-device")]
     pub(super) fn discard_unused_instrument_owners(&mut self, ids: &[u64]) -> Option<String> {
         let mut error_message = None;
         for id in ids {
+            #[cfg(target_os = "android")]
+            let direct_result = self
+                .clap_instrument_owners
+                .get_mut(id)
+                .map(ClapInstrumentOwner::try_deactivate_unused);
+            #[cfg(not(target_os = "android"))]
+            let direct_result: Option<Result<(), aaadaw_engine::ClapInstrumentError>> = None;
+            match direct_result {
+                Some(Ok(())) => {
+                    self.clap_instrument_owners.remove(id);
+                    self.clap_instrument_targets.remove(id);
+                }
+                Some(Err(error)) => {
+                    error_message = Some(format!(
+                        "Could not stop Android CLAP instrument {id}: {error}"
+                    ));
+                }
+                None => {}
+            }
             let result = self.clap_instrument_helper_owners.get_mut(id).map(|owner| {
                 owner
                     .shutdown()

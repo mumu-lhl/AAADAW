@@ -4,19 +4,21 @@ use super::{App, Message};
     all(
         feature = "jack-backend",
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     ),
     all(
         feature = "pipewire-backend",
         feature = "cpal-backend",
-        any(target_os = "windows", target_os = "macos")
+        any(target_os = "windows", target_os = "macos", target_os = "android")
     )
 ))]
 use aaadaw_app::PlaybackBackend;
 use iced::widget::button;
 #[cfg(feature = "audio-device")]
 use iced::widget::text_input;
-use iced::widget::{column, container, float, mouse_area, pane_grid, responsive, row, stack, text};
+use iced::widget::{
+    column, container, float, mouse_area, pane_grid, responsive, row, scrollable, stack, text,
+};
 use iced::{Alignment, Element, Length};
 
 mod arrangement;
@@ -71,7 +73,12 @@ pub(super) fn playback_diagnostic_suffix(
 }
 
 pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element<'_, Message> {
-    if app.settings_window_id == Some(window_id) {
+    if app.main_window_id == Some(window_id) && app.mobile_panel == super::MobilePanel::MidiEditor {
+        let size = app
+            .main_window_size
+            .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
+        mobile_view(app, size.width, size.height)
+    } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.render_window_id == Some(window_id) {
         render::view(app)
@@ -89,6 +96,17 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 }
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    responsive(move |size| {
+        if cfg!(target_os = "android") || size.width < 720.0 {
+            mobile_view(app, size.width, size.height)
+        } else {
+            desktop_view(app)
+        }
+    })
+    .into()
+}
+
+fn desktop_view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
     let workspace: Element<'_, Message> = match app.main_workspace {
@@ -289,6 +307,187 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     layered
 }
 
+fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<'_, Message> {
+    use super::{MainMenu, MainWorkspace};
+
+    let menus = [
+        MainMenu::File,
+        MainMenu::Edit,
+        MainMenu::View,
+        MainMenu::Insert,
+        MainMenu::Item,
+        MainMenu::Track,
+        MainMenu::Actions,
+    ]
+    .into_iter()
+    .map(|menu_id| -> Element<'_, Message> {
+        button(text(menu_id.label()).size(14))
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
+            .style(if app.active_menu == Some(menu_id) {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::ToggleMainMenu(menu_id))
+            .into()
+    });
+    let menu_row = scrollable(row(menus).spacing(tokens::SPACING_XS))
+        .direction(iced::widget::scrollable::Direction::Horizontal(
+            iced::widget::scrollable::Scrollbar::default(),
+        ))
+        .height(Length::Shrink);
+
+    let workspace_switcher = row![
+        button("Arrange")
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_LG as u16; 2])
+            .style(if app.main_workspace == MainWorkspace::Arrangement {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::ShowMainWorkspace(MainWorkspace::Arrangement)),
+        button("Mixer")
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_LG as u16; 2])
+            .style(if app.main_workspace == MainWorkspace::Mixer {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::ShowMainWorkspace(MainWorkspace::Mixer)),
+        button(text(format!(
+            "Jobs · {}",
+            usize::from(app.offline_render_busy) + app.offline_job_queue.len()
+        )))
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+        .padding([tokens::SPACING_LG as u16, tokens::SPACING_MD as u16])
+        .on_press(Message::ToggleOfflineJobsPanel),
+    ]
+    .spacing(tokens::SPACING_SM);
+
+    let workspace: Element<'_, Message> = match app.mobile_panel {
+        super::MobilePanel::Editor => match app.main_workspace {
+            MainWorkspace::Arrangement => arrangement::mobile_view(app),
+            MainWorkspace::Mixer => mixer::mobile_view(app),
+        },
+        super::MobilePanel::MidiEditor => midi_editor::mobile_view(app),
+        super::MobilePanel::MediaBrowser => media::mobile_view(app),
+        super::MobilePanel::Settings => settings::view(app),
+        super::MobilePanel::TimeMap => tempo_map::mobile_view(app),
+        super::MobilePanel::FxChain => fx_chain::mobile_view(app),
+        super::MobilePanel::PluginPicker => plugin_picker::mobile_view(app),
+    };
+    let panel_navigation: Element<'_, Message> = if app.mobile_panel == super::MobilePanel::Editor {
+        workspace_switcher.into()
+    } else {
+        row![
+            button("← Back")
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_SM, tokens::SPACING_MD])
+                .on_press(Message::MobileNavigateBack),
+            text(app.mobile_panel.title()).size(14).width(Length::Fill),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    let transport = container(
+        column![
+            row![
+                text(format!(
+                    "{:.2} BPM",
+                    app.project.tempo_at_tick(app.timeline.edit_cursor_tick)
+                ))
+                .size(13),
+                iced::widget::Space::new().width(Length::Fill),
+                mobile_playback_controls(app),
+            ]
+            .align_y(Alignment::Center),
+            row![
+                text(format!("{}", app.timeline.edit_cursor_tick)).size(12),
+                iced::widget::Space::new().width(Length::Fill),
+                text(app.status.clone()).size(11).width(Length::Fill),
+            ]
+            .align_y(Alignment::Center),
+        ]
+        .spacing(tokens::SPACING_XS),
+    )
+    .width(Length::Fill)
+    .padding(tokens::PANEL_PADDING)
+    .style(iced::widget::container::rounded_box);
+
+    let mut content = column![menu_row, panel_navigation]
+        .spacing(tokens::SPACING_SM)
+        .padding(tokens::SPACING_SM)
+        .height(Length::Fill);
+    if let Some(candidate) = app
+        .recording_recovery_candidates
+        .iter()
+        .find(|candidate| candidate_needs_recovery(app, candidate))
+    {
+        let notice = row![
+            text("Incomplete recording found")
+                .size(12)
+                .width(Length::Fill),
+            button("Recover")
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_MD; 2])
+                .on_press(Message::RecoverRecording(candidate.manifest_path.clone())),
+            button("Discard")
+                .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+                .padding([tokens::SPACING_MD; 2])
+                .on_press(Message::DiscardRecording(candidate.manifest_path.clone())),
+        ]
+        .spacing(tokens::SPACING_XS)
+        .align_y(Alignment::Center);
+        content = content.push(container(notice).width(Length::Fill));
+    }
+    content = content.push(workspace).push(transport);
+    let base: Element<'_, Message> = container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
+    let mut layered = base;
+    if let Some(active_menu) = app.active_menu {
+        let popup = float(menu::mobile_dropdown(
+            app,
+            active_menu,
+            (viewport_width - tokens::SPACING_LG * 2.0).max(1.0),
+            (viewport_height - tokens::SPACING_LG * 2.0).max(1.0),
+        ))
+        .translate(center_popup);
+        layered = stack![layered, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.offline_jobs_panel_open {
+        let popup = float(menu::mobile_offline_jobs_panel(
+            app,
+            (viewport_width - tokens::SPACING_LG * 2.0).max(1.0),
+            (viewport_height - tokens::SPACING_LG * 2.0).max(1.0),
+        ))
+        .translate(center_popup);
+        layered = stack![layered, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    mouse_area(layered)
+        .on_press(Message::DismissMainMenu)
+        .into()
+}
+
+fn center_popup(bounds: iced::Rectangle, viewport: iced::Rectangle) -> iced::Vector {
+    let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+    let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+    let target_x = (viewport.x + (viewport.width - bounds.width) / 2.0).clamp(viewport.x, max_x);
+    let target_y = (viewport.y + (viewport.height - bounds.height) / 2.0).clamp(viewport.y, max_y);
+    iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+}
+
 fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecoveryCandidate) -> bool {
     !app.pending_recording_cleanup.iter().any(|cleanup| {
         cleanup.manifest_path == candidate.manifest_path
@@ -459,6 +658,51 @@ fn transport_view(app: &App) -> Element<'_, Message> {
 }
 
 #[cfg(feature = "audio-device")]
+fn mobile_playback_controls(app: &App) -> Element<'_, Message> {
+    let available = app.selected_playback_backend().is_available();
+    row![
+        button(if app.playback_playing {
+            "Pause"
+        } else {
+            "Play"
+        })
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+        .padding([tokens::SPACING_LG, tokens::SPACING_MD])
+        .on_press_maybe(available.then_some(if app.playback_playing {
+            Message::TogglePlayback
+        } else {
+            Message::StartPlayback
+        })),
+        button("Stop")
+            .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+            .padding([tokens::SPACING_LG, tokens::SPACING_MD])
+            .on_press_maybe(available.then_some(Message::StopPlayback)),
+        button(if app.recording.is_some() {
+            "End rec"
+        } else {
+            "Record"
+        })
+        .height(Length::Fixed(tokens::TOUCH_TARGET_MIN))
+        .padding([tokens::SPACING_LG, tokens::SPACING_MD])
+        .style(button::danger)
+        .on_press_maybe(if app.recording.is_some() {
+            Some(Message::StopRecording)
+        } else if available {
+            Some(Message::StartRecording)
+        } else {
+            None
+        }),
+    ]
+    .spacing(tokens::SPACING_XS)
+    .into()
+}
+
+#[cfg(not(feature = "audio-device"))]
+fn mobile_playback_controls(_app: &App) -> Element<'static, Message> {
+    text("Audio off").size(11).into()
+}
+
+#[cfg(feature = "audio-device")]
 fn playback_status_label(app: &App) -> String {
     if app.recording_starting {
         "Connecting audio input…".to_owned()
@@ -595,12 +839,12 @@ fn transport_details(app: &App) -> Element<'_, Message> {
         all(
             feature = "jack-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ),
         all(
             feature = "pipewire-backend",
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         )
     ))]
     let controls = {
@@ -635,7 +879,7 @@ fn transport_details(app: &App) -> Element<'_, Message> {
         );
         #[cfg(all(
             feature = "cpal-backend",
-            any(target_os = "windows", target_os = "macos")
+            any(target_os = "windows", target_os = "macos", target_os = "android")
         ))]
         let controls = controls.push(
             button(

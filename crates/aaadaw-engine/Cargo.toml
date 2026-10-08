@@ -12,6 +12,7 @@ jack-backend = ["audio-device", "dep:jack"]
 pipewire-backend = ["audio-device", "dep:pipewire"]
 wasapi-backend = ["cpal-backend"]
 coreaudio-backend = ["cpal-backend"]
+android-backend = ["cpal-backend"]
 cpal-backend = ["audio-device", "dep:cpal"]
 
 [dependencies]
@@ -29,6 +30,9 @@ cpal = { version = "0.18.2", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+cpal = { version = "0.18.2", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
 cpal = { version = "0.18.2", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

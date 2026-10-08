@@ -2888,6 +2888,28 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         response_for(8)["result"]["structuredContent"]["notes"][1]["duration"],
         480
     );
+    // The shortened query clips notes at the item boundary without changing their stored duration.
+    assert_eq!(
+        response_for(8)["result"]["structuredContent"]["notes"],
+        json!([
+            {
+                "item_id": item_id.value(),
+                "note_id": note_ids[0],
+                "tick": 1080,
+                "pitch": 60,
+                "duration": 480,
+                "velocity": 100
+            },
+            {
+                "item_id": item_id.value(),
+                "note_id": note_ids[1],
+                "tick": 2880,
+                "pitch": 64,
+                "duration": 480,
+                "velocity": 90
+            }
+        ])
+    );
     assert_eq!(
         response_for(10)["result"]["structuredContent"]["notes"],
         json!([

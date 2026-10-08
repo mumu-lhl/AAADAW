@@ -1,6 +1,8 @@
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
-use std::sync::Arc;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 const CAPTURE_BLOCK_QUEUE_CAPACITY: usize = 16_384;
 
@@ -15,12 +17,21 @@ fn sample_peak(sample: f32) -> f32 {
 #[derive(Default)]
 struct CaptureState {
     enabled: AtomicBool,
+    stop_requested: AtomicBool,
     failed: AtomicBool,
     timing_error: AtomicBool,
     overflow_frames: AtomicU64,
     callback_error: AtomicBool,
+    device_error: AtomicBool,
     first_capture_frame: AtomicU64,
     has_first_capture_frame: AtomicBool,
+    next_capture_frame: AtomicU64,
+    capture_anchor_frame: AtomicU64,
+    capture_started_at: OnceLock<Instant>,
+    monitor: Mutex<Option<AudioMonitorProducer>>,
+    replacement_queues: Arc<Mutex<VecDeque<CaptureQueueConsumer>>>,
+    capacity_frames: usize,
+    capacity_blocks: usize,
     input_peak: [AtomicU32; 2],
 }
 
@@ -40,16 +51,21 @@ pub struct AudioCaptureControl(Arc<CaptureState>);
 impl AudioCaptureControl {
     /// Starts copying frames from the realtime input callback into the bounded queue.
     pub fn start(&self) {
+        let _ = self.0.capture_started_at.set(Instant::now());
+        self.0.stop_requested.store(false, Ordering::Release);
         self.0.enabled.store(true, Ordering::Release);
     }
 
     /// Returns whether the current take is accepting input callback frames.
     pub fn is_enabled(&self) -> bool {
-        self.0.enabled.load(Ordering::Acquire) && !self.0.failed.load(Ordering::Acquire)
+        self.0.enabled.load(Ordering::Acquire)
+            && !self.0.failed.load(Ordering::Acquire)
+            && !self.0.device_error.load(Ordering::Acquire)
     }
 
     /// Stops accepting frames while leaving queued data available to drain.
     pub fn stop(&self) {
+        self.0.stop_requested.store(true, Ordering::Release);
         self.0.enabled.store(false, Ordering::Release);
     }
 
@@ -68,6 +84,11 @@ impl AudioCaptureControl {
         self.0.callback_error.load(Ordering::Acquire)
     }
 
+    /// Returns whether the input device disappeared and can be reopened.
+    pub fn has_device_error(&self) -> bool {
+        self.0.device_error.load(Ordering::Acquire)
+    }
+
     /// Returns whether capture timing was invalid or could not be represented.
     pub fn has_timing_error(&self) -> bool {
         self.0.timing_error.load(Ordering::Acquire)
@@ -78,6 +99,86 @@ impl AudioCaptureControl {
         self.0.failed.store(true, Ordering::Release);
         self.0.callback_error.store(true, Ordering::Release);
         self.0.enabled.store(false, Ordering::Release);
+    }
+
+    /// Marks an Android input route loss without invalidating the active take.
+    pub fn mark_device_lost(&self) {
+        self.0.callback_error.store(true, Ordering::Release);
+        self.0.device_error.store(true, Ordering::Release);
+        self.0.enabled.store(false, Ordering::Release);
+    }
+
+    /// Clears a previous route error before opening a replacement device stream.
+    pub fn prepare_device_recovery(&self) {
+        self.0.callback_error.store(false, Ordering::Release);
+        self.0.device_error.store(false, Ordering::Release);
+    }
+
+    /// Resumes capture after a replacement input stream has been opened.
+    pub fn resume_after_device_recovery(&self) {
+        if !self.0.failed.load(Ordering::Acquire) && !self.0.stop_requested.load(Ordering::Acquire)
+        {
+            self.0.callback_error.store(false, Ordering::Release);
+            self.0.device_error.store(false, Ordering::Release);
+            self.0.enabled.store(true, Ordering::Release);
+        }
+    }
+
+    /// Creates a replacement SPSC producer and queues its consumer after the current stream.
+    /// Call after shutting down the old input stream so only one callback writes at a time.
+    pub fn replacement_producer(&self, sample_rate: u32) -> AudioCaptureProducer {
+        let (producer, consumer) = RingBuffer::new(self.0.capacity_frames.max(1));
+        let (block_producer, block_consumer) = RingBuffer::new(self.0.capacity_blocks.max(1));
+        self.0
+            .replacement_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(CaptureQueueConsumer {
+                consumer,
+                block_consumer,
+            });
+        let monitor = self
+            .0
+            .monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let elapsed_frame = self.elapsed_capture_frames(sample_rate).unwrap_or(0);
+        let base_frame = elapsed_frame.max(self.0.next_capture_frame.load(Ordering::Acquire));
+        self.0
+            .capture_anchor_frame
+            .store(base_frame, Ordering::Release);
+        AudioCaptureProducer {
+            producer,
+            block_producer,
+            monitor,
+            state: Arc::clone(&self.0),
+            next_contiguous_frame: base_frame,
+            base_frame,
+            published_capture_frame: self.0.has_first_capture_frame.load(Ordering::Acquire),
+        }
+    }
+
+    /// Returns the capture timeline position at the current monotonic time.
+    pub fn elapsed_capture_frames(&self, sample_rate: u32) -> Option<u64> {
+        let started_at = self.0.capture_started_at.get()?;
+        let frames = started_at.elapsed().as_nanos() * u128::from(sample_rate) / 1_000_000_000;
+        u64::try_from(frames).ok()
+    }
+
+    /// Refreshes the capture timeline anchor on a device-management thread before stream start.
+    #[cfg(any(feature = "cpal-backend", test))]
+    pub(crate) fn refresh_capture_anchor(&self, sample_rate: u32) -> Option<u64> {
+        let elapsed_frame = self.elapsed_capture_frames(sample_rate)?;
+        let frame = elapsed_frame.max(self.0.next_capture_frame.load(Ordering::Acquire));
+        self.0.capture_anchor_frame.store(frame, Ordering::Release);
+        Some(frame)
+    }
+
+    /// Reads the prepared capture timeline anchor without consulting the system clock.
+    #[cfg(any(feature = "cpal-backend", test))]
+    pub(crate) fn capture_anchor_frame(&self) -> u64 {
+        self.0.capture_anchor_frame.load(Ordering::Acquire)
     }
 
     /// Invalidates an active take when the backend provides unusable frame timing.
@@ -137,7 +238,13 @@ pub struct AudioCaptureProducer {
     monitor: Option<AudioMonitorProducer>,
     state: Arc<CaptureState>,
     next_contiguous_frame: u64,
+    base_frame: u64,
     published_capture_frame: bool,
+}
+
+struct CaptureQueueConsumer {
+    consumer: Consumer<[f32; 2]>,
+    block_consumer: Consumer<CapturedFrames>,
 }
 
 /// Control-thread handle for enabling the bounded input-monitor tap.
@@ -316,6 +423,7 @@ pub struct AudioCaptureConsumer {
     state: Arc<CaptureState>,
     pending_block: Option<CapturedFrames>,
     pending_offset: usize,
+    replacement_queues: Arc<Mutex<VecDeque<CaptureQueueConsumer>>>,
 }
 
 /// Creates bounded queues for stereo frames and callback-block timing metadata.
@@ -339,7 +447,13 @@ fn audio_capture_stream_with_capacity(
 ) {
     let (producer, consumer) = RingBuffer::new(capacity_frames.max(1));
     let (block_producer, block_consumer) = RingBuffer::new(capacity_blocks.max(1));
-    let state = Arc::new(CaptureState::default());
+    let replacement_queues = Arc::new(Mutex::new(VecDeque::new()));
+    let state = Arc::new(CaptureState {
+        replacement_queues: Arc::clone(&replacement_queues),
+        capacity_frames: capacity_frames.max(1),
+        capacity_blocks: capacity_blocks.max(1),
+        ..CaptureState::default()
+    });
     (
         AudioCaptureProducer {
             producer,
@@ -347,6 +461,7 @@ fn audio_capture_stream_with_capacity(
             monitor: None,
             state: Arc::clone(&state),
             next_contiguous_frame: 0,
+            base_frame: 0,
             published_capture_frame: false,
         },
         AudioCaptureConsumer {
@@ -355,6 +470,7 @@ fn audio_capture_stream_with_capacity(
             state: Arc::clone(&state),
             pending_block: None,
             pending_offset: 0,
+            replacement_queues,
         },
         AudioCaptureControl(state),
     )
@@ -363,7 +479,17 @@ fn audio_capture_stream_with_capacity(
 impl AudioCaptureProducer {
     /// Attaches the output graph's bounded live-monitor queue before starting the backend.
     pub fn attach_monitor(&mut self, monitor: AudioMonitorProducer) {
+        *self
+            .state
+            .monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(monitor.clone());
         self.monitor = Some(monitor);
+    }
+
+    /// Returns the first frame to use when this producer starts a new device stream.
+    pub fn base_frame(&self) -> u64 {
+        self.base_frame
     }
 
     /// Copies a planar block at the next contiguous frame position.
@@ -492,6 +618,14 @@ impl AudioCaptureProducer {
             self.fail_overflow(frame_count as u64);
             return 0;
         }
+        if let Some(next_frame) = first_frame.checked_add(frame_count as u64) {
+            self.state
+                .next_capture_frame
+                .fetch_max(next_frame, Ordering::Release);
+        } else {
+            self.fail_timing();
+            return 0;
+        }
         frame_count
     }
 
@@ -503,7 +637,9 @@ impl AudioCaptureProducer {
         if matches!(self.block_producer.push(block), Err(PushError::Full(_))) {
             return false;
         }
-        if !self.published_capture_frame {
+        if !self.published_capture_frame
+            && !self.state.has_first_capture_frame.load(Ordering::Acquire)
+        {
             self.state
                 .first_capture_frame
                 .store(first_frame, Ordering::Relaxed);
@@ -533,16 +669,30 @@ impl AudioCaptureConsumer {
         if output.is_empty() {
             return None;
         }
-        if self.pending_block.is_none() {
-            self.pending_block = match self.block_consumer.pop() {
-                Ok(block) if block.frame_count > 0 => Some(block),
+        while self.pending_block.is_none() {
+            match self.block_consumer.pop() {
+                Ok(block) if block.frame_count > 0 => {
+                    self.pending_block = Some(block);
+                    self.pending_offset = 0;
+                }
                 Ok(_) => {
                     self.fail_timing();
                     return None;
                 }
-                Err(PopError::Empty) => return None,
-            };
-            self.pending_offset = 0;
+                Err(PopError::Empty) => {
+                    let replacement = self
+                        .replacement_queues
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .pop_front();
+                    if let Some(replacement) = replacement {
+                        self.consumer = replacement.consumer;
+                        self.block_consumer = replacement.block_consumer;
+                        continue;
+                    }
+                    return None;
+                }
+            }
         }
 
         let block = self.pending_block.expect("pending block was loaded");
@@ -622,6 +772,68 @@ mod tests {
         assert_eq!(block.frame_count, 2);
         assert_eq!(output[..2], [[0.1, -0.1], [0.2, -0.2]]);
         assert!(consumer.pop_timed_frames(&mut output).is_none());
+    }
+
+    #[test]
+    fn capture_anchor_is_refreshed_for_realtime_callback_reads() {
+        let (_producer, _consumer, control) = audio_capture_stream(8);
+        control.start();
+
+        let anchor = control
+            .refresh_capture_anchor(48_000)
+            .expect("an armed take has a monotonic start time");
+
+        assert_eq!(control.capture_anchor_frame(), anchor);
+    }
+
+    #[test]
+    fn capture_consumer_switches_to_a_replacement_input_queue_after_drain() {
+        let (mut producer, mut consumer, control) = audio_capture_stream(8);
+        control.start();
+        producer.push_frames_at(20, [[0.1, -0.1], [0.2, -0.2]]);
+
+        let mut replacement = control.replacement_producer(48_000);
+        replacement.push_frames_at(30, [[0.3, -0.3]]);
+
+        let mut output = [[0.0; 2]; 4];
+        assert_eq!(
+            consumer.pop_timed_frames(&mut output),
+            Some(super::CapturedFrames {
+                first_frame: 20,
+                frame_count: 2,
+            })
+        );
+        assert_eq!(&output[..2], &[[0.1, -0.1], [0.2, -0.2]]);
+        assert_eq!(
+            consumer.pop_timed_frames(&mut output),
+            Some(super::CapturedFrames {
+                first_frame: 30,
+                frame_count: 1,
+            })
+        );
+        assert_eq!(output[0], [0.3, -0.3]);
+        assert!(!control.has_failed());
+    }
+
+    #[test]
+    fn device_recovery_resumes_capture_without_reopening_after_stop() {
+        let (_producer, _consumer, control) = audio_capture_stream(8);
+        control.start();
+        control.mark_device_lost();
+        assert!(control.has_device_error());
+        assert!(!control.has_failed());
+        assert!(!control.is_enabled());
+
+        control.prepare_device_recovery();
+        control.resume_after_device_recovery();
+        assert!(control.is_enabled());
+        assert!(!control.has_device_error());
+
+        control.mark_device_lost();
+        control.stop();
+        control.prepare_device_recovery();
+        control.resume_after_device_recovery();
+        assert!(!control.is_enabled());
     }
 
     #[test]
