@@ -367,6 +367,7 @@ struct App {
     offline_job_queue: offline_job_queue::OfflineJobQueue<audio_export::OfflineRenderJob>,
     offline_job_history: VecDeque<String>,
     offline_jobs_panel_open: bool,
+    transport_details_open: bool,
     wav_export_options: WavExportOptions,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
@@ -1243,6 +1244,7 @@ impl App {
             Message::RuntimeKeyboardEvent(..)
                 | Message::ShortcutPressed(..)
                 | Message::MenuKeyboard(_)
+                | Message::ToggleTransportDetails
                 | Message::BackgroundTick
                 | Message::MeterTick
                 | Message::AudioImportStarted(_)
@@ -1273,6 +1275,7 @@ impl App {
             || matches!(
                 &message,
                 Message::ActionQueryChanged(_)
+                    | Message::ToggleTransportDetails
                     | Message::ActionMenuScrolled(_)
                     | Message::RunActionQuery
             );
@@ -1373,6 +1376,7 @@ impl App {
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
                     | Message::ToggleOfflineJobsPanel
+                    | Message::ToggleTransportDetails
                     | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
                     | Message::WindowClosed(_)
                     | Message::WindowCloseRequested(_)
@@ -1576,6 +1580,7 @@ impl App {
                         | Message::DismissMainMenu
                         | Message::Escape
                         | Message::ToggleMediaBrowserPanel
+                        | Message::ToggleTransportDetails
                         | Message::BackgroundTick
                         | Message::MeterTick
                 )
@@ -1638,6 +1643,7 @@ impl App {
                             | Message::SplitSelectedItemsAtCursor
                             | Message::SplitSelectedItemsAtTimeSelection
                             | Message::RunActionQuery
+                            | Message::ToggleTransportDetails
                             | Message::RunAudioAssetManagement(_)
                             | Message::CancelAudioAssetManagement
                             | Message::ReimportAudioItem(_)
@@ -2505,6 +2511,9 @@ impl App {
             }
             Message::ToggleOfflineJobsPanel => {
                 self.offline_jobs_panel_open = !self.offline_jobs_panel_open;
+            }
+            Message::ToggleTransportDetails => {
+                self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
                 if !self.cancel_shortcut_capture() {

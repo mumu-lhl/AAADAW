@@ -148,6 +148,7 @@ pub(crate) enum Message {
     MenuKeyboard(MenuNavigation),
     DismissMainMenu,
     ToggleOfflineJobsPanel,
+    ToggleTransportDetails,
     Escape,
     DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,

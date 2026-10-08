@@ -162,42 +162,10 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING),
         );
     }
-    let transport = container(
-        row![
-            text("Transport").size(14),
-            button(
-                text(format!(
-                    "{:.2} BPM",
-                    app.project.tempo_at_tick(app.timeline.edit_cursor_tick)
-                ))
-                .size(12)
-            )
-            .padding([tokens::SPACING_XS, tokens::SPACING_SM])
-            .on_press(Message::OpenTempoMap),
-            button(
-                text(format!(
-                    "{}/{}",
-                    app.project
-                        .time_signature_at_tick(app.timeline.edit_cursor_tick)
-                        .numerator(),
-                    app.project
-                        .time_signature_at_tick(app.timeline.edit_cursor_tick)
-                        .denominator()
-                ))
-                .size(12)
-            )
-            .padding([tokens::SPACING_XS, tokens::SPACING_SM])
-            .on_press(Message::OpenMeterMap),
-            playback_controls(app),
-            iced::widget::Space::new().width(Length::Fill),
-            time_selection_readout(app),
-        ]
-        .spacing(tokens::SECTION_GAP)
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .padding(tokens::PANEL_PADDING)
-    .style(iced::widget::container::rounded_box);
+    let transport = container(transport_view(app))
+        .width(Length::Fill)
+        .padding(tokens::PANEL_PADDING)
+        .style(iced::widget::container::rounded_box);
     let offline_job_count = usize::from(app.offline_render_busy) + app.offline_job_queue.len();
     let status_row = row![
         text(status_text).width(Length::Fill),
@@ -541,6 +509,115 @@ fn time_selection_readout(app: &App) -> Element<'_, Message> {
     .into()
 }
 
+fn transport_readout_tick(app: &App) -> u64 {
+    #[cfg(feature = "audio-device")]
+    if app.playback_playing || app.playback_paused || app.recording.is_some() {
+        return app
+            .project
+            .tick_at_sample(app.playhead_sample)
+            .unwrap_or(app.timeline.edit_cursor_tick);
+    }
+    app.timeline.edit_cursor_tick
+}
+
+fn transport_time_readout(project: &aaadaw_core::Project, tick: u64) -> String {
+    project
+        .musical_position_at_tick(tick)
+        .map(|position| {
+            format!(
+                "{}.{}.{}",
+                position.measure(),
+                position.beat(),
+                position.tick_in_beat()
+            )
+        })
+        .unwrap_or_else(|_| format!("{tick} ticks"))
+}
+
+fn transport_view(app: &App) -> Element<'_, Message> {
+    responsive(move |size| {
+        let readout = text(transport_time_readout(
+            &app.project,
+            transport_readout_tick(app),
+        ))
+        .size(16);
+        let status = text(playback_status_label(app)).size(12);
+        let details_button = button(if app.transport_details_open {
+            "Details ▲"
+        } else {
+            "Details ▼"
+        })
+        .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+        .style(button::secondary)
+        .on_press(Message::ToggleTransportDetails);
+        let controls = playback_controls(app);
+        let primary: Element<'_, Message> = if size.width < 720.0 {
+            column![
+                row![controls, details_button]
+                    .spacing(tokens::SECTION_GAP)
+                    .align_y(Alignment::Center),
+                row![readout, status]
+                    .spacing(tokens::SECTION_GAP)
+                    .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP)
+            .into()
+        } else {
+            row![
+                controls,
+                readout,
+                status.width(Length::Fill),
+                details_button
+            ]
+            .spacing(tokens::SECTION_GAP)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let tempo = button(
+            text(format!(
+                "{:.2} BPM",
+                app.project.tempo_at_tick(app.timeline.edit_cursor_tick)
+            ))
+            .size(12),
+        )
+        .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+        .on_press(Message::OpenTempoMap);
+        let signature = app
+            .project
+            .time_signature_at_tick(app.timeline.edit_cursor_tick);
+        let meter = button(
+            text(format!(
+                "{}/{}",
+                signature.numerator(),
+                signature.denominator()
+            ))
+            .size(12),
+        )
+        .padding([tokens::SPACING_XS, tokens::SPACING_SM])
+        .on_press(Message::OpenMeterMap);
+        let timing = row![tempo, meter, time_selection_readout(app)]
+            .spacing(tokens::SECTION_GAP)
+            .align_y(Alignment::Center);
+        let main: Element<'_, Message> = if size.width < 980.0 {
+            column![primary, timing].spacing(tokens::SECTION_GAP).into()
+        } else {
+            row![primary, timing]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        let content: Element<'_, Message> = if app.transport_details_open {
+            column![main, transport_details(app)]
+                .spacing(tokens::SECTION_GAP)
+                .into()
+        } else {
+            column![main].into()
+        };
+        container(content).width(Length::Fill).into()
+    })
+    .into()
+}
+
 #[cfg(feature = "audio-device")]
 fn mobile_playback_controls(app: &App) -> Element<'_, Message> {
     let available = app.selected_playback_backend().is_available();
@@ -587,102 +664,70 @@ fn mobile_playback_controls(_app: &App) -> Element<'static, Message> {
 }
 
 #[cfg(feature = "audio-device")]
-fn playback_controls(app: &App) -> Element<'_, Message> {
-    let backend_name = app.selected_playback_backend().name();
-    let playback_available = app.selected_playback_backend().is_available();
-    let armed = app
+fn playback_status_label(app: &App) -> String {
+    if app.recording_starting {
+        "Connecting audio input…".to_owned()
+    } else if app.recording_stopping {
+        "Finalizing recording…".to_owned()
+    } else if app.recording.is_some() {
+        "Recording".to_owned()
+    } else if app.playback_busy {
+        format!("Preparing {}…", app.selected_playback_backend().name())
+    } else if !app.selected_playback_backend().is_available() {
+        "Audio unavailable in this build".to_owned()
+    } else if app.playback.is_none() {
+        "Output closed".to_owned()
+    } else if app.playback_playing {
+        "Playing".to_owned()
+    } else if app.playback_paused {
+        "Paused".to_owned()
+    } else if app
         .project
         .tracks()
         .iter()
-        .any(|track| track.is_record_armed());
-    let playback_state = if !playback_available {
-        "Native audio output is unavailable in this build".to_owned()
-    } else if app.recording.is_some() {
-        format!(
-            "Recording · {:.2}s",
-            app.playhead_sample as f64 / app.project.settings().sample_rate() as f64
-        )
-    } else if app.recording_starting {
-        if app.pending_recording.is_some() {
-            format!("Starting {backend_name} transport…")
-        } else {
-            format!("Connecting {backend_name} input…")
-        }
-    } else if app.recording_stopping {
-        "Finalizing take…".to_owned()
-    } else if app.playback_busy {
-        format!("Preparing {backend_name}…")
-    } else if app.playback.is_none() {
-        format!(
-            "{} · {backend_name} closed",
-            if armed { "Armed" } else { "Stopped" }
-        )
+        .any(|track| track.is_record_armed())
+    {
+        "Stopped · Armed".to_owned()
     } else {
-        let seconds = app.playhead_sample as f64 / app.project.settings().sample_rate() as f64;
-        format!(
-            "{} · {seconds:.2}s",
-            if app.playback_playing {
-                "Playing"
-            } else if app.playback_paused {
-                "Paused"
-            } else if armed {
-                "Armed · Stopped"
-            } else {
-                "Stopped"
-            },
-        )
-    };
-    let playback_state = if let Some(playback) = app.playback.as_ref() {
-        let stats = playback.stats();
-        format!(
-            "{playback_state}{}",
-            playback_diagnostic_suffix(
-                backend_name,
-                stats.underrun_samples,
-                stats.master_guarded_samples,
-                stats.master_non_finite_samples,
-                stats.jack_xruns,
-                stats.callback_errors,
-                stats.output_device_lost,
-            )
-        )
-    } else {
-        playback_state
-    };
-    let can_record = playback_available;
-    let controls = row![
+        "Stopped · Ready".to_owned()
+    }
+}
+
+#[cfg(not(feature = "audio-device"))]
+fn playback_status_label(_app: &App) -> String {
+    "Audio unavailable in this build".to_owned()
+}
+
+#[cfg(feature = "audio-device")]
+fn playback_controls(app: &App) -> Element<'_, Message> {
+    let playback_available = app.selected_playback_backend().is_available();
+    let preparation_busy = app.playback_busy || app.recording_starting || app.recording_stopping;
+    let can_play = playback_available && !preparation_busy && app.recording.is_none();
+    let can_stop = app.recording.is_some()
+        || app.recording_starting
+        || (!app.playback_busy && app.playback.is_some());
+    let can_record = playback_available && !preparation_busy && app.recording.is_none();
+    row![
         button(if app.playback_playing {
             "Pause"
         } else {
             "Play"
         })
-        .on_press_maybe(playback_available.then_some(if app.playback_playing {
+        .on_press_maybe(can_play.then_some(if app.playback_playing {
             Message::TogglePlayback
         } else {
             Message::StartPlayback
         })),
-        button(if app.recording_starting {
-            "Cancel Input"
-        } else if app.recording.is_some() {
-            "Stop Recording"
-        } else {
-            "Stop"
-        })
-        .on_press_maybe(if app.recording.is_some() || app.recording_starting {
+        button("Stop").on_press_maybe(if app.recording.is_some() || app.recording_starting {
             Some(Message::StopRecording)
         } else {
-            playback_available.then_some(Message::StopPlayback)
+            can_stop.then_some(Message::StopPlayback)
         }),
-        button("MIDI Panic")
-            .style(iced::widget::button::danger)
-            .on_press_maybe(
-                (playback_available && app.playback.is_some()).then_some(Message::PanicMidi)
-            ),
         button(if app.recording_starting {
-            "Connecting…"
+            "Cancel Rec"
         } else if app.recording.is_some() {
-            "Recording"
-        } else if !can_record {
+            "Stop Rec"
+        } else if !playback_available {
             "Record unavailable"
         } else {
             "Record"
@@ -695,14 +740,61 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             None
         }),
-        button("Restart").on_press_maybe(playback_available.then_some(Message::RestartPlayback),),
+        button("Loop unavailable")
+            .style(button::secondary)
+            .on_press_maybe(None::<Message>),
+    ]
+    .spacing(tokens::SPACING_XS)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+#[cfg(not(feature = "audio-device"))]
+fn playback_controls(_app: &App) -> Element<'_, Message> {
+    row![
+        button("Play").on_press_maybe(None::<Message>),
+        button("Stop").on_press_maybe(None::<Message>),
+        button("Record unavailable")
+            .style(button::danger)
+            .on_press_maybe(None::<Message>),
+        button("Loop unavailable")
+            .style(button::secondary)
+            .on_press_maybe(None::<Message>),
+    ]
+    .spacing(tokens::SPACING_XS)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+#[cfg(feature = "audio-device")]
+fn transport_details(app: &App) -> Element<'_, Message> {
+    let backend_name = app.selected_playback_backend().name();
+    let sample = app.playhead_sample;
+    let seconds = sample as f64 / f64::from(app.project.settings().sample_rate().max(1));
+    let busy = app.playback_busy || app.recording_starting || app.recording_stopping;
+    let controls = row![
+        button("Restart").on_press_maybe(
+            (app.selected_playback_backend().is_available() && !busy)
+                .then_some(Message::RestartPlayback)
+        ),
         text_input("Sample", &app.seek_sample_query)
             .on_input(Message::SeekSampleChanged)
-            .width(100),
-        button("Seek").on_press_maybe(playback_available.then_some(Message::SeekToSample)),
-        button(text(format!("Close {backend_name}"))).on_press(Message::ClosePlayback),
-        text(playback_state),
-    ];
+            .width(120),
+        button("Seek").on_press_maybe(
+            (app.selected_playback_backend().is_available() && !busy)
+                .then_some(Message::SeekToSample)
+        ),
+        button("MIDI Panic")
+            .style(button::danger)
+            .on_press_maybe((!busy && app.playback.is_some()).then_some(Message::PanicMidi)),
+        button(text(format!("Close {backend_name}")))
+            .on_press_maybe((!busy && app.playback.is_some()).then_some(Message::ClosePlayback)),
+        button("Audio Settings")
+            .style(button::secondary)
+            .on_press(Message::OpenSettings),
+    ]
+    .spacing(tokens::SPACING_XS)
+    .align_y(Alignment::Center);
     #[cfg(any(
         all(feature = "jack-backend", feature = "pipewire-backend"),
         all(
@@ -727,7 +819,10 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                     "JACK"
                 },
             )
-            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Jack)),
+            .on_press_maybe(
+                (!busy && app.playback.is_none())
+                    .then_some(Message::SelectPlaybackBackend(PlaybackBackend::Jack)),
+            ),
         );
         #[cfg(feature = "pipewire-backend")]
         let controls = controls.push(
@@ -738,7 +833,10 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                     "PipeWire"
                 },
             )
-            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
+            .on_press_maybe(
+                (!busy && app.playback.is_none())
+                    .then_some(Message::SelectPlaybackBackend(PlaybackBackend::PipeWire)),
+            ),
         );
         #[cfg(all(
             feature = "cpal-backend",
@@ -752,20 +850,74 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
                     PlaybackBackend::Cpal.name().to_owned()
                 },
             )
-            .on_press(Message::SelectPlaybackBackend(PlaybackBackend::Cpal)),
+            .on_press_maybe(
+                (!busy && app.playback.is_none())
+                    .then_some(Message::SelectPlaybackBackend(PlaybackBackend::Cpal)),
+            ),
         );
         controls
     };
-    controls.spacing(8).align_y(Alignment::Center).into()
+    let mut content = column![
+        row![
+            text(format!("{seconds:.3}s · {sample} samples")).size(12),
+            text(format!("Output: {backend_name}")).size(12),
+        ]
+        .spacing(tokens::SECTION_GAP)
+        .align_y(Alignment::Center),
+        controls,
+    ]
+    .spacing(tokens::SPACING_XS);
+    if let Some(playback) = app.playback.as_ref() {
+        let stats = playback.stats();
+        let diagnostics = playback_diagnostic_suffix(
+            backend_name,
+            stats.underrun_samples,
+            stats.master_guarded_samples,
+            stats.master_non_finite_samples,
+            stats.jack_xruns,
+            stats.callback_errors,
+            stats.output_device_lost,
+        );
+        if !diagnostics.is_empty() {
+            content = content.push(text(diagnostics).size(11).width(Length::Fill));
+        }
+    }
+    container(content).width(Length::Fill).into()
 }
 
 #[cfg(not(feature = "audio-device"))]
-fn playback_controls(_app: &App) -> Element<'_, Message> {
-    text("Enable an audio backend for playback").into()
+fn transport_details(_app: &App) -> Element<'_, Message> {
+    row![
+        text("Audio backend support is disabled in this build."),
+        button("Audio Settings")
+            .style(button::secondary)
+            .on_press(Message::OpenSettings),
+    ]
+    .spacing(tokens::SECTION_GAP)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 #[cfg(test)]
 mod tests {
+    use aaadaw_core::Project;
+
+    #[test]
+    fn transport_time_readout_uses_bars_beats_and_ticks() {
+        let project = Project::new();
+
+        assert_eq!(super::transport_time_readout(&project, 960), "1.2.0");
+    }
+
+    #[cfg(feature = "audio-device")]
+    #[test]
+    fn playback_preparation_has_a_clear_status_label() {
+        let mut app = super::App::default();
+        app.playback_busy = true;
+
+        assert!(super::playback_status_label(&app).starts_with("Preparing "));
+    }
+
     #[test]
     fn clap_risk_notice_clearly_describes_the_process_boundary() {
         assert!(super::CLAP_PLUGIN_RISK.contains("app's privileges"));
