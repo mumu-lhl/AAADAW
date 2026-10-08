@@ -26,6 +26,47 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
         row![
             column![
+                text("Output sample rate").size(13),
+                text("Resampled offline; project playback rate is unchanged.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &super::super::audio_export::RenderSampleRateChoice::ALL[..],
+                Some(app.render_sample_rate),
+                Message::SetRenderSampleRate,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            column![
+                text("Effect tail").size(13),
+                text("Applied after the project content.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &super::super::audio_export::RenderTailChoice::ALL[..],
+                Some(app.render_tail),
+                Message::SetRenderTail,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text(format!(
+            "Estimated output duration: {}",
+            estimated_duration(app)
+        ))
+        .size(12),
+        row![
+            column![
                 text("TPDF dither").size(13),
                 text("Applies to integer PCM output.").size(11),
             ]
@@ -54,6 +95,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     if let Some(active) = &app.active_offline_job {
         contents = contents.push(text(format!("Active job: {}", active.job.label())).size(12));
+        if let Some(details) = active.job.details() {
+            contents = contents.push(text(details).size(11));
+        }
     } else {
         contents = contents.push(text("No active render job").size(12));
     }
@@ -112,4 +156,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn estimated_duration(app: &App) -> String {
+    let output_rate = app.render_sample_rate.sample_rate(&app.project);
+    let Some(output_frames) = aaadaw_app::project_render_output_frames(
+        &app.project,
+        output_rate,
+        app.render_tail.seconds(),
+    )
+    .ok() else {
+        return "unavailable".to_owned();
+    };
+    let output_seconds = output_frames.div_ceil(u64::from(output_rate));
+    let minutes = output_seconds / 60;
+    let seconds = output_seconds % 60;
+    format!("{minutes}:{seconds:02} · {output_rate} Hz")
 }

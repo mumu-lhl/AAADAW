@@ -2228,6 +2228,14 @@ fn main_window_title_tracks_project_name_and_unsaved_changes() {
 fn wav_export_options_default_to_pcm24_and_dither_only_applies_to_integer_formats() {
     let mut app = App::default();
     assert_eq!(
+        app.render_sample_rate,
+        super::audio_export::RenderSampleRateChoice::Project
+    );
+    assert_eq!(
+        app.render_tail,
+        super::audio_export::RenderTailChoice::ProjectDefault
+    );
+    assert_eq!(
         app.wav_export_options,
         aaadaw_app::WavExportOptions::default()
     );

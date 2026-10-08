@@ -273,6 +273,9 @@ fn offline_jobs_panel_with_width(
             })
             .align_y(Alignment::Center),
         );
+        if let Some(details) = active.job.details() {
+            jobs = jobs.push(text(details).size(9));
+        }
     } else {
         jobs = jobs.push(text("No active job").size(10));
     }
@@ -302,6 +305,9 @@ fn offline_jobs_panel_with_width(
                 })
                 .align_y(Alignment::Center),
             );
+            if let Some(details) = job.details() {
+                jobs = jobs.push(text(details).size(9));
+            }
         }
     }
     for result in &app.offline_job_history {

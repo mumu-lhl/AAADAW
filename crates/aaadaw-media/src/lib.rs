@@ -19,7 +19,7 @@ pub use decoded_cache::{
     DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
 };
 pub use stream::{
-    AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    AudioFeedWorker, StereoPcmResampler, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
     spawn_cached_stereo_audio_item_stream, spawn_mono_stream, spawn_stereo_audio_item_stream,
     spawn_stereo_audio_item_stream_at, spawn_stereo_audio_item_stream_from_reader,

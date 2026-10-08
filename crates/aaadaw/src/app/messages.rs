@@ -388,6 +388,8 @@ pub(crate) enum Message {
     OfflineRenderFinished(Result<PathBuf, String>),
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),
+    SetRenderSampleRate(super::audio_export::RenderSampleRateChoice),
+    SetRenderTail(super::audio_export::RenderTailChoice),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),
