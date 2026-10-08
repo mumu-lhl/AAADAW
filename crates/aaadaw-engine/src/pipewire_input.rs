@@ -63,6 +63,7 @@ pub struct PipeWireAudioInput {
     shutdown: Sender<ThreadCommand>,
     thread: Option<JoinHandle<()>>,
     sample_rate: u32,
+    node_id: u32,
 }
 
 impl PipeWireAudioInput {
@@ -87,8 +88,8 @@ impl PipeWireAudioInput {
                 )
             })
             .map_err(|error| PipeWireInputError::Thread(error.to_string()))?;
-        let sample_rate = match setup_receiver.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(sample_rate)) => sample_rate,
+        let (sample_rate, node_id) = match setup_receiver.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(parts)) => parts,
             Ok(Err(error)) => {
                 let _ = shutdown.send(ThreadCommand::Shutdown);
                 let _ = thread.join();
@@ -113,12 +114,18 @@ impl PipeWireAudioInput {
             shutdown,
             thread: Some(thread),
             sample_rate,
+            node_id,
         })
     }
 
     /// Returns the negotiated device sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Returns the PipeWire node used for capture route diagnostics.
+    pub fn node_id(&self) -> u32 {
+        self.node_id
     }
 
     /// Stops the PipeWire stream and joins its non-realtime control thread.
@@ -141,7 +148,7 @@ fn pipewire_thread(
     control: AudioCaptureControl,
     sample_rate: u32,
     shutdown: Receiver<ThreadCommand>,
-    setup: mpsc::SyncSender<Result<u32, String>>,
+    setup: mpsc::SyncSender<Result<(u32, u32), String>>,
 ) {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(pw::init);
@@ -155,7 +162,7 @@ fn run_pipewire_input(
     control: AudioCaptureControl,
     sample_rate: u32,
     shutdown: Receiver<ThreadCommand>,
-    setup: &mpsc::SyncSender<Result<u32, String>>,
+    setup: &mpsc::SyncSender<Result<(u32, u32), String>>,
 ) -> Result<(), String> {
     let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(|error| error.to_string())?;
     let context =
@@ -294,7 +301,8 @@ fn run_pipewire_input(
             &mut params,
         )
         .map_err(|error| error.to_string())?;
-    if setup.send(Ok(sample_rate)).is_err() {
+    let node_id = stream.node_id();
+    if setup.send(Ok((sample_rate, node_id))).is_err() {
         return Err("input setup receiver was dropped".to_owned());
     }
 

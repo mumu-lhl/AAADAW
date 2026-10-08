@@ -77,7 +77,7 @@ pub use cpal_output::{
     enumerate_output_devices as enumerate_cpal_output_devices,
 };
 #[cfg(feature = "jack-backend")]
-pub use jack_input::{JackAudioInput, JackInputError};
+pub use jack_input::{JackAudioInput, JackInputError, inspect_jack_input_routes};
 #[cfg(feature = "jack-backend")]
 pub use jack_output::{
     JackAudioOutput, JackOutputError, JackOutputStats, inspect_jack_output_routes,
@@ -123,7 +123,8 @@ pub use pcm::{MonoPcmClip, MonoPcmPlayer, PcmError};
 pub use pipewire_input::{PipeWireAudioInput, PipeWireInputError};
 #[cfg(feature = "pipewire-backend")]
 pub use pipewire_output::{
-    PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats, inspect_pipewire_output_routes,
+    PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats, inspect_pipewire_input_routes,
+    inspect_pipewire_output_routes,
 };
 pub use stream::{
     AudioStreamPosition, PcmStreamConsumer, PcmStreamError, PcmStreamProducer,

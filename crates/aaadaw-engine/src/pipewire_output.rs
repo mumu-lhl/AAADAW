@@ -653,6 +653,17 @@ fn setup_pipewire_stream(
 ///
 /// This performs a registry round trip, so call it from a background control task.
 pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
+    inspect_pipewire_routes(node_id, false)
+}
+
+/// Reads the connected PipeWire sources for an active capture stream.
+///
+/// This performs a registry round trip, so call it from a background control task.
+pub fn inspect_pipewire_input_routes(node_id: u32) -> Result<AudioRouteSnapshot, String> {
+    inspect_pipewire_routes(node_id, true)
+}
+
+fn inspect_pipewire_routes(node_id: u32, is_input: bool) -> Result<AudioRouteSnapshot, String> {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -727,7 +738,7 @@ pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !complete.get() {
         if std::time::Instant::now() >= deadline {
-            return Err("Timed out while reading PipeWire output routes".to_owned());
+            return Err("Timed out while reading PipeWire routes".to_owned());
         }
         mainloop
             .loop_()
@@ -735,37 +746,80 @@ pub fn inspect_pipewire_output_routes(node_id: u32) -> Result<AudioRouteSnapshot
     }
 
     let snapshot = snapshot.borrow();
-    let output_node = snapshot
+    let stream_node = snapshot
         .nodes
         .iter()
         .find(|(id, _, _)| *id == node_id)
-        .ok_or_else(|| "AAADAW's PipeWire playback stream is no longer available".to_owned())?;
-    let mut routes = snapshot
-        .links
-        .iter()
-        .filter_map(|(source, destination)| {
-            (*source == Some(node_id)).then_some(*destination).flatten()
-        })
-        .filter_map(|destination| {
+        .ok_or_else(|| {
+            if is_input {
+                "AAADAW's PipeWire capture stream is no longer available".to_owned()
+            } else {
+                "AAADAW's PipeWire playback stream is no longer available".to_owned()
+            }
+        })?;
+    let mut routes = linked_pipewire_route_nodes(&snapshot.links, node_id, is_input)
+        .into_iter()
+        .filter_map(|other_node| {
             snapshot
                 .nodes
                 .iter()
-                .find(|(id, _, _)| *id == destination)
+                .find(|(id, _, _)| *id == other_node)
                 .map(|(_, name, _)| name.clone())
         })
         .collect::<Vec<_>>();
     routes.sort();
     routes.dedup();
+    let (input_routes, output_routes) = if is_input {
+        (routes, Vec::new())
+    } else {
+        (Vec::new(), routes)
+    };
     Ok(AudioRouteSnapshot {
-        sample_rate_hz: output_node.2,
-        output_routes: routes,
+        sample_rate_hz: stream_node.2,
+        input_routes,
+        output_routes,
     })
+}
+
+fn linked_pipewire_route_nodes(
+    links: &[(Option<u32>, Option<u32>)],
+    node_id: u32,
+    is_input: bool,
+) -> Vec<u32> {
+    let mut nodes = links
+        .iter()
+        .filter_map(|(source, destination)| {
+            if is_input && *destination == Some(node_id) {
+                *source
+            } else if !is_input && *source == Some(node_id) {
+                *destination
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_unstable();
+    nodes.dedup();
+    nodes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use aaadaw_core::Project;
+
+    #[test]
+    fn pipewire_route_nodes_follow_stream_direction() {
+        let links = [
+            (Some(10), Some(20)),
+            (Some(11), Some(20)),
+            (Some(20), Some(30)),
+            (Some(20), Some(31)),
+        ];
+
+        assert_eq!(linked_pipewire_route_nodes(&links, 20, true), [10, 11]);
+        assert_eq!(linked_pipewire_route_nodes(&links, 20, false), [30, 31]);
+    }
 
     fn graph(max_frames: usize) -> AudioRenderGraph {
         let project = Project::new();

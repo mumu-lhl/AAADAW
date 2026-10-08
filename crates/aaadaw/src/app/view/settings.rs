@@ -295,6 +295,29 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
     } else {
         text("Refresh routes to inspect AAADAW's current output connection.").size(11)
     };
+    let input_routes = if !output_open {
+        text("Capture input routes are unavailable while the backend is closed.").size(11)
+    } else if app.linux_audio_routes_busy {
+        text("").size(11)
+    } else if let Some((reported_backend, result)) = &app.linux_audio_route_report {
+        if *reported_backend != backend {
+            text("Backend changed; refresh the route summary.").size(11)
+        } else {
+            match result {
+                Ok(snapshot) if snapshot.input_routes.is_empty() => {
+                    text("Capture input routes are shown while recording.").size(11)
+                }
+                Ok(snapshot) => text(format!(
+                    "Connected capture inputs: {}",
+                    snapshot.input_routes.join(" · ")
+                ))
+                .size(11),
+                Err(_) => text("").size(11),
+            }
+        }
+    } else {
+        text("Capture input routes are shown while recording.").size(11)
+    };
 
     let refresh_enabled = output_open && !app.linux_audio_routes_busy;
     let reconnect_enabled = backend_available
@@ -321,6 +344,7 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
             .map(|error| text(format!("Last backend failure: {error}")).size(11))
             .unwrap_or_else(|| text("").size(11)),
         routes,
+        input_routes,
         row![
             button("Refresh routes")
                 .on_press_maybe(refresh_enabled.then_some(Message::RefreshLinuxAudioRoutes)),

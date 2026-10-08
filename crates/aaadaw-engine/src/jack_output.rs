@@ -523,6 +523,7 @@ pub fn inspect_jack_output_routes(client_name: &str) -> Result<AudioRouteSnapsho
     routes.dedup();
     Ok(AudioRouteSnapshot {
         sample_rate_hz: Some(client.sample_rate()),
+        input_routes: Vec::new(),
         output_routes: routes,
     })
 }

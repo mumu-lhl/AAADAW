@@ -234,6 +234,52 @@ pub fn open_audio_input(
 
 #[cfg(feature = "audio-device")]
 impl RunningAudioInput {
+    #[cfg(feature = "jack-backend")]
+    pub fn jack_client_name(&self) -> Option<&str> {
+        match self {
+            Self::Jack(input) => Some(input.client_name()),
+            #[cfg(feature = "pipewire-backend")]
+            Self::PipeWire(_) => None,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Self::Cpal(_) => None,
+            #[cfg(not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(
+                    feature = "cpal-backend",
+                    any(target_os = "windows", target_os = "macos")
+                )
+            )))]
+            Self::Unavailable => None,
+        }
+    }
+
+    #[cfg(feature = "pipewire-backend")]
+    pub fn pipewire_node_id(&self) -> Option<u32> {
+        match self {
+            Self::PipeWire(input) => Some(input.node_id()),
+            #[cfg(feature = "jack-backend")]
+            Self::Jack(_) => None,
+            #[cfg(all(
+                feature = "cpal-backend",
+                any(target_os = "windows", target_os = "macos")
+            ))]
+            Self::Cpal(_) => None,
+            #[cfg(not(any(
+                feature = "jack-backend",
+                feature = "pipewire-backend",
+                all(
+                    feature = "cpal-backend",
+                    any(target_os = "windows", target_os = "macos")
+                )
+            )))]
+            Self::Unavailable => None,
+        }
+    }
+
     /// Maps an optional playback frame anchor into the input backend's extended clock domain.
     pub fn map_shared_frame_time(&self, _frame: Option<u32>) -> SharedFrameClockMapping {
         match self {

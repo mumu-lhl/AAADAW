@@ -4624,13 +4624,34 @@ impl App {
         let node_id = playback.pipewire_node_id();
         #[cfg(not(feature = "pipewire-backend"))]
         let node_id = None;
+        #[cfg(feature = "jack-backend")]
+        let input_client_name = self
+            .recording
+            .as_ref()
+            .and_then(|recording| recording.input.jack_client_name())
+            .map(str::to_owned);
+        #[cfg(not(feature = "jack-backend"))]
+        let input_client_name = None;
+        #[cfg(feature = "pipewire-backend")]
+        let input_node_id = self
+            .recording
+            .as_ref()
+            .and_then(|recording| recording.input.pipewire_node_id());
+        #[cfg(not(feature = "pipewire-backend"))]
+        let input_node_id = None;
         let generation = self.linux_audio_routes_generation.wrapping_add(1);
         self.linux_audio_routes_generation = generation;
         self.linux_audio_routes_busy = true;
         let message_backend = backend;
         Task::perform(
             run_blocking("aaadaw-linux-audio-routes", move || {
-                inspect_linux_audio_output_routes(backend, client_name, node_id)
+                inspect_linux_audio_routes(
+                    backend,
+                    client_name,
+                    node_id,
+                    input_client_name,
+                    input_node_id,
+                )
             }),
             move |result| Message::LinuxAudioRoutesRefreshed(generation, message_backend, result),
         )
@@ -7470,31 +7491,46 @@ fn parse_track_volume_draft(text: &str) -> Result<f32, &'static str> {
 }
 
 #[cfg(all(target_os = "linux", feature = "audio-device"))]
-fn inspect_linux_audio_output_routes(
+#[allow(unused_mut, unused_variables)]
+fn inspect_linux_audio_routes(
     backend: PlaybackBackend,
     client_name: Option<String>,
     node_id: Option<u32>,
+    input_client_name: Option<String>,
+    input_node_id: Option<u32>,
 ) -> Result<aaadaw_engine::AudioRouteSnapshot, String> {
-    match backend {
+    let mut snapshot = match backend {
         #[cfg(feature = "jack-backend")]
         PlaybackBackend::Jack => {
             let client_name = client_name.ok_or_else(|| {
                 "The active JACK output client could not be identified".to_owned()
             })?;
-            aaadaw_engine::inspect_jack_output_routes(&client_name)
+            aaadaw_engine::inspect_jack_output_routes(&client_name)?
         }
         #[cfg(feature = "pipewire-backend")]
         PlaybackBackend::PipeWire => {
             let node_id = node_id.ok_or_else(|| {
                 "The active PipeWire output stream could not be identified".to_owned()
             })?;
-            aaadaw_engine::inspect_pipewire_output_routes(node_id)
+            aaadaw_engine::inspect_pipewire_output_routes(node_id)?
         }
-        _ => Err(format!(
-            "{} route diagnostics are unavailable in this Linux build",
-            backend.name()
-        )),
+        _ => {
+            return Err(format!(
+                "{} route diagnostics are unavailable in this Linux build",
+                backend.name()
+            ));
+        }
+    };
+    #[cfg(feature = "jack-backend")]
+    if let Some(client_name) = input_client_name {
+        snapshot.input_routes =
+            aaadaw_engine::inspect_jack_input_routes(&client_name)?.input_routes;
     }
+    #[cfg(feature = "pipewire-backend")]
+    if let Some(node_id) = input_node_id {
+        snapshot.input_routes = aaadaw_engine::inspect_pipewire_input_routes(node_id)?.input_routes;
+    }
+    Ok(snapshot)
 }
 
 fn parse_track_pan_draft(text: &str) -> Result<f32, &'static str> {

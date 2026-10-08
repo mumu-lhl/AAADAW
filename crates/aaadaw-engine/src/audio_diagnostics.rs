@@ -3,6 +3,8 @@
 pub struct AudioRouteSnapshot {
     /// Negotiated or server-reported rate when the backend exposes it.
     pub sample_rate_hz: Option<u32>,
+    /// Friendly descriptions of connected capture sources.
+    pub input_routes: Vec<String>,
     /// Friendly descriptions of connected output destinations.
     pub output_routes: Vec<String>,
 }
@@ -23,6 +25,7 @@ mod tests {
         assert!(
             AudioRouteSnapshot {
                 sample_rate_hz: Some(48_000),
+                input_routes: Vec::new(),
                 output_routes: vec!["Built-in Audio:playback_FL".to_owned()],
             }
             .has_output_route()
