@@ -2211,6 +2211,17 @@ impl ProjectStore {
         .map_err(StorageError::Snapshot)
     }
 
+    /// Returns whether a project snapshot has been written to this database.
+    pub fn has_saved_snapshot(&self) -> Result<bool, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_meta WHERE singleton = 1)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::from)
+    }
+
     /// Checkpoints the WAL, keeping the database usable while this store remains open.
     pub fn checkpoint(&mut self) -> Result<(), StorageError> {
         let (busy, _log_frames, _checkpointed_frames): (i64, i64, i64) = self
@@ -3169,5 +3180,24 @@ mod audio_asset_copy_tests {
 
         destination.close().unwrap();
         source.close().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod saved_snapshot_tests {
+    use super::ProjectStore;
+    use aaadaw_core::Project;
+
+    #[test]
+    fn empty_session_store_is_distinguishable_from_a_recoverable_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+
+        assert!(!store.has_saved_snapshot().unwrap());
+        store.save(&Project::new()).unwrap();
+        assert!(store.has_saved_snapshot().unwrap());
+
+        store.close().unwrap();
     }
 }

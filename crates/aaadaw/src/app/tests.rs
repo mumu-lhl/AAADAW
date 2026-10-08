@@ -23,6 +23,7 @@ use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -1585,9 +1586,13 @@ fn cancelling_save_dialog_clears_the_wait_for_dialog_status() {
         Message::SaveProject,
         Message::PickPath(PathPickerTarget::SaveProject),
     ] {
-        let session_media_dir = tempfile::tempdir().unwrap();
-        let session_media_path = session_media_dir.path().join("session.aaadaw");
+        let temporary_dir = tempfile::tempdir().unwrap();
+        let session_media_path = temporary_dir.path().join("session.aaadaw");
         std::fs::write(&session_media_path, b"").unwrap();
+        let session_media_dir = super::UnsavedSessionMedia {
+            directory: temporary_dir.keep(),
+            lock: Some(super::ProjectSessionLock::acquire(&session_media_path).unwrap()),
+        };
         let mut app = App {
             session_media_dir: Some(session_media_dir),
             ..App::default()
@@ -1649,6 +1654,23 @@ fn native_picker_results_fill_the_requested_path_fields() {
         replacement_path.to_string_lossy()
     );
     assert!(!app.path_picker_busy);
+}
+
+#[test]
+fn saving_waits_for_an_unsaved_session_recovery_snapshot() {
+    let mut app = App {
+        project_path: Some(PathBuf::from("project.aaadaw")),
+        unsaved_session_snapshot_busy: true,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::SaveProject);
+
+    assert!(!app.io_busy);
+    assert_eq!(
+        app.status,
+        "Wait for the unsaved session recovery snapshot to finish"
+    );
 }
 
 #[test]
@@ -3673,6 +3695,83 @@ fn first_save_migrates_unsaved_audio_assets_before_publishing_the_project() {
     assert_eq!(source_bytes, b"audio created before first save");
     drop(reader);
     source_store.close().unwrap();
+}
+
+#[test]
+fn abandoned_unsaved_sessions_are_scanned_and_recovered_but_live_sessions_are_skipped() {
+    let root = tempfile::tempdir().unwrap();
+    let active_session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let active_directory = active_session.directory.clone();
+
+    let abandoned_directory = root.path().join("session-abandoned");
+    std::fs::create_dir(&abandoned_directory).unwrap();
+    let abandoned_path = abandoned_directory.join("session.aaadaw");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Recovered track".to_owned(),
+        })
+        .unwrap();
+    super::project_io::save_unsaved_session_snapshot(
+        abandoned_path.clone(),
+        project.snapshot(),
+        ArrangementViewState::default(),
+    )
+    .unwrap();
+
+    let candidates = super::project_io::scan_unsaved_session_recoveries(
+        root.path().to_path_buf(),
+        active_directory,
+    )
+    .unwrap();
+    assert_eq!(candidates, vec![abandoned_path.clone()]);
+
+    let live_lock = ProjectSessionLock::acquire(&abandoned_path).unwrap();
+    assert!(
+        super::project_io::scan_unsaved_session_recoveries(
+            root.path().to_path_buf(),
+            active_session.directory.clone(),
+        )
+        .unwrap()
+        .is_empty()
+    );
+    drop(live_lock);
+
+    let (recovered, view_state, lock) = load_project_session(abandoned_path.clone()).unwrap();
+    assert_eq!(recovered.tracks()[0].name(), "Recovered track");
+    assert_eq!(view_state, Some(ArrangementViewState::default()));
+
+    let mut app = App {
+        session_media_dir: Some(active_session),
+        unsaved_session_recovery_candidates: vec![abandoned_path.clone()],
+        ..App::default()
+    };
+    let result = std::sync::Arc::new(std::sync::Mutex::new(Some(Ok((
+        recovered, view_state, lock,
+    )))));
+    let _ = app.update(Message::UnsavedSessionRecovered(
+        abandoned_path.clone(),
+        result,
+    ));
+    assert_eq!(app.media_store_path(), Some(abandoned_path));
+    assert_eq!(app.project.tracks()[0].name(), "Recovered track");
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn edits_in_an_unsaved_session_schedule_a_recovery_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(directory.path()).unwrap();
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::AddTrack);
+
+    assert!(app.unsaved_session_snapshot_at.is_some());
+    assert_eq!(app.revision, 1);
 }
 
 #[cfg(unix)]

@@ -26,7 +26,7 @@ use aaadaw_engine::{
 };
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
-use aaadaw_storage::{ProjectSessionLock, ProjectStore};
+use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use commands::CommandId;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
@@ -213,6 +213,28 @@ impl StereoPeakHold {
     }
 }
 
+struct UnsavedSessionMedia {
+    directory: PathBuf,
+    lock: Option<ProjectSessionLock>,
+}
+
+impl UnsavedSessionMedia {
+    fn store_path(&self) -> PathBuf {
+        self.directory.join("session.aaadaw")
+    }
+}
+
+impl Drop for UnsavedSessionMedia {
+    fn drop(&mut self) {
+        drop(self.lock.take());
+        if let Err(error) = std::fs::remove_dir_all(&self.directory)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %self.directory.display(), %error, "could not remove unsaved session media");
+        }
+    }
+}
+
 #[derive(Default)]
 struct App {
     project: Project,
@@ -231,7 +253,13 @@ struct App {
     main_workspace: MainWorkspace,
     project_path_query: String,
     project_path: Option<PathBuf>,
-    session_media_dir: Option<tempfile::TempDir>,
+    session_media_dir: Option<UnsavedSessionMedia>,
+    retired_unsaved_sessions: Vec<UnsavedSessionMedia>,
+    unsaved_session_recovery_candidates: Vec<PathBuf>,
+    unsaved_session_recovery_busy: bool,
+    unsaved_session_snapshot_at: Option<Instant>,
+    unsaved_session_snapshot_busy: bool,
+    unsaved_session_snapshot_revision: u64,
     pending_project_transition: Option<PendingProjectTransition>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
@@ -1025,8 +1053,35 @@ impl App {
             clap_plugin_cache::default_path(),
             plugin_settings_warnings,
         );
+        let session_recovery_task = match unsaved_sessions_root() {
+            Ok(session_root) => {
+                let active_session_dir = app
+                    .session_media_dir
+                    .as_ref()
+                    .map_or_else(PathBuf::new, |session| session.directory.clone());
+                Task::perform(
+                    run_blocking("aaadaw-unsaved-session-scan", move || {
+                        project_io::scan_unsaved_session_recoveries(
+                            session_root,
+                            active_session_dir,
+                        )
+                    }),
+                    |result| match result {
+                        Ok(candidates) => Message::UnsavedSessionRecoveryScanned(Ok(candidates)),
+                        Err(error) => Message::UnsavedSessionRecoveryScanned(Err(error)),
+                    },
+                )
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not locate unsaved session recovery directory");
+                Task::none()
+            }
+        };
         let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
-            return (app, Task::batch([main_window_task, plugin_scan_task]));
+            return (
+                app,
+                Task::batch([main_window_task, plugin_scan_task, session_recovery_task]),
+            );
         };
         app.project_path_query = path.to_string_lossy().into_owned();
         app.io_busy = true;
@@ -1038,14 +1093,22 @@ impl App {
             }),
             move |result| Message::ProjectLoaded(message_path, Arc::new(Mutex::new(Some(result)))),
         );
-        (app, Task::batch([main_window_task, plugin_scan_task, task]))
+        (
+            app,
+            Task::batch([
+                main_window_task,
+                plugin_scan_task,
+                session_recovery_task,
+                task,
+            ]),
+        )
     }
 
     pub(super) fn media_store_path(&self) -> Option<PathBuf> {
         self.project_path.clone().or_else(|| {
             self.session_media_dir
                 .as_ref()
-                .map(|directory| directory.path().join("session.aaadaw"))
+                .map(UnsavedSessionMedia::store_path)
         })
     }
 
@@ -1111,6 +1174,7 @@ impl App {
             || self.audio_asset_management_busy
             || self.audio_waveform_worker.is_some()
             || self.track_mix_gesture.is_some()
+            || self.unsaved_session_snapshot_at.is_some()
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
         } else {
@@ -1135,6 +1199,7 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let revision_before_message = self.revision;
         #[cfg(feature = "audio-device")]
         let standby_input_completion = matches!(
             &message,
@@ -3016,6 +3081,14 @@ impl App {
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
                 let offline_queue_task = self.resume_offline_job_queue();
+                let unsaved_snapshot_task = if self
+                    .unsaved_session_snapshot_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    self.save_unsaved_session_snapshot()
+                } else {
+                    Task::none()
+                };
                 if self
                     .track_mix_commit_at
                     .is_some_and(|deadline| Instant::now() >= deadline)
@@ -3073,7 +3146,7 @@ impl App {
                         self.update_audio_asset_management(),
                     ]);
                 }
-                task = Task::batch([offline_queue_task, task]);
+                task = Task::batch([offline_queue_task, unsaved_snapshot_task, task]);
             }
             Message::MeterTick => {
                 #[cfg(feature = "audio-device")]
@@ -3136,7 +3209,8 @@ impl App {
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
-                        self.session_media_dir = None;
+                        self.retire_unsaved_session_media();
+                        self.unsaved_session_snapshot_revision = 0;
                         self.recording_recovery_candidates.clear();
                         self.project_generation = self.project_generation.wrapping_add(1);
                         self.start_audio_waveform_scan(true);
@@ -3196,7 +3270,8 @@ impl App {
                         }
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
-                        self.session_media_dir = None;
+                        self.retire_unsaved_session_media();
+                        self.unsaved_session_snapshot_revision = 0;
                         self.saved_revision = revision;
                         continue_transition =
                             self.revision == revision && self.pending_project_transition.is_some();
@@ -3246,6 +3321,122 @@ impl App {
                 if continue_transition {
                     task = Task::batch([task, self.continue_pending_project_transition()]);
                 }
+            }
+            Message::UnsavedSessionRecoveryScanned(result) => match result {
+                Ok(candidates) => self.unsaved_session_recovery_candidates = candidates,
+                Err(error) => {
+                    tracing::warn!(%error, "unsaved session recovery scan failed");
+                    self.status = format!("Unsaved session scan failed: {error}");
+                }
+            },
+            Message::RecoverUnsavedSession(path) => {
+                if self.project_path.is_some() || self.is_dirty() {
+                    self.status = "Save or discard the current project before recovering a session"
+                        .to_owned();
+                } else if self.unsaved_session_recovery_busy {
+                    self.status = "Wait for unsaved session recovery to finish".to_owned();
+                } else {
+                    self.unsaved_session_recovery_busy = true;
+                    let message_path = path.clone();
+                    task = Task::perform(
+                        run_blocking("aaadaw-unsaved-session-recover", move || {
+                            project_io::load_project_session(path)
+                        }),
+                        move |result| {
+                            Message::UnsavedSessionRecovered(
+                                message_path,
+                                Arc::new(Mutex::new(Some(result))),
+                            )
+                        },
+                    );
+                }
+            }
+            Message::DiscardUnsavedSession(path) => {
+                if self.unsaved_session_recovery_busy {
+                    self.status = "Wait for unsaved session recovery to finish".to_owned();
+                } else {
+                    self.unsaved_session_recovery_busy = true;
+                    let message_path = path.clone();
+                    task = Task::perform(
+                        run_blocking("aaadaw-unsaved-session-discard", move || {
+                            project_io::discard_unsaved_session(path)
+                        }),
+                        move |result| Message::UnsavedSessionDiscarded(message_path, result),
+                    );
+                }
+            }
+            Message::UnsavedSessionRecovered(path, result) => {
+                self.unsaved_session_recovery_busy = false;
+                let result = result.lock().ok().and_then(|mut result| result.take());
+                match result {
+                    Some(Ok((project, arrangement_view_state, lock))) => {
+                        self.retire_unsaved_session_media();
+                        let Some(directory) = path.parent().map(PathBuf::from) else {
+                            self.status = "Recovered session path is invalid".to_owned();
+                            return Task::none();
+                        };
+                        self.session_media_dir = Some(UnsavedSessionMedia {
+                            directory,
+                            lock: Some(lock),
+                        });
+                        self.project = project;
+                        self.project_path = None;
+                        self.project_path_query.clear();
+                        self.project_lock = None;
+                        self.project_generation = self.project_generation.wrapping_add(1);
+                        self.revision = 1;
+                        self.saved_revision = 0;
+                        self.unsaved_session_snapshot_revision = self.revision;
+                        self.unsaved_session_recovery_candidates
+                            .retain(|candidate| candidate != &path);
+                        self.timeline
+                            .replace_project(&self.project, arrangement_view_state.as_ref());
+                        self.clear_track_draft_state();
+                        self.start_audio_waveform_scan(true);
+                        self.status = "Unsaved project session recovered".to_owned();
+                    }
+                    Some(Err(error)) => {
+                        tracing::error!(path = %path.display(), %error, "unsaved session recovery failed");
+                        self.status = format!("Session recovery failed: {error}");
+                    }
+                    None => self.status = "Session recovery result was unavailable".to_owned(),
+                }
+            }
+            Message::UnsavedSessionDiscarded(path, result) => {
+                self.unsaved_session_recovery_busy = false;
+                match result {
+                    Ok(()) => {
+                        self.unsaved_session_recovery_candidates
+                            .retain(|candidate| candidate != &path);
+                        self.status = "Unsaved session discarded".to_owned();
+                    }
+                    Err(error) => {
+                        self.status = format!("Session discard failed: {error}");
+                    }
+                }
+            }
+            Message::UnsavedSessionSnapshotSaved(generation, revision, result) => {
+                self.unsaved_session_snapshot_busy = false;
+                if generation == self.project_generation {
+                    match result {
+                        Ok(()) => {
+                            self.unsaved_session_snapshot_revision =
+                                self.unsaved_session_snapshot_revision.max(revision);
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "unsaved session snapshot save failed");
+                            self.status = format!("Session recovery snapshot failed: {error}");
+                        }
+                    }
+                    if self.project_path.is_none()
+                        && self.session_media_dir.is_some()
+                        && self.revision > revision
+                    {
+                        self.unsaved_session_snapshot_at =
+                            Some(Instant::now() + Duration::from_millis(300));
+                    }
+                }
+                self.retired_unsaved_sessions.clear();
             }
             Message::RecordingRecoveryScanned(path, result) => {
                 if self
@@ -3438,7 +3629,50 @@ impl App {
                 }
             }
         }
+        if self.revision > revision_before_message
+            && self.project_path.is_none()
+            && self.session_media_dir.is_some()
+            && self.revision > self.unsaved_session_snapshot_revision
+        {
+            self.unsaved_session_snapshot_at = Some(Instant::now() + Duration::from_millis(500));
+        }
         task
+    }
+
+    fn save_unsaved_session_snapshot(&mut self) -> Task<Message> {
+        if self.unsaved_session_snapshot_busy {
+            self.unsaved_session_snapshot_at = Some(Instant::now() + Duration::from_millis(300));
+            return Task::none();
+        }
+        let Some(path) = self
+            .session_media_dir
+            .as_ref()
+            .map(UnsavedSessionMedia::store_path)
+        else {
+            self.unsaved_session_snapshot_at = None;
+            return Task::none();
+        };
+        let generation = self.project_generation;
+        let revision = self.revision;
+        let snapshot = self.project.snapshot();
+        let view_state = self.timeline.arrangement_view_state(&self.project);
+        self.unsaved_session_snapshot_at = None;
+        self.unsaved_session_snapshot_busy = true;
+        Task::perform(
+            run_blocking("aaadaw-unsaved-session-snapshot", move || {
+                project_io::save_unsaved_session_snapshot(path, snapshot, view_state)
+            }),
+            move |result| Message::UnsavedSessionSnapshotSaved(generation, revision, result),
+        )
+    }
+
+    fn retire_unsaved_session_media(&mut self) {
+        self.unsaved_session_snapshot_at = None;
+        if let Some(session) = self.session_media_dir.take()
+            && self.unsaved_session_snapshot_busy
+        {
+            self.retired_unsaved_sessions.push(session);
+        }
     }
 
     fn is_dirty(&self) -> bool {
@@ -3521,6 +3755,8 @@ impl App {
         self.recording_recovery_scanning = false;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
+        self.retire_unsaved_session_media();
+        self.unsaved_session_snapshot_revision = 0;
         let session_media_error = match create_unsaved_project_session_dir() {
             Ok(session_dir) => {
                 self.session_media_dir = Some(session_dir);
@@ -3558,6 +3794,7 @@ impl App {
             return Task::none();
         }
         if self.io_busy
+            || self.unsaved_session_snapshot_busy
             || self.path_picker_busy
             || self.import_busy
             || self.audio_asset_management_busy
@@ -7275,19 +7512,35 @@ fn project_path_from_query(query: &str) -> Option<PathBuf> {
     (!query.is_empty()).then(|| PathBuf::from(query))
 }
 
-fn create_unsaved_project_session_dir() -> Result<tempfile::TempDir, String> {
+fn create_unsaved_project_session_dir() -> Result<UnsavedSessionMedia, String> {
+    create_unsaved_project_session_dir_in(&unsaved_sessions_root()?)
+}
+
+fn unsaved_sessions_root() -> Result<PathBuf, String> {
     let directories = directories::ProjectDirs::from("org", "AAADAW", "AAADAW")
         .ok_or_else(|| "application data directory is unavailable".to_owned())?;
-    let session_root = directories.data_local_dir().join("unsaved-sessions");
-    std::fs::create_dir_all(&session_root).map_err(|error| error.to_string())?;
+    Ok(directories.data_local_dir().join("unsaved-sessions"))
+}
+
+fn create_unsaved_project_session_dir_in(
+    session_root: &std::path::Path,
+) -> Result<UnsavedSessionMedia, String> {
+    std::fs::create_dir_all(session_root).map_err(|error| error.to_string())?;
     let session_dir = tempfile::Builder::new()
         .prefix("session-")
         .tempdir_in(session_root)
         .map_err(|error| error.to_string())?;
-    let store = ProjectStore::open(session_dir.path().join("session.aaadaw"))
+    let store_path = session_dir.path().join("session.aaadaw");
+    let mut store = ProjectStore::open(&store_path).map_err(|error| error.to_string())?;
+    store
+        .save_with_arrangement_view_state(&Project::new(), &ArrangementViewState::default())
         .map_err(|error| error.to_string())?;
     store.close().map_err(|error| error.to_string())?;
-    Ok(session_dir)
+    let lock = ProjectSessionLock::acquire(&store_path).map_err(|error| error.to_string())?;
+    Ok(UnsavedSessionMedia {
+        directory: session_dir.keep(),
+        lock: Some(lock),
+    })
 }
 
 fn new_project_status(session_media_error: Option<&str>) -> String {

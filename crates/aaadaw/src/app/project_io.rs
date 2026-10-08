@@ -15,8 +15,12 @@ pub(super) fn open_project(app: &mut App) -> Task<Message> {
         );
         return Task::none();
     }
-    if app.io_busy {
-        app.status = "Wait for current project operation to finish".to_owned();
+    if app.io_busy || app.unsaved_session_snapshot_busy {
+        app.status = if app.unsaved_session_snapshot_busy {
+            "Wait for the unsaved session recovery snapshot to finish".to_owned()
+        } else {
+            "Wait for current project operation to finish".to_owned()
+        };
         app.pending_project_transition = None;
         return Task::none();
     }
@@ -47,8 +51,12 @@ pub(super) fn open_project(app: &mut App) -> Task<Message> {
 }
 
 pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Message> {
-    if app.io_busy {
-        app.status = "Wait for current project operation to finish".to_owned();
+    if app.io_busy || app.unsaved_session_snapshot_busy {
+        app.status = if app.unsaved_session_snapshot_busy {
+            "Wait for the unsaved session recovery snapshot to finish".to_owned()
+        } else {
+            "Wait for current project operation to finish".to_owned()
+        };
         return Task::none();
     }
     let Some((path, can_overwrite)) = resolve_save_target(
@@ -147,6 +155,98 @@ pub(super) fn load_project_session(
         .map_err(|error| error.to_string())?;
     store.close().map_err(|error| error.to_string())?;
     Ok((project, arrangement_view_state, lock))
+}
+
+pub(super) fn save_unsaved_session_snapshot(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
+) -> Result<(), String> {
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    let mut store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
+    let save = store
+        .save_with_arrangement_view_state(&project, &arrangement_view_state)
+        .map_err(|error| error.to_string());
+    let close = store.close().map_err(|error| error.to_string());
+    save?;
+    close
+}
+
+pub(super) fn scan_unsaved_session_recoveries(
+    session_root: PathBuf,
+    active_session_dir: PathBuf,
+) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(&session_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            continue;
+        }
+        let directory = entry.path();
+        if directory == active_session_dir {
+            continue;
+        }
+        let path = directory.join("session.aaadaw");
+        if !path.is_file() {
+            continue;
+        }
+        let _lock = match ProjectSessionLock::acquire(&path) {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not inspect unsaved session");
+                continue;
+            }
+        };
+        let store = match ProjectStore::open(&path) {
+            Ok(store) => store,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not open unsaved session");
+                continue;
+            }
+        };
+        let candidate = store
+            .has_saved_snapshot()
+            .and_then(|has_snapshot| {
+                if has_snapshot {
+                    store.load().map(|_| true)
+                } else {
+                    Ok(false)
+                }
+            })
+            .unwrap_or_else(|error| {
+                tracing::warn!(path = %path.display(), %error, "unsaved session snapshot is invalid");
+                false
+            });
+        if let Err(error) = store.close() {
+            tracing::warn!(path = %path.display(), %error, "could not close unsaved session store");
+            continue;
+        }
+        if candidate {
+            candidates.push(path);
+        }
+    }
+    candidates.sort();
+    Ok(candidates)
+}
+
+pub(super) fn discard_unsaved_session(path: PathBuf) -> Result<(), String> {
+    let lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "unsaved session has no parent directory".to_owned())?
+        .to_path_buf();
+    drop(lock);
+    std::fs::remove_dir_all(directory).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
