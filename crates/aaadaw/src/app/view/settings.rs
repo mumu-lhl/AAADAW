@@ -822,6 +822,10 @@ mod linux_audio_diagnostics_tests {
     fn active_capture_without_routes_is_reported_as_disconnected() {
         assert!(capture_route_summary(&[], true).contains("No connected capture input route"));
         assert!(capture_route_summary(&[], false).contains("shown while recording"));
+        assert_eq!(
+            capture_route_summary(&["Input:Mic → AAADAW:In".to_owned()], true),
+            "Connected capture inputs: Input:Mic → AAADAW:In"
+        );
     }
 
     #[test]
