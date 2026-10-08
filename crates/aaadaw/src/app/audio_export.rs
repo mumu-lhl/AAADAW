@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 const JOB_HISTORY_CAPACITY: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum RenderSampleRateChoice {
+pub(crate) enum RenderSampleRateChoice {
     #[default]
     Project,
     Hz44100,
@@ -57,7 +57,7 @@ impl std::fmt::Display for RenderSampleRateChoice {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum RenderTailChoice {
+pub(crate) enum RenderTailChoice {
     #[default]
     ProjectDefault,
     Seconds0,
