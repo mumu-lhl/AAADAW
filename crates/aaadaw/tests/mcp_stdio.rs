@@ -2876,6 +2876,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
         response_for(6)["result"]["structuredContent"],
         json!({"item_id": item_id.value(), "start_tick": 960, "length_ticks": 2400})
     );
+    // Queries expose only the visible clip range; the persisted note keeps its full duration.
     assert_eq!(
         response_for(8)["result"]["structuredContent"]["notes"],
         json!([
@@ -2892,7 +2893,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
                 "note_id": note_ids[1],
                 "tick": 2880,
                 "pitch": 64,
-                "duration": 960,
+                "duration": 480,
                 "velocity": 90
             }
         ])
