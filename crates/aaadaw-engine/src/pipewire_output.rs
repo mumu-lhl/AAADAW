@@ -702,6 +702,32 @@ enum PipeWireRouteDirection {
     Output,
 }
 
+#[derive(Default)]
+struct PipeWireRegistrySnapshot {
+    nodes: Vec<PipeWireRouteNode>,
+    ports: Vec<PipeWireRoutePort>,
+    links: Vec<PipeWireRouteLink>,
+}
+
+struct PipeWireRouteNode {
+    id: u32,
+    name: String,
+    sample_rate_hz: Option<u32>,
+}
+
+struct PipeWireRoutePort {
+    id: u32,
+    node_id: u32,
+    name: String,
+}
+
+struct PipeWireRouteLink {
+    output_node_id: u32,
+    output_port_id: u32,
+    input_node_id: u32,
+    input_port_id: u32,
+}
+
 /// Reads the connected PipeWire destinations for an active playback stream.
 ///
 /// This performs a registry round trip, so call it from a background control task.
@@ -723,12 +749,6 @@ fn inspect_pipewire_routes(
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    #[derive(Default)]
-    struct RegistrySnapshot {
-        nodes: Vec<(u32, String, Option<u32>)>,
-        links: Vec<(Option<u32>, Option<u32>)>,
-    }
-
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(pw::init);
 
@@ -739,7 +759,7 @@ fn inspect_pipewire_routes(
         .connect_rc(None)
         .map_err(|error| error.to_string())?;
     let registry = core.get_registry().map_err(|error| error.to_string())?;
-    let snapshot = Rc::new(RefCell::new(RegistrySnapshot::default()));
+    let snapshot = Rc::new(RefCell::new(PipeWireRegistrySnapshot::default()));
     let listener_snapshot = Rc::clone(&snapshot);
     let _registry_listener = registry
         .add_listener_local()
@@ -758,19 +778,64 @@ fn inspect_pipewire_routes(
                     let sample_rate = properties
                         .get("audio.rate")
                         .and_then(|rate| rate.parse::<u32>().ok());
-                    listener_snapshot
-                        .borrow_mut()
-                        .nodes
-                        .push((global.id, name, sample_rate));
+                    listener_snapshot.borrow_mut().nodes.push(PipeWireRouteNode {
+                        id: global.id,
+                        name,
+                        sample_rate_hz: sample_rate,
+                    });
+                }
+                pw::types::ObjectType::Port => {
+                    let Some(node_id) = properties
+                        .get("node.id")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let name = properties
+                        .get("port.alias")
+                        .or_else(|| properties.get("port.name"))
+                        .unwrap_or("Unknown PipeWire port")
+                        .to_owned();
+                    listener_snapshot.borrow_mut().ports.push(PipeWireRoutePort {
+                        id: global.id,
+                        node_id,
+                        name,
+                    });
                 }
                 pw::types::ObjectType::Link => {
-                    let output = properties
+                    let Some(output_node_id) = properties
                         .get("link.output.node")
-                        .and_then(|value| value.parse::<u32>().ok());
-                    let input = properties
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(output_port_id) = properties
+                        .get("link.output.port")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(input_node_id) = properties
                         .get("link.input.node")
-                        .and_then(|value| value.parse::<u32>().ok());
-                    listener_snapshot.borrow_mut().links.push((output, input));
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    let Some(input_port_id) = properties
+                        .get("link.input.port")
+                        .and_then(|value| value.parse::<u32>().ok())
+                    else {
+                        return;
+                    };
+                    listener_snapshot
+                        .borrow_mut()
+                        .links
+                        .push(PipeWireRouteLink {
+                            output_node_id,
+                            output_port_id,
+                            input_node_id,
+                            input_port_id,
+                        });
                 }
                 _ => {}
             }
@@ -805,7 +870,7 @@ fn inspect_pipewire_routes(
     let stream_node = snapshot
         .nodes
         .iter()
-        .find(|(id, _, _)| *id == node_id)
+        .find(|node| node.id == node_id)
         .ok_or_else(|| match direction {
             PipeWireRouteDirection::Input => {
                 "AAADAW's PipeWire capture stream is no longer available".to_owned()
@@ -814,45 +879,69 @@ fn inspect_pipewire_routes(
                 "AAADAW's PipeWire playback stream is no longer available".to_owned()
             }
         })?;
-    let mut routes = linked_pipewire_route_nodes(&snapshot.links, node_id, direction)
-        .into_iter()
-        .filter_map(|other_node| {
-            snapshot
-                .nodes
-                .iter()
-                .find(|(id, _, _)| *id == other_node)
-                .map(|(_, name, _)| name.clone())
-        })
-        .collect::<Vec<_>>();
-    routes.sort();
-    routes.dedup();
+    let routes = pipewire_route_summaries(
+        &snapshot.nodes,
+        &snapshot.ports,
+        &snapshot.links,
+        node_id,
+        direction,
+    );
     let (input_routes, output_routes) = match direction {
         PipeWireRouteDirection::Input => (routes, Vec::new()),
         PipeWireRouteDirection::Output => (Vec::new(), routes),
     };
     Ok(AudioRouteSnapshot {
-        sample_rate_hz: stream_node.2,
+        sample_rate_hz: stream_node.sample_rate_hz,
         input_routes,
         output_routes,
     })
 }
 
-fn linked_pipewire_route_nodes(
-    links: &[(Option<u32>, Option<u32>)],
+fn pipewire_route_summaries(
+    nodes: &[PipeWireRouteNode],
+    ports: &[PipeWireRoutePort],
+    links: &[PipeWireRouteLink],
     node_id: u32,
     direction: PipeWireRouteDirection,
-) -> Vec<u32> {
-    let mut nodes = links
+) -> Vec<String> {
+    let mut routes = links
         .iter()
-        .filter_map(|(source, destination)| match direction {
-            PipeWireRouteDirection::Input if *destination == Some(node_id) => *source,
-            PipeWireRouteDirection::Output if *source == Some(node_id) => *destination,
-            _ => None,
+        .filter_map(|link| {
+            let (own_port_id, peer_node_id, peer_port_id) = match direction {
+                PipeWireRouteDirection::Input if link.input_node_id == node_id => (
+                    link.input_port_id,
+                    link.output_node_id,
+                    link.output_port_id,
+                ),
+                PipeWireRouteDirection::Output if link.output_node_id == node_id => (
+                    link.output_port_id,
+                    link.input_node_id,
+                    link.input_port_id,
+                ),
+                _ => return None,
+            };
+            let own_port = ports
+                .iter()
+                .find(|port| port.id == own_port_id && port.node_id == node_id)?;
+            let peer_port = ports
+                .iter()
+                .find(|port| port.id == peer_port_id && port.node_id == peer_node_id)?;
+            let peer_node = nodes.iter().find(|node| node.id == peer_node_id)?;
+            Some(match direction {
+                PipeWireRouteDirection::Input => format!(
+                    "{}:{} → AAADAW:{}",
+                    peer_node.name, peer_port.name, own_port.name
+                ),
+                PipeWireRouteDirection::Output => format!(
+                    "AAADAW:{} → {}:{}",
+                    own_port.name, peer_node.name, peer_port.name
+                ),
+            })
         })
         .collect::<Vec<_>>();
-    nodes.sort_unstable();
-    nodes.dedup();
-    nodes
+    routes.sort();
+    routes.dedup();
+    routes
 }
 
 #[cfg(test)]
@@ -861,21 +950,79 @@ mod tests {
     use aaadaw_core::Project;
 
     #[test]
-    fn pipewire_route_nodes_follow_stream_direction() {
-        let links = [
-            (Some(10), Some(20)),
-            (Some(11), Some(20)),
-            (Some(20), Some(30)),
-            (Some(20), Some(31)),
+    fn pipewire_route_summaries_include_port_connections_and_direction() {
+        let nodes = [
+            PipeWireRouteNode {
+                id: 10,
+                name: "Microphone".to_owned(),
+                sample_rate_hz: None,
+            },
+            PipeWireRouteNode {
+                id: 20,
+                name: "AAADAW".to_owned(),
+                sample_rate_hz: Some(48_000),
+            },
+            PipeWireRouteNode {
+                id: 30,
+                name: "Speakers".to_owned(),
+                sample_rate_hz: None,
+            },
         ];
-
+        let ports = [
+            PipeWireRoutePort {
+                id: 101,
+                node_id: 10,
+                name: "capture_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 201,
+                node_id: 20,
+                name: "input_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 202,
+                node_id: 20,
+                name: "output_FL".to_owned(),
+            },
+            PipeWireRoutePort {
+                id: 301,
+                node_id: 30,
+                name: "playback_FL".to_owned(),
+            },
+        ];
+        let links = [
+            PipeWireRouteLink {
+                output_node_id: 10,
+                output_port_id: 101,
+                input_node_id: 20,
+                input_port_id: 201,
+            },
+            PipeWireRouteLink {
+                output_node_id: 20,
+                output_port_id: 202,
+                input_node_id: 30,
+                input_port_id: 301,
+            },
+        ];
         assert_eq!(
-            linked_pipewire_route_nodes(&links, 20, PipeWireRouteDirection::Input),
-            [10, 11]
+            pipewire_route_summaries(
+                &nodes,
+                &ports,
+                &links,
+                20,
+                PipeWireRouteDirection::Input
+            ),
+            vec!["Microphone:capture_FL → AAADAW:input_FL".to_owned()]
         );
         assert_eq!(
-            linked_pipewire_route_nodes(&links, 20, PipeWireRouteDirection::Output),
-            [30, 31]
+            pipewire_route_summaries(
+                &nodes,
+                &ports,
+                &links,
+                20,
+                PipeWireRouteDirection::Output
+            ),
+            vec!["AAADAW:output_FL → Speakers:playback_FL".to_owned()]
         );
     }
 

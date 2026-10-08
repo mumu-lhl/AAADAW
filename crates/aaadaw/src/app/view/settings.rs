@@ -313,12 +313,9 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
             text("Backend changed; refresh the route summary.").size(11)
         } else {
             match result {
-                Ok(snapshot) if snapshot.input_routes.is_empty() => {
-                    text("Capture input routes are shown while recording.").size(11)
-                }
-                Ok(snapshot) => text(format!(
-                    "Connected capture inputs: {}",
-                    snapshot.input_routes.join(" · ")
+                Ok(snapshot) => text(capture_route_summary(
+                    &snapshot.input_routes,
+                    app.recording.is_some() || app.recording_starting,
                 ))
                 .size(11),
                 Err(_) => text("").size(11),
@@ -367,6 +364,17 @@ fn linux_audio_diagnostics(app: &App) -> Element<'_, Message> {
     .spacing(tokens::SPACING_SM)
     .width(Length::Fill)
     .into()
+}
+
+#[cfg(all(target_os = "linux", feature = "audio-device"))]
+fn capture_route_summary(input_routes: &[String], capture_active: bool) -> String {
+    if input_routes.is_empty() && capture_active {
+        "No connected capture input route was detected for the active recording.".to_owned()
+    } else if input_routes.is_empty() {
+        "Capture input routes are shown while recording.".to_owned()
+    } else {
+        format!("Connected capture inputs: {}", input_routes.join(" · "))
+    }
 }
 
 #[cfg(all(target_os = "linux", feature = "audio-device"))]
@@ -806,9 +814,15 @@ fn clap_plugins(app: &App) -> Element<'_, Message> {
 
 #[cfg(all(test, target_os = "linux", feature = "audio-device"))]
 mod linux_audio_diagnostics_tests {
-    use super::linux_audio_connection_state;
+    use super::{capture_route_summary, linux_audio_connection_state};
     use aaadaw_app::AudioOutputConnectionState;
     use aaadaw_app::PlaybackBackend;
+
+    #[test]
+    fn active_capture_without_routes_is_reported_as_disconnected() {
+        assert!(capture_route_summary(&[], true).contains("No connected capture input route"));
+        assert!(capture_route_summary(&[], false).contains("shown while recording"));
+    }
 
     #[test]
     fn unavailable_backend_has_build_guidance() {
