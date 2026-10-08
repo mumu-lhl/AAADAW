@@ -104,7 +104,7 @@ fn controller_points_beyond_clip_end_survive_trim_undo_and_snapshot() {
     let (mut project, item_id) = project_with_midi_item();
     let hidden_controller = MidiControllerData {
         controller: 64,
-        tick: 4_800,
+        tick: 3_600,
         value: 127,
     };
     project
