@@ -6028,6 +6028,71 @@ fn completed_audio_import_places_item_through_project_action() {
 }
 
 #[test]
+fn unsaved_session_can_start_audio_import_into_its_temporary_store() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let source_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/first-project/melody.wav");
+    let mut app = App {
+        session_media_dir: Some(session),
+        audio_file_path_query: source_path.to_string_lossy().into_owned(),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+
+    let _task = app.start_audio_import();
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path.clone()));
+    assert!(store_path.is_file());
+    assert!(app.import_busy);
+    assert!(app.status.starts_with("Starting import of "));
+}
+
+#[test]
+fn unsaved_session_can_queue_project_rendering() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let destination = root.path().join("render.wav");
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+
+    let _task = app.start_offline_render(destination);
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path));
+    assert!(app.offline_render_busy);
+    assert!(!app.io_busy);
+    assert_eq!(app.status, "Render render.wav…");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn unsaved_session_can_start_recording_preparation() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::create_unsaved_project_session_dir_in(root.path()).unwrap();
+    let store_path = session.store_path();
+    let mut app = App {
+        session_media_dir: Some(session),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let _ = app.update(Message::ToggleRecordArm(track_id));
+
+    let _task = app.update(Message::StartRecording);
+
+    assert!(app.project_path.is_none());
+    assert_eq!(app.media_store_path(), Some(store_path));
+    assert!(app.recording_starting);
+    assert!(app.playback_busy);
+}
+
+#[test]
 fn audio_import_targets_the_selected_track_and_edit_cursor_sample() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
