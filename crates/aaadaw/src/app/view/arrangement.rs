@@ -713,7 +713,12 @@ fn track_peak_reading(app: &App, track: &Track) -> ([f32; 2], StereoPeakHold) {
 
 fn peak_dbfs_label(peak: f32) -> String {
     if peak.is_finite() && peak > 0.0 {
-        format!("{:.0}dBFS", 20.0 * peak.log10())
+        let label = format!("{:.0}dBFS", 20.0 * peak.log10());
+        if let Some(positive) = label.strip_prefix('-') {
+            format!("−{positive}")
+        } else {
+            label
+        }
     } else {
         "−∞dBFS".to_owned()
     }
