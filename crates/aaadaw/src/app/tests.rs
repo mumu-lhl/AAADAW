@@ -29,8 +29,10 @@ static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn transport_details_can_toggle_during_project_io() {
-    let mut app = App::default();
-    app.io_busy = true;
+    let mut app = App {
+        io_busy: true,
+        ..App::default()
+    };
 
     let _ = app.update(Message::ToggleTransportDetails);
 
