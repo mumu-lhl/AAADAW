@@ -362,15 +362,19 @@ fn timeline_content_at_width(app: &App, viewport_width: f32) -> Element<'_, Mess
         }
     };
     let has_items = !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty();
-    let fit_project = has_items.then_some(Message::Timeline(
-        TimelineEvent::FitProjectToView { viewport_width },
-    ));
-    let fit_selection = app.timeline.time_selection.is_some().then_some(Message::Timeline(
-        TimelineEvent::FitSelectionToView { viewport_width },
-    ));
-    let fit_selected_items = (!app.timeline.selected_items.is_empty()).then_some(Message::Timeline(
-        TimelineEvent::FitSelectedItemsToView { viewport_width },
-    ));
+    let fit_project = has_items.then_some(Message::Timeline(TimelineEvent::FitProjectToView {
+        viewport_width,
+    }));
+    let fit_selection = app
+        .timeline
+        .time_selection
+        .is_some()
+        .then_some(Message::Timeline(TimelineEvent::FitSelectionToView {
+            viewport_width,
+        }));
+    let fit_selected_items = (!app.timeline.selected_items.is_empty()).then_some(
+        Message::Timeline(TimelineEvent::FitSelectedItemsToView { viewport_width }),
+    );
     #[cfg(feature = "audio-device")]
     let follow_playhead_button = button(if app.timeline.follow_playhead {
         "Follow on"
@@ -439,9 +443,9 @@ fn timeline_content_at_width(app: &App, viewport_width: f32) -> Element<'_, Mess
         timeline::ruler_widget(&app.timeline, &app.project),
         scroll
     ]
-        .spacing(0)
-        .width(Length::Fill)
-        .height(Length::Fill);
+    .spacing(0)
+    .width(Length::Fill)
+    .height(Length::Fill);
     if let Some(context) = app.timeline.context_automation_point {
         let (x, y) = app
             .timeline
