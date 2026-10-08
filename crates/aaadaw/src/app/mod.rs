@@ -3545,7 +3545,16 @@ impl App {
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
         )
         .then(|| self.timeline.arrangement_view_state(&self.project));
+        let item_trim_preview_changed = matches!(
+            &event,
+            timeline::TimelineEvent::BeginItemTrim { .. }
+                | timeline::TimelineEvent::UpdateItemTrim { .. }
+        );
         self.timeline.handle(event);
+        if item_trim_preview_changed && let Some(preview) = self.timeline.item_trim_preview() {
+            let valid = self.item_trim_action(preview).is_ok();
+            self.timeline.set_item_trim_valid(valid);
+        }
         #[cfg(feature = "audio-device")]
         if let Some(tick) = edit_cursor_tick
             && !self.playback_playing
@@ -5748,11 +5757,6 @@ impl App {
         let Some(preview) = preview else {
             return;
         };
-        if !preview.valid {
-            self.status =
-                "Trim rejected: audio items must remain at least one sample long".to_owned();
-            return;
-        }
         match self.item_trim_action(preview) {
             Ok(Some(action)) => self.apply_action(action, "Audio item trimmed"),
             Ok(None) => {}
@@ -5774,39 +5778,48 @@ impl App {
         let old_end = old_start
             .checked_add(item.length_samples())
             .ok_or_else(|| "audio item range overflows sample time".to_owned())?;
-        let (start_sample, source_offset_samples, length_samples) = match preview.edge {
-            timeline::ItemTrimEdge::Start => {
-                let start = self
-                    .project
-                    .sample_at_tick(preview.start_tick)
-                    .map_err(|error| error.to_string())?;
-                if start <= old_start || start >= old_end {
-                    return Err(
-                        "left trim must move inward and leave at least one sample".to_owned()
-                    );
-                }
-                let source_offset = item
-                    .source_offset_samples()
-                    .checked_add(start - old_start)
-                    .ok_or_else(|| "source offset overflows sample time".to_owned())?;
-                (start, source_offset, old_end - start)
-            }
-            timeline::ItemTrimEdge::End => {
-                let end = self
-                    .project
-                    .sample_at_tick(preview.end_tick)
-                    .map_err(|error| error.to_string())?;
-                if end <= old_start || end >= old_end {
-                    return Err(
-                        "right trim must move inward and leave at least one sample".to_owned()
-                    );
-                }
-                (old_start, item.source_offset_samples(), end - old_start)
-            }
-        };
-        if length_samples == 0 || start_sample.checked_add(length_samples).is_none() {
-            return Err("trimmed audio range is invalid".to_owned());
+        let start_sample = self
+            .project
+            .sample_at_tick(preview.start_tick)
+            .map_err(|error| error.to_string())?;
+        let end_sample = self
+            .project
+            .sample_at_tick(preview.end_tick)
+            .map_err(|error| error.to_string())?;
+        if start_sample >= end_sample {
+            return Err("Audio Items must remain at least one sample long".to_owned());
         }
+        if start_sample == old_start && end_sample == old_end {
+            return Ok(None);
+        }
+        let waveform = self.audio_waveforms.get(item.media_ref()).ok_or_else(|| {
+            "Audio source bounds are unavailable until waveform scanning finishes".to_owned()
+        })?;
+        let project_rate = u64::from(self.project.settings().sample_rate());
+        let source_rate = u64::from(waveform.sample_rate());
+        let start_delta = i128::from(start_sample) - i128::from(old_start);
+        let source_start_delta = scale_project_samples_to_source_frames_toward_zero(
+            start_delta,
+            source_rate,
+            project_rate,
+        )?;
+        let source_offset_samples = i128::from(item.source_offset_samples())
+            .checked_add(source_start_delta)
+            .and_then(|offset| u64::try_from(offset).ok())
+            .ok_or_else(|| "Audio trim exceeds the start of the source".to_owned())?;
+        let source_length = scale_project_samples_to_source_frames_ceil(
+            i128::from(end_sample - start_sample),
+            source_rate,
+            project_rate,
+        )?;
+        let source_end = i128::from(source_offset_samples)
+            .checked_add(source_length)
+            .and_then(|end| u64::try_from(end).ok())
+            .ok_or_else(|| "Audio trim exceeds the end of the source".to_owned())?;
+        if source_offset_samples >= source_end || source_end > waveform.frame_count() {
+            return Err("Audio trim must stay within the source media".to_owned());
+        }
+        let length_samples = end_sample - start_sample;
         Ok(Some(DawAction::EditAudioItem {
             item_id: preview.item_id,
             media_ref: item.media_ref().to_owned(),
@@ -7345,6 +7358,36 @@ fn scroll_widget_to(target: &'static str, offset_y: f32) -> Task<Message> {
         y: Some(offset_y.max(0.0)),
     };
     iced::advanced::widget::operate(scrollable::scroll_to(target, offset))
+}
+
+fn scale_project_samples_to_source_frames_toward_zero(
+    project_samples: i128,
+    source_rate: u64,
+    project_rate: u64,
+) -> Result<i128, String> {
+    if source_rate == 0 || project_rate == 0 {
+        return Err("Audio sample rates must be positive".to_owned());
+    }
+    let numerator = project_samples
+        .checked_mul(i128::from(source_rate))
+        .ok_or_else(|| "Audio trim exceeds the supported time range".to_owned())?;
+    Ok(numerator / i128::from(project_rate))
+}
+
+fn scale_project_samples_to_source_frames_ceil(
+    project_samples: i128,
+    source_rate: u64,
+    project_rate: u64,
+) -> Result<i128, String> {
+    let numerator = project_samples
+        .checked_mul(i128::from(source_rate))
+        .ok_or_else(|| "Audio trim exceeds the supported time range".to_owned())?;
+    let denominator = i128::from(project_rate);
+    let remainder = numerator.rem_euclid(denominator);
+    numerator
+        .div_euclid(denominator)
+        .checked_add(i128::from(remainder > 0))
+        .ok_or_else(|| "Audio trim exceeds the supported time range".to_owned())
 }
 
 fn scroll_actions_menu_selection(app: &mut App, selected: CommandId) -> Task<Message> {

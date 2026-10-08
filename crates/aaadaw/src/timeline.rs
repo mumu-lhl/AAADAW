@@ -1867,31 +1867,23 @@ impl TimelineState {
             self.snap_enabled,
             ignore_snap,
         );
-        let (start_tick, end_tick, valid) = match edge {
-            ItemTrimEdge::Start => {
-                let start_tick = target_tick.max(item.start_tick);
-                (
-                    start_tick,
-                    item.end_tick,
-                    start_tick > item.start_tick && start_tick < item.end_tick,
-                )
-            }
-            ItemTrimEdge::End => {
-                let end_tick = target_tick.min(item.end_tick);
-                (
-                    item.start_tick,
-                    end_tick,
-                    end_tick < item.end_tick && end_tick > item.start_tick,
-                )
-            }
+        let (start_tick, end_tick) = match edge {
+            ItemTrimEdge::Start => (target_tick, item.end_tick),
+            ItemTrimEdge::End => (item.start_tick, target_tick),
         };
         self.item_trim_preview = Some(ItemTrimPreview {
             item_id,
             edge,
             start_tick,
             end_tick,
-            valid,
+            valid: start_tick < end_tick,
         });
+    }
+
+    pub(crate) fn set_item_trim_valid(&mut self, valid: bool) {
+        if let Some(preview) = &mut self.item_trim_preview {
+            preview.valid &= valid;
+        }
     }
 
     pub(crate) fn drag_preview(&self) -> Option<ItemDragPreview> {
