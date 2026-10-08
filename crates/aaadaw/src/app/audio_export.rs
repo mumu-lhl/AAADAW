@@ -10,6 +10,126 @@ use std::sync::{Arc, Mutex};
 
 const JOB_HISTORY_CAPACITY: usize = 4;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RenderSampleRateChoice {
+    #[default]
+    Project,
+    Hz44100,
+    Hz48000,
+    Hz88200,
+    Hz96000,
+    Hz192000,
+}
+
+impl RenderSampleRateChoice {
+    pub(super) const ALL: [Self; 6] = [
+        Self::Project,
+        Self::Hz44100,
+        Self::Hz48000,
+        Self::Hz88200,
+        Self::Hz96000,
+        Self::Hz192000,
+    ];
+
+    pub(super) fn sample_rate(self, project: &Project) -> u32 {
+        match self {
+            Self::Project => project.settings().sample_rate(),
+            Self::Hz44100 => 44_100,
+            Self::Hz48000 => 48_000,
+            Self::Hz88200 => 88_200,
+            Self::Hz96000 => 96_000,
+            Self::Hz192000 => 192_000,
+        }
+    }
+}
+
+impl std::fmt::Display for RenderSampleRateChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Project => formatter.write_str("Project rate"),
+            Self::Hz44100 => formatter.write_str("44.1 kHz"),
+            Self::Hz48000 => formatter.write_str("48 kHz"),
+            Self::Hz88200 => formatter.write_str("88.2 kHz"),
+            Self::Hz96000 => formatter.write_str("96 kHz"),
+            Self::Hz192000 => formatter.write_str("192 kHz"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RenderTailChoice {
+    #[default]
+    ProjectDefault,
+    Seconds0,
+    Seconds1,
+    Seconds2,
+    Seconds3,
+    Seconds5,
+    Seconds10,
+    Seconds30,
+    Seconds60,
+    Seconds120,
+    Seconds300,
+    Seconds600,
+}
+
+impl RenderTailChoice {
+    pub(super) const ALL: [Self; 12] = [
+        Self::ProjectDefault,
+        Self::Seconds0,
+        Self::Seconds1,
+        Self::Seconds2,
+        Self::Seconds3,
+        Self::Seconds5,
+        Self::Seconds10,
+        Self::Seconds30,
+        Self::Seconds60,
+        Self::Seconds120,
+        Self::Seconds300,
+        Self::Seconds600,
+    ];
+
+    pub(super) fn seconds(self) -> u32 {
+        match self {
+            Self::ProjectDefault => aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
+            Self::Seconds0 => 0,
+            Self::Seconds1 => 1,
+            Self::Seconds2 => 2,
+            Self::Seconds3 => 3,
+            Self::Seconds5 => 5,
+            Self::Seconds10 => 10,
+            Self::Seconds30 => 30,
+            Self::Seconds60 => 60,
+            Self::Seconds120 => 120,
+            Self::Seconds300 => 300,
+            Self::Seconds600 => 600,
+        }
+    }
+}
+
+impl std::fmt::Display for RenderTailChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProjectDefault => write!(
+                formatter,
+                "Project default ({} s)",
+                aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS
+            ),
+            Self::Seconds0 => formatter.write_str("0 s"),
+            Self::Seconds1 => formatter.write_str("1 s"),
+            Self::Seconds2 => formatter.write_str("2 s"),
+            Self::Seconds3 => formatter.write_str("3 s"),
+            Self::Seconds5 => formatter.write_str("5 s"),
+            Self::Seconds10 => formatter.write_str("10 s"),
+            Self::Seconds30 => formatter.write_str("30 s"),
+            Self::Seconds60 => formatter.write_str("60 s"),
+            Self::Seconds120 => formatter.write_str("2 min"),
+            Self::Seconds300 => formatter.write_str("5 min"),
+            Self::Seconds600 => formatter.write_str("10 min"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct OfflineRenderJob {
     kind: OfflineRenderKind,
@@ -25,6 +145,7 @@ enum OfflineRenderKind {
         destination: PathBuf,
         master_ceiling: aaadaw_engine::MasterOutputCeiling,
         options: aaadaw_app::WavExportOptions,
+        settings: aaadaw_app::ProjectRenderSettings,
     },
     FreezeTrack {
         track_id: TrackId,
@@ -34,6 +155,22 @@ enum OfflineRenderKind {
 impl OfflineRenderJob {
     pub(super) fn label(&self) -> &str {
         &self.label
+    }
+
+    pub(super) fn details(&self) -> Option<String> {
+        match &self.kind {
+            OfflineRenderKind::ProjectWav {
+                destination,
+                settings,
+                ..
+            } => Some(format!(
+                "{} · {} Hz · {} s tail",
+                destination.display(),
+                settings.output_sample_rate,
+                settings.tail_seconds
+            )),
+            OfflineRenderKind::FreezeTrack { .. } => None,
+        }
     }
 }
 
@@ -116,6 +253,10 @@ impl App {
                 destination,
                 master_ceiling: self.audio_settings.master_output_ceiling,
                 options: self.wav_export_options,
+                settings: aaadaw_app::ProjectRenderSettings {
+                    output_sample_rate: self.render_sample_rate.sample_rate(&self.project),
+                    tail_seconds: self.render_tail.seconds(),
+                },
             },
             snapshot: Arc::new(self.project.snapshot()),
             project_path,
@@ -187,21 +328,24 @@ impl App {
                     destination,
                     master_ceiling,
                     options,
+                    settings,
                 } => {
                     let destination = destination.clone();
                     let result_path = destination.clone();
                     let master_ceiling = *master_ceiling;
                     let options = *options;
+                    let settings = *settings;
                     Task::perform(
                         run_blocking("aaadaw-offline-render", move || {
                             let project = Project::from_snapshot((*snapshot).clone())
                                 .map_err(|error| error.to_string())?;
-                            aaadaw_app::render_project_file_to_wav(
+                            aaadaw_app::render_project_file_with_settings(
                                 project_path,
                                 &project,
                                 &destination,
                                 master_ceiling,
                                 options,
+                                settings,
                                 &worker_cancel,
                                 |done, total| {
                                     *worker_progress
@@ -505,12 +649,31 @@ mod tests {
                 destination: PathBuf::from(destination),
                 master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
                 options: aaadaw_app::WavExportOptions::default(),
+                settings: aaadaw_app::ProjectRenderSettings {
+                    output_sample_rate: 48_000,
+                    tail_seconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
+                },
             },
             snapshot: Arc::new(Project::default().snapshot()),
             project_path: PathBuf::from("session.aaadaw"),
             project_generation: 0,
             label: label.to_owned(),
         }
+    }
+
+    #[test]
+    fn render_rate_and_tail_choices_resolve_to_job_settings() {
+        let project = Project::default();
+        assert_eq!(
+            RenderSampleRateChoice::Project.sample_rate(&project),
+            project.settings().sample_rate()
+        );
+        assert_eq!(RenderSampleRateChoice::Hz44100.sample_rate(&project), 44_100);
+        assert_eq!(RenderSampleRateChoice::Hz192000.sample_rate(&project), 192_000);
+        assert_eq!(RenderTailChoice::ProjectDefault.seconds(), 2);
+        assert_eq!(RenderTailChoice::Seconds0.seconds(), 0);
+        assert_eq!(RenderTailChoice::Seconds60.seconds(), 60);
+        assert_eq!(RenderTailChoice::Seconds600.seconds(), 600);
     }
 
     #[test]
