@@ -538,7 +538,7 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
 }
 
 const COMPACT_TCP_WIDTH: f32 = 400.0;
-const TCP_STEREO_METER_WIDTH: f32 = 60.0;
+const TCP_STEREO_METER_WIDTH: f32 = 80.0;
 
 fn track_row<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let height = app
@@ -655,37 +655,13 @@ fn track_row_layout<'a>(
 }
 
 pub(super) fn track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message> {
-    let peaks = app
-        .track_peak_levels
-        .get(&track.id())
-        .copied()
-        .unwrap_or([0.0; 2]);
-    let hold = app
-        .track_peak_holds
-        .get(&track.id())
-        .copied()
-        .unwrap_or_default();
+    let (peaks, hold) = track_peak_reading(app, track);
     stereo_peak_meter(peaks, hold, Message::ClearTrackMeter(track.id()))
 }
 
 fn tcp_track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message> {
-    let peaks = app
-        .track_peak_levels
-        .get(&track.id())
-        .copied()
-        .unwrap_or([0.0; 2]);
-    let hold = app
-        .track_peak_holds
-        .get(&track.id())
-        .copied()
-        .unwrap_or_default();
+    let (peaks, hold) = track_peak_reading(app, track);
     let channel_meter = |channel: usize, label: &'static str| {
-        let held_peak = hold.levels[channel];
-        let peak_label = if held_peak.is_finite() && held_peak > 0.0 {
-            format!("{:.0}", 20.0 * held_peak.log10())
-        } else {
-            "−∞".to_owned()
-        };
         column![
             text(if hold.clipped[channel] { "CLIP" } else { "" })
                 .size(8)
@@ -697,12 +673,12 @@ fn tcp_track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message>
             })
             .width(Length::Fixed(12.0))
             .height(Length::Fill),
-            text(peak_label).size(9),
+            text(peak_dbfs_label(hold.levels[channel])).size(8),
             text(label).size(9),
         ]
         .spacing(1)
         .align_x(Alignment::Center)
-        .width(Length::Fixed(26.0))
+        .width(Length::Fixed(36.0))
         .height(Length::Fill)
     };
     column![
@@ -718,6 +694,29 @@ fn tcp_track_peak_meter<'a>(app: &'a App, track: &Track) -> Element<'a, Message>
     .width(Length::Fixed(TCP_STEREO_METER_WIDTH))
     .height(Length::Fill)
     .into()
+}
+
+fn track_peak_reading(app: &App, track: &Track) -> ([f32; 2], StereoPeakHold) {
+    let track_id = track.id();
+    let peaks = app
+        .track_peak_levels
+        .get(&track_id)
+        .copied()
+        .unwrap_or([0.0; 2]);
+    let hold = app
+        .track_peak_holds
+        .get(&track_id)
+        .copied()
+        .unwrap_or_default();
+    (peaks, hold)
+}
+
+fn peak_dbfs_label(peak: f32) -> String {
+    if peak.is_finite() && peak > 0.0 {
+        format!("{:.0}dBFS", 20.0 * peak.log10())
+    } else {
+        "−∞dBFS".to_owned()
+    }
 }
 
 fn peak_meter_level_fraction(peak: f32) -> f32 {
@@ -1407,7 +1406,7 @@ fn pan_label(pan: f32) -> String {
 mod tests {
     use super::{
         SliderInteractionState, forward_left_release_after_cancel, invalidate_click_after_drag,
-        peak_meter_level_fraction, record_left_click,
+        peak_dbfs_label, peak_meter_level_fraction, record_left_click,
     };
     use iced::{Event, Point, advanced::mouse};
 
@@ -1421,6 +1420,13 @@ mod tests {
         assert!((peak_meter_level_fraction(minus_30_db) - 0.5).abs() < 0.001);
         assert_eq!(peak_meter_level_fraction(1.0), 1.0);
         assert_eq!(peak_meter_level_fraction(2.0), 1.0);
+    }
+
+    #[test]
+    fn peak_hold_readout_identifies_dbfs_units() {
+        assert_eq!(peak_dbfs_label(0.0), "−∞dBFS");
+        assert_eq!(peak_dbfs_label(f32::NAN), "−∞dBFS");
+        assert_eq!(peak_dbfs_label(0.5), "−6dBFS");
     }
 
     #[test]
