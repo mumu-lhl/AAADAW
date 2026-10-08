@@ -3392,8 +3392,7 @@ fn action_search_keyboard_selection_scrolls_past_the_visible_rows() {
     let entries = super::commands::matching_actions_menu(&app, "");
     let selected = entries
         .iter()
-        .filter(|entry| entry.enabled)
-        .next_back()
+        .rfind(|entry| entry.enabled)
         .expect("Actions menu has an enabled command")
         .id;
 
