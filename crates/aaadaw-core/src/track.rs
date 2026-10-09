@@ -125,6 +125,7 @@ pub struct Track {
     pub(crate) pan: f32,
     pub(crate) pan_mode: crate::PanMode,
     pub(crate) muted: bool,
+    pub(crate) phase_inverted: bool,
     pub(crate) solo: bool,
     pub(crate) record_armed: bool,
     pub(crate) instrument: Option<TrackInstrument>,
@@ -366,6 +367,11 @@ impl Track {
     /// Returns this track's pan position in the inclusive range `-1.0..=1.0`.
     pub fn pan(&self) -> f32 {
         self.pan
+    }
+
+    /// Returns whether the post-fader track signal has inverted polarity.
+    pub fn is_phase_inverted(&self) -> bool {
+        self.phase_inverted
     }
 
     /// Returns whether this track is muted.

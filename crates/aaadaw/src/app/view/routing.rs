@@ -296,6 +296,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     enabled
                 })
             ),
+        checkbox(track.is_phase_inverted())
+            .label("Invert track polarity")
+            .on_toggle(move |_| Message::TogglePhase(source)),
         scrollable(connections).height(Length::Fill),
         text(&app.status).size(11),
         button("Close").on_press(Message::CloseTrackRouting),

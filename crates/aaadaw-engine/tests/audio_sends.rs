@@ -275,3 +275,110 @@ fn send_taps_match_reference_fader_pan_and_track_mute() {
         }
     }
 }
+
+#[test]
+fn track_phase_matches_reference_tap_boundaries_and_live_switches() {
+    use aaadaw_core::AudioSendTap;
+    for tap in [
+        AudioSendTap::PostFader,
+        AudioSendTap::PreFx,
+        AudioSendTap::PreFader,
+    ] {
+        let mut project = project();
+        let source = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackMainSend {
+                track_id: source,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackVolume {
+                track_id: source,
+                volume_db: 20.0 * 0.5_f32.log10(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackPhase {
+                track_id: source,
+                phase_inverted: true,
+            })
+            .unwrap();
+        send(
+            &mut project,
+            0,
+            AudioSendParameters {
+                tap,
+                ..Default::default()
+            },
+        );
+        let mut graph = graph(&project, [0.0, 0.125, 0.0], 24);
+        let control = graph.track_mix_controller();
+        let mut output = [[0.0; 2]; 8];
+        graph.render_into(&mut output).unwrap();
+        let inverted = if tap == AudioSendTap::PostFader {
+            -0.0625
+        } else {
+            0.125
+        };
+        assert!(
+            output
+                .iter()
+                .all(|frame| frame.iter().all(|value| (*value - inverted).abs() < 1e-6)),
+            "{tap:?}: {output:?}"
+        );
+        assert!(control.set_track_phase(source, false));
+        graph.render_into(&mut output).unwrap();
+        let normal = if tap == AudioSendTap::PostFader {
+            0.0625
+        } else {
+            0.125
+        };
+        assert!(
+            output
+                .iter()
+                .all(|frame| frame.iter().all(|value| (*value - normal).abs() < 1e-6))
+        );
+        assert!(control.set_track_phase(source, true));
+        graph.render_into(&mut output).unwrap();
+        assert!(
+            output
+                .iter()
+                .all(|frame| frame.iter().all(|value| (*value - inverted).abs() < 1e-6))
+        );
+        assert!(
+            control
+                .take_track_peak(source)
+                .unwrap()
+                .iter()
+                .all(|peak| *peak >= 0.0)
+        );
+    }
+}
+
+#[test]
+fn track_phase_inverts_main_mix_without_negative_meter_levels() {
+    use aaadaw_engine::MixerPlan;
+    let mut project = project();
+    let source = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackPhase {
+            track_id: source,
+            phase_inverted: true,
+        })
+        .unwrap();
+    let mut render = graph(&project, [0.0, 0.125, 0.0], 8);
+    let mut output = [[0.0; 2]; 8];
+    render.render_into(&mut output).unwrap();
+    assert!(output.iter().all(|frame| *frame == [-0.125, -0.125]));
+    let mixer = MixerPlan::compile(project.tracks(), 8).unwrap();
+    output.fill([0.0, 0.0]);
+    mixer
+        .mix_mono_into(&[&[0.0; 8], &[0.125; 8], &[0.0; 8]], &mut output)
+        .unwrap();
+    assert!(output.iter().all(|frame| *frame == [-0.125, -0.125]));
+    assert_eq!(
+        mixer.track_mix_controller().take_track_peak(source),
+        Some([0.125, 0.125])
+    );
+}

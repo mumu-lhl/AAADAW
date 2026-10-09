@@ -28,6 +28,7 @@ pub struct TrackSnapshot {
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
+    pub phase_inverted: bool,
     pub solo: bool,
     pub record_armed: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,

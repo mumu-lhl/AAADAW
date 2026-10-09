@@ -59,6 +59,7 @@ pub(crate) enum TrackCommand {
     CycleFolderCompact,
     Rename,
     ToggleMute,
+    TogglePhase,
     ToggleSolo,
     ToggleRecordArm,
     MoveUp,
@@ -447,6 +448,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::TogglePhase),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Invert track polarity",
+        aliases: &["phase", "polarity", "invert phase"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::Track(TrackCommand::ToggleSolo),
         menu: Some(MainMenu::Track),
         category: "Track",
@@ -656,6 +667,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
             | CommandKind::AddTrack
+            | CommandKind::Track(TrackCommand::TogglePhase)
             | CommandKind::Track(TrackCommand::ToggleMute)
             | CommandKind::Track(TrackCommand::ToggleSolo)
             | CommandKind::Track(TrackCommand::ToggleRecordArm)
@@ -1119,6 +1131,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::CycleFolderCompact) => "track.cycle-folder-compact",
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
+        CommandKind::Track(TrackCommand::TogglePhase) => "track.toggle-phase",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
         CommandKind::Track(TrackCommand::ToggleRecordArm) => "track.toggle-record-arm",
         CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
@@ -1253,6 +1266,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 }
                 TrackCommand::Rename => Message::BeginTrackNameEdit(track_id),
                 TrackCommand::ToggleMute => Message::ToggleMute(track_id),
+                TrackCommand::TogglePhase => Message::TogglePhase(track_id),
                 TrackCommand::ToggleSolo => Message::ToggleSolo(track_id),
                 TrackCommand::ToggleRecordArm => Message::ToggleRecordArm(track_id),
                 TrackCommand::MoveUp => Message::MoveTrack(track_id, -1),
@@ -1338,6 +1352,7 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
 struct TrackState {
     index: usize,
     muted: bool,
+    phase_inverted: bool,
     solo: bool,
     record_armed: bool,
     folder: bool,
@@ -1487,6 +1502,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     TrackCommand::Routing
                     | TrackCommand::CycleFolderCompact
                     | TrackCommand::Rename
+                    | TrackCommand::TogglePhase
                     | TrackCommand::ToggleMute
                     | TrackCommand::ToggleSolo
                     | TrackCommand::ToggleRecordArm
@@ -1521,6 +1537,7 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
         .map(|(index, track)| TrackState {
             index,
             muted: track.is_muted(),
+            phase_inverted: track.is_phase_inverted(),
             solo: track.is_solo(),
             record_armed: track.is_record_armed(),
             folder: track.is_folder(),
@@ -1727,6 +1744,10 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
             .selected_track_id()
             .and_then(|id| track_state(app, id))
             .map(|track| track.muted),
+        CommandId::SelectedTrack(TrackCommand::TogglePhase) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.phase_inverted),
         CommandId::SelectedTrack(TrackCommand::ToggleSolo) => app
             .selected_track_id()
             .and_then(|id| track_state(app, id))

@@ -185,6 +185,7 @@ struct LiveTrackGains {
     stereo_left: AtomicU32,
     stereo_right: AtomicU32,
     muted: AtomicBool,
+    phase_inverted: AtomicBool,
     solo: AtomicBool,
     peak_left: AtomicU32,
     peak_right: AtomicU32,
@@ -355,6 +356,15 @@ impl TrackMixController {
         true
     }
 
+    /// Updates post-fader polarity without rebuilding the render graph.
+    pub fn set_track_phase(&self, track_id: TrackId, inverted: bool) -> bool {
+        let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
+            return false;
+        };
+        live.phase_inverted.store(inverted, Ordering::Release);
+        true
+    }
+
     /// Updates one track's mute and solo state without rebuilding the render graph.
     pub fn set_track_mute_solo(&self, track_id: TrackId, muted: bool, solo: bool) -> bool {
         let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
@@ -393,7 +403,13 @@ impl TrackMixController {
 }
 
 impl LiveTrackGains {
-    fn new(gains: GainCoefficients, muted: bool, solo: bool, pan_mode: PanMode) -> Self {
+    fn new(
+        gains: GainCoefficients,
+        muted: bool,
+        solo: bool,
+        pan_mode: PanMode,
+        phase_inverted: bool,
+    ) -> Self {
         Self {
             version: AtomicU32::new(0),
             pan_mode,
@@ -402,6 +418,7 @@ impl LiveTrackGains {
             stereo_left: AtomicU32::new(gains.stereo_left.to_bits()),
             stereo_right: AtomicU32::new(gains.stereo_right.to_bits()),
             muted: AtomicBool::new(muted),
+            phase_inverted: AtomicBool::new(phase_inverted),
             solo: AtomicBool::new(solo),
             peak_left: AtomicU32::new(0),
             peak_right: AtomicU32::new(0),
@@ -663,6 +680,7 @@ impl MixerPlan {
                     track.is_muted(),
                     track.is_solo(),
                     track.pan_mode(),
+                    track.is_phase_inverted(),
                 )),
                 mix_ramp: Cell::new(GainRamp::new(gains, ramp_frames)),
                 record_armed: track.is_record_armed(),
@@ -767,6 +785,11 @@ impl MixerPlan {
             track.live.reset_peak();
             return;
         }
+        let polarity = if track.live.phase_inverted.load(Ordering::Acquire) {
+            -1.0
+        } else {
+            1.0
+        };
         let mut ramp = track.mix_ramp.get();
         if let Some(target) = track.live.snapshot() {
             ramp.retarget(target);
@@ -793,8 +816,8 @@ impl MixerPlan {
                     start_sample.saturating_add(offset as u64),
                 );
             }
-            let left = sample * gains.left * automation_gain;
-            let right = sample * gains.right * automation_gain;
+            let left = sample * gains.left * automation_gain * polarity;
+            let right = sample * gains.right * automation_gain * polarity;
             frame[0] += left;
             frame[1] += right;
             peak_left = peak_left.max(meter_peak(left));
@@ -822,8 +845,8 @@ impl MixerPlan {
                         start_sample.saturating_add(offset as u64),
                     );
                 }
-                let left = sample * gains.left * automation_gain;
-                let right = sample * gains.right * automation_gain;
+                let left = sample * gains.left * automation_gain * polarity;
+                let right = sample * gains.right * automation_gain * polarity;
                 frame[0] += left;
                 frame[1] += right;
                 peak_left = peak_left.max(meter_peak(left));
@@ -853,6 +876,11 @@ impl MixerPlan {
             track.live.reset_peak();
             return;
         }
+        let polarity = if track.live.phase_inverted.load(Ordering::Acquire) {
+            -1.0
+        } else {
+            1.0
+        };
         let mut ramp = track.mix_ramp.get();
         if let Some(target) = track.live.snapshot() {
             ramp.retarget(target);
@@ -884,8 +912,8 @@ impl MixerPlan {
             } else {
                 (gains.stereo_left, gains.stereo_right)
             };
-            let left = sample[0] * left_gain * automation_gain;
-            let right = sample[1] * right_gain * automation_gain;
+            let left = sample[0] * left_gain * automation_gain * polarity;
+            let right = sample[1] * right_gain * automation_gain * polarity;
             frame[0] += left;
             frame[1] += right;
             peak_left = peak_left.max(meter_peak(left));
@@ -918,8 +946,8 @@ impl MixerPlan {
                         block.start_sample.saturating_add(offset as u64),
                     );
                 }
-                let left = sample[0] * left_gain * automation_gain;
-                let right = sample[1] * right_gain * automation_gain;
+                let left = sample[0] * left_gain * automation_gain * polarity;
+                let right = sample[1] * right_gain * automation_gain * polarity;
                 frame[0] += left;
                 frame[1] += right;
                 peak_left = peak_left.max(meter_peak(left));

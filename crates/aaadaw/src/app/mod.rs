@@ -3246,6 +3246,22 @@ impl App {
                 self.begin_track_draft(track_id, TrackDraftField::Name);
             }
             Message::CommitTrackName(track_id) => self.commit_track_name(track_id),
+            Message::TogglePhase(track_id) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    self.apply_action(
+                        DawAction::SetTrackPhase {
+                            track_id,
+                            phase_inverted: !track.is_phase_inverted(),
+                        },
+                        "Track polarity changed",
+                    );
+                }
+            }
             Message::ToggleMute(track_id) => {
                 if let Some(track) = self
                     .project
@@ -5993,6 +6009,7 @@ impl App {
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
             DawAction::SetTrackVolume { track_id, .. }
+            | DawAction::SetTrackPhase { track_id, .. }
             | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
             _ => None,
         };
@@ -6043,6 +6060,7 @@ impl App {
             && let Some(playback) = &self.playback
         {
             let _ = playback.set_track_mix(track_id, track.volume_db(), track.pan());
+            let _ = playback.set_track_phase(track_id, track.is_phase_inverted());
         }
         #[cfg(not(feature = "audio-device"))]
         let _ = track_id;

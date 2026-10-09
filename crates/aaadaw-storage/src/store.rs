@@ -22,11 +22,13 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 22;
+pub const CURRENT_SCHEMA_VERSION: u32 = 23;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
 // Additive migration: existing projects retain their historical signal path.
+const MIGRATION_23: &str = "ALTER TABLE tracks ADD COLUMN phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK(phase_inverted IN (0, 1));";
+
 const MIGRATION_22: &str = "CREATE TABLE arrangement_folder_compact (track_id INTEGER PRIMARY KEY CHECK(track_id >= 0), mode INTEGER NOT NULL CHECK(mode BETWEEN 0 AND 2));";
 
 const MIGRATION_21: &str = "ALTER TABLE tracks ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0 CHECK(is_folder IN (0, 1)); ALTER TABLE tracks ADD COLUMN parent_track_id INTEGER REFERENCES tracks(id);";
@@ -2413,6 +2415,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             20 => transaction.execute_batch(MIGRATION_20)?,
             21 => transaction.execute_batch(MIGRATION_21)?,
             22 => transaction.execute_batch(MIGRATION_22)?,
+            23 => transaction.execute_batch(MIGRATION_23)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2458,8 +2461,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -2477,7 +2480,8 @@ fn write_snapshot(
                 track.frozen_audio_item_id.map(to_sql_integer).transpose()?,
                 track.main_send_enabled,
                 track.is_folder,
-                track.parent_track_id.map(to_sql_integer).transpose()?
+                track.parent_track_id.map(to_sql_integer).transpose()?,
+                track.phase_inverted
             ],
         )?;
     }
@@ -2852,7 +2856,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2875,6 +2879,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, bool>(14)?,
                 row.get::<_, bool>(15)?,
                 row.get::<_, Option<i64>>(16)?,
+                row.get::<_, bool>(17)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2899,6 +2904,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 main_send_enabled,
                 is_folder,
                 parent_track_id,
+                phase_inverted,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2923,6 +2929,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     name,
                     is_bus,
                     output_track_id: output_track_id.map(from_sql_u64).transpose()?,
+                    phase_inverted,
                     main_send_enabled,
                     is_folder,
                     parent_track_id: parent_track_id.map(from_sql_u64).transpose()?,

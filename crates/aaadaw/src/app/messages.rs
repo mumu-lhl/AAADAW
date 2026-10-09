@@ -323,6 +323,7 @@ pub(crate) enum Message {
     TrackNameChanged(TrackId, String),
     CommitTrackName(TrackId),
     ToggleMute(TrackId),
+    TogglePhase(TrackId),
     ToggleSolo(TrackId),
     ToggleRecordArm(TrackId),
     #[cfg(feature = "audio-device")]

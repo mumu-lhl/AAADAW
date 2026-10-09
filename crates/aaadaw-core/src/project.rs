@@ -253,6 +253,11 @@ enum ProjectEvent {
         before: f32,
         after: f32,
     },
+    TrackPhaseChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
     TrackMuteChanged {
         track_id: TrackId,
         before: bool,
@@ -468,6 +473,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TrackPanChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackPhaseChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackPhaseChanged {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
@@ -944,7 +958,8 @@ impl Project {
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
-                    | ProjectEvent::TrackPanChanged { .. },
+                    | ProjectEvent::TrackPanChanged { .. }
+                    | ProjectEvent::TrackPhaseChanged { .. },
             )
         )
     }
@@ -956,7 +971,8 @@ impl Project {
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
-                    | ProjectEvent::TrackPanChanged { .. },
+                    | ProjectEvent::TrackPanChanged { .. }
+                    | ProjectEvent::TrackPhaseChanged { .. },
             )
         )
     }
@@ -1064,6 +1080,7 @@ impl Project {
                     volume_db: track.volume_db,
                     pan: track.pan,
                     muted: track.muted,
+                    phase_inverted: track.phase_inverted,
                     solo: track.solo,
                     record_armed: track.record_armed,
                     instrument: track.instrument.as_ref().map(|instrument| {
@@ -1309,6 +1326,7 @@ impl Project {
                 pan: track.pan,
                 pan_mode: settings.pan_mode(),
                 muted: track.muted,
+                phase_inverted: track.phase_inverted,
                 solo: track.solo,
                 record_armed: track.record_armed,
                 instrument,
@@ -1498,6 +1516,7 @@ impl Project {
                     pan: 0.0,
                     pan_mode: state.pan_mode,
                     muted: false,
+                    phase_inverted: false,
                     solo: false,
                     record_armed: false,
                     instrument: None,
@@ -1532,6 +1551,7 @@ impl Project {
                     pan: 0.0,
                     pan_mode: state.pan_mode,
                     muted: false,
+                    phase_inverted: false,
                     solo: false,
                     record_armed: false,
                     instrument: None,
@@ -1831,6 +1851,21 @@ impl Project {
                     track_id,
                     before: track.pan,
                     after: pan,
+                }
+            }
+            DawAction::SetTrackPhase {
+                track_id,
+                phase_inverted,
+            } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackPhaseChanged {
+                    track_id,
+                    before: track.phase_inverted,
+                    after: phase_inverted,
                 }
             }
             DawAction::SetTrackMute { track_id, muted } => {
@@ -2919,6 +2954,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.pan = *after;
+            }
+            ProjectEvent::TrackPhaseChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.phase_inverted != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.phase_inverted = *after;
             }
             ProjectEvent::TrackMuteChanged {
                 track_id,

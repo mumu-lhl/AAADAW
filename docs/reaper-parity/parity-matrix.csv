@@ -54,3 +54,4 @@ RENDER-BOUNDS-001,atomic,UI-028,linux,7.82,Render,Source/Bounds/Rate/Tail 设置
 PREF-TREE-001,atomic,UI-031,linux,7.82,Preferences,完整适用类别树,P11,uninvestigated,false,crates/aaadaw/src/app/view/settings.rs,,每个适用叶子页真实配置可恢复；没有空类别,,当前四个 SettingsCategory
 DATA-MIGRATE-001,atomic,UI-037,linux,7.82,Storage,v17 工程迁移保留原语义,P12,uninvestigated,false,crates/aaadaw-storage/src/store.rs,,旧工程迁移后音频/路由/FX/冻结源一致；失败可恢复,,尚无本计划新增模型的迁移
 TRANSPORT-PLAY-001,atomic,UI-007,linux,7.82,Play-Stop-Pause,默认传输动作与状态轨迹,P6,in_progress,false,crates/aaadaw/src/app/commands.rs,,同一组合触发等价动作且状态位置和停止录音轨迹一致,,工厂组合与独立按钮已实现；全部状态偏好和实际设备输出待验收
+ROUTE-PHASE-001,atomic,UI-004,linux,7.82,Track Phase,轨道反相与发送边界,P3,in_progress,false,crates/aaadaw-engine/src/lib.rs,,主输出及三种Tap极性与实际参照一致且默认控件可操作,,音频边界与schema23及IO已实现；默认TCP-MCP按钮布局和动态偏好待对齐

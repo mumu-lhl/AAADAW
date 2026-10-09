@@ -91,6 +91,11 @@ pub enum DawAction {
         track_id: TrackId,
         pan: f32,
     },
+    /// Set post-fader track polarity.
+    SetTrackPhase {
+        track_id: TrackId,
+        phase_inverted: bool,
+    },
     /// Mute or unmute a track.
     SetTrackMute {
         track_id: TrackId,

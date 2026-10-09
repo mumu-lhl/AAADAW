@@ -7782,3 +7782,24 @@ fn transport_stop_commands_cancel_recording_setup_through_busy_guards() {
         assert!(app.project.tracks().is_empty());
     }
 }
+
+#[test]
+fn track_phase_command_and_undo_share_domain_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track = app.project.tracks()[0].id();
+    app.timeline.select_track_only(track);
+    let command = CommandId::SelectedTrack(commands::TrackCommand::TogglePhase);
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("track.toggle-phase")
+    );
+    assert_eq!(commands::toggle_state(&app, command), Some(false));
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(app.project.tracks()[0].is_phase_inverted());
+    assert_eq!(commands::toggle_state(&app, command), Some(true));
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.tracks()[0].is_phase_inverted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.tracks()[0].is_phase_inverted());
+}

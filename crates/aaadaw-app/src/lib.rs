@@ -782,6 +782,11 @@ impl RunningAudioPlayback {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
     }
 
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
+    }
+
     /// Updates a track's live mute and solo state without replacing the graph.
     pub fn set_track_mute_solo(
         &self,
@@ -1384,6 +1389,11 @@ impl RunningJackPlayback {
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
     }
 
     /// Updates a track's live mute and solo state without replacing the graph.

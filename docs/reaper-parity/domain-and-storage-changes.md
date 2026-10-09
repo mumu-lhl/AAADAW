@@ -85,3 +85,7 @@ tracks.is_folder=false、parent_track_id=NULL 为旧工程默认值，Parent 有
 ## 已实现 schema 22 切片
 
 arrangement_folder_compact 按 TrackId 保存视图模式 0/1/2，旧工程为空（Normal）；与其他 ArrangementViewState 同事务写入。Project 领域/Undo 不包含压缩状态，无效值拒绝保存并回滚；UI 仅恢复仍存在的文件夹，删除或取消角色时清理过期视图条目。
+
+## 已实现 schema 23 切片
+
+tracks.phase_inverted NOT NULL DEFAULT 0 / CHECK 0 或 1，旧工程保留原极性；Snapshot 与领域事件包含相位，Undo 属于 callback-safe mix 参数。视图压缩表与路由结构保持原事务和身份。
