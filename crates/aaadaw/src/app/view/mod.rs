@@ -82,6 +82,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         mobile_view(app, size.width, size.height)
     } else if app.routing_window_id == Some(window_id) {
         routing::view(app)
+    } else if app.action_input_window_id == Some(window_id) {
+        action_list::input_view(app)
     } else if app.action_list_window_id == Some(window_id) {
         action_list::view(app)
     } else if app.settings_window_id == Some(window_id) {

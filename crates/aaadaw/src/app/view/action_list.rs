@@ -135,3 +135,45 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .into()
 }
+
+pub(super) fn input_view(app: &App) -> Element<'_, Message> {
+    let label = app
+        .action_list
+        .input_draft
+        .map(|binding| commands::format_shortcut_label(&binding.config_label()))
+        .unwrap_or_default();
+    let action = app
+        .action_list
+        .input_action
+        .as_ref()
+        .and_then(|id| commands::label_for_id(app, id))
+        .unwrap_or_default();
+    container(
+        column![
+            text(action).size(12),
+            text("Press a key or key combination").size(12),
+            container(text(label).size(16))
+                .padding(8)
+                .width(Length::Fill)
+                .style(container::bordered_box),
+            text(&app.action_list.feedback).size(11),
+            iced::widget::Space::new().height(Length::Fill),
+            row![
+                iced::widget::Space::new().width(Length::Fill),
+                button(text("OK").size(12)).on_press_maybe(
+                    app.action_list
+                        .input_draft
+                        .is_some()
+                        .then_some(Message::ActionInputConfirm)
+                ),
+                button(text("Cancel").size(12)).on_press(Message::ActionInputCancel),
+            ]
+            .spacing(6)
+        ]
+        .spacing(8),
+    )
+    .padding(12)
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}

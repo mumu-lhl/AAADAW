@@ -14,6 +14,8 @@ pub(super) struct ActionListState {
     pub(super) selected: Option<String>,
     pub(super) selected_binding: Option<usize>,
     pub(super) capture: Option<CaptureMode>,
+    pub(super) input_draft: Option<shortcut::Shortcut>,
+    pub(super) input_action: Option<String>,
     pub(super) feedback: String,
     pub(super) found_ids: Option<Vec<String>>,
 }
@@ -83,17 +85,79 @@ impl App {
         task.discard()
     }
 
-    pub(super) fn close_action_list(&mut self) -> Task<Message> {
+    pub(super) fn open_action_input(&mut self) -> Task<Message> {
+        let Some(entry) = self.action_list_selected_entry() else {
+            return Task::none();
+        };
+        let Some(action) = commands::stable_id(entry.id) else {
+            return Task::none();
+        };
+        if let Some(window) = self.action_input_window_id {
+            return iced::window::gain_focus(window);
+        }
+        self.action_list.input_action = Some(action);
+        self.action_list.input_draft = None;
+        self.action_list.feedback.clear();
+        self.action_list.capture = Some(CaptureMode::Add);
+        let (window, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(387.0, 229.0),
+            min_size: Some(iced::Size::new(387.0, 229.0)),
+            ..Default::default()
+        });
+        self.action_input_window_id = Some(window);
+        task.discard()
+    }
+
+    pub(super) fn close_action_input(&mut self) -> Task<Message> {
         self.action_list.capture = None;
-        self.action_list_window_id
+        self.action_list.input_draft = None;
+        self.action_list.input_action = None;
+        self.action_input_window_id
             .take()
-            .map_or_else(Task::none, |id| {
-                let close = iced::window::close(id);
-                match self.main_window_id {
-                    Some(main) => Task::batch([close, iced::window::gain_focus(main)]),
+            .map_or_else(Task::none, |window| {
+                let close = iced::window::close(window);
+                match self.action_list_window_id {
+                    Some(parent) => Task::batch([close, iced::window::gain_focus(parent)]),
                     None => close,
                 }
             })
+    }
+
+    pub(super) fn confirm_action_input(&mut self) -> Task<Message> {
+        self.confirm_action_input_with(keyboard_config::save)
+    }
+
+    fn confirm_action_input_with(
+        &mut self,
+        persist: impl FnOnce(&commands::ShortcutBindings) -> Result<(), String>,
+    ) -> Task<Message> {
+        let (Some(id), Some(chord)) = (
+            self.action_list.input_action.clone(),
+            self.action_list.input_draft,
+        ) else {
+            return Task::none();
+        };
+        let mut values = self.action_list_bindings(&id);
+        values.push(chord);
+        if self.commit_action_list_bindings(&id, &values, persist) {
+            self.close_action_input()
+        } else {
+            Task::none()
+        }
+    }
+
+    pub(super) fn close_action_list(&mut self) -> Task<Message> {
+        let parent_window = self.action_list_window_id.take();
+        let child = self.close_action_input();
+        self.action_list.capture = None;
+        let parent = parent_window.map_or_else(Task::none, |id| {
+            let close = iced::window::close(id);
+            match self.main_window_id {
+                Some(main) => Task::batch([close, iced::window::gain_focus(main)]),
+                None => close,
+            }
+        });
+        Task::batch([child, parent])
     }
 
     pub(super) fn run_action_list(&mut self, close: bool) -> Task<Message> {
@@ -192,6 +256,17 @@ impl App {
         else {
             return Task::none();
         };
+        if self.action_input_window_id.is_some() {
+            if key == Key::Named(Named::Escape) && modifiers == Modifiers::NONE {
+                return self.close_action_input();
+            }
+            if key == Key::Named(Named::Enter)
+                && modifiers == Modifiers::NONE
+                && self.action_list.input_draft.is_some()
+            {
+                return self.confirm_action_input();
+            }
+        }
         if key == Key::Named(Named::Escape) && modifiers == Modifiers::NONE {
             if self.action_list.capture.take().is_some() {
                 return Task::none();
@@ -214,17 +289,8 @@ impl App {
             };
             match mode {
                 CaptureMode::Add => {
-                    let Some(entry) = self.action_list_selected_entry() else {
-                        return Task::none();
-                    };
-                    let Some(id) = commands::stable_id(entry.id) else {
-                        return Task::none();
-                    };
-                    let mut values = self.action_list_bindings(&id);
-                    values.push(chord);
-                    if self.persist_action_list_bindings(&id, &values) {
-                        self.action_list.capture = None;
-                    }
+                    self.action_list.input_draft = Some(chord);
+                    self.action_list.feedback.clear();
                 }
                 CaptureMode::Find => {
                     let ids = commands::for_actions_menu(self)
@@ -315,5 +381,49 @@ mod tests {
         assert!(app.project.tracks().is_empty());
         app.action_list.set_query("no matching action".into());
         assert!(app.action_list_selected_entry().is_none());
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    #[test]
+    fn input_draft_waits_for_confirmation_and_survives_save_failure() {
+        let mut app = App::default();
+        app.action_list.select("edit.undo".into());
+        let _ = app.open_action_input();
+        let window = app.action_input_window_id;
+        let _ = app.update(Message::ActionListSelect("track.add".into()));
+        assert_eq!(app.action_list.selected.as_deref(), Some("edit.undo"));
+        let _ = app.update(Message::ActionListFindShortcut);
+        assert!(matches!(app.action_list.capture, Some(CaptureMode::Add)));
+        let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::F12),
+            modified_key: Key::Named(Named::F12),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F12),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::ALT,
+            text: None,
+            repeat: false,
+        });
+        let _ = app.action_list_keyboard_event(event, iced::event::Status::Ignored);
+        assert!(app.shortcut_bindings.read().unwrap().is_empty());
+        assert!(app.action_list.input_draft.is_some());
+        let _ = app.confirm_action_input_with(|_| Err("disk full".into()));
+        assert!(app.shortcut_bindings.read().unwrap().is_empty());
+        assert_eq!(app.action_input_window_id, window);
+        assert!(app.action_list.input_draft.is_some());
+        let _ = app.confirm_action_input_with(|bindings| {
+            assert!(bindings["edit.undo"].contains("Alt+F12"));
+            Ok(())
+        });
+        assert!(app.action_input_window_id.is_none());
+        assert!(app.action_list.input_draft.is_none());
+        assert!(app.shortcut_bindings.read().unwrap()["edit.undo"].contains("Alt+F12"));
+        let before = app.shortcut_bindings.read().unwrap().clone();
+        let _ = app.open_action_input();
+        app.action_list.input_draft = shortcut::Shortcut::parse("Alt+F11").unwrap();
+        let _ = app.close_action_input();
+        assert_eq!(*app.shortcut_bindings.read().unwrap(), before);
     }
 }

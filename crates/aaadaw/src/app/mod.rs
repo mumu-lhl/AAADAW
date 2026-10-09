@@ -321,6 +321,7 @@ struct App {
     routing_track_id: Option<TrackId>,
     routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
     action_list_window_id: Option<iced::window::Id>,
+    action_input_window_id: Option<iced::window::Id>,
     action_list: action_list::ActionListState,
     render_window_id: Option<iced::window::Id>,
     tempo_map_window_id: Option<iced::window::Id>,
@@ -1319,6 +1320,8 @@ impl App {
                     || "Track routing".to_owned(),
                     |track| format!("Routing for {}", track.name()),
                 )
+        } else if self.action_input_window_id == Some(window_id) {
+            "Keyboard input".to_owned()
         } else if self.action_list_window_id == Some(window_id) {
             "Actions".to_owned()
         } else if self.settings_window_id == Some(window_id) {
@@ -1423,6 +1426,21 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.action_input_window_id.is_some()
+            && matches!(
+                &message,
+                Message::ActionListQueryChanged(_)
+                    | Message::ActionListSelect(_)
+                    | Message::ActionListSelectBinding(_)
+                    | Message::ActionListAddBinding
+                    | Message::ActionListDeleteBinding
+                    | Message::ActionListFindShortcut
+                    | Message::ActionListRun(_)
+                    | Message::OpenActionMacroEditor
+            )
+        {
+            return Task::none();
+        }
         let revision_before_message = self.revision;
         #[cfg(feature = "audio-device")]
         let standby_input_completion = matches!(
@@ -1553,6 +1571,7 @@ impl App {
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
+                    || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
                     || self.settings_window_id == Some(*window_id)
         );
@@ -1578,6 +1597,8 @@ impl App {
                     | Message::ActionListQueryChanged(_)
                     | Message::ActionListSelect(_)
                     | Message::ActionListSelectBinding(_)
+                    | Message::ActionInputConfirm
+                    | Message::ActionInputCancel
                     | Message::ActionListAddBinding
                     | Message::ActionListDeleteBinding
                     | Message::ActionListFindShortcut
@@ -2016,7 +2037,13 @@ impl App {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
                     self.routing_send_drafts.clear();
+                } else if self.action_input_window_id == Some(window_id) {
+                    self.action_input_window_id = None;
+                    self.action_list.capture = None;
+                    self.action_list.input_action = None;
+                    self.action_list.input_draft = None;
                 } else if self.action_list_window_id == Some(window_id) {
+                    task = self.close_action_input();
                     self.action_list_window_id = None;
                     self.action_list.capture = None;
                 } else if self.settings_window_id == Some(window_id) {
@@ -2756,10 +2783,9 @@ impl App {
             Message::ActionListSelectBinding(index) => {
                 self.action_list.selected_binding = Some(index)
             }
-            Message::ActionListAddBinding => {
-                self.action_list.feedback.clear();
-                self.action_list.capture = Some(action_list::CaptureMode::Add)
-            }
+            Message::ActionListAddBinding => task = self.open_action_input(),
+            Message::ActionInputConfirm => task = self.confirm_action_input(),
+            Message::ActionInputCancel => task = self.close_action_input(),
             Message::ActionListFindShortcut => {
                 self.action_list.feedback.clear();
                 self.action_list.capture = Some(action_list::CaptureMode::Find)
@@ -2777,6 +2803,12 @@ impl App {
                     ) {
                         return self.close_track_routing();
                     }
+                    return Task::none();
+                }
+                if self.action_input_window_id == Some(window_id) {
+                    return self.action_list_keyboard_event(event, status);
+                }
+                if self.action_input_window_id.is_some() {
                     return Task::none();
                 }
                 if self.action_list_window_id == Some(window_id) {

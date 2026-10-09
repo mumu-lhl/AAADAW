@@ -176,6 +176,8 @@ pub(crate) enum Message {
     ActionListSelect(String),
     ActionListSelectBinding(usize),
     ActionListAddBinding,
+    ActionInputConfirm,
+    ActionInputCancel,
     ActionListDeleteBinding,
     ActionListFindShortcut,
     ActionListRun(bool),
