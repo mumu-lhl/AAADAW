@@ -4157,6 +4157,7 @@ fn project_session_round_trip_restores_arrangement_view_state() {
         })
         .unwrap();
     let view_state = ArrangementViewState {
+        folder_compact: Vec::new(),
         volume_lanes: vec![aaadaw_storage::VolumeAutomationLaneViewState {
             track_id: track_id.value(),
             visible: false,
@@ -7696,4 +7697,28 @@ fn folder_registry_and_routing_parent_edits_share_undoable_project_state() {
     assert_eq!(app.project.tracks()[1].parent_track(), None);
     let _ = app.update(Message::Undo);
     assert!(!app.project.tracks()[0].is_folder());
+}
+
+#[test]
+fn folder_compact_registered_command_changes_only_persisted_view_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let folder = app.project.tracks()[0].id();
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackFolder {
+        track_id: folder,
+        enabled: true,
+    }));
+    let before = app.project.snapshot();
+    let view_before = app.timeline.arrangement_view_state(&app.project);
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(commands::CommandId::Track {
+        track_id: folder,
+        command: commands::TrackCommand::CycleFolderCompact,
+    }));
+    assert_eq!(app.project.snapshot(), before);
+    assert_ne!(
+        app.timeline.arrangement_view_state(&app.project),
+        view_before
+    );
+    assert!(app.revision > revision);
 }

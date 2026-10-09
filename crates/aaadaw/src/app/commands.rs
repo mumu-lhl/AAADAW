@@ -54,6 +54,7 @@ pub(crate) enum CommandId {
 pub(crate) enum TrackCommand {
     Routing,
     ToggleFolder,
+    CycleFolderCompact,
     Rename,
     ToggleMute,
     ToggleSolo,
@@ -378,6 +379,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Add track",
         aliases: &["create track"],
         shortcuts: ADD_TRACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::CycleFolderCompact),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Cycle folder compact state",
+        aliases: &["folder compact", "collapse folder", "expand folder"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -1075,6 +1086,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::AddTrack => "track.add",
         CommandKind::Track(TrackCommand::Routing) => "track.routing",
         CommandKind::Track(TrackCommand::ToggleFolder) => "track.toggle-folder",
+        CommandKind::Track(TrackCommand::CycleFolderCompact) => "track.cycle-folder-compact",
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
@@ -1192,6 +1204,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             }
             match command {
                 TrackCommand::Routing => Message::OpenTrackRouting(track_id),
+                TrackCommand::CycleFolderCompact => {
+                    Message::Timeline(crate::timeline::TimelineEvent::CycleFolderCompact(track_id))
+                }
                 TrackCommand::ToggleFolder => {
                     Message::RoutingChange(aaadaw_core::DawAction::SetTrackFolder {
                         track_id,
@@ -1419,6 +1434,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::AddTrack => !project_edit_busy(app),
         CommandKind::Track(TrackCommand::Routing) => track.is_some(),
+        CommandKind::Track(TrackCommand::CycleFolderCompact) => {
+            track.is_some_and(|track| track.folder)
+        }
         CommandKind::Track(command) => {
             !project_edit_busy(app)
                 && track.is_some_and(|track| match command {
@@ -1433,6 +1451,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                                     .any(|candidate| candidate.parent_track() == Some(target.id())))
                     }
                     TrackCommand::Routing
+                    | TrackCommand::CycleFolderCompact
                     | TrackCommand::Rename
                     | TrackCommand::ToggleMute
                     | TrackCommand::ToggleSolo

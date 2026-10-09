@@ -22,11 +22,13 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 21;
+pub const CURRENT_SCHEMA_VERSION: u32 = 22;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
 // Additive migration: existing projects retain their historical signal path.
+const MIGRATION_22: &str = "CREATE TABLE arrangement_folder_compact (track_id INTEGER PRIMARY KEY CHECK(track_id >= 0), mode INTEGER NOT NULL CHECK(mode BETWEEN 0 AND 2));";
+
 const MIGRATION_21: &str = "ALTER TABLE tracks ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0 CHECK(is_folder IN (0, 1)); ALTER TABLE tracks ADD COLUMN parent_track_id INTEGER REFERENCES tracks(id);";
 
 const MIGRATION_20: &str =
@@ -464,6 +466,7 @@ mod arrangement_view_state_tests {
             })
             .unwrap();
         let view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: vec![VolumeAutomationLaneViewState {
                 track_id: track_id.value(),
                 visible: false,
@@ -525,6 +528,7 @@ mod arrangement_view_state_tests {
         store.save(&project).unwrap();
 
         let invalid_view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: Vec::new(),
             fx_lanes: vec![FxAutomationLaneViewState {
                 track_id: 1,
@@ -2166,6 +2170,25 @@ impl ProjectStore {
                 height,
             });
         }
+        let mut statement = self
+            .connection
+            .prepare("SELECT track_id, mode FROM arrangement_folder_compact ORDER BY track_id")?;
+        let rows =
+            statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (id, mode) = row?;
+            if !(0..=2).contains(&mode) {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid folder compact mode",
+                ));
+            }
+            view_state
+                .folder_compact
+                .push(crate::FolderCompactViewState {
+                    track_id: from_sql_u64(id)?,
+                    mode: mode as u8,
+                });
+        }
         Ok(Some(view_state))
     }
 
@@ -2389,6 +2412,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             19 => transaction.execute_batch(MIGRATION_19)?,
             20 => transaction.execute_batch(MIGRATION_20)?,
             21 => transaction.execute_batch(MIGRATION_21)?,
+            22 => transaction.execute_batch(MIGRATION_22)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2631,6 +2655,18 @@ fn write_arrangement_view_state(
     transaction: &Transaction<'_>,
     view_state: &ArrangementViewState,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM arrangement_folder_compact", [])?;
+    for folder in &view_state.folder_compact {
+        if folder.mode > 2 {
+            return Err(StorageError::InvalidStoredData(
+                "invalid folder compact mode",
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO arrangement_folder_compact(track_id, mode) VALUES(?1, ?2)",
+            params![to_sql_integer(folder.track_id)?, folder.mode],
+        )?;
+    }
     transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
     transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
     transaction.execute(

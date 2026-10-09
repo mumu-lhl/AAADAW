@@ -711,6 +711,64 @@ fn track_row_layout<'a>(
     height: f32,
 ) -> Element<'a, Message> {
     let track_id = track.id();
+    if height <= 25.0 {
+        let selected = app.timeline.is_track_selected(track_id);
+        let controls: Element<'a, Message> = if height <= 4.0 {
+            iced::widget::Space::new()
+                .width(Length::Fill)
+                .height(height)
+                .into()
+        } else {
+            row![
+                track_name_input(app, track),
+                button(text("M").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_muted() {
+                        button::warning
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleMute(track_id)),
+                button(text("S").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_solo() {
+                        button::warning
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleSolo(track_id)),
+                button(text("R").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_record_armed() {
+                        button::danger
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleRecordArm(track_id)),
+                track_routing_button(track),
+            ]
+            .spacing(2)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        return mouse_area(
+            container(controls)
+                .height(height)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(track_selection_background(selected).into()),
+                    ..container::Style::default()
+                }),
+        )
+        .on_press(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+            track_id,
+            modifiers: app.keyboard_modifiers,
+        }))
+        .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
+            track_id,
+        )))
+        .into();
+    }
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let output_label = track
         .effective_output_track()
@@ -944,19 +1002,34 @@ pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a
         .style(track_draft_input_style(has_error))
         .padding([2, 4])
         .width(Length::Fill);
+    let marker: Element<'a, Message> = if track.is_folder() {
+        button(
+            text(match app.timeline.folder_compact(track_id) {
+                1 => "▸",
+                2 => "▹",
+                _ => "▾",
+            })
+            .size(11),
+        )
+        .style(button::text)
+        .padding([0, 2])
+        .on_press(Message::ExecuteCommand(CommandId::Track {
+            track_id,
+            command: TrackCommand::CycleFolderCompact,
+        }))
+        .into()
+    } else {
+        text(if track.parent_track().is_some() {
+            "↳"
+        } else {
+            ""
+        })
+        .size(11)
+        .into()
+    };
     row![
-        text(format!(
-            "{}{}",
-            "  ".repeat(app.project.folder_depth(track_id)),
-            if track.is_folder() {
-                "F"
-            } else if track.parent_track().is_some() {
-                "↳"
-            } else {
-                ""
-            }
-        ))
-        .size(11),
+        text("  ".repeat(app.project.folder_depth(track_id))).size(11),
+        marker,
         input
     ]
     .align_y(Alignment::Center)

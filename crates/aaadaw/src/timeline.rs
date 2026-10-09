@@ -130,6 +130,7 @@ impl fmt::Display for SnapGrid {
 
 #[derive(Debug, Clone)]
 pub(crate) enum TimelineEvent {
+    CycleFolderCompact(TrackId),
     PanByPixels(f32),
     ZoomAt {
         factor: f32,
@@ -753,6 +754,9 @@ pub(crate) struct TimelineState {
     fx_lane_snapshot:
         HashMap<(TrackId, usize, u32), Option<Vec<aaadaw_core::FxParameterAutomationPoint>>>,
     row_layout: Vec<TrackRowLayout>,
+    folder_compact: HashMap<TrackId, u8>,
+    folder_parents: HashMap<TrackId, Option<TrackId>>,
+    folder_tracks: HashSet<TrackId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -761,6 +765,23 @@ pub(super) struct TrackRowLayout {
     pub(super) height: f32,
     pub(super) base_height: f32,
     pub(super) fx_lane_count: usize,
+}
+
+impl TrackRowLayout {
+    pub(super) fn item_geometry(self, automation: bool) -> (f32, f32) {
+        if self.base_height < 43.0 {
+            let padding = (self.base_height / 4.0).min(2.0);
+            (
+                self.top + padding,
+                (self.base_height - 2.0 * padding).max(0.0),
+            )
+        } else {
+            (
+                self.top + 7.0,
+                (self.base_height - if automation { 42.0 } else { 14.0 }).max(0.0),
+            )
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -924,6 +945,9 @@ impl Default for TimelineState {
             fx_chain_snapshot: HashMap::new(),
             fx_lane_snapshot: HashMap::new(),
             row_layout: Vec::new(),
+            folder_compact: HashMap::new(),
+            folder_parents: HashMap::new(),
+            folder_tracks: HashSet::new(),
         }
     }
 }
@@ -934,6 +958,7 @@ impl TimelineState {
         project: &Project,
         view_state: Option<&ArrangementViewState>,
     ) {
+        self.folder_compact.clear();
         self.volume_automation_tracks.clear();
         self.hidden_volume_automation_tracks.clear();
         self.selected_volume_automation_point = None;
@@ -951,6 +976,16 @@ impl TimelineState {
         self.rebuild(project);
 
         if let Some(view_state) = view_state {
+            for folder in &view_state.folder_compact {
+                if folder.mode <= 2
+                    && let Some(track) = project
+                        .tracks()
+                        .iter()
+                        .find(|track| track.id().value() == folder.track_id && track.is_folder())
+                {
+                    self.folder_compact.insert(track.id(), folder.mode);
+                }
+            }
             let saved_volume_visibility = view_state
                 .volume_lanes
                 .iter()
@@ -1066,13 +1101,37 @@ impl TimelineState {
                 lane.parameter_id,
             )
         });
+        let mut folder_compact: Vec<_> = self
+            .folder_compact
+            .iter()
+            .filter(|(id, _)| self.folder_tracks.contains(id))
+            .map(|(id, mode)| aaadaw_storage::FolderCompactViewState {
+                track_id: id.value(),
+                mode: *mode,
+            })
+            .collect();
+        folder_compact.sort_by_key(|folder| folder.track_id);
         ArrangementViewState {
+            folder_compact,
             volume_lanes,
             fx_lanes,
         }
     }
 
     pub(crate) fn rebuild(&mut self, project: &Project) {
+        self.folder_parents = project
+            .tracks()
+            .iter()
+            .map(|track| (track.id(), track.parent_track()))
+            .collect();
+        self.folder_tracks = project
+            .tracks()
+            .iter()
+            .filter(|track| track.is_folder())
+            .map(|track| track.id())
+            .collect();
+        self.folder_compact
+            .retain(|id, _| self.folder_tracks.contains(id));
         self.reconcile_fx_automation_lanes(project);
         self.volume_automation_tracks.extend(
             project
@@ -1276,6 +1335,20 @@ impl TimelineState {
             .collect();
     }
 
+    pub(crate) fn folder_compact(&self, track_id: TrackId) -> u8 {
+        self.folder_compact.get(&track_id).copied().unwrap_or(0)
+    }
+
+    fn inherited_folder_compact(&self, track_id: TrackId) -> u8 {
+        let mut parent = self.folder_parents.get(&track_id).copied().flatten();
+        let mut mode = 0;
+        while let Some(id) = parent {
+            mode = mode.max(self.folder_compact(id));
+            parent = self.folder_parents.get(&id).copied().flatten();
+        }
+        mode
+    }
+
     fn rebuild_row_layout(&mut self) {
         let mut top = 0.0;
         self.row_layout = self
@@ -1283,6 +1356,12 @@ impl TimelineState {
             .track_ids
             .iter()
             .map(|track_id| {
+                let compact = self.inherited_folder_compact(*track_id);
+                let base_height = match compact {
+                    1 => 25.0,
+                    2 => 4.0,
+                    _ => TIMELINE_ROW_HEIGHT,
+                };
                 let fx_lane_count = self
                     .fx_automation_lanes
                     .iter()
@@ -1294,11 +1373,12 @@ impl TimelineState {
                     .filter(|(id, _, _)| id == track_id)
                     .map(|key| self.fx_automation_lane_height(*key))
                     .sum::<f32>();
-                let height = TIMELINE_ROW_HEIGHT + fx_lane_height;
+                let fx_lane_count = if compact == 0 { fx_lane_count } else { 0 };
+                let height = base_height + if compact == 0 { fx_lane_height } else { 0.0 };
                 let row = TrackRowLayout {
                     top,
                     height,
-                    base_height: TIMELINE_ROW_HEIGHT,
+                    base_height,
                     fx_lane_count,
                 };
                 top += height;
@@ -1327,6 +1407,9 @@ impl TimelineState {
     }
 
     fn fx_automation_bands(&self, track_id: TrackId) -> Vec<FxAutomationBand> {
+        if self.inherited_folder_compact(track_id) != 0 {
+            return Vec::new();
+        }
         fx_automation_bands_for_track(
             track_id,
             &self.fx_automation_lanes,
@@ -1434,6 +1517,18 @@ impl TimelineState {
                     self.volume_automation_tracks.insert(track_id);
                 }
                 self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::CycleFolderCompact(track_id) => {
+                if self.folder_tracks.contains(&track_id) {
+                    let mode = (self.folder_compact(track_id) + 1) % 3;
+                    if mode == 0 {
+                        self.folder_compact.remove(&track_id);
+                    } else {
+                        self.folder_compact.insert(track_id, mode);
+                    }
+                    self.rebuild_row_layout();
+                    self.cache.generation = self.cache.generation.wrapping_add(1);
+                }
             }
             TimelineEvent::ToggleFxAutomation {
                 track_id,
@@ -2242,6 +2337,9 @@ impl TimelineProgram<'_> {
                 .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
             let sample = automation_sample_between(sample, min_sample, max_sample)?;
             let tick = self.project.tick_at_sample(sample).ok()?;
+            if row.base_height < 64.0 {
+                return None;
+            }
             let row_y = (position.y - row.top).clamp(62.0, row.base_height - 1.0);
             let gain_db = (6.0 - ((row_y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
             Some(AutomationPointPreview {
@@ -2253,6 +2351,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_bands_for_track(&self, track_id: TrackId) -> Vec<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return Vec::new();
+        }
         fx_automation_bands_for_track(
             track_id,
             self.fx_automation_lanes,
@@ -2261,6 +2369,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_lane_at_y(&self, track_id: TrackId, row_y: f32) -> Option<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return None;
+        }
         fx_automation_band_at_y(
             track_id,
             row_y,
@@ -2270,6 +2388,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_lane_resize_target(&self, track_id: TrackId, row_y: f32) -> Option<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return None;
+        }
         fx_automation_lane_resize_target(
             track_id,
             row_y,
@@ -3020,6 +3148,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     let Some(row) = self.row_layout.get(drag.track_index) else {
                         return Some(shader::Action::capture());
                     };
+                    if row.base_height < 64.0 {
+                        return Some(shader::Action::capture());
+                    }
                     let y = (position.y - row.top).clamp(62.0, row.base_height - 1.0);
                     let gain_db = (6.0 - ((y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
                     let mut points = track.volume_automation().to_vec();
@@ -3163,10 +3294,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             .tracks()
             .iter()
             .enumerate()
-            .filter(|(_, track)| {
-                self.volume_automation_tracks.contains(&track.id())
-                    || (!self.hidden_volume_automation_tracks.contains(&track.id())
-                        && !track.volume_automation().is_empty())
+            .filter(|(index, track)| {
+                self.row_layout
+                    .get(*index)
+                    .is_some_and(|row| row.base_height >= TIMELINE_ROW_HEIGHT)
+                    && (self.volume_automation_tracks.contains(&track.id())
+                        || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                            && !track.volume_automation().is_empty()))
             })
             .map(|(track_index, track)| renderer::AutomationLane {
                 track_index: track_index as u32,
@@ -3680,6 +3814,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                     shaping: Shaping::Basic,
                 });
             }
+            if row.base_height < TIMELINE_ROW_HEIGHT {
+                continue;
+            }
             if !self.state.volume_automation_tracks.contains(track_id)
                 || self
                     .state
@@ -3735,6 +3872,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             else {
                 continue;
             };
+            if row.base_height < 25.0 {
+                continue;
+            }
             if row.top + row.height < self.state.vertical_scroll
                 || row.top > self.state.vertical_scroll + self.state.viewport_height
             {
@@ -3748,7 +3888,11 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             if right < 0.0 || left > f64::from(bounds.width) || width < 18.0 {
                 continue;
             }
-            if item.kind == ItemKind::Midi && !item.midi_notes.is_empty() {
+            if row.base_height < 12.0 {
+                continue;
+            }
+            if row.base_height >= 43.0 && item.kind == ItemKind::Midi && !item.midi_notes.is_empty()
+            {
                 let preview_top = row.top + 34.0;
                 let preview_height = 50.0_f32.min(row.base_height - 42.0);
                 for note_rect in midi_note_preview_geometry(
@@ -3774,7 +3918,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 position: Point::new(
                     (left.max(0.0) + 5.0) as f32,
                     row.top
-                        + if item.kind == ItemKind::Midi {
+                        + if row.base_height < 43.0 {
+                            row.base_height / 2.0
+                        } else if item.kind == ItemKind::Midi {
                             20.0
                         } else if item.media_ref.as_ref().is_some_and(|media_ref| {
                             self.state.audio_waveforms.contains_key(media_ref)
@@ -6077,5 +6223,88 @@ mod tests {
             copy: false,
         });
         assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
+    }
+    #[test]
+    fn folder_compact_cycles_restore_lanes_and_media_geometry_without_project_edits() {
+        let mut project = Project::new();
+        for index in 0..3 {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: format!("Track {index}"),
+                })
+                .unwrap();
+        }
+        let ids: Vec<_> = project.tracks().iter().map(|track| track.id()).collect();
+        for id in &ids[..2] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id: *id,
+                    enabled: true,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: ids[1],
+                parent: Some(ids[0]),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: ids[2],
+                parent: Some(ids[1]),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id: ids[2],
+                plugins: vec![TrackFxPlugin::new("test.fx", "fx.clap").unwrap()],
+            })
+            .unwrap();
+        let before = project.snapshot();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::ToggleFxAutomation {
+            track_id: ids[2],
+            chain_index: 0,
+            parameter_id: 7,
+            name: "Gain".into(),
+            value_range: (0.0, 1.0),
+            stepped: false,
+        });
+        let normal = timeline.row_layout.clone();
+        for expected in [25.0, 4.0] {
+            timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+            assert_eq!(
+                timeline.row_layout(0).unwrap().base_height,
+                TIMELINE_ROW_HEIGHT
+            );
+            for index in [1, 2] {
+                let row = timeline.row_layout(index).unwrap();
+                assert_eq!(row.height, expected);
+                let (y, height) = row.item_geometry(true);
+                assert!(height > 0.0 && y >= row.top && y + height <= row.top + row.base_height);
+            }
+            assert!(timeline.fx_automation_bands(ids[2]).is_empty());
+            let state = timeline.arrangement_view_state(&project);
+            let mut restored = TimelineState::default();
+            restored.replace_project(&project, Some(&state));
+            assert_eq!(restored.row_layout, timeline.row_layout);
+            assert_eq!(
+                restored.folder_compact(ids[0]),
+                timeline.folder_compact(ids[0])
+            );
+        }
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+        assert_eq!(timeline.row_layout, normal);
+        assert_eq!(timeline.fx_automation_bands(ids[2]).len(), 1);
+        assert_eq!(project.snapshot(), before);
+        // A nested tiny folder remains tiny beneath a merely small ancestor.
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[1]));
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[1]));
+        assert_eq!(timeline.row_layout(1).unwrap().height, 25.0);
+        assert_eq!(timeline.row_layout(2).unwrap().height, 4.0);
     }
 }

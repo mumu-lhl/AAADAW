@@ -81,3 +81,7 @@ track_sends.tap（0 Post-fader、1 Pre-FX、3 Pre-fader）默认 0，受 CHECK �
 ## 已实现 schema 21 切片
 
 tracks.is_folder=false、parent_track_id=NULL 为旧工程默认值，Parent 有 FK；Project 验证有序森林及组合路由 DAG。层级修改的 Undo 仅保存 TrackId/父节点/文件夹角色与顺序，不覆盖其他参数/FX。旧显式 output_track_id 优先于隐式 Parent 路径，Bus 不转为 Folder。
+
+## 已实现 schema 22 切片
+
+arrangement_folder_compact 按 TrackId 保存视图模式 0/1/2，旧工程为空（Normal）；与其他 ArrangementViewState 同事务写入。Project 领域/Undo 不包含压缩状态，无效值拒绝保存并回滚；UI 仅恢复仍存在的文件夹，删除或取消角色时清理过期视图条目。

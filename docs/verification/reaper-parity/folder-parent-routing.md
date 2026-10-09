@@ -16,7 +16,7 @@ Outer 自身常量 0.25，Inner 无媒体，Leaf 0.125，Sibling 0.125，Outside
 
 复现脚本 [probe-folders.lua](../../../scripts/reaper_parity/probe-folders.lua) 使用隔离配置及临时空工程，输入和环境变量同其他路由探针，不保存用户工程。
 
-另外实测 Outer I_FOLDERCOMPACT=0/1/2：默认配置中 Outer、Outside 始终 74 px；其全部后代分别为 74/25/4 px。此尺寸证据用于下一步压缩显示，不表示 AAADAW 已匹配该布局。
+另外实测 Outer I_FOLDERCOMPACT=0/1/2：默认配置中 Outer、Outside 始终 74 px；其全部后代分别为 74/25/4 px。Small/Tiny 尺寸已实现；普通展开仍为 AAADAW 的 128 px，未匹配 REAPER 的 74 px。
 
 ## 实现及验证
 
@@ -33,4 +33,17 @@ GUI 已把 Audio 2 标为 Folder，Audio 1 设为其子轨；TCP/MCP 同步重�
 
 ## 尚未完成
 
-压缩/展开显示、默认 Folder 按钮循环、文件夹拖动/深度调整手势、MCP 文件夹显示策略与完整默认主题均待下一步。当前冻结仍只支持原有独立 instrument 角色，Folder Freeze 未开发；拒绝冻结文件夹或把已冻结轨道改为文件夹，避免烘焙/接收路径错误。GUI 原生保存与 MIDI 动态计划限制仍见前一切片。P3 和产品全量对齐未关闭。
+文件夹拖动/深度调整手势、MCP 文件夹显示策略与完整默认主题均待下一步。当前冻结仍只支持原有独立 instrument 角色，Folder Freeze 未开发；拒绝冻结文件夹或把已冻结轨道改为文件夹，避免烘焙/接收路径错误。GUI 原生保存与 MIDI 动态计划限制仍见前一切片。P3 和产品全量对齐未关闭。
+
+## 文件夹压缩显示续项
+
+[probe-folder-compact.lua](../../../scripts/reaper_parity/probe-folder-compact.lua) 在上述隔离五轨工程中测量 0/1/2 三态。TCP/MCP 的文件夹按钮及注册动作 `track.cycle-folder-compact` 依次切换 Normal → Small → Tiny → Normal；后代继承祖先最强压缩，文件夹自身保持其父级决定的高度。压缩时暂隐藏 FX/音量自动化编辑区域，展开恢复；媒体坐标限制在 25/4 px 行内。
+
+schema 22 新增 arrangement_folder_compact，按稳定 TrackId 保存模式；旧工程默认为 Normal。压缩只修改视图，不进入 Project Undo；无效模式回滚整次保存，加载仅接受有效文件夹。771 项 workspace 测试通过，Clippy warnings denied 与默认构建通过。
+
+实际 GUI 创建子轨 MIDI Item，检查三态边界；重启并 Recover 后 Tiny 和媒体恢复，再展开正常显示。此处验证会话恢复，原生 Save/Reopen 仍未验收。
+
+![Small 25 px](images/folder-compact-small.png)
+![Tiny 4 px](images/folder-compact-tiny.png)
+![恢复 Tiny](images/folder-compact-restored.png)
+![展开保留 Item](images/folder-compact-normal.png)

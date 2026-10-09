@@ -328,12 +328,8 @@ impl Primitive for TimelinePrimitive {
                 instances.push(GpuRect::new(GpuRectSpec {
                     start_tick: item.start_tick,
                     end_tick: item.end_tick,
-                    y: row.top + 7.0,
-                    height: if has_automation {
-                        row.base_height - 42.0
-                    } else {
-                        row.base_height - 14.0
-                    },
+                    y: row.item_geometry(has_automation).0,
+                    height: row.item_geometry(has_automation).1,
                     color,
                     item_id: item.id.value(),
                     track_index: item.track_index as u32,
@@ -684,17 +680,14 @@ impl Primitive for TimelinePrimitive {
                 y: self
                     .row_layout
                     .get(track_index as usize)
-                    .map_or(0.0, |row| row.top + 7.0),
+                    .map_or(0.0, |row| {
+                        row.item_geometry(self.has_volume_automation(track_index)).0
+                    }),
                 height: self
                     .row_layout
                     .get(track_index as usize)
                     .map_or(0.0, |row| {
-                        row.base_height
-                            - if self.has_volume_automation(track_index) {
-                                42.0
-                            } else {
-                                14.0
-                            }
+                        row.item_geometry(self.has_volume_automation(track_index)).1
                     }),
                 color: if trim.is_some_and(|trim| !trim.valid) {
                     [218, 80, 71, 255]
@@ -838,8 +831,8 @@ fn item_rect(
     GpuRect::new(GpuRectSpec {
         start_tick: item.start_tick,
         end_tick: item.end_tick,
-        y: row.top + 7.0,
-        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
+        y: row.item_geometry(has_volume_automation).0,
+        height: row.item_geometry(has_volume_automation).1,
         color,
         item_id: item.id.value(),
         track_index: item.track_index as u32,
@@ -869,8 +862,8 @@ fn selected_item_rect(
     GpuRect::new(GpuRectSpec {
         start_tick,
         end_tick,
-        y: row.top + 7.0,
-        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
+        y: row.item_geometry(has_volume_automation).0,
+        height: row.item_geometry(has_volume_automation).1,
         color,
         item_id,
         track_index,

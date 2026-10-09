@@ -1560,11 +1560,14 @@ impl App {
             || matches!(
                 &message,
                 Message::ExecuteCommand(
-                    commands::CommandId::SelectedTrack(commands::TrackCommand::Routing)
-                        | commands::CommandId::Track {
-                            command: commands::TrackCommand::Routing,
-                            ..
-                        }
+                    commands::CommandId::SelectedTrack(
+                        commands::TrackCommand::Routing
+                            | commands::TrackCommand::CycleFolderCompact
+                    ) | commands::CommandId::Track {
+                        command: commands::TrackCommand::Routing
+                            | commands::TrackCommand::CycleFolderCompact,
+                        ..
+                    }
                 ) | Message::OpenTrackRouting(_)
                     | Message::CloseTrackRouting
                     | Message::RoutingSendDraft(..)
@@ -4191,6 +4194,7 @@ impl App {
         let previous_view_state = matches!(
             &event,
             timeline::TimelineEvent::ToggleVolumeAutomation(_)
+                | timeline::TimelineEvent::CycleFolderCompact(_)
                 | timeline::TimelineEvent::ToggleFxAutomation { .. }
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
         )
