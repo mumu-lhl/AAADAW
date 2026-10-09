@@ -3736,7 +3736,8 @@ mod tests {
             let mut output = [[0.0_f32; 2]; 128];
             let mut rendered = false;
             let mut preview_event_count = 0;
-            for _ in 0..100 {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
                 let stats = graph
                     .render_into(&mut output)
                     .expect("stopped isolated route should render preview blocks");
@@ -3745,7 +3746,11 @@ mod tests {
                     rendered = true;
                     break;
                 }
-                std::thread::yield_now();
+                // The real device spaces callbacks in time. A tight fixed-count
+                // loop can expire every IPC response before the helper is scheduled,
+                // especially when Windows runs this test beside other lib tests.
+                // Wait only in the test harness; render_into remains nonblocking.
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             assert_eq!(graph.transport_mut().position_samples(), 0);
             preview.release();
