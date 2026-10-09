@@ -1,7 +1,9 @@
 use super::action_macros::ActionMacro;
+use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
+#[cfg(feature = "audio-device")]
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
@@ -102,123 +104,21 @@ struct CommandDefinition {
     separator_before: bool,
 }
 
-#[derive(Clone, Copy)]
-enum Shortcut {
-    Command(char),
-    CommandShift(char),
-    Unmodified(char),
-    Delete,
-    Space,
-    ShiftSpace,
-}
-
-impl Shortcut {
-    fn config_label(self) -> String {
-        match self {
-            Self::Command(key) => format!("Mod+{}", key.to_ascii_uppercase()),
-            Self::CommandShift(key) => {
-                format!("Mod+Shift+{}", key.to_ascii_uppercase())
-            }
-            Self::Unmodified(key) => key.to_ascii_uppercase().to_string(),
-            Self::Delete => "Delete/Backspace".to_owned(),
-            Self::Space => "Space".to_owned(),
-            Self::ShiftSpace => "Shift+Space".to_owned(),
-        }
-    }
-
-    fn parse(value: &str) -> Result<Option<Self>, String> {
-        let value = value.trim();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        if value.eq_ignore_ascii_case("space") {
-            return Ok(Some(Self::Space));
-        }
-        if value.eq_ignore_ascii_case("shift+space") {
-            return Ok(Some(Self::ShiftSpace));
-        }
-        if value.eq_ignore_ascii_case("delete")
-            || value.eq_ignore_ascii_case("backspace")
-            || value.eq_ignore_ascii_case("delete/backspace")
-        {
-            return Ok(Some(Self::Delete));
-        }
-        let mut unmodified_characters = value.chars();
-        if let Some(character) = unmodified_characters.next()
-            && character.is_ascii_alphabetic()
-            && unmodified_characters.next().is_none()
-        {
-            return Ok(Some(Self::Unmodified(character.to_ascii_lowercase())));
-        }
-        let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
-        if !(2..=3).contains(&parts.len()) {
-            return Err(format!(
-                "Use a letter, Delete, {}+letter, {}+Shift+letter, Space, or Shift+Space",
-                shortcut_modifier_name(),
-                shortcut_modifier_name()
-            ));
-        }
-        let has_mod = matches!(
-            parts[0].to_ascii_lowercase().as_str(),
-            "mod" | "ctrl" | "cmd"
-        );
-        let shifted = parts.len() == 3 && parts[1].eq_ignore_ascii_case("shift");
-        if !has_mod || (parts.len() == 3 && !shifted) {
-            return Err(format!(
-                "Use {}+key, {}+Shift+key, Space, or Shift+Space",
-                shortcut_modifier_name(),
-                shortcut_modifier_name()
-            ));
-        }
-        let key = parts.last().copied().unwrap_or_default();
-        let mut characters = key.chars();
-        let Some(character) = characters.next() else {
-            return Err("Shortcut key must be one letter".to_owned());
-        };
-        if !character.is_ascii_alphabetic() || characters.next().is_some() {
-            return Err("Shortcut key must be one letter".to_owned());
-        }
-        Ok(Some(if shifted {
-            Self::CommandShift(character.to_ascii_lowercase())
-        } else {
-            Self::Command(character.to_ascii_lowercase())
-        }))
-    }
-
-    fn matches(self, key: &Key<&str>, modifiers: Modifiers) -> bool {
-        match self {
-            Self::Command(character) => {
-                modifiers == Modifiers::COMMAND && key_matches_character(key, character)
-            }
-            Self::CommandShift(character) => {
-                modifiers == (Modifiers::COMMAND | Modifiers::SHIFT)
-                    && key_matches_character(key, character)
-            }
-            Self::Unmodified(character) => {
-                modifiers == Modifiers::NONE && key_matches_character(key, character)
-            }
-            Self::Delete => {
-                modifiers == Modifiers::NONE
-                    && matches!(key, Key::Named(Named::Delete | Named::Backspace))
-            }
-            Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
-            Self::ShiftSpace => modifiers == Modifiers::SHIFT && *key == Key::Named(Named::Space),
-        }
-    }
-}
-
-const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::Command('o')];
-const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::Command('n')];
-const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
-const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
-const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
-const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::Command('d')];
-const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Delete];
-const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Unmodified('s')];
+const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
+const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
+const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
+const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
+const REDO_SHORTCUT: &[Shortcut] = &[
+    Shortcut::character('z', Modifiers::COMMAND.union(Modifiers::SHIFT)),
+    Shortcut::character('y', Modifiers::COMMAND),
+];
+const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifiers::COMMAND)];
+const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
+const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
-const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
+const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
-const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::ShiftSpace];
+const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::SHIFT)];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -724,7 +624,7 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                     .iter()
                     .map(|shortcut| shortcut.config_label())
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join("; ")
             } else {
                 app.shortcut_binding_edits
                     .get(id)
@@ -742,7 +642,7 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                         .iter()
                         .map(|shortcut| shortcut.config_label())
                         .collect::<Vec<_>>()
-                        .join(", "),
+                        .join("; "),
                 ),
             }
         })
@@ -768,6 +668,20 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
         }
     }));
     entries
+}
+
+pub(super) fn staged_binding_for_id(app: &App, id: &str) -> String {
+    let defaults = COMMANDS
+        .iter()
+        .find(|definition| command_kind_id(definition.kind) == id)
+        .map_or(&[][..], |definition| definition.shortcuts);
+    if app.shortcut_defaults_restored.contains(id) {
+        return serialize_bindings(defaults);
+    }
+    app.shortcut_binding_edits
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| config_binding_for(app, id, defaults))
 }
 
 pub(super) fn label_for_id(app: &App, id: &str) -> Option<String> {
@@ -808,7 +722,7 @@ pub(super) fn validate_bindings_with_macros(
             return Err(format!("unknown action ID: {id}"));
         }
     }
-    let mut resolved = HashMap::<String, String>::new();
+    let mut resolved = Vec::<(Shortcut, String)>::new();
     let mut normalized_bindings = ShortcutBindings::new();
     for definition in COMMANDS {
         let id = command_kind_id(definition.kind);
@@ -830,36 +744,44 @@ pub(super) fn validate_bindings_with_macros(
             continue;
         }
         for shortcut in definition.shortcuts {
-            let normalized = shortcut.config_label();
-            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned())
-                && other_id != id
-            {
-                return Err(format!("{normalized} conflicts with the default for {id}"));
-            }
+            register_shortcut(*shortcut, id, &mut resolved)?;
         }
     }
     Ok(normalized_bindings)
 }
 
+fn register_shortcut(
+    shortcut: Shortcut,
+    id: &str,
+    resolved: &mut Vec<(Shortcut, String)>,
+) -> Result<(), String> {
+    if shortcut.is_reserved() {
+        return Err("Escape is reserved for cancelling the current operation".to_owned());
+    }
+    if let Some((_, other_id)) = resolved
+        .iter()
+        .find(|(other, other_id)| other_id != id && shortcut.conflicts(*other))
+    {
+        return Err(format!(
+            "{} is already assigned to both {other_id} and {id}",
+            shortcut.config_label()
+        ));
+    }
+    resolved.push((shortcut, id.to_owned()));
+    Ok(())
+}
+
 fn insert_normalized_binding(
     id: &str,
     value: &str,
-    resolved: &mut HashMap<String, String>,
+    resolved: &mut Vec<(Shortcut, String)>,
     normalized_bindings: &mut ShortcutBindings,
 ) -> Result<(), String> {
-    if value.trim().is_empty() {
-        normalized_bindings.insert(id.to_owned(), String::new());
-        return Ok(());
+    let shortcuts = parse_bindings(value)?;
+    for shortcut in &shortcuts {
+        register_shortcut(*shortcut, id, resolved)?;
     }
-    let shortcut =
-        Shortcut::parse(value)?.ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
-    let normalized = shortcut.config_label();
-    if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
-        return Err(format!(
-            "{normalized} is already assigned to both {other_id} and {id}"
-        ));
-    }
-    normalized_bindings.insert(id.to_owned(), normalized);
+    normalized_bindings.insert(id.to_owned(), serialize_bindings(&shortcuts));
     Ok(())
 }
 
@@ -936,8 +858,12 @@ pub(super) fn from_shortcut(
         let id = macro_id(action_macro.id);
         bindings
             .get(&id)
-            .and_then(|binding| Shortcut::parse(binding).ok().flatten())
-            .is_some_and(|shortcut| shortcut.matches(key, modifiers))
+            .and_then(|binding| parse_bindings(binding).ok())
+            .is_some_and(|shortcuts| {
+                shortcuts
+                    .iter()
+                    .any(|shortcut| shortcut.matches(key, modifiers))
+            })
     }) {
         return Some(CommandId::Macro(action_macro.id));
     }
@@ -945,9 +871,11 @@ pub(super) fn from_shortcut(
         let id = command_kind_id(definition.kind);
         let custom = bindings
             .get(id)
-            .and_then(|binding| Shortcut::parse(binding).ok().flatten());
+            .and_then(|binding| parse_bindings(binding).ok());
         match custom {
-            Some(shortcut) => shortcut.matches(key, modifiers),
+            Some(shortcuts) => shortcuts
+                .iter()
+                .any(|shortcut| shortcut.matches(key, modifiers)),
             None if bindings.contains_key(id) => false,
             None => definition
                 .shortcuts
@@ -959,27 +887,7 @@ pub(super) fn from_shortcut(
 }
 
 pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
-    let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::SHIFT {
-        "Shift+Space".to_owned()
-    } else if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
-        "Space".to_owned()
-    } else if key.eq_ignore_ascii_case("delete") && modifiers == Modifiers::NONE {
-        "Delete".to_owned()
-    } else if modifiers == Modifiers::NONE
-        && key.len() == 1
-        && key.chars().all(|character| character.is_ascii_alphabetic())
-    {
-        key.to_ascii_uppercase()
-    } else if modifiers == Modifiers::COMMAND {
-        format!("Mod+{key}")
-    } else if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
-        format!("Mod+Shift+{key}")
-    } else {
-        return Err(shortcut_capture_help());
-    };
-    Shortcut::parse(&candidate)?
-        .map(Shortcut::config_label)
-        .ok_or_else(|| "That key cannot be used as a shortcut".to_owned())
+    Shortcut::capture(key, modifiers).map(Shortcut::config_label)
 }
 
 pub(super) fn friendly_shortcut_error(error: &str, macros: &[ActionMacro]) -> String {
@@ -1014,19 +922,12 @@ fn format_shortcut_label_for_platform(binding: &str, is_macos: bool) -> String {
         .replace("Mod+", &modifier)
 }
 
-pub(super) fn shortcut_modifier_name() -> &'static str {
-    modifier_name_for_platform(cfg!(target_os = "macos"))
-}
-
 fn modifier_name_for_platform(is_macos: bool) -> &'static str {
     if is_macos { "Cmd" } else { "Ctrl" }
 }
 
 pub(super) fn shortcut_capture_help() -> String {
-    let modifier = shortcut_modifier_name();
-    format!(
-        "Select a binding, then press a letter, Delete, {modifier}+letter, {modifier}+Shift+letter, Space, or Shift+Space."
-    )
+    "Select a binding, then press a character, function key, or navigation key with Ctrl, Alt, Shift, or Super. Escape cancels; unmodified Backspace clears.".to_owned()
 }
 
 fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
@@ -1041,7 +942,7 @@ fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
         .iter()
         .map(|shortcut| shortcut.config_label())
         .collect::<Vec<_>>()
-        .join(", ")
+        .join("; ")
 }
 
 fn command_kind_id(kind: CommandKind) -> &'static str {
@@ -1490,10 +1391,6 @@ fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
         && (!app.playback_active() || track_mix_only)
 }
 
-fn key_matches_character(key: &Key<&str>, expected: char) -> bool {
-    matches!(key, Key::Character(character) if character.eq_ignore_ascii_case(&expected.to_string()))
-}
-
 #[cfg(test)]
 mod shortcut_label_tests {
     use super::*;
@@ -1515,17 +1412,6 @@ mod shortcut_label_tests {
         assert_eq!(
             format_shortcut_label_for_platform("Ctrl/Cmd+N", false),
             "Ctrl+N"
-        );
-        let current_modifier = if cfg!(target_os = "macos") {
-            "Cmd"
-        } else {
-            "Ctrl"
-        };
-        assert_eq!(
-            shortcut_capture_help(),
-            format!(
-                "Select a binding, then press a letter, Delete, {current_modifier}+letter, {current_modifier}+Shift+letter, Space, or Shift+Space."
-            )
         );
         assert_eq!(
             capture_binding("Space", Modifiers::SHIFT).unwrap(),
@@ -1552,7 +1438,7 @@ mod macro_tests {
     #[test]
     fn macro_shortcuts_validate_and_resolve_by_stable_id() {
         let macros = [test_macro()];
-        let bindings = ShortcutBindings::from([("macro.23".to_owned(), "Ctrl+M".to_owned())]);
+        let bindings = ShortcutBindings::from([("macro.23".to_owned(), "Mod+M".to_owned())]);
         let bindings = validate_bindings_with_macros(&bindings, &macros).unwrap();
         assert_eq!(bindings.get("macro.23").map(String::as_str), Some("Mod+M"));
         assert_eq!(

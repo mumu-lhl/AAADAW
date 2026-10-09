@@ -62,6 +62,7 @@ mod project_io;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
+mod shortcut;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -340,6 +341,7 @@ struct App {
     plugin_picker_instrument_track_id: Option<TrackId>,
     plugin_picker_search: String,
     shortcut_capture_id: Option<String>,
+    shortcut_capture_append: bool,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
     audio_settings: audio_config::AudioSettings,
@@ -1499,6 +1501,7 @@ impl App {
                     | Message::WindowClosed(_)
                     | Message::WindowCloseRequested(_)
                     | Message::StartShortcutCapture(_)
+                    | Message::AddShortcutBinding(_)
                     | Message::ClearShortcutBinding(_)
                     | Message::RestoreShortcutDefault(_)
                     | Message::SelectSettingsCategory(_)
@@ -2411,8 +2414,15 @@ impl App {
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
+                self.shortcut_capture_append = false;
                 self.shortcut_editor_feedback =
                     "Press a shortcut; Backspace clears it; Escape cancels".to_owned();
+            }
+            Message::AddShortcutBinding(action_id) => {
+                self.shortcut_capture_id = Some(action_id);
+                self.shortcut_capture_append = true;
+                self.shortcut_editor_feedback =
+                    "Press an additional shortcut; Escape cancels".to_owned();
             }
             Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
             Message::RestoreShortcutDefault(action_id) => self.restore_shortcut_default(action_id),
@@ -3185,18 +3195,18 @@ impl App {
                 if self.pending_project_transition.is_some() {
                     return Task::none();
                 }
-                let key = match key.as_str() {
-                    " " => iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
-                    "Delete" => iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
-                    character => iced::keyboard::Key::Character(character),
-                };
                 let shortcut = {
                     let bindings = self
                         .shortcut_bindings
                         .read()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    commands::from_shortcut(&key, modifiers, &bindings, &self.action_macros)
-                        .map(Message::ExecuteCommand)
+                    commands::from_shortcut(
+                        &key.as_ref(),
+                        modifiers,
+                        &bindings,
+                        &self.action_macros,
+                    )
+                    .map(Message::ExecuteCommand)
                 };
                 if let Some(message) = shortcut {
                     task = self.update(message);
@@ -4733,6 +4743,16 @@ impl App {
             }
         };
         let mut candidate = self.shortcut_binding_edits.clone();
+        let binding = if self.shortcut_capture_append {
+            let current = commands::staged_binding_for_id(self, &action_id);
+            if current.is_empty() {
+                binding
+            } else {
+                format!("{current}; {binding}")
+            }
+        } else {
+            binding
+        };
         candidate.insert(action_id, binding.clone());
         match commands::validate_bindings_with_macros(&candidate, &self.action_macros) {
             Ok(bindings) => {
@@ -8310,10 +8330,14 @@ fn keyboard_shortcut_event(
             return None;
         };
         return match key.as_ref() {
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+                if modifiers == iced::keyboard::Modifiers::NONE =>
+            {
                 Some(Message::CancelShortcutCapture)
             }
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace)
+                if modifiers == iced::keyboard::Modifiers::NONE =>
+            {
                 Some(Message::ClearShortcutBinding(action_id.to_owned()))
             }
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
@@ -8371,21 +8395,14 @@ fn keyboard_shortcut_event(
     else {
         return None;
     };
-    match key.as_ref() {
-        iced::keyboard::Key::Character(character) => {
-            Some(Message::ShortcutPressed(character.to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
-            Some(Message::ShortcutPressed(" ".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
-            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
-            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
-        _ => None,
+    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+        && modifiers == iced::keyboard::Modifiers::NONE
+    {
+        Some(Message::Escape)
+    } else if key == iced::keyboard::Key::Unidentified {
+        None
+    } else {
+        Some(Message::ShortcutPressed(key, modifiers))
     }
 }
 

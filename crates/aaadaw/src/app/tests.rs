@@ -1298,7 +1298,7 @@ fn menus_and_context_targets_survive_keyboard_input_and_background_ticks() {
         window_id,
     ));
     let _ = app.update(Message::ShortcutPressed(
-        "not-a-bound-shortcut".to_owned(),
+        Key::Character("not-a-bound-shortcut".into()),
         Modifiers::NONE,
     ));
     let _ = app.update(Message::AudioImportFinished(
@@ -1962,7 +1962,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             None,
         ),
         Some(Message::ShortcutPressed(key, modifiers))
-            if key == "z" && modifiers == Modifiers::COMMAND
+            if key == Key::Character("z".into()) && modifiers == Modifiers::COMMAND
     ));
     let app = App::default();
     let undo = commands::for_menu(&app, MainMenu::Edit)
@@ -1979,7 +1979,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     );
     assert_eq!(
         redo.shortcut.as_deref(),
-        Some(commands::format_shortcut_label("Mod+Shift+Z, Mod+Y").as_str())
+        Some(commands::format_shortcut_label("Mod+Shift+Z; Mod+Y").as_str())
     );
     let escape_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::Escape),
@@ -2043,7 +2043,7 @@ fn midi_editor_shortcuts_use_configured_commands_only_when_unconsumed() {
             Some(midi_editor_window_id),
         ),
         Some(Message::ShortcutPressed(key, modifiers))
-            if key == "z" && modifiers == Modifiers::COMMAND
+            if key == Key::Character("z".into()) && modifiers == Modifiers::COMMAND
     ));
     assert!(
         midi_editor_shortcut_event(
@@ -2089,7 +2089,7 @@ fn midi_editor_stop_shortcut_reaches_the_transport_command() {
     assert!(matches!(
         &shortcut,
         Message::ShortcutPressed(key, modifiers)
-            if key == " " && *modifiers == Modifiers::SHIFT
+            if *key == Key::Named(iced::keyboard::key::Named::Space) && *modifiers == Modifiers::SHIFT
     ));
     let mut app = App::default();
     let _ = app.update(shortcut);
@@ -2272,7 +2272,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
     );
     assert_eq!(
         commands::capture_binding("Delete", Modifiers::NONE).unwrap(),
-        "Delete/Backspace"
+        "Delete"
     );
 
     let main_window_id = iced::window::Id::unique();
@@ -2446,7 +2446,7 @@ fn documented_first_project_shortcuts_match_action_defaults() {
         ("file.open-project", "Mod+O"),
         ("file.save-project", "Mod+S"),
         ("edit.undo", "Mod+Z"),
-        ("edit.redo", "Mod+Shift+Z, Mod+Y"),
+        ("edit.redo", "Mod+Shift+Z; Mod+Y"),
         ("item.duplicate", "Mod+D"),
         ("item.delete-selected", "Delete/Backspace"),
         ("item.split-at-cursor", "S"),
@@ -3005,7 +3005,7 @@ fn track_context_instrument_picker_assigns_only_instruments_through_undoable_act
 #[test]
 fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
     let bindings = HashMap::from([
-        ("edit.undo".to_owned(), "Ctrl+U".to_owned()),
+        ("edit.undo".to_owned(), "Mod+U".to_owned()),
         ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
     ]);
     let bindings = commands::validate_bindings(&bindings).unwrap();
@@ -3048,6 +3048,148 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
         )]))
         .is_err()
     );
+}
+
+#[test]
+fn shortcut_alternatives_dispatch_named_keys_and_detect_legacy_overlap() {
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "Escape".to_owned(),
+        )]))
+        .is_err()
+    );
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "Alt+Escape".to_owned(),
+        )]))
+        .is_ok()
+    );
+    let bindings = commands::validate_bindings(&HashMap::from([(
+        "edit.undo".to_owned(),
+        "Ctrl+Alt+F12; Shift+Home; Alt+7".to_owned(),
+    )]))
+    .unwrap();
+    for (key, modifiers) in [
+        (
+            Key::Named(iced::keyboard::key::Named::F12),
+            Modifiers::CTRL | Modifiers::ALT,
+        ),
+        (
+            Key::Named(iced::keyboard::key::Named::Home),
+            Modifiers::SHIFT,
+        ),
+        (Key::Character("7"), Modifiers::ALT),
+    ] {
+        assert!(matches!(
+            shortcut_message(key, modifiers, &bindings),
+            Some(Message::ExecuteCommand(CommandId::Undo))
+        ));
+    }
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "F1; Backspace".to_owned(),
+        )]))
+        .is_err()
+    );
+    assert!(
+        commands::validate_bindings(&HashMap::from([
+            ("edit.undo".to_owned(), "Alt+F1; Alt+F2".to_owned()),
+            ("file.save-project".to_owned(), "Alt+F2".to_owned()),
+        ]))
+        .is_err()
+    );
+}
+
+#[test]
+fn shortcut_named_key_events_reach_project_actions_without_losing_focus_guards() {
+    let mut app = App::default();
+    let window = iced::window::Id::unique();
+    app.main_window_id = Some(window);
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "track.add".to_owned(),
+        "Alt+F1".to_owned(),
+    )]))
+    .unwrap();
+    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::F1),
+        modified_key: Key::Named(iced::keyboard::key::Named::F1),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F1),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::ALT,
+        text: None,
+        repeat: false,
+    });
+    assert!(
+        keyboard_shortcut_event(
+            event.clone(),
+            iced::event::Status::Captured,
+            window,
+            Some(window),
+            None,
+            None
+        )
+        .is_none()
+    );
+    assert!(
+        keyboard_shortcut_event(
+            event.clone(),
+            iced::event::Status::Ignored,
+            iced::window::Id::unique(),
+            Some(window),
+            None,
+            None
+        )
+        .is_none()
+    );
+    let message = keyboard_shortcut_event(
+        event,
+        iced::event::Status::Ignored,
+        window,
+        Some(window),
+        None,
+        None,
+    )
+    .unwrap();
+    let _ = app.update(message);
+    assert_eq!(app.project.tracks().len(), 1);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn shortcut_add_capture_preserves_existing_bindings_and_rejected_candidates() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "edit.undo".to_owned(),
+        key: "F12".to_owned(),
+        modifiers: Modifiers::ALT,
+    });
+    let saved = app.shortcut_binding_edits.clone();
+    assert_eq!(saved["edit.undo"], "Mod+Z; Alt+F12");
+    for (key, modifiers) in [
+        (Key::Character("z"), Modifiers::COMMAND),
+        (Key::Named(iced::keyboard::key::Named::F12), Modifiers::ALT),
+    ] {
+        assert!(matches!(
+            shortcut_message(key, modifiers, &saved),
+            Some(Message::ExecuteCommand(CommandId::Undo))
+        ));
+    }
+    let _ = app.update(Message::AddShortcutBinding("file.save-project".to_owned()));
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "file.save-project".to_owned(),
+        key: "F12".to_owned(),
+        modifiers: Modifiers::ALT,
+    });
+    assert_eq!(app.shortcut_binding_edits, saved);
+    assert!(app.shortcut_editor_feedback.contains("already assigned"));
+    assert!(app.shortcut_capture_id.is_some());
+    let _ = app.update(Message::CancelShortcutCapture);
+    assert_eq!(app.shortcut_binding_edits, saved);
 }
 
 #[test]
@@ -3648,7 +3790,10 @@ fn saved_macros_run_ordered_commands_from_actions_search_and_shortcuts() {
     let _ = app.update(Message::RunActionQuery);
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
-    let _ = app.update(Message::ShortcutPressed("m".to_owned(), Modifiers::COMMAND));
+    let _ = app.update(Message::ShortcutPressed(
+        Key::Character("m".into()),
+        Modifiers::COMMAND,
+    ));
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
     app.action_macros[0].steps = vec![

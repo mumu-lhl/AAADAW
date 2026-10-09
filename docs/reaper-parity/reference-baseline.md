@@ -12,7 +12,7 @@
 | 工程身份 | 保留 AAADAW 名称与 `.aaadaw` 单文件格式 |
 | 开发分支 / PR | `feat/reaper-parity` / 仅一个 PR |
 
-当前已完成源码和公开文档调查，**尚未完成 REAPER 7.82 实机界面采集**。下列环境字段需在 P0 填写；不得把计划值当作测量值。
+已在隔离配置中运行 Linux REAPER 7.82，核实 Default 7 主题并导出六个 Action Sections 的动作与快捷键目录。安装包指纹及运行环境见 [LNX-782-ACTIONS-001](../verification/reaper-parity/linux-7.82/README.md)。**P0 尚未完成**：界面/鼠标/偏好逐项采集、完整配置指纹、真实音频及视觉误差预算仍待验证。下列字段是后续采集清单，不得把计划值当作测量值。
 
 ## P0 环境清单
 

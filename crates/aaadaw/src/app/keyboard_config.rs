@@ -81,6 +81,10 @@ mod tests {
         let bindings = ShortcutBindings::from([
             ("edit.undo".to_owned(), "Mod+Z".to_owned()),
             ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
+            (
+                "track.add".to_owned(),
+                "Alt+F1; Ctrl+Alt+7; Semicolon".to_owned(),
+            ),
         ]);
         save_to(&path, &bindings).unwrap();
         assert_eq!(
