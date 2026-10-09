@@ -1998,8 +1998,8 @@ impl AudioRenderGraph {
             project.settings().sample_rate(),
         )
         .map_err(AudioGraphBuildError::MixerPlan)?;
-        let midi_plan =
-            MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
+        let midi_plan = MidiEventPlan::compile_for_render(project)
+            .map_err(AudioGraphBuildError::MidiSchedule)?;
         let mut instrument_routes = Vec::with_capacity(instrument_processors.len());
         let mut has_instrument = vec![false; project.tracks().len()];
         for instrument in instrument_processors.iter() {
@@ -2671,6 +2671,47 @@ impl AudioRenderGraph {
         self.render_block(true, midi_input, midi_output, output)
     }
 
+    fn midi_output_event_allowed(&self, event: &ScheduledMidiEvent) -> bool {
+        // Never suppress release events: a voice may have been started before
+        // its track was muted or excluded by a later solo change.
+        if event.kind == MidiEventKind::NoteOff
+            || (event.kind == MidiEventKind::ControllerChange
+                && event.controller == Some(64)
+                && event.velocity < 64)
+        {
+            return true;
+        }
+        self.mixer.tracks.iter().enumerate().any(|(index, track)| {
+            track.track_id == event.track_id
+                && !track.live.muted.load(Ordering::Acquire)
+                && self.solo_bus_subtrees[index]
+        })
+    }
+
+    fn copy_midi_output(
+        &self,
+        count: usize,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, AudioGraphError> {
+        let events = self.midi_scratch[..count]
+            .iter()
+            .flatten()
+            .filter(|event| self.midi_output_event_allowed(event));
+        let required = events.clone().count();
+        if output.len() < required {
+            return Err(AudioGraphError::MidiSchedule(
+                MidiScheduleError::OutputBufferTooSmall {
+                    required,
+                    available: output.len(),
+                },
+            ));
+        }
+        for (slot, event) in output.iter_mut().zip(events) {
+            *slot = Some(*event);
+        }
+        Ok(required)
+    }
+
     fn render_block(
         &mut self,
         include_midi: bool,
@@ -2707,6 +2748,9 @@ impl AudioRenderGraph {
             }
         }
 
+        self.mixer
+            .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
+        let mut midi_output_count = 0;
         let was_playing = self.transport.is_playing();
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed =
@@ -2761,18 +2805,7 @@ impl AudioRenderGraph {
                 });
             }
             if include_midi {
-                if midi_output.len() < count {
-                    return Err(AudioGraphError::MidiSchedule(
-                        MidiScheduleError::OutputBufferTooSmall {
-                            required: count,
-                            available: midi_output.len(),
-                        },
-                    ));
-                }
-                midi_output
-                    .iter_mut()
-                    .zip(self.midi_scratch.iter().take(count))
-                    .for_each(|(destination, source)| *destination = *source);
+                midi_output_count = self.copy_midi_output(count, midi_output)?;
             }
             count
         } else {
@@ -2866,18 +2899,7 @@ impl AudioRenderGraph {
             }
         }
         if include_midi && midi_event_count > 0 {
-            if midi_output.len() < midi_event_count {
-                return Err(AudioGraphError::MidiSchedule(
-                    MidiScheduleError::OutputBufferTooSmall {
-                        required: midi_event_count,
-                        available: midi_output.len(),
-                    },
-                ));
-            }
-            midi_output
-                .iter_mut()
-                .zip(self.midi_scratch.iter().take(midi_event_count))
-                .for_each(|(destination, source)| *destination = *source);
+            midi_output_count = self.copy_midi_output(midi_event_count, midi_output)?;
         }
         if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
             return Err(AudioGraphError::MidiInputEventBufferFull {
@@ -2937,7 +2959,11 @@ impl AudioRenderGraph {
             return Ok(AudioRenderStats {
                 block,
                 underrun_samples: 0,
-                midi_event_count,
+                midi_event_count: if include_midi {
+                    midi_output_count
+                } else {
+                    midi_event_count
+                },
                 master_guarded_samples: 0,
                 master_non_finite_samples: 0,
             });
@@ -3330,7 +3356,11 @@ impl AudioRenderGraph {
         Ok(AudioRenderStats {
             block,
             underrun_samples,
-            midi_event_count,
+            midi_event_count: if include_midi {
+                midi_output_count
+            } else {
+                midi_event_count
+            },
             master_guarded_samples: master_guard.guarded_samples,
             master_non_finite_samples: master_guard.non_finite_samples,
         })

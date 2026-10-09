@@ -28,4 +28,4 @@ schema 19 增加 tracks.main_send_enabled（旧工程默认开启）及有 ID/�
 
 ## 剩余差异
 
-Pre-FX/Pre-fader、MIDI Send、通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。现有 MIDI 计划在编译时过滤 mute/solo，播放中解除 Solo/静音后的事件计划动态恢复仍待补齐。P3 与全量对齐未完成。
+Pre-FX/Pre-fader、MIDI Send、通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。该切片的内部 MIDI 动态恢复缺口已由[后续回归](midi-live-audibility.md)修复；MIDI 路由与外部追赶仍待开发。P3 与全量对齐未完成。

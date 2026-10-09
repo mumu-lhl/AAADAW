@@ -344,3 +344,90 @@ fn audio_send_receiver_solo_keeps_source_instrument_midi_and_audio() {
     drop(graph);
     helper.shutdown().unwrap();
 }
+
+#[test]
+fn initially_excluded_instrument_recovers_live_without_rebuilding_graph() {
+    for initially_muted in [true, false] {
+        let mut project = Project::new();
+        let source = add_track_with_note(&mut project, "Synth");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Other".into(),
+            })
+            .unwrap();
+        let other = project.tracks()[1].id();
+        if initially_muted {
+            project
+                .apply(DawAction::SetTrackMute {
+                    track_id: source,
+                    muted: true,
+                })
+                .unwrap();
+        } else {
+            project
+                .apply(DawAction::SetTrackSolo {
+                    track_id: other,
+                    solo: true,
+                })
+                .unwrap();
+        }
+        let config = ClapIpcConfig::new(
+            project.settings().sample_rate(),
+            CLAP_IPC_MAX_BLOCK_FRAMES,
+            CLAP_IPC_MAX_EVENTS,
+        )
+        .unwrap();
+        let mut helper = ClapInstrumentHelperProcess::spawn(
+            helper_path(),
+            Path::new("unused-test-plugin.clap"),
+            "test.synth",
+            config,
+            None,
+        )
+        .unwrap();
+        let (_, first) = pcm_stream(16_384).unwrap();
+        let (_, second) = pcm_stream(16_384).unwrap();
+        let mut graph = AudioRenderGraph::new(&project, vec![first, second], 8192).unwrap();
+        let mut instruments = vec![TrackIsolatedInstrument::new(
+            source,
+            helper.instance_id(),
+            helper.audio_port(),
+            config,
+        )];
+        graph
+            .install_isolated_instrument_ports(&project, &mut instruments)
+            .unwrap();
+        let mix = graph.track_mix_controller();
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 128];
+        graph.render_into(&mut output).unwrap();
+        assert!(output.iter().all(|frame| *frame == [0.0, 0.0]));
+        assert!(mix.set_track_mute_solo(source, false, false));
+        assert!(mix.set_track_mute_solo(other, false, false));
+        graph.render_into(&mut output).unwrap();
+        assert!(
+            output
+                .iter()
+                .all(|frame| frame[0] > 0.45 && frame[1] > 0.45),
+            "live recovery failed: muted={initially_muted}"
+        );
+        assert!(mix.set_track_mute_solo(source, true, false));
+        graph.render_into(&mut output).unwrap();
+        assert!(output.iter().all(|frame| *frame == [0.0, 0.0]));
+        assert!(mix.set_track_mute_solo(source, false, false));
+        graph.render_into(&mut output).unwrap();
+        assert!(
+            output
+                .iter()
+                .all(|frame| frame[0] > 0.45 && frame[1] > 0.45)
+        );
+        graph.transport_mut().seek_sample(48_000);
+        for _ in 0..8 {
+            graph.render_into(&mut output).unwrap();
+        }
+        assert!(output.iter().all(|frame| *frame == [0.0, 0.0]));
+        drop(graph);
+        helper.shutdown().unwrap();
+    }
+}

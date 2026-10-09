@@ -1915,3 +1915,78 @@ fn project_pan_policy_keeps_own_mono_level_when_a_silent_route_is_added() {
         }
     }
 }
+
+#[test]
+fn midi_output_uses_live_audibility_and_keeps_release_events() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".into(),
+        })
+        .unwrap();
+    let track = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: track,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: item,
+            notes: vec![
+                aaadaw_core::MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 1,
+                    velocity: 100,
+                },
+                aaadaw_core::MidiNoteData {
+                    pitch: 62,
+                    tick: 2,
+                    duration: 1,
+                    velocity: 100,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackMute {
+            track_id: track,
+            muted: true,
+        })
+        .unwrap();
+    let (_, stream) = pcm_stream(26).unwrap();
+    let mut graph = AudioRenderGraph::new(&project, vec![stream], 26).unwrap();
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut audio = [[0.0; 2]; 26];
+    let mut events = [None; 1];
+    let stats = graph.render_with_midi(&mut events, &mut audio).unwrap();
+    assert_eq!(stats.midi_event_count, 1);
+    assert_eq!(
+        events[0].unwrap().kind,
+        aaadaw_engine::MidiEventKind::NoteOff
+    );
+    assert!(mix.set_track_mute_solo(track, false, false));
+    events.fill(None);
+    let stats = graph.render_with_midi(&mut events, &mut audio).unwrap();
+    assert_eq!(stats.midi_event_count, 1);
+    assert_eq!(
+        events[0].unwrap().kind,
+        aaadaw_engine::MidiEventKind::NoteOn
+    );
+    assert_eq!(events[0].unwrap().pitch, 62);
+    assert!(mix.set_track_mute_solo(track, true, false));
+    events.fill(None);
+    let stats = graph.render_with_midi(&mut events, &mut audio).unwrap();
+    assert_eq!(stats.midi_event_count, 1);
+    assert_eq!(
+        events[0].unwrap().kind,
+        aaadaw_engine::MidiEventKind::NoteOff
+    );
+    assert_eq!(events[0].unwrap().pitch, 62);
+}

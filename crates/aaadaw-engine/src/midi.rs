@@ -298,6 +298,19 @@ impl MidiEventPlan {
     /// excluded by the project's solo state are omitted. Call this off the
     /// audio callback; the returned plan can be queried without allocation.
     pub fn compile(project: &Project) -> Result<Self, MidiScheduleError> {
+        Self::compile_with_audibility(project, true)
+    }
+
+    // Instruments must retain muted/excluded notes so live mix changes can
+    // restore their current voices without rebuilding or seeking the graph.
+    pub(crate) fn compile_for_render(project: &Project) -> Result<Self, MidiScheduleError> {
+        Self::compile_with_audibility(project, false)
+    }
+
+    fn compile_with_audibility(
+        project: &Project,
+        filter_audibility: bool,
+    ) -> Result<Self, MidiScheduleError> {
         let tracks = project.tracks();
         let has_solo = tracks.iter().any(Track::is_solo);
         let mut events = Vec::new();
@@ -306,7 +319,7 @@ impl MidiEventPlan {
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
 
         let mut reachable_solo = std::collections::HashMap::new();
-        if has_solo {
+        if filter_audibility && has_solo {
             for track in tracks {
                 let mut pending: Vec<_> = track
                     .effective_output_track()
@@ -359,7 +372,9 @@ impl MidiEventPlan {
                     track_id: item.track_id().value(),
                 })?;
             let routed_to_solo = reachable_solo.get(&track.id()).copied().unwrap_or(false);
-            if track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo) {
+            if filter_audibility
+                && (track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo))
+            {
                 continue;
             }
 

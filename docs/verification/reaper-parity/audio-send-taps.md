@@ -24,4 +24,4 @@ AudioSendTap 是每连接参数的一部分，Project/DawAction、Undo、Snapsho
 
 ![每条 Send 独立选择位置](images/audio-send-taps.png)
 
-多通道/MIDI/硬件、文件夹、反馈/PDC、路由矩阵和完整 REAPER 窗口交互仍待开发；前一切片的原生文件选择器与 MIDI 动态计划限制继续适用。P3 未关闭。
+多通道/MIDI/硬件、文件夹、反馈/PDC、路由矩阵和完整 REAPER 窗口交互仍待开发；原生文件选择器限制继续适用，内部 MIDI 动态恢复见[后续修复](midi-live-audibility.md)。P3 未关闭。
