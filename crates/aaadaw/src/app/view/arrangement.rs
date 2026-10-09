@@ -1036,7 +1036,7 @@ pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a
     .into()
 }
 
-fn track_draft_input_style(
+pub(super) fn track_draft_input_style(
     has_error: bool,
 ) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
     move |theme, status| {
