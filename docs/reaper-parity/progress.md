@@ -7,7 +7,7 @@
 | 用户批准 | 2026-10-09；Linux / REAPER 7.82 / 默认主题与配置 |
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
-| 唯一 PR | 尚未创建；创建后只在此处登记同一个 PR 链接 |
+| 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
 | 当前交付 | 批准计划、固定版本动作目录、逻辑键组合与多绑定首批实现、自动和 GUI 验证 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
@@ -32,7 +32,7 @@
 
 ## 实际验证与待补证据
 
-2026-10-09 首批实现 `INPUT-BIND-001` / `UI-030`：`app/shortcut.rs`、`commands.rs`、键盘事件分发、Settings 追加按钮及配置回归。支持精确修饰组合、字符/数字/标点、功能/导航键、多绑定、语义冲突检查。保留旧配置；工程 schema 为 17。代码提交与证据均在唯一分支，可通过 Git 历史追溯。
+2026-10-09 首批实现 `INPUT-BIND-001` / `UI-030`，提交 `2288d67`：`app/shortcut.rs`、`commands.rs`、键盘事件分发、Settings 追加按钮及配置回归。支持精确修饰组合、字符/数字/标点、功能/导航键、多绑定、语义冲突检查。保留旧配置；工程 schema 为 17。代码提交与证据均在唯一分支，可通过 Git 历史追溯。
 
 `cargo xtest` 全 workspace：715 passed / 0 skipped；Clippy（warnings denied）、默认构建、JACK/PipeWire all-targets check、格式检查通过。GUI 验证追加绑定、冲突保留、保存、重新启动及新绑定撤销轨道；详见 [AAADAW-INPUT-001](../verification/reaper-parity/keyboard-foundation.md)。不把功能回归当作 REAPER 全量行为验收；相关矩阵仍为 `in_progress`。
 
