@@ -212,3 +212,66 @@ fn incomplete_mixer_track_sets_reject_missing_main_or_send_targets() {
         ));
     }
 }
+
+#[test]
+fn send_taps_match_reference_fader_pan_and_track_mute() {
+    use aaadaw_core::AudioSendTap;
+    for tap in [
+        AudioSendTap::PostFader,
+        AudioSendTap::PreFx,
+        AudioSendTap::PreFader,
+    ] {
+        for muted in [false, true] {
+            let mut project = project();
+            let source = project.tracks()[1].id();
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: source,
+                    enabled: false,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackVolume {
+                    track_id: source,
+                    volume_db: 20.0 * 0.5_f32.log10(),
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackPan {
+                    track_id: source,
+                    pan: 1.0,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackMute {
+                    track_id: source,
+                    muted,
+                })
+                .unwrap();
+            send(
+                &mut project,
+                0,
+                AudioSendParameters {
+                    tap,
+                    ..Default::default()
+                },
+            );
+            let mut graph = graph(&project, [0.0, 0.125, 0.0], 1);
+            let mut output = [[0.0; 2]; 1];
+            graph.render_into(&mut output).unwrap();
+            let expected = if muted {
+                [0.0, 0.0]
+            } else if tap == AudioSendTap::PostFader {
+                [0.0, 0.0625]
+            } else {
+                [0.125, 0.125]
+            };
+            for channel in 0..2 {
+                assert!(
+                    (output[0][channel] - expected[channel]).abs() < 1e-6,
+                    "{tap:?} mute={muted} {output:?}"
+                );
+            }
+        }
+    }
+}

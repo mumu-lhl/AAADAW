@@ -1,11 +1,23 @@
 use super::super::{App, Message};
 use super::tokens;
-use aaadaw_core::{AudioSendParameters, DawAction, TrackId};
+use aaadaw_core::{AudioSendParameters, AudioSendTap, DawAction, TrackId};
 use iced::widget::{
     button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
 };
 use iced::{Element, Length};
 use std::fmt;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Tap(AudioSendTap);
+impl fmt::Display for Tap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            AudioSendTap::PostFader => "Post-fader (Post-pan)",
+            AudioSendTap::PreFx => "Pre-FX",
+            AudioSendTap::PreFader => "Pre-fader (Post-FX)",
+        })
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Destination {
@@ -72,7 +84,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .map_or_else(|| parameters.pan.to_string(), |draft| draft.pan.clone());
         let controls = column![
             row![
-                text("Audio · Post-fader").size(11).width(Length::Fill),
+                text("Audio").size(11).width(Length::Fill),
                 button("Remove").on_press(Message::RoutingChange(DawAction::DeleteAudioSend {
                     track_id: source,
                     send_id: id
@@ -86,6 +98,24 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     parameters,
                 })
             })
+            .width(Length::Fill),
+            pick_list(
+                [
+                    Tap(AudioSendTap::PostFader),
+                    Tap(AudioSendTap::PreFx),
+                    Tap(AudioSendTap::PreFader)
+                ],
+                Some(Tap(parameters.tap)),
+                move |tap| Message::RoutingChange(DawAction::UpdateAudioSend {
+                    track_id: source,
+                    send_id: id,
+                    destination,
+                    parameters: AudioSendParameters {
+                        tap: tap.0,
+                        ..parameters
+                    },
+                }),
+            )
             .width(Length::Fill),
             row![
                 column![
@@ -156,8 +186,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     column![
                         button(sender.name()).on_press(Message::OpenTrackRouting(sender_id)),
                         text(format!(
-                            "Post-fader · {} dB · Pan {}",
-                            parameters.volume_db, parameters.pan
+                            "{} · {} dB · Pan {}",
+                            Tap(parameters.tap),
+                            parameters.volume_db,
+                            parameters.pan
                         ))
                         .size(11),
                         text(format!(

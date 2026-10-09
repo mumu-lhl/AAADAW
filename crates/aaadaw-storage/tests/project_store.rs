@@ -1946,13 +1946,17 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
     }
     let source = project.tracks()[0].id();
     let destination = project.tracks()[1].id();
-    for volume_db in [-6.0, -12.0] {
+    for (volume_db, tap) in [
+        (-6.0, aaadaw_core::AudioSendTap::PreFx),
+        (-12.0, aaadaw_core::AudioSendTap::PreFader),
+    ] {
         project
             .apply(DawAction::CreateAudioSend {
                 track_id: source,
                 destination,
                 parameters: aaadaw_core::AudioSendParameters {
                     volume_db,
+                    tap,
                     pan: 0.5,
                     phase_inverted: true,
                     ..Default::default()
@@ -1988,7 +1992,7 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
     assert!(
         connection
             .execute(
-                "INSERT INTO track_sends VALUES(900, ?1, 2, 9999, 0, 0, 0, 0)",
+                "INSERT INTO track_sends(id,source_track_id,position,destination_track_id,volume_db,pan,muted,phase_inverted) VALUES(900, ?1, 2, 9999, 0, 0, 0, 0)",
                 [source.value() as i64]
             )
             .is_err()
@@ -2028,6 +2032,43 @@ fn schema_eighteen_adds_empty_sends_and_preserves_main_outputs_and_mix_policy() 
     drop(connection);
     let store = ProjectStore::open(&path).unwrap();
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_nineteen_preserves_sends_and_defaults_tap_to_post_fader() {
+    let path = project_path();
+    let mut project = Project::new();
+    for index in 0..2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Track {index}"),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: project.tracks()[0].id(),
+            destination: project.tracks()[1].id(),
+            parameters: aaadaw_core::AudioSendParameters {
+                volume_db: -6.0,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE track_sends DROP COLUMN tap; PRAGMA user_version = 19;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), expected);
     store.close().unwrap();
     remove_database(&path);

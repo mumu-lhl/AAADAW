@@ -73,3 +73,7 @@ Undo/Redo 为运行会话历史；恢复历史与重开工程是否持久化按�
 ## 已实现 schema 19 切片
 
 tracks.main_send_enabled 旧工程默认 true；track_sends 保存全局 SendId、源/目标 TrackId、顺序、volume/pan/mute/phase。Receive 不另存一份数据。外键与 Project 全图验证配合，读写及 Undo 保持身份；schema 18 保留旧单输出与 PanMode。当前 Tap 固定 Post-fader，后续增量迁移扩展。详见 [发送验证](../verification/reaper-parity/audio-sends.md)。
+
+## 已实现 schema 20 切片
+
+track_sends.tap（0 Post-fader、1 Pre-FX、3 Pre-fader）默认 0，受 CHECK 约束，reader 拒绝无效值。旧发送身份/位置/参数与主输出保持；AudioSendParameters 携带类型化 Tap，Undo 与 Snapshot 不另存路径。

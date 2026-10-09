@@ -14,9 +14,19 @@ impl SendId {
     }
 }
 
-/// Independent post-fader audio send controls.
+/// Signal stage tapped by an audio send.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AudioSendTap {
+    #[default]
+    PostFader,
+    PreFx,
+    PreFader,
+}
+
+/// Independent audio send controls.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AudioSendParameters {
+    pub tap: AudioSendTap,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
@@ -31,7 +41,7 @@ impl AudioSendParameters {
     }
 }
 
-/// A post-fader connection owned by its source; receives are derived views.
+/// A connection owned by its source; receives are derived views.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioSend {
     pub(crate) id: SendId,

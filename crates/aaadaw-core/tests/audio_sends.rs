@@ -39,6 +39,7 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
         pan: -0.5,
         muted: true,
         phase_inverted: true,
+        tap: aaadaw_core::AudioSendTap::PreFx,
     };
     project
         .apply(DawAction::UpdateAudioSend {

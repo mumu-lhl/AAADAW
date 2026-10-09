@@ -36,4 +36,4 @@ pub use track::{
     Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
-pub use routing::{AudioSend, AudioSendParameters, AudioSendSnapshot, SendId};
+pub use routing::{AudioSend, AudioSendParameters, AudioSendSnapshot, AudioSendTap, SendId};

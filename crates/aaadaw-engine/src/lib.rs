@@ -131,7 +131,7 @@ pub use stream::{
 };
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 
-use aaadaw_core::{ItemId, PanMode, Track, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{AudioSendTap, ItemId, PanMode, Track, TrackId, VolumeAutomationPoint};
 use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
@@ -162,6 +162,7 @@ struct TrackGains {
 
 #[derive(Clone, Debug)]
 struct CompiledSend {
+    tap: AudioSendTap,
     destination: usize,
     left_gain: f32,
     right_gain: f32,
@@ -648,6 +649,7 @@ impl MixerPlan {
                         })?;
                         let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
                         Ok(CompiledSend {
+                            tap: parameters.tap,
                             destination,
                             left_gain: gains.stereo_left * phase,
                             right_gain: gains.stereo_right * phase,
@@ -1822,6 +1824,8 @@ pub struct AudioRenderGraph {
     effects: Vec<FxRoute>,
     track_effect_buffers: TrackEffectBuffers,
     post_fader_scratch: Vec<[f32; 2]>,
+    pre_fx_scratch: Vec<[f32; 2]>,
+    pre_fader_scratch: Vec<[f32; 2]>,
     track_has_stereo_input: Vec<bool>,
     solo_audible_tracks: Vec<bool>,
     solo_bus_subtrees: Vec<bool>,
@@ -2099,6 +2103,8 @@ impl AudioRenderGraph {
             effects: effect_routes,
             track_effect_buffers,
             post_fader_scratch: vec![[0.0; 2]; max_block_frames],
+            pre_fx_scratch: vec![[0.0; 2]; max_block_frames],
+            pre_fader_scratch: vec![[0.0; 2]; max_block_frames],
             track_has_stereo_input,
             solo_audible_tracks,
             solo_bus_subtrees,
@@ -3220,6 +3226,11 @@ impl AudioRenderGraph {
             }
         }
         for track_index in self.mixer.routing_order.iter().copied() {
+            self.pre_fx_scratch[..output.len()].copy_from_slice(
+                &self.track_effect_buffers[track_index]
+                    .as_ref()
+                    .expect("routing buffer")[..output.len()],
+            );
             while self
                 .effects
                 .get(next_effect)
@@ -3248,6 +3259,7 @@ impl AudioRenderGraph {
             let source = self.track_effect_buffers[track_index]
                 .as_ref()
                 .expect("every track has a preallocated routing buffer");
+            self.pre_fader_scratch[..output.len()].copy_from_slice(&source[..output.len()]);
             let post_fader = &mut self.post_fader_scratch[..output.len()];
             post_fader.fill([0.0, 0.0]);
             // Advance source automation/ramp and publish its meter exactly once,
@@ -3281,6 +3293,7 @@ impl AudioRenderGraph {
             }
             for send in &track.sends {
                 if !send.muted
+                    && !track.live.muted.load(Ordering::Acquire)
                     && (self.solo_audible_tracks[track_index]
                         || self.solo_bus_subtrees[send.destination])
                 {
@@ -3288,7 +3301,11 @@ impl AudioRenderGraph {
                         .as_mut()
                         .expect("send destination buffer");
                     add_routed_buffer(
-                        post_fader,
+                        match send.tap {
+                            AudioSendTap::PostFader => post_fader,
+                            AudioSendTap::PreFx => &self.pre_fx_scratch[..output.len()],
+                            AudioSendTap::PreFader => &self.pre_fader_scratch[..output.len()],
+                        },
                         &mut destination[..output.len()],
                         send.left_gain,
                         send.right_gain,

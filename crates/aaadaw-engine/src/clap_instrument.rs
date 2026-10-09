@@ -3827,4 +3827,95 @@ mod tests {
             .into_parts();
         owner.deactivate(stopped);
     }
+    #[test]
+    fn send_taps_bracket_fx_and_source_fader_without_reprocessing() {
+        use aaadaw_core::{AudioSendParameters, AudioSendTap};
+        for (tap, expected) in [
+            (AudioSendTap::PreFx, [0.125, 0.125]),
+            (AudioSendTap::PreFader, [0.0625, 0.0625]),
+            (AudioSendTap::PostFader, [0.0, 0.015625]),
+        ] {
+            let mut project = Project::new();
+            for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+                project
+                    .apply(DawAction::CreateTrack {
+                        index,
+                        name: name.into(),
+                    })
+                    .unwrap();
+            }
+            let source = project.tracks()[0].id();
+            let receiver = project.tracks()[1].id();
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: source,
+                    enabled: false,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackVolume {
+                    track_id: source,
+                    volume_db: 20.0 * 0.25_f32.log10(),
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackPan {
+                    track_id: source,
+                    pan: 1.0,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackFxChain {
+                    track_id: source,
+                    plugins: vec![TrackFxPlugin::new(EFFECT_PLUGIN_ID, "test.clap").unwrap()],
+                })
+                .unwrap();
+            project
+                .apply(DawAction::CreateAudioSend {
+                    track_id: source,
+                    destination: receiver,
+                    parameters: AudioSendParameters {
+                        tap,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            let (mut producer, consumer) = pcm_stream(4).unwrap();
+            producer.push_samples(&[0.125; 4]);
+            let (_, silent) = pcm_stream(4).unwrap();
+            let (owner, processor) =
+                ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
+                    .unwrap();
+            let mut graph = AudioRenderGraph::new(&project, vec![consumer, silent], 4).unwrap();
+            graph
+                .install_fx_processors(
+                    &project,
+                    &mut vec![TrackFxProcessor::new(
+                        source,
+                        0,
+                        EFFECT_PLUGIN_ID,
+                        processor,
+                    )],
+                )
+                .unwrap();
+            graph.transport_mut().start();
+            let mut output = [[0.0; 2]; 4];
+            graph.render_into(&mut output).unwrap();
+            for frame in output {
+                for channel in 0..2 {
+                    assert!(
+                        (frame[channel] - expected[channel]).abs() < 1e-6,
+                        "{tap:?} {frame:?}"
+                    );
+                }
+            }
+            graph.stop_fx_processors();
+            let (_, _, _, stopped) = graph
+                .take_stopped_fx_processors()
+                .pop()
+                .unwrap()
+                .into_parts();
+            owner.deactivate(stopped);
+        }
+    }
 }
