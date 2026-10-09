@@ -9,12 +9,23 @@ pub const DEFAULT_TEMPO_BPM: f64 = 120.0;
 // Tempo segment integration uses f64 positions; reject integers beyond its exact range.
 const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
 
-/// Immutable construction settings for a project's timebase.
+/// Track-level gain policy inherited from the project at construction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PanMode {
+    /// Historical AAADAW equal-power mono and linear stereo balance behavior.
+    LegacyMonoStereo,
+    /// REAPER factory 0 dB linear stereo balance, also applied to mono sources.
+    #[default]
+    ZeroDbBalance,
+}
+
+/// Immutable construction settings for a project.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectSettings {
     sample_rate: u32,
     ppq: u32,
     initial_tempo_bpm: f64,
+    pan_mode: PanMode,
 }
 
 impl ProjectSettings {
@@ -33,7 +44,19 @@ impl ProjectSettings {
             sample_rate,
             ppq,
             initial_tempo_bpm,
+            pan_mode: PanMode::default(),
         })
+    }
+
+    /// Selects the gain policy without changing timebase settings.
+    pub fn with_pan_mode(mut self, mode: PanMode) -> Self {
+        self.pan_mode = mode;
+        self
+    }
+
+    /// Returns the project gain policy.
+    pub fn pan_mode(self) -> PanMode {
+        self.pan_mode
     }
 
     /// Returns the project sample rate.
@@ -58,6 +81,7 @@ impl Default for ProjectSettings {
             sample_rate: DEFAULT_SAMPLE_RATE,
             ppq: DEFAULT_PPQ,
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
+            pan_mode: PanMode::default(),
         }
     }
 }
@@ -433,6 +457,7 @@ impl TempoMap {
             sample_rate: self.sample_rate,
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
+            pan_mode: PanMode::default(),
         }
     }
 

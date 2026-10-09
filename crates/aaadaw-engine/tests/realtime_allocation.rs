@@ -81,7 +81,10 @@ impl Drop for AllocationTracking {
 
 #[test]
 fn render_callback_does_not_allocate_on_the_rendering_thread() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

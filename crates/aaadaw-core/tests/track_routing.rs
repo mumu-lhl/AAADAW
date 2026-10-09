@@ -38,7 +38,7 @@ fn bus_track_routes_are_undoable_and_survive_snapshot_round_trip() {
 }
 
 #[test]
-fn routing_rejects_non_bus_targets_cycles_and_bus_deletion_with_dependents() {
+fn routing_accepts_ordinary_targets_and_rejects_cycles_and_dependent_deletion() {
     let mut project = Project::new();
     for (index, name) in ["Source", "Bus A", "Bus B"].into_iter().enumerate() {
         let action = if index == 0 {
@@ -58,13 +58,24 @@ fn routing_rejects_non_bus_targets_cycles_and_bus_deletion_with_dependents() {
     let bus_a = project.tracks()[1].id();
     let bus_b = project.tracks()[2].id();
 
-    assert_eq!(
-        project.apply(DawAction::SetTrackOutput {
+    project
+        .apply(DawAction::SetTrackOutput {
             track_id: bus_a,
-            output_track: Some(source)
-        }),
-        Err(ActionError::InvalidTrackOutput)
+            output_track: Some(source),
+        })
+        .unwrap();
+    let restored = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(restored.tracks()[1].output_track(), Some(source));
+    assert!(!restored.tracks()[0].is_bus());
+    assert_eq!(
+        project.apply(DawAction::DeleteTrack { track_id: source }),
+        Err(ActionError::TrackHasRoutingDependents { track_id: source })
     );
+    project.undo().unwrap();
+    assert_eq!(project.tracks()[1].output_track(), None);
+    project.redo().unwrap();
+    assert_eq!(project.tracks()[1].output_track(), Some(source));
+    project.undo().unwrap();
     project
         .apply(DawAction::SetTrackOutput {
             track_id: bus_a,

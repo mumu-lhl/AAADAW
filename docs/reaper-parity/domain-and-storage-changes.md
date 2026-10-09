@@ -65,3 +65,7 @@ Undo/Redo 为运行会话历史；恢复历史与重开工程是否持久化按�
 ## 切片设计模板
 
 每个实现任务附：矩阵 ID、前后可观察行为、涉及模块、领域接口、存储迁移、引擎处理顺序、线程/内存所有权、窗口生命周期、错误/取消路径、验证场景、已知依赖和回滚方式。无实际需求不新增 crate 或抽象层。
+
+## 已实现 schema 18 切片
+
+`project_meta.pan_mode` 为受 CHECK 约束的工程级策略：0 为旧 AAADAW mono/stereo 混合策略，1 为新工程默认 0 dB balance。v17 加列默认 0，不改原轨道与媒体；新工程写 1。ProjectSettings 和 Track 构建缓存一致，Snapshot 保留 Settings；初始图与 live mix 都使用同一策略。没有 FX 前的声像补偿。并行 Send 模型尚未加入，本切片继续使用原 output_track_id 单输出。详见 [路由验证](../verification/reaper-parity/ordinary-track-routing.md)。

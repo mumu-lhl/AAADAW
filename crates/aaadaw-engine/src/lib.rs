@@ -131,7 +131,7 @@ pub use stream::{
 };
 pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
 
-use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{ItemId, PanMode, Track, TrackId, VolumeAutomationPoint};
 use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
@@ -161,6 +161,7 @@ struct TrackGains {
 #[derive(Debug)]
 struct LiveTrackGains {
     version: AtomicU32,
+    pan_mode: PanMode,
     left: AtomicU32,
     right: AtomicU32,
     stereo_left: AtomicU32,
@@ -322,7 +323,7 @@ impl TrackMixController {
         let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
             return false;
         };
-        let Some(gains) = gain_coefficients(volume_db, pan) else {
+        let Some(gains) = gain_coefficients(volume_db, pan, live.pan_mode) else {
             return false;
         };
 
@@ -375,9 +376,10 @@ impl TrackMixController {
 }
 
 impl LiveTrackGains {
-    fn new(gains: GainCoefficients, muted: bool, solo: bool) -> Self {
+    fn new(gains: GainCoefficients, muted: bool, solo: bool, pan_mode: PanMode) -> Self {
         Self {
             version: AtomicU32::new(0),
+            pan_mode,
             left: AtomicU32::new(gains.left.to_bits()),
             right: AtomicU32::new(gains.right.to_bits()),
             stereo_left: AtomicU32::new(gains.stereo_left.to_bits()),
@@ -428,7 +430,7 @@ fn meter_peak(value: f32) -> f32 {
     }
 }
 
-fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
+fn gain_coefficients(volume_db: f32, pan: f32, pan_mode: PanMode) -> Option<GainCoefficients> {
     if !volume_db.is_finite() || !(-1.0..=1.0).contains(&pan) {
         return None;
     }
@@ -449,6 +451,10 @@ fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
         (gain, (1.0 + pan) * gain)
     } else {
         ((1.0 - pan) * gain, gain)
+    };
+    let (left, right) = match pan_mode {
+        PanMode::LegacyMonoStereo => (left, right),
+        PanMode::ZeroDbBalance => (stereo_left, stereo_right),
     };
     Some(GainCoefficients {
         left,
@@ -583,7 +589,8 @@ impl MixerPlan {
         let has_solo = Arc::new(AtomicBool::new(tracks.iter().any(Track::is_solo)));
         let mut compiled = Vec::with_capacity(tracks.len());
         for track in tracks {
-            let Some(gains) = gain_coefficients(track.volume_db(), track.pan()) else {
+            let Some(gains) = gain_coefficients(track.volume_db(), track.pan(), track.pan_mode())
+            else {
                 return Err(MixerPlanError::InvalidTrackGain {
                     track_id: track.id().value(),
                 });
@@ -598,6 +605,7 @@ impl MixerPlan {
                     gains,
                     track.is_muted(),
                     track.is_solo(),
+                    track.pan_mode(),
                 )),
                 mix_ramp: Cell::new(GainRamp::new(gains, ramp_frames)),
                 record_armed: track.is_record_armed(),
@@ -857,24 +865,25 @@ impl MixerPlan {
     fn compile_solo_audibility(&self, audible: &mut [bool], solo_bus_subtrees: &mut [bool]) {
         if !self.has_solo.load(Ordering::Acquire) {
             audible.fill(true);
+            // A concurrent Solo enable must never expose a stale own-source mask.
+            solo_bus_subtrees.fill(true);
             return;
         }
         audible.fill(false);
         solo_bus_subtrees.fill(false);
 
-        // Walk from Master toward source tracks so a soloed bus includes every
+        // Walk from Master toward source tracks so a soloed receiver includes every
         // track below it without searching the full graph for each track.
         for track_index in self.routing_order.iter().rev().copied() {
             let track = &self.tracks[track_index];
-            solo_bus_subtrees[track_index] = (track.is_bus
-                && track.live.solo.load(Ordering::Acquire))
+            solo_bus_subtrees[track_index] = track.live.solo.load(Ordering::Acquire)
                 || track
                     .output_track_index
                     .is_some_and(|parent| solo_bus_subtrees[parent]);
             audible[track_index] = solo_bus_subtrees[track_index];
         }
 
-        // A soloed source and each bus above it must remain open on the path to Master.
+        // A soloed source and each receiving track above it must remain open on the path to Master.
         for (track_index, track) in self.tracks.iter().enumerate() {
             if !track.live.solo.load(Ordering::Acquire) {
                 continue;
@@ -3177,6 +3186,18 @@ impl AudioRenderGraph {
         };
         self.mixer
             .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
+        if self.mixer.has_solo.load(Ordering::Acquire) {
+            // Output paths may remain open for a soloed upstream source without
+            // making the receiver's own media, instrument or monitor audible.
+            // Clear own content before any upstream buffers are routed into it.
+            for (index, buffer) in self.track_effect_buffers.iter_mut().enumerate() {
+                if !self.solo_bus_subtrees[index]
+                    && let Some(buffer) = buffer
+                {
+                    buffer[..output.len()].fill([0.0, 0.0]);
+                }
+            }
+        }
         for track_index in self.mixer.routing_order.iter().copied() {
             while self
                 .effects

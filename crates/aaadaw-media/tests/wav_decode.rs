@@ -272,7 +272,10 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[-32768, 0, 16384, 32767], 24_000))
         .expect("test WAV should be written");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -336,7 +339,10 @@ fn delayed_stereo_reader_skips_pcm_that_falls_behind_the_playhead() {
         byte_position: Arc::clone(&byte_position),
     };
 
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -500,7 +506,10 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
         .audio_asset_reader("asset://embedded-wav")
         .expect("embedded asset should resolve to a reader");
 
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -563,7 +572,10 @@ fn file_backed_audio_item_stream_can_refill_at_a_timeline_seek() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[0, 8192, 16384, 24576], 48_000))
         .expect("test WAV should be written");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

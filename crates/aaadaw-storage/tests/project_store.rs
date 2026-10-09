@@ -41,6 +41,101 @@ fn readonly_project_load_does_not_modify_saved_database() {
 }
 
 #[test]
+fn ordinary_track_receivers_survive_save_and_read_only_reopen() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Receiver", "Source"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let receiver = project.tracks()[0].id();
+    let source = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(receiver),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(restored.tracks()[1].output_track(), Some(receiver));
+    assert!(!restored.tracks()[0].is_bus());
+    assert_eq!(
+        restored.settings().pan_mode(),
+        aaadaw_core::PanMode::ZeroDbBalance
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    remove_database(&path);
+}
+
+#[test]
+fn schema_seventeen_preserves_legacy_mix_policy_and_new_defaults_round_trip() {
+    let path = project_path();
+    let settings = aaadaw_core::ProjectSettings::default()
+        .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo);
+    let mut project = Project::with_settings(settings);
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy source".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Legacy bus".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: project.tracks()[0].id(),
+            output_track: Some(project.tracks()[1].id()),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 17;")
+        .unwrap();
+    drop(connection);
+    let backup_path = path.with_extension("v17-backup");
+    std::fs::copy(&path, &backup_path).unwrap();
+    let backup_bytes = std::fs::read(&backup_path).unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 18);
+    let restored = store.load().unwrap();
+    assert_eq!(restored.snapshot(), project.snapshot());
+    assert!(
+        restored
+            .tracks()
+            .iter()
+            .all(|track| track.pan_mode() == aaadaw_core::PanMode::LegacyMonoStereo)
+    );
+    store.close().unwrap();
+    let restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(
+        restored.settings().pan_mode(),
+        aaadaw_core::PanMode::LegacyMonoStereo
+    );
+    assert_eq!(std::fs::read(&backup_path).unwrap(), backup_bytes);
+    assert!(matches!(
+        ProjectStore::load_read_only(&backup_path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    std::fs::remove_file(backup_path).unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn project_store_round_trips_track_fx_parameter_automation() {
     let path = project_path();
     let mut project = Project::new();
@@ -142,7 +237,10 @@ fn project_store_round_trips_frozen_track_and_its_render_item() {
 #[test]
 fn schema_fourteen_migrates_track_freeze_reference_as_empty() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -158,7 +256,7 @@ fn schema_fourteen_migrates_track_freeze_reference_as_empty() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             PRAGMA user_version = 14;",
+             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 14;",
         )
         .unwrap();
     drop(connection);
@@ -205,7 +303,7 @@ fn midi_item_name_round_trips_and_schema_fifteen_defaults_existing_names() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; PRAGMA user_version = 15;",
+            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 15;",
         )
         .unwrap();
     drop(connection);
@@ -285,7 +383,10 @@ fn readonly_project_load_rejects_older_schema_without_migrating_it() {
 #[test]
 fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -304,7 +405,7 @@ fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
              DROP TABLE arrangement_view_meta; \
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             PRAGMA user_version = 13;",
+             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);
@@ -665,7 +766,10 @@ fn checkpoint_reports_busy_while_a_reader_pins_the_wal_and_recovers_afterward() 
 #[test]
 fn schema_twelve_migrates_v11_tempo_curve_values() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::SetTempo {
             start_tick: 1920,
@@ -691,7 +795,7 @@ fn schema_twelve_migrates_v11_tempo_curve_values() {
              DROP TABLE arrangement_view_meta;
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id;
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name;
-             PRAGMA user_version = 11;
+             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 11;
              DROP TABLE track_fx_parameter_automation_points;
              CREATE TABLE tempo_points_v11 (
                  start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
@@ -751,7 +855,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN output_track_id; \
              ALTER TABLE tracks DROP COLUMN is_bus; \
              DROP TABLE track_fx_plugins; \
-             PRAGMA user_version = 2;",
+             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 2;",
         )
         .expect("remove v3 columns to represent a v2 project");
     drop(connection);
@@ -1712,7 +1816,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 6;",
+            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1726,7 +1830,10 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
 #[test]
 fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1759,7 +1866,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1773,7 +1880,10 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 #[test]
 fn schema_eight_projects_migrate_volume_automation_storage_without_changing_tracks() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1786,7 +1896,7 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
@@ -1812,7 +1922,7 @@ fn schema_nine_projects_migrate_tracks_to_master_by_default() {
     store.close().expect("project should close");
 
     let connection = Connection::open(&path).expect("project should be SQLite");
-    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; PRAGMA user_version = 9;").unwrap();
+    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 9;").unwrap();
     drop(connection);
     let store = ProjectStore::open(&path).expect("schema nine should migrate");
     let restored = store.load().unwrap();

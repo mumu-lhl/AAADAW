@@ -7,7 +7,10 @@ use aaadaw_engine::{
 
 #[test]
 fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -73,7 +76,10 @@ fn render_graph_mixes_streamed_pcm_and_reports_underruns() {
 
 #[test]
 fn stereo_item_stream_preserves_channels_and_counts_interleaved_underrun_samples() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -116,7 +122,10 @@ fn stereo_item_stream_preserves_channels_and_counts_interleaved_underrun_samples
 
 #[test]
 fn stereo_item_underrun_publishes_the_next_playhead_sample_to_its_feeder() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -160,7 +169,10 @@ fn stereo_item_underrun_publishes_the_next_playhead_sample_to_its_feeder() {
 
 #[test]
 fn stereo_item_discards_already_queued_frames_behind_a_refill_position() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -204,7 +216,10 @@ fn stereo_item_discards_already_queued_frames_behind_a_refill_position() {
 
 #[test]
 fn stereo_audio_item_keeps_its_image_through_a_subgroup_bus() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -252,7 +267,10 @@ fn stereo_audio_item_keeps_its_image_through_a_subgroup_bus() {
 
 #[test]
 fn render_graph_routes_audio_through_bus_fader_and_mute() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -328,7 +346,10 @@ fn render_graph_routes_audio_through_bus_fader_and_mute() {
 
 #[test]
 fn soloed_bus_keeps_its_inputs_and_mutes_unrelated_tracks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Source", "Direct", "Bus"].into_iter().enumerate() {
         let action = if index == 2 {
             DawAction::CreateBusTrack {
@@ -377,7 +398,10 @@ fn soloed_bus_keeps_its_inputs_and_mutes_unrelated_tracks() {
 
 #[test]
 fn nested_buses_render_in_dependency_order_independent_of_track_order() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateBusTrack {
             index: 0,
@@ -431,7 +455,10 @@ fn nested_buses_render_in_dependency_order_independent_of_track_order() {
 
 #[test]
 fn track_volume_automation_is_sample_accurate_across_blocks_and_seeks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -477,7 +504,10 @@ fn track_volume_automation_is_sample_accurate_across_blocks_and_seeks() {
 
 #[test]
 fn track_volume_automation_holds_endpoint_values_before_and_after_points() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -519,7 +549,10 @@ fn track_volume_automation_holds_endpoint_values_before_and_after_points() {
 
 #[test]
 fn live_mix_controller_starts_smoothing_on_the_next_render_block() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -557,7 +590,10 @@ fn live_mix_controller_starts_smoothing_on_the_next_render_block() {
 
 #[test]
 fn live_mix_ramp_applies_to_stereo_audio_routed_through_a_bus() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -624,7 +660,10 @@ fn live_mix_ramp_applies_to_stereo_audio_routed_through_a_bus() {
 
 #[test]
 fn live_input_monitor_routes_only_to_explicitly_enabled_armed_tracks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Armed", "Also armed", "Unarmed"].into_iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {
@@ -696,7 +735,10 @@ fn live_input_monitor_routes_only_to_explicitly_enabled_armed_tracks() {
 
 #[test]
 fn live_input_monitor_renders_while_transport_is_stopped_without_advancing_it() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -735,7 +777,10 @@ fn live_input_monitor_renders_while_transport_is_stopped_without_advancing_it() 
 
 #[test]
 fn live_mix_ramp_applies_while_monitoring_with_transport_stopped() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -787,7 +832,10 @@ fn live_mix_ramp_applies_while_monitoring_with_transport_stopped() {
 
 #[test]
 fn live_input_monitor_keeps_its_queue_and_route_across_graph_replacement() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -831,7 +879,10 @@ fn live_input_monitor_keeps_its_queue_and_route_across_graph_replacement() {
 #[test]
 fn live_input_monitor_obeys_track_mute_and_project_solo_rules() {
     for (muted, solo_other) in [(true, false), (false, true)] {
-        let mut project = Project::new();
+        let mut project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+        );
         for (index, name) in ["Monitor target", "Other"].into_iter().enumerate() {
             project
                 .apply(DawAction::CreateTrack {
@@ -887,7 +938,10 @@ fn live_input_monitor_obeys_track_mute_and_project_solo_rules() {
 
 #[test]
 fn live_input_monitor_tracks_mute_and_solo_changes_without_graph_rebuild() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Monitor target", "Other"].into_iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {
@@ -949,7 +1003,10 @@ fn live_input_monitor_tracks_mute_and_solo_changes_without_graph_rebuild() {
 
 #[test]
 fn master_sample_peak_ceiling_applies_after_mixing_and_updates_live() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -984,7 +1041,10 @@ fn master_sample_peak_ceiling_applies_after_mixing_and_updates_live() {
 
 #[test]
 fn audio_item_streams_respect_sample_clock_start_and_end_positions() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1028,7 +1088,10 @@ fn audio_item_streams_respect_sample_clock_start_and_end_positions() {
 
 #[test]
 fn seeking_inside_an_audio_item_requires_a_refilled_source_stream() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1069,7 +1132,10 @@ fn seeking_inside_an_audio_item_requires_a_refilled_source_stream() {
 
 #[test]
 fn refilled_audio_item_stream_can_start_at_a_seek_position() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1108,7 +1174,10 @@ fn refilled_audio_item_stream_can_start_at_a_seek_position() {
 
 #[test]
 fn graph_rejects_mismatched_topology_and_oversized_blocks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1140,7 +1209,10 @@ fn graph_rejects_mismatched_topology_and_oversized_blocks() {
 
 #[test]
 fn render_graph_schedules_midi_atomically_with_the_audio_block() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1215,7 +1287,10 @@ fn render_graph_schedules_midi_atomically_with_the_audio_block() {
 
 #[test]
 fn playback_start_and_restart_chase_sustained_midi_notes() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1310,7 +1385,10 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
 
 #[test]
 fn seek_chases_sustain_state_before_resuming_sustained_notes() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1421,4 +1499,419 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
         .expect("sustained note should be chased");
     assert_eq!(note.kind, aaadaw_engine::MidiEventKind::NoteOn);
     assert_eq!(note.sample_offset, 0);
+}
+
+#[test]
+fn stereo_audio_item_keeps_its_image_through_a_subgroup_bus_with_ordinary_receivers() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Stereo source".to_owned(),
+        })
+        .expect("source track should be created");
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Stereo bus".to_owned(),
+        })
+        .expect("bus track should be created");
+    let source_track = project.tracks()[0].id();
+    let bus_track = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_track,
+            output_track: Some(bus_track),
+        })
+        .expect("source should route to the bus");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: source_track,
+            media_ref: "asset://stereo-bus-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1,
+        })
+        .expect("audio item should be valid");
+    let (mut producer, consumer) = stereo_pcm_stream(1).unwrap();
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames(&[[0.25, -0.5]]), 1);
+    let stream = AudioItemStream::new_stereo(project.audio_items()[0].id(), consumer);
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: bus_track,
+            media_ref: "asset://receiver-own-stereo".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 1,
+        })
+        .unwrap();
+    let (mut receiver_producer, receiver_consumer) = stereo_pcm_stream(1).unwrap();
+    receiver_producer.set_stereo_content(true);
+    assert_eq!(receiver_producer.push_frames(&[[0.1, 0.2]]), 1);
+    let receiver_stream =
+        AudioItemStream::new_stereo(project.audio_items()[1].id(), receiver_consumer);
+    let mut graph =
+        AudioRenderGraph::new_for_audio_items(&project, vec![stream, receiver_stream], 2)
+            .expect("stereo source should route through the bus");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph
+        .render_into(&mut output)
+        .expect("routed stereo source should render");
+
+    assert!((output[0][0] - 0.35).abs() < 1.0e-6);
+    assert!((output[0][1] + 0.3).abs() < 1.0e-6);
+}
+
+#[test]
+fn render_graph_routes_audio_through_bus_fader_and_mute_with_ordinary_receivers() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bass".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Guitar".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 2,
+            name: "Band".into(),
+        })
+        .unwrap();
+    let bass = project.tracks()[0].id();
+    let guitar = project.tracks()[1].id();
+    let bus = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: bass,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: guitar,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackVolume {
+            track_id: bus,
+            volume_db: -6.0,
+        })
+        .unwrap();
+
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(4).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[0].push_samples(&[0.25; 2]);
+    producers[1].push_samples(&[0.5; 2]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = (0.25 + 0.5) * 1.0 * 10.0_f32.powf(-6.0 / 20.0);
+    assert!(
+        (output[0][0] - expected).abs() < 1.0e-6,
+        "output={output:?} expected={expected}"
+    );
+    assert!(
+        (output[0][1] - expected).abs() < 1.0e-6,
+        "output={output:?} expected={expected}"
+    );
+    assert_eq!(mix.take_track_peak(bus), Some([expected, expected]));
+    let bass_peak = 0.25 * 1.0;
+    assert_eq!(mix.take_track_peak(bass), Some([bass_peak, bass_peak]));
+
+    assert!(mix.set_track_mute_solo(bus, true, false));
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]]);
+    assert_eq!(mix.take_track_peak(bus), Some([0.0, 0.0]));
+}
+
+#[test]
+fn soloed_bus_keeps_its_inputs_and_mutes_unrelated_tracks_with_ordinary_receivers() {
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Direct", "Bus"].into_iter().enumerate() {
+        let action = DawAction::CreateTrack {
+            index,
+            name: name.into(),
+        };
+        project.apply(action).unwrap();
+    }
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(bus),
+        })
+        .unwrap();
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(4).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[0].push_samples(&[0.25]);
+    producers[1].push_samples(&[0.5]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    let mix = graph.track_mix_controller();
+    assert!(mix.set_track_mute_solo(bus, false, true));
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = 0.25 * 1.0;
+    assert!((output[0][0] - expected).abs() < 1.0e-6);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
+    assert_eq!(mix.take_track_peak(source), Some([expected, expected]));
+    assert_eq!(mix.take_track_peak(bus), Some([expected, expected]));
+    let direct = project.tracks()[1].id();
+    assert_eq!(mix.take_track_peak(direct), Some([0.0, 0.0]));
+}
+
+#[test]
+fn nested_buses_render_in_dependency_order_independent_of_track_order_with_ordinary_receivers() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Master Submix".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Source Submix".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 2,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let master_submix = project.tracks()[0].id();
+    let source_submix = project.tracks()[1].id();
+    let source = project.tracks()[2].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_submix,
+            output_track: Some(master_submix),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(source_submix),
+        })
+        .unwrap();
+
+    let mut streams = Vec::new();
+    let mut producers = Vec::new();
+    for _ in 0..3 {
+        let (producer, consumer) = pcm_stream(2).unwrap();
+        producers.push(producer);
+        streams.push(consumer);
+    }
+    producers[2].push_samples(&[0.5]);
+    let mut graph = AudioRenderGraph::new(&project, streams, 1).unwrap();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    graph.render_into(&mut output).unwrap();
+    let expected = 0.5 * 1.0;
+    assert!((output[0][0] - expected).abs() < 1.0e-6);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
+}
+
+#[test]
+fn live_mix_ramp_applies_to_stereo_audio_routed_through_a_bus_with_ordinary_receiver() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Source".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Bus".to_owned(),
+        })
+        .unwrap();
+    let source_id = project.tracks()[0].id();
+    let bus_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source_id,
+            output_track: Some(bus_id),
+        })
+        .unwrap();
+
+    let ramp_frames = 240;
+    let (mut source_producer, source_consumer) = pcm_stream(ramp_frames + 2).unwrap();
+    let (mut bus_producer, bus_consumer) = pcm_stream(ramp_frames + 2).unwrap();
+    assert_eq!(
+        source_producer.push_samples(&vec![0.25; ramp_frames + 2]),
+        ramp_frames + 2
+    );
+    assert_eq!(
+        bus_producer.push_samples(&vec![0.0; ramp_frames + 2]),
+        ramp_frames + 2
+    );
+    let mut graph =
+        AudioRenderGraph::new(&project, vec![source_consumer, bus_consumer], ramp_frames)
+            .expect("track streams should compile into the bus graph");
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut initial = [[0.0_f32; 2]; 2];
+    graph
+        .render_into(&mut initial)
+        .expect("initial routed stereo frames should render");
+    let center = 0.25;
+    assert!(
+        initial.iter().all(|frame| {
+            (frame[0] - center).abs() < 1.0e-6 && (frame[1] - center).abs() < 1.0e-6
+        })
+    );
+
+    assert!(mix.set_track_mix(bus_id, -6.0, 1.0));
+    let mut output = vec![[0.0_f32; 2]; ramp_frames];
+    graph
+        .render_into(&mut output)
+        .expect("bus fader/pan ramp should render across the stereo route");
+    let right_gain = 10.0_f32.powf(-6.0 / 20.0);
+    assert!(output[0][0] > 0.0 && output[0][0] < center);
+    assert!(output[0][1] < center);
+    assert_eq!(output[ramp_frames - 1][0], 0.0);
+    assert!((output[ramp_frames - 1][1] - center * right_gain).abs() < 1.0e-6);
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        u64::try_from(ramp_frames + 2).unwrap()
+    );
+}
+
+#[test]
+fn upstream_solo_opens_receiver_path_without_playing_receiver_own_media() {
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let source = project.tracks()[0].id();
+    let receiver = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(receiver),
+        })
+        .unwrap();
+    let (mut source_producer, source_consumer) = pcm_stream(4).unwrap();
+    let (mut own_producer, own_consumer) = pcm_stream(4).unwrap();
+    source_producer.push_samples(&[0.25; 3]);
+    own_producer.push_samples(&[0.5; 3]);
+    let mut graph =
+        AudioRenderGraph::new(&project, vec![source_consumer, own_consumer], 1).unwrap();
+    let mix = graph.track_mix_controller();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 1];
+    let routed = 0.25 * 1.0;
+    graph.render_into(&mut output).unwrap();
+    assert!((output[0][0] - routed - 0.5).abs() < 1.0e-6);
+    mix.set_track_mute_solo(source, false, true);
+    graph.render_into(&mut output).unwrap();
+    assert!((output[0][0] - routed).abs() < 1.0e-6);
+    assert!((output[0][1] - routed).abs() < 1.0e-6);
+    mix.set_track_mute_solo(source, false, false);
+    mix.set_track_mute_solo(receiver, false, true);
+    graph.render_into(&mut output).unwrap();
+    assert!((output[0][0] - routed - 0.5).abs() < 1.0e-6);
+}
+
+#[test]
+fn project_pan_policy_keeps_own_mono_level_when_a_silent_route_is_added() {
+    for mode in [
+        aaadaw_core::PanMode::ZeroDbBalance,
+        aaadaw_core::PanMode::LegacyMonoStereo,
+    ] {
+        for (pan, balance_expected) in [
+            (-1.0, [0.25, 0.0]),
+            (-0.5, [0.25, 0.125]),
+            (0.0, [0.25, 0.25]),
+            (0.5, [0.125, 0.25]),
+            (1.0, [0.0, 0.25]),
+        ] {
+            for connected in [false, true] {
+                let mut project = Project::with_settings(
+                    aaadaw_core::ProjectSettings::default().with_pan_mode(mode),
+                );
+                let expected = if mode == aaadaw_core::PanMode::LegacyMonoStereo {
+                    match pan {
+                        -1.0 => [0.25, 0.0],
+                        1.0 => [0.0, 0.25],
+                        _ => {
+                            let angle = (f64::from(pan) + 1.0) * std::f64::consts::FRAC_PI_4;
+                            [angle.cos() as f32 * 0.25, angle.sin() as f32 * 0.25]
+                        }
+                    }
+                } else {
+                    balance_expected
+                };
+                for (index, name) in ["Silent", "Own mono"].into_iter().enumerate() {
+                    project
+                        .apply(DawAction::CreateTrack {
+                            index,
+                            name: name.into(),
+                        })
+                        .unwrap();
+                }
+                let silent = project.tracks()[0].id();
+                let receiver = project.tracks()[1].id();
+                project
+                    .apply(DawAction::SetTrackPan {
+                        track_id: receiver,
+                        pan,
+                    })
+                    .unwrap();
+                if connected {
+                    project
+                        .apply(DawAction::SetTrackOutput {
+                            track_id: silent,
+                            output_track: Some(receiver),
+                        })
+                        .unwrap();
+                }
+                let (mut silent_producer, silent_consumer) = pcm_stream(1).unwrap();
+                let (mut own_producer, own_consumer) = pcm_stream(1).unwrap();
+                silent_producer.push_samples(&[0.0]);
+                own_producer.push_samples(&[0.25]);
+                let mut graph =
+                    AudioRenderGraph::new(&project, vec![silent_consumer, own_consumer], 1)
+                        .unwrap();
+                graph.transport_mut().start();
+                let mut output = [[0.0; 2]; 1];
+                graph.render_into(&mut output).unwrap();
+                assert_eq!(
+                    output[0], expected,
+                    "mode={mode:?}, pan={pan}, connected={connected}"
+                );
+            }
+        }
+    }
 }

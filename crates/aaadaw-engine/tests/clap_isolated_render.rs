@@ -48,7 +48,10 @@ fn add_track_with_note(project: &mut Project, name: &str) -> aaadaw_core::TrackI
 
 #[test]
 fn crashed_helper_silences_only_its_track_while_isolated_midi_keeps_rendering() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     let failed_track = add_track_with_note(&mut project, "Failed instrument");
     let working_track = add_track_with_note(&mut project, "Working instrument");
     let config = ClapIpcConfig::new(
@@ -135,7 +138,10 @@ fn crashed_helper_silences_only_its_track_while_isolated_midi_keeps_rendering() 
 
 #[test]
 fn stalled_helper_silences_only_its_track_while_isolated_midi_keeps_rendering() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     let stalled_track = add_track_with_note(&mut project, "Stalled instrument");
     let working_track = add_track_with_note(&mut project, "Working instrument");
     let config = ClapIpcConfig::new(
@@ -210,7 +216,10 @@ fn stalled_helper_silences_only_its_track_while_isolated_midi_keeps_rendering() 
 
 #[test]
 fn protocol_mismatch_does_not_prevent_other_isolated_tracks_from_rendering() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     let _mismatched_track = add_track_with_note(&mut project, "Mismatched instrument");
     let working_track = add_track_with_note(&mut project, "Working instrument");
     let config = ClapIpcConfig::new(

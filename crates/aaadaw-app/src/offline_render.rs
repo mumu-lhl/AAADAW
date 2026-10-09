@@ -962,7 +962,10 @@ mod tests {
     }
 
     fn project_with_one_track() -> Project {
-        let mut project = Project::new();
+        let mut project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+        );
         project
             .apply(DawAction::CreateTrack {
                 index: 0,

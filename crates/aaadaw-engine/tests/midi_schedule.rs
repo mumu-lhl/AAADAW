@@ -4,7 +4,10 @@ use aaadaw_core::{
 use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -162,7 +165,10 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
 
 #[test]
 fn event_plan_applies_midi_source_offset_at_the_visible_start() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -552,7 +558,10 @@ fn midi_controller_schedule_is_sample_accurate_and_chases_latest_state() {
 
 #[test]
 fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -610,7 +619,10 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
 
 #[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {
@@ -683,7 +695,10 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
 
 #[test]
 fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

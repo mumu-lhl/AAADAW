@@ -12,7 +12,7 @@ UI-010,category,,linux,7.82,Item 编辑,Move/Copy/Trim/Extend/Slip、Fade/Crossf
 UI-011,category,,linux,7.82,Take/Lane/Comp,录音 Take、Fixed Lanes、Comp Areas、激活/多 Take、评级、Marker、Explode/Implode,P5/P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-012,category,,linux,7.82,高级与谱编辑,Razor、Ripple、Grouping、Lock、Stretch、Pitch、瞬态、动态分割、谱图/谱编辑/Sample 编辑,P5,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-013,category,,linux,7.82,Tempo/Marker/Region,标尺 Lane、Tempo/Meter、属性、管理窗口、Region 编辑、Timebase、负时间偏移,P4/P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
-UI-014,category,,linux,7.82,路由,Track I/O、Send/Receive、Hardware、Matrix、Wiring、Channel/MIDI Bus、反馈、PDC,P3,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-014,category,,linux,7.82,路由,Track I/O、Send/Receive、Hardware、Matrix、Wiring、Channel/MIDI Bus、反馈、PDC,P3,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-015,category,,linux,7.82,Pan/Group/VCA,Pan Law/Modes、Width/Dual Pan、Phase、Grouping Matrix/Manager、VCA,P3/P8,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-016,category,,linux,7.82,音频设备与录音,后端、设备/通道、别名、缓冲/时钟、Monitor、模式、Punch/Loop、录音结束、恢复,P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-017,category,,linux,7.82,节拍器与同步,Metronome/Count-in/Pre-roll、路由、Scrub/Jog、外部 LTC/MTC/MIDI Clock 等适用入口,P6/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
@@ -42,7 +42,7 @@ SHELL-PROFILE-001,atomic,UI-003,linux,7.82,Desktop profile,窄桌面窗口维持
 INPUT-BIND-001,atomic,UI-030,linux,7.82,Action List,完整修饰键和命名键组合,P1,in_progress,false,crates/aaadaw/src/app/commands.rs,LNX-782-ACTIONS-001 / LNX-782-ACTIONLIST-002; docs/verification/reaper-parity/action-list-and-input.md,参照适用按键可绑定和执行；冲突不破坏原配置,AAADAW-INPUT-002; 727 workspace tests passed; GUI Add/Find/Delete,动作列表基础已实现；Section/原厂录入确认/重复绑定规则等仍待对齐
 INPUT-FOCUS-001,atomic,UI-030,linux,7.82,Focus,文本与编辑器 Action Section 的输入归属,P1,uninvestigated,false,crates/aaadaw/src/app/commands.rs,,输入文本不执行误触全局动作；参照允许穿透逐项验证,,现有焦点能力需对照验证
 MIX-FADER-001,atomic,UI-005,linux,7.82,Mixer,Fader/Meter 的几何和操作,P2,uninvestigated,false,crates/aaadaw/src/app/view/mixer.rs,,默认 MCP 推子方向/曲线/精调/重置及 Meter 布局匹配证据,,当前复用横向轨道控制
-ROUTE-SEND-001,atomic,UI-014,linux,7.82,Track routing,通用轨道 Send/Receive,P3,uninvestigated,false,crates/aaadaw-core/src/track.rs,,可建立非 Bus 目标发送且图中实际处理正确；保存撤销一致,,当前单输出只允许 Bus 目标
+ROUTE-SEND-001,atomic,UI-014,linux,7.82,Track routing,通用轨道 Send/Receive,P3,in_progress,false,crates/aaadaw-core/src/track.rs,docs/verification/reaper-parity/ordinary-track-routing.md,可建立非 Bus 目标发送且图中实际处理正确；保存撤销一致,core routing / engine render / storage schema18 tests,普通目标单输出已实现；并行Send/Receive与Tap/通道/MIDI映射仍缺
 ROUTE-FOLDER-001,atomic,UI-004,linux,7.82,Folder,嵌套文件夹与 Parent Send,P3,uninvestigated,false,crates/aaadaw-core/src/track.rs,,嵌套/折叠/TCP-MCP/实际汇总路径与参照一致,,当前 Track 缺文件夹层级
 EDIT-FADE-001,atomic,UI-010,linux,7.82,Item Fade,淡化手柄、曲线与交叉淡化,P4,uninvestigated,false,crates/aaadaw-core/src/audio.rs,,拖动和数值输入得到相同曲线；播放导出保存重开一致,,当前 AudioItem 无淡化数据
 EDIT-TAKE-001,atomic,UI-011,linux,7.82,Take,多 Take 与激活状态,P5,uninvestigated,false,crates/aaadaw-core/src/audio.rs,,录音产生正确 Take；切换播放、撤销和保存正确,,当前 AudioItem 只有单 placement

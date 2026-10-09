@@ -128,7 +128,7 @@ impl fmt::Display for ActionError {
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
             ),
             Self::InvalidTrackOutput => {
-                formatter.write_str("track output must name a different bus or Master")
+                formatter.write_str("track output must name a different track or Master")
             }
             Self::TrackRoutingCycle => {
                 formatter.write_str("track output would create a routing cycle")

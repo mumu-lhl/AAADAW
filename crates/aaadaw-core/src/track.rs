@@ -119,6 +119,7 @@ pub struct Track {
     pub(crate) output_track: Option<TrackId>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
+    pub(crate) pan_mode: crate::PanMode,
     pub(crate) muted: bool,
     pub(crate) solo: bool,
     pub(crate) record_armed: bool,
@@ -306,6 +307,11 @@ impl TrackFxPlugin {
 }
 
 impl Track {
+    /// Returns the inherited project gain policy.
+    pub fn pan_mode(&self) -> crate::PanMode {
+        self.pan_mode
+    }
+
     /// Returns this track's identifier.
     pub fn id(&self) -> TrackId {
         self.id

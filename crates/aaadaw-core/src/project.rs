@@ -43,10 +43,7 @@ fn valid_track_routing(tracks: &[crate::Track]) -> bool {
             if target_id == source.id {
                 return false;
             }
-            let Some(target) = tracks
-                .iter()
-                .find(|track| track.id == target_id && track.is_bus)
-            else {
+            let Some(target) = tracks.iter().find(|track| track.id == target_id) else {
                 return false;
             };
             visited += 1;
@@ -80,6 +77,7 @@ pub struct FxParameterChange {
 
 #[derive(Clone, Debug, Default)]
 struct ProjectState {
+    pan_mode: crate::PanMode,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
@@ -658,6 +656,7 @@ impl Project {
     pub fn with_settings(settings: ProjectSettings) -> Self {
         Self {
             state: ProjectState {
+                pan_mode: settings.pan_mode(),
                 tempo_map: TempoMap::new(settings),
                 meter_map: MeterMap::new(settings.ppq()),
                 ..ProjectState::default()
@@ -668,7 +667,10 @@ impl Project {
 
     /// Returns the project's immutable sample-rate and PPQ settings.
     pub fn settings(&self) -> ProjectSettings {
-        self.state.tempo_map.settings()
+        self.state
+            .tempo_map
+            .settings()
+            .with_pan_mode(self.state.pan_mode)
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -833,7 +835,7 @@ impl Project {
     /// Creates a serialization-friendly copy of the current project state.
     pub fn snapshot(&self) -> ProjectSnapshot {
         ProjectSnapshot {
-            settings: self.state.tempo_map.settings(),
+            settings: self.settings(),
             tracks: self
                 .state
                 .tracks
@@ -1071,6 +1073,7 @@ impl Project {
                 output_track: track.output_track_id.map(TrackId::from_raw),
                 volume_db: track.volume_db,
                 pan: track.pan,
+                pan_mode: settings.pan_mode(),
                 muted: track.muted,
                 solo: track.solo,
                 record_armed: track.record_armed,
@@ -1191,6 +1194,7 @@ impl Project {
 
         Ok(Self {
             state: ProjectState {
+                pan_mode: settings.pan_mode(),
                 tracks,
                 audio_items,
                 midi_items,
@@ -1252,6 +1256,7 @@ impl Project {
                     output_track: None,
                     volume_db: 0.0,
                     pan: 0.0,
+                    pan_mode: state.pan_mode,
                     muted: false,
                     solo: false,
                     record_armed: false,
@@ -1281,6 +1286,7 @@ impl Project {
                     output_track: None,
                     volume_db: 0.0,
                     pan: 0.0,
+                    pan_mode: state.pan_mode,
                     muted: false,
                     solo: false,
                     record_armed: false,
@@ -1457,7 +1463,7 @@ impl Project {
                     let target = state
                         .tracks
                         .iter()
-                        .find(|track| track.id == target_id && track.is_bus)
+                        .find(|track| track.id == target_id)
                         .ok_or(ActionError::InvalidTrackOutput)?;
                     next = target.output_track;
                 }

@@ -346,7 +346,7 @@ pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Eleme
         label: "Master".to_owned(),
     })
     .chain(app.project.tracks().iter().filter_map(|candidate| {
-        if !candidate.is_bus() || candidate.id() == track_id {
+        if candidate.id() == track_id {
             return None;
         }
         let mut ancestor = candidate.output_track();
@@ -363,7 +363,7 @@ pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Eleme
         }
         Some(TrackOutputChoice {
             track_id: Some(candidate.id()),
-            label: format!("{} (Bus)", candidate.name()),
+            label: candidate.name().to_owned(),
         })
     }))
     .collect();

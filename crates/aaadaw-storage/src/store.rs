@@ -1,8 +1,8 @@
 use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
-    MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
-    TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectSettings, ProjectSnapshot,
+    SnapshotError, TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
@@ -22,9 +22,12 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 17;
+pub const CURRENT_SCHEMA_VERSION: u32 = 18;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
+
+// Additive migration: existing projects retain their historical signal path.
+const MIGRATION_18: &str = "ALTER TABLE project_meta ADD COLUMN pan_mode INTEGER NOT NULL DEFAULT 0 CHECK(pan_mode IN (0, 1));";
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE project_meta (
@@ -2152,18 +2155,19 @@ impl ProjectStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, f64>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((sample_rate, ppq, initial_tempo_bpm)) = metadata else {
+        let Some((sample_rate, ppq, initial_tempo_bpm, pan_mode)) = metadata else {
             let rows: i64 = self.connection.query_row(
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
             (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
@@ -2187,7 +2191,12 @@ impl ProjectStore {
             from_sql_u32(ppq)?,
             initial_tempo_bpm,
         )
-        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?;
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_pan_mode(match pan_mode {
+            0 => PanMode::LegacyMonoStereo,
+            1 => PanMode::ZeroDbBalance,
+            _ => return Err(StorageError::InvalidStoredData("unsupported pan mode")),
+        });
 
         let tracks = read_tracks(&self.connection)?;
         let audio_items = read_audio_items(&self.connection)?;
@@ -2357,6 +2366,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             15 => transaction.execute_batch(MIGRATION_15)?,
             16 => transaction.execute_batch(MIGRATION_16)?,
             17 => transaction.execute_batch(MIGRATION_17)?,
+            18 => transaction.execute_batch(MIGRATION_18)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2386,12 +2396,16 @@ fn write_snapshot(
 
     let settings = snapshot.settings;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm) \
-         VALUES(1, ?1, ?2, ?3)",
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode) \
+         VALUES(1, ?1, ?2, ?3, ?4)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
-            settings.initial_tempo_bpm()
+            settings.initial_tempo_bpm(),
+            match settings.pan_mode() {
+                PanMode::LegacyMonoStereo => 0,
+                PanMode::ZeroDbBalance => 1,
+            },
         ],
     )?;
 

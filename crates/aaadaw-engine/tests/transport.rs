@@ -40,7 +40,10 @@ fn transport_advances_only_while_playing_and_preserves_seek_position() {
 
 #[test]
 fn transport_seeks_between_project_ticks_and_samples() {
-    let project = Project::new();
+    let project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     let mut transport = Transport::new();
 
     transport

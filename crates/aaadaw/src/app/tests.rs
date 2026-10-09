@@ -7607,3 +7607,20 @@ fn yielded_factory_binding_is_consistent_between_labels_and_dispatch() {
         Some(CommandId::Undo)
     );
 }
+
+#[test]
+fn ordinary_track_routing_is_available_as_an_undoable_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddTrack);
+    let bus = app.project.tracks()[1].id();
+    assert!(!app.project.tracks()[1].is_bus());
+
+    let _ = app.update(Message::SetTrackOutput(source, Some(bus)));
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].output_track(), None);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+}
