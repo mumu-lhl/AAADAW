@@ -22,7 +22,7 @@
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
 | P4 | 未开始 | 基础编辑 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
-| P6 | 未开始 | 传输、录音和设备 |
+| P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
@@ -81,3 +81,7 @@ Normal/Small/Tiny 循环、25/4 px 后代显示、Item 边界、隐藏及恢复�
 ## 2026-10-09 Action List 录入确认
 
 Add 独立键盘录入窗口与手动 OK/Cancel 已实现，取消不写入，保存失败保留草稿，父列表捕获期间不改变动作。774 项全量测试及最后输入守卫的 6 项 focused 回归、Clippy、构建和 GUI 确认/取消通过。[记录](../verification/reaper-parity/action-list-and-input.md)仍保留 Section、重复分配优先级、Scope/MIDI/OSC 等差异。文件夹压缩提交 eeb1b0d 的 Rust CI、Portable、Installers 均已成功。P1/P3 继续进行。
+
+## 2026-10-09 默认传输入口
+
+按动作目录分离 Space Play/Stop 与 Enter/Ctrl+Space Play/Pause，保留旧显式绑定，桌面独立 Pause 按钮。录音准备期间停止命令守卫与取消路径补齐。797 项 audio-device 全量测试、默认 Clippy、音频功能构建与 GUI 入口显示通过。[证据](../verification/reaper-parity/transport-bindings.md)记录无真实设备和完整状态/偏好验收缺口。P6 已开始但未关闭，P0–P3 继续进行。

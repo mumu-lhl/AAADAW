@@ -766,16 +766,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         || (!app.playback_busy && app.playback.is_some());
     let can_record = playback_available && !preparation_busy && app.recording.is_none();
     row![
-        button(if app.playback_playing {
-            "Pause"
-        } else {
-            "Play"
-        })
-        .on_press_maybe(can_play.then_some(if app.playback_playing {
-            Message::TogglePlayback
-        } else {
-            Message::StartPlayback
-        })),
+        button("Play").on_press_maybe(can_play.then_some(Message::StartPlayback)),
+        button("Pause").on_press_maybe(can_play.then_some(Message::TogglePlayback)),
         button("Stop").on_press_maybe(if app.recording.is_some() || app.recording_starting {
             Some(Message::StopRecording)
         } else {

@@ -44,6 +44,8 @@ pub(crate) enum CommandId {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    TogglePlayStop,
+    #[cfg(feature = "audio-device")]
     StopPlayback,
     #[cfg(feature = "audio-device")]
     PanicMidi,
@@ -94,6 +96,8 @@ enum CommandKind {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    TogglePlayStop,
+    #[cfg(feature = "audio-device")]
     StopPlayback,
     #[cfg(feature = "audio-device")]
     PanicMidi,
@@ -125,9 +129,14 @@ const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifier
 const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
-const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::NONE)];
+const PLAYBACK_SHORTCUT: &[Shortcut] = &[
+    Shortcut::named(Named::Enter, Modifiers::NONE),
+    Shortcut::named(Named::Space, Modifiers::CTRL),
+];
 #[cfg(feature = "audio-device")]
-const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::SHIFT)];
+const PLAY_STOP_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::NONE)];
+#[cfg(feature = "audio-device")]
+const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -505,6 +514,17 @@ const COMMANDS: &[CommandDefinition] = &[
     },
     #[cfg(feature = "audio-device")]
     CommandDefinition {
+        kind: CommandKind::TogglePlayStop,
+        menu: None,
+        category: "Transport",
+        label: "Play/Stop",
+        aliases: &["play stop", "toggle play stop"],
+        shortcuts: PLAY_STOP_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    #[cfg(feature = "audio-device")]
+    CommandDefinition {
         kind: CommandKind::StopPlayback,
         menu: None,
         category: "Transport",
@@ -643,7 +663,10 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::Track(TrackCommand::MoveDown)
     ) || {
         #[cfg(feature = "audio-device")]
-        if kind == CommandKind::TogglePlayback {
+        if matches!(
+            kind,
+            CommandKind::TogglePlayback | CommandKind::TogglePlayStop
+        ) {
             return true;
         }
         false
@@ -745,6 +768,13 @@ pub(super) fn staged_binding_for_id(app: &App, id: &str) -> String {
 }
 
 fn default_may_yield(kind: CommandKind) -> bool {
+    #[cfg(feature = "audio-device")]
+    if matches!(
+        kind,
+        CommandKind::TogglePlayback | CommandKind::TogglePlayStop
+    ) {
+        return true;
+    }
     matches!(
         kind,
         CommandKind::OpenActionList | CommandKind::AddTrack | CommandKind::ToggleMixerPanel
@@ -1097,6 +1127,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => "transport.toggle-playback",
         #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => "transport.play-stop",
+        #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => "transport.stop-playback",
         #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => "transport.panic-midi",
@@ -1230,6 +1262,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         #[cfg(feature = "audio-device")]
         CommandId::TogglePlayback => Message::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandId::TogglePlayStop => Message::TogglePlayStop,
         #[cfg(feature = "audio-device")]
         CommandId::StopPlayback => Message::StopPlayback,
         #[cfg(feature = "audio-device")]
@@ -1470,6 +1504,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => true,
         #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => true,
+        #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => true,
         #[cfg(feature = "audio-device")]
         CommandKind::PanicMidi => app.playback.is_some(),
@@ -1522,6 +1558,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => CommandId::TogglePlayStop,
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => CommandId::StopPlayback,
         #[cfg(feature = "audio-device")]

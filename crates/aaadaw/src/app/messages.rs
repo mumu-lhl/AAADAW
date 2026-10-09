@@ -424,6 +424,8 @@ pub(crate) enum Message {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    TogglePlayStop,
+    #[cfg(feature = "audio-device")]
     StartPlayback,
     #[cfg(feature = "audio-device")]
     StopPlayback,

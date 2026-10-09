@@ -1805,8 +1805,18 @@ impl App {
         }
         #[cfg(feature = "audio-device")]
         {
+            let recording_stop_command = (self.recording.is_some() || self.recording_starting)
+                && matches!(
+                    &message,
+                    Message::TogglePlayStop
+                        | Message::StopPlayback
+                        | Message::ExecuteCommand(
+                            commands::CommandId::TogglePlayStop | commands::CommandId::StopPlayback
+                        )
+                );
             if (self.recording.is_some() || self.recording_starting || self.recording_stopping)
                 && !window_safe_message
+                && !recording_stop_command
                 && !matches!(
                     &message,
                     Message::StopPlayback
@@ -1833,6 +1843,7 @@ impl App {
                 return Task::none();
             }
             if self.playback_busy
+                && !recording_stop_command
                 && !window_safe_message
                 && !standby_input_completion
                 && !matches!(
@@ -3134,6 +3145,16 @@ impl App {
                 }
             }
             #[cfg(feature = "audio-device")]
+            Message::TogglePlayStop => {
+                task = self.update(if self.recording.is_some() || self.recording_starting {
+                    Message::StopRecording
+                } else if self.playback_playing || self.playback_paused {
+                    Message::StopPlayback
+                } else {
+                    Message::StartPlayback
+                });
+            }
+            #[cfg(feature = "audio-device")]
             Message::TogglePlayback => {
                 if self.playback_playing {
                     self.pause_playback();
@@ -3998,7 +4019,7 @@ impl App {
             Message::StopPlayback => {
                 self.release_midi_preview();
                 self.finish_fx_automation_write();
-                if self.recording.is_some() {
+                if self.recording.is_some() || self.recording_starting {
                     task = self.stop_recording();
                 } else {
                     task = self.stop_transport_to_start();

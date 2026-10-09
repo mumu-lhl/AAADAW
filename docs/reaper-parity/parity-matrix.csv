@@ -5,7 +5,7 @@ UI-003,category,,linux,7.82,Docker 与窗口,四向位置、Tabs、浮动、置�
 UI-004,category,,linux,7.82,TCP,各高度布局、Name/Index、Arm/Input/Monitor、FX/Route/Trim、Gain/Pan/Width、Phase、Meter、文件夹,P2/P3/P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-005,category,,linux,7.82,MCP/Master,Layout、Fader、Meter/Peak、FX/Sends、Master、滚动、显示过滤、选择同步,P2/P3,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-006,category,,linux,7.82,Arrange 与标尺,Item/Track/Time/Loop 选择、鼠标修饰键、Snap/Grid、缩放、滚动、播放跟随、标尺单位,P1/P4,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
-UI-007,category,,linux,7.82,Transport,播放/停止/暂停/录音/Repeat、时间显示、Rate、Tempo、拍号、选区、右键、Big Clock,P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-007,category,,linux,7.82,Transport,播放/停止/暂停/录音/Repeat、时间显示、Rate、Tempo、拍号、选区、右键、Big Clock,P6,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-008,category,,linux,7.82,工程与模板,New/Open/Save/Close、项目标签、Settings 全页、模板、Subproject、Notes、Recovery,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-009,category,,linux,7.82,Track/Item 属性,重命名、颜色、轨道设置、Item/Take/Source 属性、精确值和批量编辑,P3/P4/P5,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-010,category,,linux,7.82,Item 编辑,Move/Copy/Trim/Extend/Slip、Fade/Crossfade、Gain、Split/Heal/Glue/Reverse、Source Loop,P4,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
@@ -53,3 +53,4 @@ FX-LOCATIONS-001,atomic,UI-024,linux,7.82,FX,Input/Take/Master/Monitor 挂载点
 RENDER-BOUNDS-001,atomic,UI-028,linux,7.82,Render,Source/Bounds/Rate/Tail 设置,P10,uninvestigated,false,crates/aaadaw/src/app/view/render.rs,,选择范围输出帧数/采样率/尾音正确；取消不替换目标,,当前 WAV 格式和 Dither 简化界面
 PREF-TREE-001,atomic,UI-031,linux,7.82,Preferences,完整适用类别树,P11,uninvestigated,false,crates/aaadaw/src/app/view/settings.rs,,每个适用叶子页真实配置可恢复；没有空类别,,当前四个 SettingsCategory
 DATA-MIGRATE-001,atomic,UI-037,linux,7.82,Storage,v17 工程迁移保留原语义,P12,uninvestigated,false,crates/aaadaw-storage/src/store.rs,,旧工程迁移后音频/路由/FX/冻结源一致；失败可恢复,,尚无本计划新增模型的迁移
+TRANSPORT-PLAY-001,atomic,UI-007,linux,7.82,Play-Stop-Pause,默认传输动作与状态轨迹,P6,in_progress,false,crates/aaadaw/src/app/commands.rs,,同一组合触发等价动作且状态位置和停止录音轨迹一致,,工厂组合与独立按钮已实现；全部状态偏好和实际设备输出待验收

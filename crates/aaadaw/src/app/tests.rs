@@ -2011,7 +2011,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             Modifiers::NONE,
             &HashMap::new(),
         ),
-        Some(Message::ExecuteCommand(CommandId::TogglePlayback))
+        Some(Message::ExecuteCommand(CommandId::TogglePlayStop))
     ));
     #[cfg(not(feature = "audio-device"))]
     assert!(
@@ -2095,6 +2095,11 @@ fn midi_editor_stop_shortcut_reaches_the_transport_command() {
             if input.logical_key == Key::Named(iced::keyboard::key::Named::Space) && input.modifiers == Modifiers::SHIFT
     ));
     let mut app = App::default();
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "transport.stop-playback".into(),
+        "Shift+Space".into(),
+    )]))
+    .unwrap();
     let _ = app.update(shortcut);
     assert!(app.status.contains("output is not open"));
     assert!(
@@ -2471,13 +2476,13 @@ fn documented_first_project_shortcuts_match_action_defaults() {
             .iter()
             .find(|entry| entry.id == "transport.toggle-playback")
             .expect("playback shortcut should exist in audio builds");
-        assert_eq!(playback.default_binding, "Space");
+        assert_eq!(playback.default_binding, "Enter; Ctrl+Space");
 
         let stop = shortcuts
             .iter()
             .find(|entry| entry.id == "transport.stop-playback")
             .expect("stop shortcut should exist in audio builds");
-        assert_eq!(stop.default_binding, "Shift+Space");
+        assert_eq!(stop.default_binding, "");
     }
 }
 
@@ -2486,8 +2491,8 @@ fn documented_first_project_shortcuts_match_action_defaults() {
 fn stop_shortcut_resolves_to_a_distinct_transport_command() {
     let key = Key::Named(iced::keyboard::key::Named::Space);
     assert_eq!(
-        commands::from_shortcut(&key, Modifiers::SHIFT, &HashMap::new(), &[]),
-        Some(CommandId::StopPlayback)
+        commands::from_shortcut(&key, Modifiers::NONE, &HashMap::new(), &[]),
+        Some(CommandId::TogglePlayStop)
     );
 }
 
@@ -7721,4 +7726,59 @@ fn folder_compact_registered_command_changes_only_persisted_view_state() {
         view_before
     );
     assert!(app.revision > revision);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn transport_factory_bindings_separate_stop_and_pause_and_preserve_custom_maps() {
+    use iced::keyboard::key::Named;
+    for (key, modifiers, expected) in [
+        (Named::Space, Modifiers::NONE, CommandId::TogglePlayStop),
+        (Named::Enter, Modifiers::NONE, CommandId::TogglePlayback),
+        (Named::Space, Modifiers::CTRL, CommandId::TogglePlayback),
+    ] {
+        assert_eq!(
+            commands::from_shortcut(&Key::Named(key), modifiers, &HashMap::new(), &[]),
+            Some(expected)
+        );
+    }
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(Named::Space),
+            Modifiers::SHIFT,
+            &HashMap::new(),
+            &[]
+        ),
+        None
+    );
+    let custom = commands::validate_bindings(&HashMap::from([
+        ("transport.toggle-playback".into(), "Space".into()),
+        ("transport.stop-playback".into(), "Shift+Space".into()),
+    ]))
+    .unwrap();
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::Space), Modifiers::NONE, &custom, &[]),
+        Some(CommandId::TogglePlayback)
+    );
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::Space), Modifiers::SHIFT, &custom, &[]),
+        Some(CommandId::StopPlayback)
+    );
+    assert_eq!(commands::binding_for_id("transport.play-stop", &custom), "");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn transport_stop_commands_cancel_recording_setup_through_busy_guards() {
+    for command in [CommandId::TogglePlayStop, CommandId::StopPlayback] {
+        let mut app = App {
+            recording_starting: true,
+            playback_busy: true,
+            ..App::default()
+        };
+        let _ = app.update(Message::ExecuteCommand(command));
+        assert!(app.recording_cancel_requested, "{command:?}");
+        assert!(app.status.contains("Cancelling input setup"));
+        assert!(app.project.tracks().is_empty());
+    }
 }
