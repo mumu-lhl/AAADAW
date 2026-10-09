@@ -24,6 +24,17 @@ struct Destination {
     id: TrackId,
     name: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Parent {
+    id: Option<TrackId>,
+    name: String,
+}
+impl fmt::Display for Parent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
+    }
+}
 impl fmt::Display for Destination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.name)
@@ -43,6 +54,25 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into();
     };
     let source = track.id();
+    let parents: Vec<_> = std::iter::once(Parent {
+        id: None,
+        name: "No folder (root)".into(),
+    })
+    .chain(
+        app.project
+            .tracks()
+            .iter()
+            .filter(|candidate| app.project.can_parent_to(source, candidate.id()))
+            .map(|candidate| Parent {
+                id: Some(candidate.id()),
+                name: candidate.name().into(),
+            }),
+    )
+    .collect();
+    let selected_parent = parents
+        .iter()
+        .find(|parent| parent.id == track.parent_track())
+        .cloned();
     let targets: Vec<_> = app
         .project
         .tracks()
@@ -227,10 +257,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     column![
         text(format!("Routing for {}", track.name())).size(18),
+        row![
+            checkbox(track.is_folder())
+                .label("Folder track")
+                .on_toggle(
+                    move |enabled| Message::RoutingChange(DawAction::SetTrackFolder {
+                        track_id: source,
+                        enabled
+                    })
+                ),
+            text("Parent folder").size(12),
+            pick_list(parents, selected_parent, move |parent| {
+                Message::RoutingChange(DawAction::SetTrackParent {
+                    track_id: source,
+                    parent: parent.id,
+                })
+            })
+            .width(Length::Fill),
+        ]
+        .spacing(tokens::SECTION_GAP),
         text(format!(
             "Main output: {}",
             track
-                .output_track()
+                .effective_output_track()
                 .and_then(|id| app
                     .project
                     .tracks()

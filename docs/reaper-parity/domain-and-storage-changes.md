@@ -77,3 +77,7 @@ tracks.main_send_enabled 旧工程默认 true；track_sends 保存全局 SendId�
 ## 已实现 schema 20 切片
 
 track_sends.tap（0 Post-fader、1 Pre-FX、3 Pre-fader）默认 0，受 CHECK 约束，reader 拒绝无效值。旧发送身份/位置/参数与主输出保持；AudioSendParameters 携带类型化 Tap，Undo 与 Snapshot 不另存路径。
+
+## 已实现 schema 21 切片
+
+tracks.is_folder=false、parent_track_id=NULL 为旧工程默认值，Parent 有 FK；Project 验证有序森林及组合路由 DAG。层级修改的 Undo 仅保存 TrackId/父节点/文件夹角色与顺序，不覆盖其他参数/FX。旧显式 output_track_id 优先于隐式 Parent 路径，Bus 不转为 Folder。

@@ -19,6 +19,7 @@ pub enum ActionError {
     InvalidVolumeAutomation,
     /// The requested track output is not a different track.
     InvalidTrackOutput,
+    InvalidTrackHierarchy,
     InvalidAudioSend,
     SendIdExhausted,
     AudioSendNotFound {
@@ -138,6 +139,7 @@ impl fmt::Display for ActionError {
             Self::InvalidTrackOutput => {
                 formatter.write_str("track output must name a different track or Master")
             }
+            Self::InvalidTrackHierarchy => formatter.write_str("invalid folder hierarchy or track order"),
             Self::TrackRoutingCycle => {
                 formatter.write_str("track output would create a routing cycle")
             }
@@ -149,7 +151,7 @@ impl fmt::Display for ActionError {
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
             Self::TrackCannotBeFrozen => formatter.write_str(
-                "freeze requires a non-bus instrument track with MIDI note content and no audio items",
+                "freeze requires an instrument track outside bus/folder roles with MIDI note content and no audio items",
             ),
             Self::TrackAlreadyFrozen { track_id } => {
                 write!(formatter, "track {} is already frozen", track_id.value())

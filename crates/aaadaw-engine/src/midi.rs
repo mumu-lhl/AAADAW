@@ -309,7 +309,7 @@ impl MidiEventPlan {
         if has_solo {
             for track in tracks {
                 let mut pending: Vec<_> = track
-                    .output_track()
+                    .effective_output_track()
                     .filter(|_| track.main_send_enabled())
                     .into_iter()
                     .chain(
@@ -336,7 +336,7 @@ impl MidiEventPlan {
                     }
                     pending.extend(
                         target
-                            .output_track()
+                            .effective_output_track()
                             .filter(|_| target.main_send_enabled())
                             .into_iter()
                             .chain(

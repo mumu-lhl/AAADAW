@@ -53,6 +53,7 @@ pub(crate) enum CommandId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackCommand {
     Routing,
+    ToggleFolder,
     Rename,
     ToggleMute,
     ToggleSolo,
@@ -377,6 +378,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Add track",
         aliases: &["create track"],
         shortcuts: ADD_TRACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::ToggleFolder),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Set track as folder",
+        aliases: &["folder", "folder track"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -1063,6 +1074,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
         CommandKind::Track(TrackCommand::Routing) => "track.routing",
+        CommandKind::Track(TrackCommand::ToggleFolder) => "track.toggle-folder",
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
@@ -1180,6 +1192,18 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             }
             match command {
                 TrackCommand::Routing => Message::OpenTrackRouting(track_id),
+                TrackCommand::ToggleFolder => {
+                    Message::RoutingChange(aaadaw_core::DawAction::SetTrackFolder {
+                        track_id,
+                        enabled: !app
+                            .project
+                            .tracks()
+                            .iter()
+                            .find(|track| track.id() == track_id)
+                            .expect("validated track")
+                            .is_folder(),
+                    })
+                }
                 TrackCommand::Rename => Message::BeginTrackNameEdit(track_id),
                 TrackCommand::ToggleMute => Message::ToggleMute(track_id),
                 TrackCommand::ToggleSolo => Message::ToggleSolo(track_id),
@@ -1267,6 +1291,7 @@ struct TrackState {
     muted: bool,
     solo: bool,
     record_armed: bool,
+    folder: bool,
 }
 
 fn entry_for(
@@ -1280,6 +1305,9 @@ fn entry_for(
             "Unmute track"
         }
         (CommandKind::Track(TrackCommand::ToggleSolo), Some(track)) if track.solo => "Unsolo track",
+        (CommandKind::Track(TrackCommand::ToggleFolder), Some(track)) if track.folder => {
+            "Set track as normal track"
+        }
         (CommandKind::Track(TrackCommand::ToggleRecordArm), Some(track)) if track.record_armed => {
             "Disarm track"
         }
@@ -1394,6 +1422,16 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::Track(command) => {
             !project_edit_busy(app)
                 && track.is_some_and(|track| match command {
+                    TrackCommand::ToggleFolder => {
+                        let target = &app.project.tracks()[track.index];
+                        !target.is_frozen()
+                            && (!target.is_folder()
+                                || !app
+                                    .project
+                                    .tracks()
+                                    .iter()
+                                    .any(|candidate| candidate.parent_track() == Some(target.id())))
+                    }
                     TrackCommand::Routing
                     | TrackCommand::Rename
                     | TrackCommand::ToggleMute
@@ -1401,7 +1439,13 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     | TrackCommand::ToggleRecordArm
                     | TrackCommand::Delete => true,
                     TrackCommand::MoveUp => track.index > 0,
-                    TrackCommand::MoveDown => track.index + 1 < app.project.tracks().len(),
+                    TrackCommand::MoveDown => {
+                        track.index
+                            + app
+                                .project
+                                .track_subtree_len(app.project.tracks()[track.index].id())
+                            < app.project.tracks().len()
+                    }
                 })
         }
         #[cfg(feature = "audio-device")]
@@ -1424,6 +1468,7 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
             muted: track.is_muted(),
             solo: track.is_solo(),
             record_armed: track.is_record_armed(),
+            folder: track.is_folder(),
         })
 }
 
@@ -1617,6 +1662,10 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
         } else {
             app.media_panel_dock.mixer_open
         }),
+        CommandId::SelectedTrack(TrackCommand::ToggleFolder) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.folder),
         CommandId::SelectedTrack(TrackCommand::ToggleMute) => app
             .selected_track_id()
             .and_then(|id| track_state(app, id))

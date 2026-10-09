@@ -11,7 +11,7 @@ use crate::{
     MidiPitchBendData, MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature,
     TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
@@ -35,11 +35,116 @@ fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool 
             .all(|pair| pair[0].sample() < pair[1].sample())
 }
 
+type TrackStructure = Vec<(TrackId, Option<TrackId>, bool)>;
+
+fn track_structure(tracks: &[Track]) -> TrackStructure {
+    tracks
+        .iter()
+        .map(|track| (track.id, track.parent_track, track.is_folder))
+        .collect()
+}
+
+fn valid_track_hierarchy(tracks: &[Track]) -> bool {
+    let mut ancestors = Vec::new();
+    for track in tracks {
+        match track.parent_track {
+            None => ancestors.clear(),
+            Some(parent) => {
+                let Some(index) = ancestors.iter().position(|id| *id == parent) else {
+                    return false;
+                };
+                ancestors.truncate(index + 1);
+            }
+        }
+        if track.is_folder {
+            ancestors.push(track.id);
+        }
+    }
+    true
+}
+
+fn is_descendant(tracks: &[Track], id: TrackId, ancestor: TrackId) -> bool {
+    let mut parent = tracks
+        .iter()
+        .find(|track| track.id == id)
+        .and_then(|track| track.parent_track);
+    for _ in 0..tracks.len() {
+        let Some(id) = parent else {
+            return false;
+        };
+        if id == ancestor {
+            return true;
+        }
+        parent = tracks
+            .iter()
+            .find(|track| track.id == id)
+            .and_then(|track| track.parent_track);
+    }
+    false
+}
+
+fn reparent_tracks(
+    tracks: &[Track],
+    source: TrackId,
+    parent: Option<TrackId>,
+) -> Result<Vec<Track>, ActionError> {
+    if !tracks.iter().any(|track| track.id == source) {
+        return Err(ActionError::TrackNotFound { track_id: source });
+    }
+    if parent.is_some_and(|id| {
+        id == source
+            || is_descendant(tracks, id, source)
+            || !tracks.iter().any(|track| track.id == id && track.is_folder)
+    }) {
+        return Err(ActionError::InvalidTrackHierarchy);
+    }
+    if tracks
+        .iter()
+        .find(|track| track.id == source)
+        .unwrap()
+        .parent_track
+        == parent
+    {
+        return Ok(tracks.to_vec());
+    }
+    let (mut group, mut remaining): (Vec<_>, Vec<_>) = tracks
+        .iter()
+        .cloned()
+        .partition(|track| track.id == source || is_descendant(tracks, track.id, source));
+    group[0].parent_track = parent;
+    let index = match parent {
+        None => remaining.len(),
+        Some(id) => {
+            remaining.iter().position(|track| track.id == id).unwrap()
+                + 1
+                + remaining
+                    .iter()
+                    .filter(|track| is_descendant(&remaining, track.id, id))
+                    .count()
+        }
+    };
+    remaining.splice(index..index, group);
+    Ok(remaining)
+}
+
+fn structure_change(before: &[Track], after: &[Track]) -> Result<ProjectEvent, ActionError> {
+    if !valid_track_hierarchy(after) {
+        return Err(ActionError::InvalidTrackHierarchy);
+    }
+    if !valid_track_routing(after) {
+        return Err(ActionError::TrackRoutingCycle);
+    }
+    Ok(ProjectEvent::TrackStructureChanged {
+        before: track_structure(before),
+        after: track_structure(after),
+    })
+}
+
 fn routing_destinations(track: &Track) -> impl Iterator<Item = TrackId> + '_ {
     // Dormant connections remain part of validation so toggling mute/main send
     // cannot introduce a cycle that was hidden while the route was disabled.
     track
-        .output_track
+        .effective_output_track()
         .into_iter()
         .chain(track.sends.iter().map(|send| send.destination))
 }
@@ -103,6 +208,10 @@ struct IdAllocator {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    TrackStructureChanged {
+        before: TrackStructure,
+        after: TrackStructure,
+    },
     TrackMainSendChanged {
         track_id: TrackId,
         before: bool,
@@ -202,11 +311,6 @@ enum ProjectEvent {
         before: Option<TrackId>,
         after: Option<TrackId>,
     },
-    TrackMoved {
-        track_id: TrackId,
-        from: usize,
-        to: usize,
-    },
     TempoChanged {
         start_tick: u64,
         before: Option<f64>,
@@ -291,6 +395,10 @@ enum ProjectEvent {
 impl ProjectEvent {
     fn inverse(&self) -> Self {
         match self {
+            Self::TrackStructureChanged { before, after } => Self::TrackStructureChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::TrackCreated { index, track } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
@@ -469,11 +577,6 @@ impl ProjectEvent {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
-            },
-            Self::TrackMoved { track_id, from, to } => Self::TrackMoved {
-                track_id: *track_id,
-                from: *to,
-                to: *from,
             },
             Self::TempoChanged {
                 start_tick,
@@ -702,6 +805,42 @@ impl Project {
         }
     }
 
+    /// Whether a folder can own this track and its complete subtree.
+    pub fn can_parent_to(&self, source: TrackId, parent: TrackId) -> bool {
+        reparent_tracks(&self.state.tracks, source, Some(parent))
+            .is_ok_and(|tracks| valid_track_hierarchy(&tracks) && valid_track_routing(&tracks))
+    }
+
+    pub fn folder_depth(&self, track_id: TrackId) -> usize {
+        let mut depth = 0;
+        let mut parent = self
+            .state
+            .tracks
+            .iter()
+            .find(|track| track.id == track_id)
+            .and_then(|track| track.parent_track);
+        while let Some(id) = parent {
+            depth += 1;
+            parent = self
+                .state
+                .tracks
+                .iter()
+                .find(|track| track.id == id)
+                .and_then(|track| track.parent_track);
+        }
+        depth
+    }
+
+    pub fn track_subtree_len(&self, track_id: TrackId) -> usize {
+        usize::from(self.state.tracks.iter().any(|track| track.id == track_id))
+            + self
+                .state
+                .tracks
+                .iter()
+                .filter(|track| is_descendant(&self.state.tracks, track.id, track_id))
+                .count()
+    }
+
     /// Whether adding a connection between two tracks keeps the graph acyclic.
     pub fn can_route_to(&self, source: TrackId, destination: TrackId) -> bool {
         if source == destination
@@ -909,6 +1048,8 @@ impl Project {
                     id: track.id.value(),
                     name: track.name.clone(),
                     is_bus: track.is_bus,
+                    is_folder: track.is_folder,
+                    parent_track_id: track.parent_track.map(TrackId::value),
                     output_track_id: track.output_track.map(TrackId::value),
                     main_send_enabled: track.main_send_enabled,
                     sends: track
@@ -1159,6 +1300,8 @@ impl Project {
                 id: TrackId::from_raw(track.id),
                 name: track.name,
                 is_bus: track.is_bus,
+                is_folder: track.is_folder,
+                parent_track: track.parent_track_id.map(TrackId::from_raw),
                 output_track: track.output_track_id.map(TrackId::from_raw),
                 main_send_enabled: track.main_send_enabled,
                 sends,
@@ -1174,7 +1317,7 @@ impl Project {
                 frozen_audio_item_id: track.frozen_audio_item_id.map(ItemId::from_raw),
             });
         }
-        if !valid_track_routing(&tracks) {
+        if !valid_track_hierarchy(&tracks) || !valid_track_routing(&tracks) {
             return Err(SnapshotError::InvalidProjectData);
         }
 
@@ -1273,6 +1416,7 @@ impl Project {
             };
             if render.track_id != track.id
                 || track.is_bus
+                || track.is_folder
                 || track.instrument.is_none()
                 || !frozen_render_ids.insert(render_id)
                 || !midi_items
@@ -1345,6 +1489,8 @@ impl Project {
                     id: TrackId::from_raw(ids.next_track_id),
                     name,
                     is_bus: false,
+                    is_folder: false,
+                    parent_track: state.tracks.get(index).and_then(|next| next.parent_track),
                     output_track: None,
                     main_send_enabled: true,
                     sends: Vec::new(),
@@ -1377,6 +1523,8 @@ impl Project {
                     id: TrackId::from_raw(ids.next_track_id),
                     name,
                     is_bus: true,
+                    is_folder: false,
+                    parent_track: state.tracks.get(index).and_then(|next| next.parent_track),
                     output_track: None,
                     main_send_enabled: true,
                     sends: Vec::new(),
@@ -1654,6 +1802,22 @@ impl Project {
                     after: output_track,
                 }
             }
+            DawAction::SetTrackFolder { track_id, enabled } => {
+                let mut after = state.tracks.clone();
+                let track = after
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if enabled && track.frozen_audio_item_id.is_some() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                track.is_folder = enabled;
+                structure_change(&state.tracks, &after)?
+            }
+            DawAction::SetTrackParent { track_id, parent } => {
+                let after = reparent_tracks(&state.tracks, track_id, parent)?;
+                structure_change(&state.tracks, &after)?
+            }
             DawAction::SetTrackPan { track_id, pan } => {
                 if !pan.is_finite() || !(-1.0..=1.0).contains(&pan) {
                     return Err(ActionError::InvalidPan);
@@ -1749,6 +1913,7 @@ impl Project {
                     return Err(ActionError::TrackAlreadyFrozen { track_id });
                 }
                 if track.is_bus
+                    || track.is_folder
                     || track.instrument.is_none()
                     || state
                         .audio_items
@@ -1929,10 +2094,22 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
-                ProjectEvent::TrackMoved {
-                    track_id,
-                    from,
-                    to: index,
+                let end = from
+                    + 1
+                    + state
+                        .tracks
+                        .iter()
+                        .filter(|track| is_descendant(&state.tracks, track.id, track_id))
+                        .count();
+                if index == from {
+                    structure_change(&state.tracks, &state.tracks)?
+                } else {
+                    let mut after = state.tracks.clone();
+                    let mut group: Vec<_> = after.drain(from..end).collect();
+                    let target = index.min(after.len());
+                    group[0].parent_track = after.get(target).and_then(|track| track.parent_track);
+                    after.splice(target..target, group);
+                    structure_change(&state.tracks, &after)?
                 }
             }
             DawAction::InsertAudioItem {
@@ -2541,7 +2718,8 @@ impl Project {
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
                 if state.tracks.iter().any(|track| {
-                    routing_destinations(track).any(|destination| destination == track_id)
+                    track.parent_track == Some(track_id)
+                        || routing_destinations(track).any(|destination| destination == track_id)
                 }) {
                     return Err(ActionError::TrackHasRoutingDependents { track_id });
                 }
@@ -2577,6 +2755,28 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::TrackStructureChanged { before, after } => {
+                if track_structure(&state.tracks) != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                let old = std::mem::take(&mut state.tracks);
+                let mut by_id: HashMap<_, _> =
+                    old.into_iter().map(|track| (track.id, track)).collect();
+                for (id, parent, folder) in after {
+                    let mut track = by_id
+                        .remove(id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    track.parent_track = *parent;
+                    track.is_folder = *folder;
+                    state.tracks.push(track);
+                }
+                if !by_id.is_empty()
+                    || !valid_track_hierarchy(&state.tracks)
+                    || !valid_track_routing(&state.tracks)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+            }
             ProjectEvent::TrackMainSendChanged {
                 track_id,
                 before,
@@ -2928,15 +3128,6 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.output_track = *after;
-            }
-            ProjectEvent::TrackMoved { track_id, from, to } => {
-                if *to >= state.tracks.len()
-                    || state.tracks.get(*from).map(|track| track.id) != Some(*track_id)
-                {
-                    return Err(ActionError::HistoryInvariantViolation);
-                }
-                let track = state.tracks.remove(*from);
-                state.tracks.insert(*to, track);
             }
             ProjectEvent::TempoChanged {
                 start_tick,

@@ -20,6 +20,8 @@ pub struct TrackSnapshot {
     pub id: u64,
     pub name: String,
     pub is_bus: bool,
+    pub is_folder: bool,
+    pub parent_track_id: Option<u64>,
     pub output_track_id: Option<u64>,
     pub main_send_enabled: bool,
     pub sends: Vec<crate::AudioSendSnapshot>,

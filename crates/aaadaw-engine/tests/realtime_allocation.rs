@@ -164,6 +164,19 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             })
             .unwrap();
     }
+    let folder = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: folder,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id,
+            parent: Some(folder),
+        })
+        .unwrap();
     let (mut producer, consumer) =
         stereo_pcm_stream(128 * 128).expect("queue capacity should be valid");
     producer.set_stereo_content(true);

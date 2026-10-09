@@ -7674,3 +7674,26 @@ fn touch_track_routing_uses_panel_navigation_and_close_keeps_project() {
     assert_eq!(app.mobile_panel, MobilePanel::Editor);
     assert_eq!(app.project.snapshot(), before);
 }
+
+#[test]
+fn folder_registry_and_routing_parent_edits_share_undoable_project_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let parent = app.project.tracks()[0].id();
+    let child = app.project.tracks()[1].id();
+    let _ = app.update(Message::ExecuteCommand(commands::CommandId::Track {
+        track_id: parent,
+        command: commands::TrackCommand::ToggleFolder,
+    }));
+    assert!(app.project.tracks()[0].is_folder());
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackParent {
+        track_id: child,
+        parent: Some(parent),
+    }));
+    assert_eq!(app.project.folder_depth(child), 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[1].parent_track(), None);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.tracks()[0].is_folder());
+}

@@ -116,6 +116,8 @@ pub struct Track {
     pub(crate) id: TrackId,
     pub(crate) name: String,
     pub(crate) is_bus: bool,
+    pub(crate) is_folder: bool,
+    pub(crate) parent_track: Option<TrackId>,
     pub(crate) output_track: Option<TrackId>,
     pub(crate) main_send_enabled: bool,
     pub(crate) sends: Vec<crate::AudioSend>,
@@ -341,6 +343,19 @@ impl Track {
     /// Returns this track's bus output, or `None` when routed directly to Master.
     pub fn output_track(&self) -> Option<TrackId> {
         self.output_track
+    }
+
+    pub fn is_folder(&self) -> bool {
+        self.is_folder
+    }
+
+    pub fn parent_track(&self) -> Option<TrackId> {
+        self.parent_track
+    }
+
+    /// Main output follows the folder parent unless an explicit output is set.
+    pub fn effective_output_track(&self) -> Option<TrackId> {
+        self.output_track.or(self.parent_track)
     }
 
     /// Returns this track's volume in decibels.

@@ -880,3 +880,68 @@ fn midi_source_audibility_follows_nested_unmuted_audio_sends_without_copying_eve
         );
     }
 }
+
+#[test]
+fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: bus,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: source,
+            parent: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 2);
+    let mut events = [None; 2];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
+    assert_eq!(events[0].unwrap().track_id, source);
+}

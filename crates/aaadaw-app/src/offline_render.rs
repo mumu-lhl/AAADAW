@@ -539,7 +539,7 @@ pub fn render_freeze_track_to_float32_wav(
         .iter()
         .find(|track| track.id() == track_id)
         .ok_or_else(|| OfflineRenderError::Media("freeze track no longer exists".into()))?;
-    if track.is_frozen() || track.is_bus() || track.instrument().is_none() {
+    if track.is_frozen() || track.is_bus() || track.is_folder() || track.instrument().is_none() {
         return Err(OfflineRenderError::Media(
             "only an unfrozen instrument track can be frozen".into(),
         ));
@@ -581,6 +581,7 @@ pub fn render_freeze_track_to_float32_wav(
         .first_mut()
         .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
     source_track.output_track_id = None;
+    source_track.parent_track_id = None;
     source_track.main_send_enabled = true;
     source_track.sends.clear();
     source_track.volume_db = 0.0;

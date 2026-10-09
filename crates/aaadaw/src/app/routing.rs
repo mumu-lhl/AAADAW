@@ -53,6 +53,8 @@ impl App {
         if !matches!(
             action,
             DawAction::SetTrackOutput { .. }
+                | DawAction::SetTrackFolder { .. }
+                | DawAction::SetTrackParent { .. }
                 | DawAction::SetTrackMainSend { .. }
                 | DawAction::CreateAudioSend { .. }
                 | DawAction::UpdateAudioSend { .. }

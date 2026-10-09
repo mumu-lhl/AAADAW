@@ -8,31 +8,53 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub enum DawAction {
     /// Create a track at `index` in the project's ordered track list.
-    CreateTrack { index: usize, name: String },
+    CreateTrack {
+        index: usize,
+        name: String,
+    },
     /// Create a subgroup bus at `index` in the project's ordered track list.
-    CreateBusTrack { index: usize, name: String },
+    CreateBusTrack {
+        index: usize,
+        name: String,
+    },
     /// Set or insert a tempo point at the given project tick.
-    SetTempo { start_tick: u64, bpm: f64 },
+    SetTempo {
+        start_tick: u64,
+        bpm: f64,
+    },
     /// Remove a tempo point, except for the required initial point at tick zero.
-    DeleteTempoPoint { start_tick: u64 },
+    DeleteTempoPoint {
+        start_tick: u64,
+    },
     /// Set the interpolation curve from one tempo point to the next.
-    SetTempoCurve { start_tick: u64, curve: TempoCurve },
+    SetTempoCurve {
+        start_tick: u64,
+        curve: TempoCurve,
+    },
     /// Set or insert a time signature at the given project tick.
     SetTimeSignature {
         start_tick: u64,
         signature: TimeSignature,
     },
     /// Replace the complete meter map as one validated, undoable operation.
-    SetTimeSignatureMap { points: Vec<MeterPointSnapshot> },
+    SetTimeSignatureMap {
+        points: Vec<MeterPointSnapshot>,
+    },
     /// Set a track's volume in decibels.
-    SetTrackVolume { track_id: TrackId, volume_db: f32 },
+    SetTrackVolume {
+        track_id: TrackId,
+        volume_db: f32,
+    },
     /// Replace a track's read-mode sample-clock volume automation lane.
     SetTrackVolumeAutomation {
         track_id: TrackId,
         points: Vec<VolumeAutomationPoint>,
     },
     /// Enable or disable the main output without deleting any sends.
-    SetTrackMainSend { track_id: TrackId, enabled: bool },
+    SetTrackMainSend {
+        track_id: TrackId,
+        enabled: bool,
+    },
     /// Add an independent post-fader audio connection.
     CreateAudioSend {
         track_id: TrackId,
@@ -57,13 +79,33 @@ pub enum DawAction {
         output_track: Option<TrackId>,
     },
     /// Set a track's pan position in the inclusive range `-1.0..=1.0`.
-    SetTrackPan { track_id: TrackId, pan: f32 },
+    SetTrackFolder {
+        track_id: TrackId,
+        enabled: bool,
+    },
+    SetTrackParent {
+        track_id: TrackId,
+        parent: Option<TrackId>,
+    },
+    SetTrackPan {
+        track_id: TrackId,
+        pan: f32,
+    },
     /// Mute or unmute a track.
-    SetTrackMute { track_id: TrackId, muted: bool },
+    SetTrackMute {
+        track_id: TrackId,
+        muted: bool,
+    },
     /// Solo or unsolo a track.
-    SetTrackSolo { track_id: TrackId, solo: bool },
+    SetTrackSolo {
+        track_id: TrackId,
+        solo: bool,
+    },
     /// Arm or disarm a track to receive the next live audio take.
-    SetTrackRecordArm { track_id: TrackId, armed: bool },
+    SetTrackRecordArm {
+        track_id: TrackId,
+        armed: bool,
+    },
     /// Assign or clear a track's CLAP instrument reference.
     SetTrackInstrument {
         track_id: TrackId,
@@ -77,7 +119,9 @@ pub enum DawAction {
         length_samples: u64,
     },
     /// Resume a track's retained MIDI, instrument, and effect source chain.
-    UnfreezeTrack { track_id: TrackId },
+    UnfreezeTrack {
+        track_id: TrackId,
+    },
     /// Replace a track's ordered CLAP FX chain as one undoable operation.
     SetTrackFxChain {
         track_id: TrackId,
@@ -101,9 +145,15 @@ pub enum DawAction {
         points: Vec<crate::FxParameterAutomationPoint>,
     },
     /// Rename a track.
-    SetTrackName { track_id: TrackId, name: String },
+    SetTrackName {
+        track_id: TrackId,
+        name: String,
+    },
     /// Move a track to a final position in the ordered track list.
-    MoveTrack { track_id: TrackId, index: usize },
+    MoveTrack {
+        track_id: TrackId,
+        index: usize,
+    },
     /// Insert an audio item referencing an opaque media source.
     InsertAudioItem {
         track_id: TrackId,
@@ -121,9 +171,14 @@ pub enum DawAction {
         length_samples: u64,
     },
     /// Move an audio or MIDI item to another track without changing its content or position.
-    MoveItemToTrack { item_id: ItemId, track_id: TrackId },
+    MoveItemToTrack {
+        item_id: ItemId,
+        track_id: TrackId,
+    },
     /// Delete an audio item from the project.
-    DeleteAudioItem { item_id: ItemId },
+    DeleteAudioItem {
+        item_id: ItemId,
+    },
     /// Insert an empty MIDI item on a track.
     InsertMidiItem {
         track_id: TrackId,
@@ -131,7 +186,10 @@ pub enum DawAction {
         length_ticks: u64,
     },
     /// Set a MIDI item's user-visible name.
-    SetMidiItemName { item_id: ItemId, name: String },
+    SetMidiItemName {
+        item_id: ItemId,
+        name: String,
+    },
     /// Move a MIDI item and/or change its length without discarding notes.
     EditMidiItem {
         item_id: ItemId,
@@ -146,9 +204,14 @@ pub enum DawAction {
         source_offset_ticks: u64,
     },
     /// Duplicate a MIDI item immediately after its source, assigning fresh item and note IDs.
-    DuplicateMidiItem { item_id: ItemId },
+    DuplicateMidiItem {
+        item_id: ItemId,
+    },
     /// Duplicate a MIDI item at a specific project tick, assigning fresh item and note IDs.
-    DuplicateMidiItemAt { item_id: ItemId, start_tick: u64 },
+    DuplicateMidiItemAt {
+        item_id: ItemId,
+        start_tick: u64,
+    },
     /// Duplicate a MIDI item onto a track at a project tick, assigning fresh item and note IDs.
     DuplicateMidiItemToTrack {
         item_id: ItemId,
@@ -162,7 +225,9 @@ pub enum DawAction {
         split_ticks: Vec<u64>,
     },
     /// Delete a MIDI item and retain it for undo.
-    DeleteMidiItem { item_id: ItemId },
+    DeleteMidiItem {
+        item_id: ItemId,
+    },
     /// Add notes to a MIDI item. Note ticks are relative to the item start.
     AddMidiNotes {
         item_id: ItemId,
@@ -196,7 +261,12 @@ pub enum DawAction {
         strength: f32,
     },
     /// Delete a track from the project.
-    DeleteTrack { track_id: TrackId },
+    DeleteTrack {
+        track_id: TrackId,
+    },
     /// Apply several actions as one atomic, undoable transaction.
-    BatchTransaction { tx_id: u64, actions: Vec<DawAction> },
+    BatchTransaction {
+        tx_id: u64,
+        actions: Vec<DawAction>,
+    },
 }

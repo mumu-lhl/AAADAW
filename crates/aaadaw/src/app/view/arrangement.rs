@@ -343,7 +343,18 @@ pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Eleme
     let track_id = track.id();
     let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
         track_id: None,
-        label: "Master".to_owned(),
+        label: track
+            .parent_track()
+            .and_then(|id| {
+                app.project
+                    .tracks()
+                    .iter()
+                    .find(|candidate| candidate.id() == id)
+            })
+            .map_or_else(
+                || "Master".into(),
+                |parent| format!("Parent: {}", parent.name()),
+            ),
     })
     .chain(app.project.tracks().iter().filter_map(|candidate| {
         if !app.project.can_route_to(track_id, candidate.id()) {
@@ -702,7 +713,7 @@ fn track_row_layout<'a>(
     let track_id = track.id();
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let output_label = track
-        .output_track()
+        .effective_output_track()
         .and_then(|output_id| {
             app.project
                 .tracks()
@@ -926,14 +937,30 @@ pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a
         .track_name_edits
         .get(&track_id)
         .map_or(track.name(), String::as_str);
-    text_input("Track name", edited_name)
+    let input = text_input("Track name", edited_name)
         .id(super::super::messages::track_name_input_id(track_id))
         .on_input(move |name| Message::TrackNameChanged(track_id, name))
         .on_submit(Message::CommitTrackName(track_id))
         .style(track_draft_input_style(has_error))
         .padding([2, 4])
-        .width(Length::Fill)
-        .into()
+        .width(Length::Fill);
+    row![
+        text(format!(
+            "{}{}",
+            "  ".repeat(app.project.folder_depth(track_id)),
+            if track.is_folder() {
+                "F"
+            } else if track.parent_track().is_some() {
+                "↳"
+            } else {
+                ""
+            }
+        ))
+        .size(11),
+        input
+    ]
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn track_draft_input_style(

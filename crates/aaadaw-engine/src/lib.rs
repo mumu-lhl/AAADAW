@@ -621,7 +621,7 @@ impl MixerPlan {
             compiled.push(TrackGains {
                 track_id: track.id(),
                 output_track_index: track
-                    .output_track()
+                    .effective_output_track()
                     .map(|output| {
                         tracks
                             .iter()

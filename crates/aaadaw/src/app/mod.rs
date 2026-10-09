@@ -6876,8 +6876,16 @@ impl App {
             return;
         };
         let target_index = match direction {
-            -1 => index.checked_sub(1),
-            1 if index + 1 < self.project.tracks().len() => Some(index + 1),
+            -1 => (0..index).rev().find(|candidate| {
+                self.project
+                    .folder_depth(self.project.tracks()[*candidate].id())
+                    <= self.project.folder_depth(track_id)
+            }),
+            1 => self
+                .project
+                .tracks()
+                .get(index + self.project.track_subtree_len(track_id))
+                .map(|next| index + self.project.track_subtree_len(next.id())),
             _ => None,
         };
         let Some(target_index) = target_index else {
