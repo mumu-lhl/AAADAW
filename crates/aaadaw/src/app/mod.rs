@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 pub(super) const MIDI_EDITOR_KEY_WIDTH: f32 = 84.0;
 pub(super) const MIDI_EDITOR_CONTENT_WIDTH_INSET: f32 = MIDI_EDITOR_KEY_WIDTH + 32.0;
 
+mod action_list;
 mod action_macros;
 mod audio_config;
 mod audio_export;
@@ -242,6 +243,22 @@ impl Drop for UnsavedSessionMedia {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellProfile {
+    Desktop,
+    Touch,
+}
+
+impl Default for ShellProfile {
+    fn default() -> Self {
+        if cfg!(target_os = "android") {
+            Self::Touch
+        } else {
+            Self::Desktop
+        }
+    }
+}
+
 #[derive(Default)]
 struct App {
     project: Project,
@@ -258,6 +275,7 @@ struct App {
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
     main_workspace: MainWorkspace,
+    shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
     mobile_panel_history: Vec<MobilePanel>,
     main_window_size: Option<iced::Size>,
@@ -296,6 +314,8 @@ struct App {
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    action_list_window_id: Option<iced::window::Id>,
+    action_list: action_list::ActionListState,
     render_window_id: Option<iced::window::Id>,
     tempo_map_window_id: Option<iced::window::Id>,
     time_map_tab: TimeMapTab,
@@ -1004,7 +1024,7 @@ fn duplicate_item_actions(
 
 impl App {
     fn is_mobile_main_window(&self) -> bool {
-        cfg!(target_os = "android") || self.main_window_size.is_some_and(|size| size.width < 720.0)
+        self.shell_profile == ShellProfile::Touch
     }
 
     fn show_mobile_panel(&mut self, panel: MobilePanel) {
@@ -1226,7 +1246,9 @@ impl App {
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
-        if self.settings_window_id == Some(window_id) {
+        if self.action_list_window_id == Some(window_id) {
+            "Actions".to_owned()
+        } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
         } else if self.render_window_id == Some(window_id) {
             "Render project to WAV".to_owned()
@@ -1455,11 +1477,23 @@ impl App {
             &message,
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
+                    || self.action_list_window_id == Some(*window_id)
+                    || self.settings_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
             || matches!(
                 &message,
-                Message::OpenSettings
+                Message::OpenActionList
+                    | Message::OpenActionMacroEditor
+                    | Message::CloseActionList
+                    | Message::ActionListQueryChanged(_)
+                    | Message::ActionListSelect(_)
+                    | Message::ActionListSelectBinding(_)
+                    | Message::ActionListAddBinding
+                    | Message::ActionListDeleteBinding
+                    | Message::ActionListFindShortcut
+                    | Message::ActionListRun(_)
+                    | Message::OpenSettings
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
@@ -1492,6 +1526,7 @@ impl App {
                     | Message::PluginPickerSearchChanged(_)
                     | Message::SelectFxChainPlugin(_)
                     | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                    | Message::ExecuteCommand(commands::CommandId::OpenActionList)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
@@ -1868,7 +1903,10 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
-                if self.settings_window_id == Some(window_id) {
+                if self.action_list_window_id == Some(window_id) {
+                    self.action_list_window_id = None;
+                    self.action_list.capture = None;
+                } else if self.settings_window_id == Some(window_id) {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
@@ -2591,11 +2629,75 @@ impl App {
                 key,
                 modifiers,
             } => self.capture_shortcut_key(action_id, &key, modifiers),
+            Message::OpenActionList => task = self.open_action_list(),
+            Message::OpenActionMacroEditor => {
+                self.settings_category = SettingsCategory::ActionMacros;
+                task = self.open_settings();
+            }
+            Message::CloseActionList => task = self.close_action_list(),
+            Message::ActionListQueryChanged(query) => self.action_list.set_query(query),
+            Message::ActionListSelect(id) => self.action_list.select(id),
+            Message::ActionListSelectBinding(index) => {
+                self.action_list.selected_binding = Some(index)
+            }
+            Message::ActionListAddBinding => {
+                self.action_list.feedback.clear();
+                self.action_list.capture = Some(action_list::CaptureMode::Add)
+            }
+            Message::ActionListFindShortcut => {
+                self.action_list.feedback.clear();
+                self.action_list.capture = Some(action_list::CaptureMode::Find)
+            }
+            Message::ActionListDeleteBinding => self.delete_action_list_binding(),
+            Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if self.action_list_window_id == Some(window_id) {
+                    return self.action_list_keyboard_event(event, status);
+                }
+
                 if let iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) =
                     &event
                 {
                     self.keyboard_modifiers = *modifiers;
+                }
+                if self.shortcut_capture_id.is_some() {
+                    if let Some(message) = keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        self.main_window_id,
+                        self.settings_window_id,
+                        self.shortcut_capture_id.as_deref(),
+                    ) {
+                        return self.update(message);
+                    }
+                    return Task::none();
+                }
+                if self.main_window_id == Some(window_id)
+                    && self.active_menu.is_none()
+                    && status == iced::event::Status::Ignored
+                    && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F10),
+                        modifiers,
+                        repeat: false,
+                        ..
+                    }) = &event
+                    && *modifiers == iced::keyboard::Modifiers::NONE
+                {
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let command = commands::from_shortcut(
+                        &iced::keyboard::Key::Named(iced::keyboard::key::Named::F10),
+                        *modifiers,
+                        &bindings,
+                        &self.action_macros,
+                    );
+                    drop(bindings);
+                    if let Some(command) = command {
+                        return self.update(Message::ExecuteCommand(command));
+                    }
                 }
                 let message = menu_navigation_event(
                     &event,
@@ -3191,7 +3293,7 @@ impl App {
             Message::EditActionMacro(id) => self.edit_action_macro(id),
             Message::SaveActionMacro => self.save_action_macro(),
             Message::DeleteActionMacro(id) => self.delete_action_macro(id),
-            Message::ShortcutPressed(key, modifiers) => {
+            Message::ShortcutPressed(input) => {
                 if self.pending_project_transition.is_some() {
                     return Task::none();
                 }
@@ -3200,13 +3302,8 @@ impl App {
                         .shortcut_bindings
                         .read()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    commands::from_shortcut(
-                        &key.as_ref(),
-                        modifiers,
-                        &bindings,
-                        &self.action_macros,
-                    )
-                    .map(Message::ExecuteCommand)
+                    commands::from_shortcut_input(&input, &bindings, &self.action_macros)
+                        .map(Message::ExecuteCommand)
                 };
                 if let Some(message) = shortcut {
                     task = self.update(message);
@@ -8177,7 +8274,8 @@ fn menu_navigation_event(
     };
     let navigation = match key.as_ref() {
         iced::keyboard::Key::Named(iced::keyboard::key::Named::F10)
-            if status == iced::event::Status::Ignored =>
+            if status == iced::event::Status::Ignored
+                && *modifiers == iced::keyboard::Modifiers::NONE =>
         {
             MenuNavigation::Open
         }
@@ -8323,6 +8421,8 @@ fn keyboard_shortcut_event(
         let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             key,
             modifiers,
+            physical_key,
+            location,
             repeat: false,
             ..
         }) = event
@@ -8340,35 +8440,22 @@ fn keyboard_shortcut_event(
             {
                 Some(Message::ClearShortcutBinding(action_id.to_owned()))
             }
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+            _ => {
+                let input = shortcut::ShortcutInput {
+                    logical_key: key,
+                    physical_key,
+                    location,
+                    modifiers: iced::keyboard::Modifiers::NONE,
+                };
+                let key = shortcut::Shortcut::capture_input(&input)
+                    .map(|key| key.config_label())
+                    .unwrap_or_else(|_| "Unidentified".to_owned());
                 Some(Message::ShortcutCaptureKey {
                     action_id: action_id.to_owned(),
-                    key: "Delete".to_owned(),
+                    key,
                     modifiers,
                 })
             }
-            iced::keyboard::Key::Character(character) => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: character.to_owned(),
-                modifiers,
-            }),
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
-                Some(Message::ShortcutCaptureKey {
-                    action_id: action_id.to_owned(),
-                    key: "Space".to_owned(),
-                    modifiers,
-                })
-            }
-            iced::keyboard::Key::Named(named) => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: format!("{named:?}"),
-                modifiers,
-            }),
-            iced::keyboard::Key::Unidentified => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: "Unidentified".to_owned(),
-                modifiers,
-            }),
         };
     }
     if main_window_id != Some(window_id) {
@@ -8389,6 +8476,8 @@ fn keyboard_shortcut_event(
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key,
         modifiers,
+        physical_key,
+        location,
         repeat: false,
         ..
     }) = event
@@ -8399,10 +8488,20 @@ fn keyboard_shortcut_event(
         && modifiers == iced::keyboard::Modifiers::NONE
     {
         Some(Message::Escape)
-    } else if key == iced::keyboard::Key::Unidentified {
-        None
     } else {
-        Some(Message::ShortcutPressed(key, modifiers))
+        let input = shortcut::ShortcutInput {
+            logical_key: key,
+            physical_key,
+            location,
+            modifiers,
+        };
+        if input.logical_key == iced::keyboard::Key::Unidentified
+            && shortcut::Shortcut::capture_input(&input).is_err()
+        {
+            None
+        } else {
+            Some(Message::ShortcutPressed(input))
+        }
     }
 }
 

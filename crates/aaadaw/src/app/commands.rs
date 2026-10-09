@@ -19,6 +19,7 @@ pub(crate) enum CommandId {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenActionList,
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
@@ -68,6 +69,7 @@ enum CommandKind {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenActionList,
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
@@ -104,6 +106,8 @@ struct CommandDefinition {
     separator_before: bool,
 }
 
+const ACTION_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('/', Modifiers::SHIFT)];
+const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::COMMAND)];
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
 const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
@@ -190,6 +194,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenActionList,
+        menu: Some(MainMenu::Actions),
+        category: "Actions",
+        label: "Show action list...",
+        aliases: &["actions", "action list", "find shortcut"],
+        shortcuts: ACTION_LIST_SHORTCUT,
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::Undo,
@@ -349,7 +363,7 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Track",
         label: "Add track",
         aliases: &["create track"],
-        shortcuts: &[],
+        shortcuts: ADD_TRACK_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -684,6 +698,17 @@ pub(super) fn staged_binding_for_id(app: &App, id: &str) -> String {
         .unwrap_or_else(|| config_binding_for(app, id, defaults))
 }
 
+pub(super) fn binding_for_id(id: &str, bindings: &ShortcutBindings) -> String {
+    bindings.get(id).cloned().unwrap_or_else(|| {
+        COMMANDS
+            .iter()
+            .find(|definition| command_kind_id(definition.kind) == id)
+            .map_or_else(String::new, |definition| {
+                serialize_bindings(definition.shortcuts)
+            })
+    })
+}
+
 pub(super) fn label_for_id(app: &App, id: &str) -> Option<String> {
     COMMANDS
         .iter()
@@ -854,16 +879,32 @@ pub(super) fn from_shortcut(
     bindings: &ShortcutBindings,
     macros: &[ActionMacro],
 ) -> Option<CommandId> {
+    find_shortcut(
+        |shortcut| shortcut.matches(key, modifiers),
+        bindings,
+        macros,
+    )
+}
+
+pub(super) fn from_shortcut_input(
+    input: &super::shortcut::ShortcutInput,
+    bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
+) -> Option<CommandId> {
+    find_shortcut(|shortcut| shortcut.matches_input(input), bindings, macros)
+}
+
+fn find_shortcut(
+    matches: impl Fn(&Shortcut) -> bool,
+    bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
+) -> Option<CommandId> {
     if let Some(action_macro) = macros.iter().find(|action_macro| {
         let id = macro_id(action_macro.id);
         bindings
             .get(&id)
             .and_then(|binding| parse_bindings(binding).ok())
-            .is_some_and(|shortcuts| {
-                shortcuts
-                    .iter()
-                    .any(|shortcut| shortcut.matches(key, modifiers))
-            })
+            .is_some_and(|shortcuts| shortcuts.iter().any(&matches))
     }) {
         return Some(CommandId::Macro(action_macro.id));
     }
@@ -873,14 +914,9 @@ pub(super) fn from_shortcut(
             .get(id)
             .and_then(|binding| parse_bindings(binding).ok());
         match custom {
-            Some(shortcuts) => shortcuts
-                .iter()
-                .any(|shortcut| shortcut.matches(key, modifiers)),
+            Some(shortcuts) => shortcuts.iter().any(&matches),
             None if bindings.contains_key(id) => false,
-            None => definition
-                .shortcuts
-                .iter()
-                .any(|shortcut| shortcut.matches(key, modifiers)),
+            None => definition.shortcuts.iter().any(&matches),
         }
         .then(|| command_id(definition.kind))
     })
@@ -954,6 +990,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
+        CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
@@ -1022,6 +1059,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ExportWav => Message::OpenRenderWindow,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
+        CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
@@ -1209,7 +1247,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
     match kind {
         CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
         CommandKind::SaveProject => !project_file_busy(app),
-        CommandKind::OpenSettings => true,
+        CommandKind::OpenSettings | CommandKind::OpenActionList => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.media_store_path().is_some()
@@ -1217,12 +1255,16 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && app.offline_job_submission_allowed()
         }
         CommandKind::CancelOfflineRender => app.offline_render_busy,
-        CommandKind::Undo => history_command_enabled(
-            app,
-            app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
-        ),
+        CommandKind::Undo => {
+            (app.project.can_undo() || app.track_mix_commit_at.is_some())
+                && history_command_enabled(
+                    app,
+                    app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
+                )
+        }
         CommandKind::Redo => {
-            app.track_mix_commit_at.is_none()
+            app.project.can_redo()
+                && app.track_mix_commit_at.is_none()
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,
@@ -1331,6 +1373,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
+        CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
@@ -1487,5 +1530,36 @@ mod macro_tests {
     fn destructive_actions_are_not_available_as_macro_steps() {
         assert!(!macro_step_ids().contains("item.delete-selected"));
         assert!(!macro_step_ids().contains("track.delete"));
+    }
+}
+
+/// Stable registry identity, independent of labels and the current selection.
+pub(super) fn stable_id(command: CommandId) -> Option<String> {
+    if let CommandId::Macro(id) = command {
+        return Some(macro_id(id));
+    }
+    COMMANDS
+        .iter()
+        .find(|definition| command_id(definition.kind) == command)
+        .map(|definition| command_kind_id(definition.kind).to_owned())
+}
+
+pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
+    match command {
+        CommandId::ToggleMediaBrowserPanel => Some(app.media_panel_dock.open),
+        CommandId::ToggleOfflineJobsPanel => Some(app.offline_jobs_panel_open),
+        CommandId::SelectedTrack(TrackCommand::ToggleMute) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.muted),
+        CommandId::SelectedTrack(TrackCommand::ToggleSolo) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.solo),
+        CommandId::SelectedTrack(TrackCommand::ToggleRecordArm) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.record_armed),
+        _ => None,
     }
 }

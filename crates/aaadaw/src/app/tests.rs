@@ -8,6 +8,7 @@ use super::project_io::{
     load_project_file, load_project_session, save_project_file,
     save_project_session_file_with_media,
 };
+use super::shortcut;
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
@@ -593,6 +594,7 @@ fn switching_arrange_and_mixer_preserves_track_selection_and_transport_position(
 fn mobile_utility_routes_keep_editor_state_and_use_one_main_window() {
     let mut app = App {
         main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        shell_profile: super::ShellProfile::Touch,
         ..App::default()
     };
     let _ = app.update(Message::AddTrack);
@@ -683,6 +685,7 @@ fn mobile_settings_shortcut_capture_and_system_back_are_handled() {
     let mut app = App {
         main_window_id: Some(main_window_id),
         main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        shell_profile: super::ShellProfile::Touch,
         ..App::default()
     };
     let _ = app.update(Message::OpenSettings);
@@ -708,7 +711,7 @@ fn mobile_settings_shortcut_capture_and_system_back_are_handled() {
             app.shortcut_capture_id.as_deref(),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+            if action_id == "edit.undo" && key == "K" && modifiers == Modifiers::COMMAND
     ));
 
     let _ = app.update(Message::Escape);
@@ -1297,10 +1300,10 @@ fn menus_and_context_targets_survive_keyboard_input_and_background_ticks() {
         iced::event::Status::Captured,
         window_id,
     ));
-    let _ = app.update(Message::ShortcutPressed(
+    let _ = app.update(Message::ShortcutPressed(test_shortcut_input(
         Key::Character("not-a-bound-shortcut".into()),
         Modifiers::NONE,
-    ));
+    )));
     let _ = app.update(Message::AudioImportFinished(
         Err("import failed".to_owned()),
     ));
@@ -1961,8 +1964,8 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             None,
             None,
         ),
-        Some(Message::ShortcutPressed(key, modifiers))
-            if key == Key::Character("z".into()) && modifiers == Modifiers::COMMAND
+        Some(Message::ShortcutPressed(input))
+            if input.logical_key == Key::Character("z".into()) && input.modifiers == Modifiers::COMMAND
     ));
     let app = App::default();
     let undo = commands::for_menu(&app, MainMenu::Edit)
@@ -2042,8 +2045,8 @@ fn midi_editor_shortcuts_use_configured_commands_only_when_unconsumed() {
             midi_editor_window_id,
             Some(midi_editor_window_id),
         ),
-        Some(Message::ShortcutPressed(key, modifiers))
-            if key == Key::Character("z".into()) && modifiers == Modifiers::COMMAND
+        Some(Message::ShortcutPressed(input))
+            if input.logical_key == Key::Character("z".into()) && input.modifiers == Modifiers::COMMAND
     ));
     assert!(
         midi_editor_shortcut_event(
@@ -2088,8 +2091,8 @@ fn midi_editor_stop_shortcut_reaches_the_transport_command() {
     .expect("unconsumed Shift+Space from the MIDI window should reach shortcuts");
     assert!(matches!(
         &shortcut,
-        Message::ShortcutPressed(key, modifiers)
-            if *key == Key::Named(iced::keyboard::key::Named::Space) && *modifiers == Modifiers::SHIFT
+        Message::ShortcutPressed(input)
+            if input.logical_key == Key::Named(iced::keyboard::key::Named::Space) && input.modifiers == Modifiers::SHIFT
     ));
     let mut app = App::default();
     let _ = app.update(shortcut);
@@ -2298,7 +2301,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+            if action_id == "edit.undo" && key == "K" && modifiers == Modifiers::COMMAND
     ));
     assert!(matches!(
         keyboard_shortcut_event(
@@ -2327,7 +2330,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "Delete" && modifiers == Modifiers::NONE
+            if action_id == "edit.undo" && key == "StandardDelete" && modifiers == Modifiers::NONE
     ));
     assert!(matches!(
         keyboard_shortcut_event(
@@ -3790,10 +3793,10 @@ fn saved_macros_run_ordered_commands_from_actions_search_and_shortcuts() {
     let _ = app.update(Message::RunActionQuery);
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
-    let _ = app.update(Message::ShortcutPressed(
+    let _ = app.update(Message::ShortcutPressed(test_shortcut_input(
         Key::Character("m".into()),
         Modifiers::COMMAND,
-    ));
+    )));
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
     app.action_macros[0].steps = vec![
@@ -7316,4 +7319,211 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
     let _ = app.update(Message::SplitSelectedItemsAtCursor);
     assert_eq!(app.project.snapshot(), before_noop);
     assert_eq!(app.revision, revision);
+}
+
+fn test_shortcut_input(logical_key: Key, modifiers: Modifiers) -> shortcut::ShortcutInput {
+    shortcut::ShortcutInput {
+        logical_key,
+        modifiers,
+        physical_key: iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        ),
+        location: iced::keyboard::Location::Standard,
+    }
+}
+
+fn test_input_event(input: shortcut::ShortcutInput) -> iced::Event {
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: input.logical_key.clone(),
+        modified_key: input.logical_key,
+        physical_key: input.physical_key,
+        location: input.location,
+        modifiers: input.modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
+#[test]
+fn main_keyboard_preserves_keypad_identity_through_project_actions() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Named, Physical},
+    };
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window),
+        ..App::default()
+    };
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([
+        ("track.add".into(), "Ctrl+Standard7".into()),
+        ("edit.undo".into(), "Ctrl+NumPad7".into()),
+    ]))
+    .unwrap();
+    let mut input = test_shortcut_input(Key::Character("7".into()), Modifiers::CTRL);
+    input.physical_key = Physical::Code(Code::Digit7);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input.clone()),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    input.logical_key = Key::Named(Named::Home); // NumLock off
+    input.physical_key = Physical::Code(Code::Numpad7);
+    input.location = Location::Numpad;
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn f10_custom_bindings_and_main_window_capture_precede_menu_navigation() {
+    use iced::keyboard::key::Named;
+    let window = iced::window::Id::unique();
+    for chord in ["Ctrl+F10", "Alt+F10", "F10"] {
+        let mut app = App {
+            main_window_id: Some(window),
+            ..App::default()
+        };
+        *app.shortcut_bindings.write().unwrap() =
+            commands::validate_bindings(&HashMap::from([("track.add".into(), chord.into())]))
+                .unwrap();
+        let modifiers = if chord.starts_with("Ctrl") {
+            Modifiers::CTRL
+        } else if chord.starts_with("Alt") {
+            Modifiers::ALT
+        } else {
+            Modifiers::NONE
+        };
+        let input = test_shortcut_input(Key::Named(Named::F10), modifiers);
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            test_input_event(input),
+            iced::event::Status::Ignored,
+            window,
+        ));
+        assert_eq!(app.project.tracks().len(), 1, "{chord}");
+        assert!(app.active_menu.is_none());
+    }
+    let mut app = App {
+        main_window_id: Some(window),
+        shell_profile: super::ShellProfile::Touch,
+        ..App::default()
+    };
+    let _ = app.update(Message::AddShortcutBinding("edit.undo".into()));
+    let input = test_shortcut_input(Key::Named(Named::F10), Modifiers::NONE);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.shortcut_binding_edits["edit.undo"], "Mod+Z; F10");
+    assert!(app.active_menu.is_none());
+}
+
+#[test]
+fn narrow_linux_window_keeps_desktop_profile() {
+    let app = App {
+        main_window_size: Some(iced::Size::new(420.0, 640.0)),
+        shell_profile: super::ShellProfile::Desktop,
+        ..App::default()
+    };
+    assert!(!app.is_mobile_main_window());
+}
+
+#[test]
+fn busy_project_keeps_action_list_input_available_without_allowing_project_edits() {
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        action_list_window_id: Some(window),
+        import_busy: true,
+        ..App::default()
+    };
+    app.action_list.select("track.add".into());
+    let _ = app.update(Message::ActionListRun(false));
+    assert!(app.project.tracks().is_empty());
+    app.action_list.capture = Some(super::action_list::CaptureMode::Find);
+    let input = test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Escape),
+        Modifiers::NONE,
+    );
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert!(app.action_list.capture.is_none());
+    assert_eq!(app.action_list_window_id, Some(window));
+}
+
+#[test]
+fn unidentified_logical_key_keeps_known_numpad_five_dispatch() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Physical},
+    };
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window),
+        ..App::default()
+    };
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "track.add".into(),
+        "Ctrl+NumPad5".into(),
+    )]))
+    .unwrap();
+    let mut input = test_shortcut_input(Key::Unidentified, Modifiers::CTRL);
+    input.physical_key = Physical::Code(Code::Numpad5);
+    input.location = Location::Numpad;
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+}
+
+#[test]
+fn action_list_and_custom_f10_respect_pending_save_confirmation() {
+    let main = iced::window::Id::unique();
+    let list = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main),
+        action_list_window_id: Some(list),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::NewProject);
+    assert!(app.pending_project_transition.is_some());
+    app.action_list.select("track.add".into());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.project.tracks().len(), 1);
+    *app.shortcut_bindings.write().unwrap() =
+        commands::validate_bindings(&HashMap::from([("track.add".into(), "F10".into())])).unwrap();
+    let event = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::F10),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        event,
+        iced::event::Status::Ignored,
+        main,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    assert!(app.pending_project_transition.is_some());
+}
+
+#[test]
+fn action_list_run_close_closes_even_when_undo_has_no_effect() {
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        action_list_window_id: Some(window),
+        ..App::default()
+    };
+    app.action_list.select("edit.undo".into());
+    let _ = app.update(Message::ActionListRun(true));
+    assert!(app.action_list_window_id.is_none());
+    assert!(app.project.tracks().is_empty());
 }

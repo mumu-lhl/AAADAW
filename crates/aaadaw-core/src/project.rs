@@ -719,6 +719,16 @@ impl Project {
             .collect()
     }
 
+    /// Returns whether a committed action is available to undo.
+    pub fn can_undo(&self) -> bool {
+        self.history_cursor > 0
+    }
+
+    /// Returns whether a committed action is available to redo.
+    pub fn can_redo(&self) -> bool {
+        self.history_cursor < self.history.len()
+    }
+
     /// Returns whether the next undo changes only a track's volume or pan.
     pub fn can_undo_track_mix(&self) -> bool {
         matches!(

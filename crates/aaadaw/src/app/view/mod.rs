@@ -21,6 +21,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+mod action_list;
 mod arrangement;
 mod fx_chain;
 mod item_inspector;
@@ -78,6 +79,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
             .main_window_size
             .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
         mobile_view(app, size.width, size.height)
+    } else if app.action_list_window_id == Some(window_id) {
+        action_list::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.render_window_id == Some(window_id) {
@@ -97,7 +100,7 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     responsive(move |size| {
-        if cfg!(target_os = "android") || size.width < 720.0 {
+        if app.is_mobile_main_window() {
             mobile_view(app, size.width, size.height)
         } else {
             desktop_view(app)
