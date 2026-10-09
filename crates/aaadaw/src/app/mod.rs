@@ -55,6 +55,7 @@ mod clap_track_fx;
 mod clap_track_instrument;
 mod commands;
 mod config_paths;
+mod desktop_layout;
 mod keyboard_config;
 mod media;
 mod messages;
@@ -274,6 +275,7 @@ struct App {
     shortcut_binding_edits: commands::ShortcutBindings,
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
+    desktop_layout_save_at: Option<Instant>,
     main_workspace: MainWorkspace,
     shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
@@ -796,46 +798,95 @@ impl std::fmt::Debug for SharedRecordingStop {
 enum MainPane {
     Arrangement,
     MediaBrowser,
+    Mixer,
 }
 
 struct MediaPanelDock {
     panes: Option<pane_grid::State<MainPane>>,
     split: Option<Split>,
+    mixer_split: Option<Split>,
     open: bool,
+    mixer_open: bool,
     main_ratio: f32,
+    arrange_ratio: f32,
 }
 
 impl Default for MediaPanelDock {
     fn default() -> Self {
-        Self {
-            panes: None,
-            split: None,
-            open: false,
-            main_ratio: 0.72,
-        }
+        Self::from_layout(desktop_layout::DesktopLayout::default())
     }
 }
 
 impl MediaPanelDock {
-    fn toggle(&mut self) {
-        if self.panes.is_none() {
-            let (mut panes, arrangement) = pane_grid::State::new(MainPane::Arrangement);
+    fn from_layout(layout: desktop_layout::DesktopLayout) -> Self {
+        let mut dock = Self {
+            panes: None,
+            split: None,
+            mixer_split: None,
+            open: layout.media_open,
+            mixer_open: layout.mixer_open,
+            main_ratio: layout.media_ratio,
+            arrange_ratio: layout.arrange_ratio,
+        };
+        dock.rebuild();
+        dock
+    }
+    fn layout(&self) -> desktop_layout::DesktopLayout {
+        desktop_layout::DesktopLayout {
+            media_open: self.open,
+            mixer_open: self.mixer_open,
+            media_ratio: self.main_ratio,
+            arrange_ratio: self.arrange_ratio,
+            ..Default::default()
+        }
+    }
+    fn rebuild(&mut self) {
+        self.split = None;
+        self.mixer_split = None;
+        if !self.open && !self.mixer_open {
+            self.panes = None;
+            return;
+        }
+        let (mut panes, arrangement) = pane_grid::State::new(MainPane::Arrangement);
+        if self.open {
             let (_, split) = panes
                 .split(Axis::Vertical, arrangement, MainPane::MediaBrowser)
-                .expect("the arrangement pane is present");
+                .expect("arrangement exists");
             panes.resize(split, self.main_ratio);
-            self.panes = Some(panes);
             self.split = Some(split);
         }
-        self.open = !self.open;
+        if self.mixer_open {
+            let (_, split) = panes
+                .split(Axis::Horizontal, arrangement, MainPane::Mixer)
+                .expect("arrangement exists");
+            panes.resize(split, self.arrange_ratio);
+            self.mixer_split = Some(split);
+        }
+        self.panes = Some(panes);
     }
-
+    fn toggle(&mut self) {
+        self.open = !self.open;
+        self.rebuild();
+    }
+    fn toggle_mixer(&mut self) {
+        self.mixer_open = !self.mixer_open;
+        self.rebuild();
+    }
     fn resize(&mut self, split: Split, ratio: f32) {
-        if self.split == Some(split) && ratio.is_finite() {
+        if !ratio.is_finite() {
+            return;
+        }
+        let ratio = if self.split == Some(split) {
             self.main_ratio = ratio.clamp(0.55, 0.86);
-            if let Some(panes) = &mut self.panes {
-                panes.resize(split, self.main_ratio);
-            }
+            self.main_ratio
+        } else if self.mixer_split == Some(split) {
+            self.arrange_ratio = ratio.clamp(0.20, 0.90);
+            self.arrange_ratio
+        } else {
+            return;
+        };
+        if let Some(panes) = &mut self.panes {
+            panes.resize(split, ratio);
         }
     }
 }
@@ -1095,6 +1146,12 @@ impl App {
             iced::Size::new(1280.0, 800.0)
         });
         let main_window_task = main_window_task.discard();
+        if !app.is_mobile_main_window() {
+            match desktop_layout::load() {
+                Ok(layout) => app.media_panel_dock = MediaPanelDock::from_layout(layout),
+                Err(error) => app.status = format!("Desktop layout unavailable: {error}"),
+            }
+        }
         match action_macros::load().and_then(commands::validate_action_macros) {
             Ok(macros) => app.action_macros = macros,
             Err(error) => {
@@ -1323,6 +1380,7 @@ impl App {
                 || self.audio_asset_management_busy
                 || self.audio_waveform_worker.is_some()
                 || self.track_mix_gesture.is_some()
+                || self.desktop_layout_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
@@ -1465,6 +1523,7 @@ impl App {
         let menu_ui_message = matches!(
             &message,
             Message::ActionQueryChanged(_)
+                | Message::ShortcutPressed(_)
                 | Message::ActionMenuScrolled(_)
                 | Message::MenuKeyboard(
                     MenuNavigation::Open
@@ -1483,7 +1542,8 @@ impl App {
         let window_safe_message = menu_ui_message
             || matches!(
                 &message,
-                Message::OpenActionList
+                Message::ToggleMixerPanel
+                    | Message::OpenActionList
                     | Message::OpenActionMacroEditor
                     | Message::CloseActionList
                     | Message::ActionListQueryChanged(_)
@@ -1530,6 +1590,7 @@ impl App {
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
+                    | Message::ExecuteCommand(commands::CommandId::ToggleMixerPanel)
                     | Message::ToggleOfflineJobsPanel
                     | Message::ToggleTransportDetails
                     | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
@@ -1831,9 +1892,28 @@ impl App {
             Message::MenuKeyboard(navigation) => {
                 task = self.navigate_main_menu(navigation);
             }
+            Message::ToggleMixerPanel => {
+                if self.is_mobile_main_window() {
+                    self.main_workspace = if self.main_workspace == MainWorkspace::Mixer {
+                        MainWorkspace::Arrangement
+                    } else {
+                        MainWorkspace::Mixer
+                    };
+                } else {
+                    self.media_panel_dock.toggle_mixer();
+                    self.schedule_desktop_layout_save();
+                }
+            }
             Message::ShowMainWorkspace(workspace) => {
                 self.cancel_shortcut_capture();
                 self.main_workspace = workspace;
+                if !self.is_mobile_main_window()
+                    && workspace == MainWorkspace::Mixer
+                    && !self.media_panel_dock.mixer_open
+                {
+                    self.media_panel_dock.toggle_mixer();
+                    self.schedule_desktop_layout_save();
+                }
                 self.mobile_panel = MobilePanel::Editor;
                 self.mobile_panel_history.clear();
                 self.active_menu = None;
@@ -1948,6 +2028,9 @@ impl App {
                 }
             }
             Message::WindowCloseRequested(window_id) => {
+                if self.main_window_id == Some(window_id) {
+                    self.flush_desktop_layout();
+                }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                 } else if self.main_window_id == Some(window_id) {
@@ -3326,10 +3409,12 @@ impl App {
                     }
                 } else {
                     self.media_panel_dock.toggle();
+                    self.schedule_desktop_layout_save();
                 }
             }
             Message::MediaPanelResized(split, ratio) => {
                 self.media_panel_dock.resize(split, ratio);
+                self.schedule_desktop_layout_save();
             }
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
@@ -3379,6 +3464,7 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                self.flush_desktop_layout_if_due();
                 #[cfg(all(feature = "audio-device", target_os = "android"))]
                 if self.settings_category == SettingsCategory::Audio {
                     match crate::android_platform::midi_port_counts() {

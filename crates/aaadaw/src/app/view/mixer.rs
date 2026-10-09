@@ -24,8 +24,13 @@ fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Me
         .iter()
         .map(|track| track_strip(app, track, mix_layout));
     let master = master_strip(app);
-    let content = row(strips).push(master).spacing(tokens::SECTION_GAP);
     let touch_targets = matches!(mix_layout, TrackMixLayout::TouchCompact);
+    let content = if touch_targets {
+        row(strips).push(master)
+    } else {
+        row(std::iter::once(master).chain(strips))
+    }
+    .spacing(tokens::SECTION_GAP);
     let scroll = scrollable(content)
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default(),
@@ -65,6 +70,17 @@ fn view_with_mix_layout(app: &App, mix_layout: TrackMixLayout) -> Element<'_, Me
     ]
     .spacing(tokens::SECTION_GAP)
     .align_y(Alignment::Center);
+    let toolbar = if touch_targets {
+        toolbar
+    } else {
+        toolbar
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .push(
+                button("×")
+                    .on_press(Message::ToggleMixerPanel)
+                    .padding([2, 6]),
+            )
+    };
     column![toolbar, scroll]
         .spacing(tokens::SECTION_GAP)
         .width(Length::Fill)

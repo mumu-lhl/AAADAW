@@ -112,10 +112,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 fn desktop_view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
-    let workspace: Element<'_, Message> = match app.main_workspace {
-        super::MainWorkspace::Arrangement if app.media_panel_dock.open => docked_arrangement(app),
-        super::MainWorkspace::Arrangement => arrangement::view(app),
-        super::MainWorkspace::Mixer => mixer::view(app),
+    let workspace = if app.media_panel_dock.panes.is_some() {
+        docked_arrangement(app)
+    } else {
+        arrangement_with_transport(app)
     };
     let status_text = app.status.clone();
 
@@ -200,10 +200,6 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING),
         );
     }
-    let transport = container(transport_view(app))
-        .width(Length::Fill)
-        .padding(tokens::PANEL_PADDING)
-        .style(iced::widget::container::rounded_box);
     let offline_job_count = usize::from(app.offline_render_busy) + app.offline_job_queue.len();
     let status_row = row![
         text(status_text).width(Length::Fill),
@@ -214,7 +210,7 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(tokens::SECTION_GAP)
     .align_y(Alignment::Center);
-    content = content.push(workspace).push(status_row).push(transport);
+    content = content.push(workspace).push(status_row);
     let base: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -503,6 +499,18 @@ fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecovery
     })
 }
 
+fn arrangement_with_transport(app: &App) -> Element<'_, Message> {
+    column![
+        arrangement::view(app),
+        container(transport_view(app))
+            .width(Length::Fill)
+            .padding(tokens::PANEL_PADDING)
+    ]
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
 fn docked_arrangement(app: &App) -> Element<'_, Message> {
     let panes = app
         .media_panel_dock
@@ -511,8 +519,9 @@ fn docked_arrangement(app: &App) -> Element<'_, Message> {
         .expect("the Media Browser dock initializes its pane grid before opening");
     pane_grid(panes, |_pane, content, _is_maximized| {
         let body: Element<'_, Message> = match content {
-            super::MainPane::Arrangement => arrangement::view(app),
+            super::MainPane::Arrangement => arrangement_with_transport(app),
             super::MainPane::MediaBrowser => media::dock_view(app),
+            super::MainPane::Mixer => mixer::view(app),
         };
         pane_grid::Content::new(body)
     })
@@ -657,6 +666,7 @@ fn transport_view(app: &App) -> Element<'_, Message> {
         };
         container(content).width(Length::Fill).into()
     })
+    .height(Length::Shrink)
     .into()
 }
 

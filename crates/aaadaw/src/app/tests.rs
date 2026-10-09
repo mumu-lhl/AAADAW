@@ -3213,7 +3213,8 @@ fn removed_workspace_shortcuts_do_not_discard_other_saved_bindings() {
 fn media_browser_dock_toggles_and_resizes_without_replacing_arrangement() {
     let mut app = App::default();
     assert!(!app.media_panel_dock.open);
-    assert!(app.media_panel_dock.panes.is_none());
+    assert!(app.media_panel_dock.mixer_open);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
     let toggle = CommandId::ToggleMediaBrowserPanel;
     assert!(commands::is_enabled(&app, toggle));
     assert!(
@@ -3224,7 +3225,7 @@ fn media_browser_dock_toggles_and_resizes_without_replacing_arrangement() {
 
     let _ = app.update(Message::ExecuteCommand(toggle));
     assert!(app.media_panel_dock.open);
-    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 3);
     let split = app.media_panel_dock.split.unwrap();
     let _ = app.update(Message::MediaPanelResized(split, 0.63));
     assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
@@ -7526,4 +7527,83 @@ fn action_list_run_close_closes_even_when_undo_has_no_effect() {
     let _ = app.update(Message::ActionListRun(true));
     assert!(app.action_list_window_id.is_none());
     assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn desktop_mixer_dock_and_media_share_state_and_keep_independent_ratios() {
+    let mut app = App::default();
+    assert!(app.media_panel_dock.mixer_open);
+    let _ = app.update(Message::AddTrack);
+    let id = app.project.tracks()[0].id();
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    let media = app.media_panel_dock.split.unwrap();
+    let mixer = app.media_panel_dock.mixer_split.unwrap();
+    assert_ne!(media, mixer);
+    let _ = app.update(Message::MediaPanelResized(media, 0.63));
+    let _ = app.update(Message::MediaPanelResized(mixer, 0.48));
+    let _ = app.update(Message::ToggleMixerPanel);
+    assert!(!app.media_panel_dock.mixer_open);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
+    let _ = app.update(Message::ToggleMixerPanel);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 3);
+    assert_eq!(app.media_panel_dock.main_ratio, 0.63);
+    assert_eq!(app.media_panel_dock.arrange_ratio, 0.48);
+    assert_eq!(app.project.tracks()[0].id(), id);
+    assert!(app.desktop_layout_save_at.is_some());
+}
+
+#[test]
+fn new_factory_shortcuts_preserve_existing_custom_maps_and_effective_labels() {
+    let bindings =
+        commands::validate_bindings(&HashMap::from([("edit.undo".into(), "Mod+M".into())]))
+            .unwrap();
+    let input = test_shortcut_input(Key::Character("m".into()), Modifiers::COMMAND);
+    assert_eq!(
+        commands::from_shortcut_input(&input, &bindings, &[]),
+        Some(CommandId::Undo)
+    );
+    assert!(commands::binding_for_id("view.toggle-mixer", &bindings).is_empty());
+    assert_eq!(commands::binding_for_id("edit.undo", &bindings), "Mod+M");
+}
+
+#[test]
+fn busy_project_view_menu_and_shortcut_toggle_mixer_without_editing_project() {
+    let main = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main),
+        io_busy: true,
+        ..App::default()
+    };
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleMixerPanel));
+    assert!(!app.media_panel_dock.mixer_open);
+    let input = test_shortcut_input(Key::Character("m".into()), Modifiers::COMMAND);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        main,
+    ));
+    assert!(app.media_panel_dock.mixer_open);
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn yielded_factory_binding_is_consistent_between_labels_and_dispatch() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Physical},
+    };
+    let bindings = commands::validate_bindings(&HashMap::from([(
+        "edit.undo".into(),
+        "Shift+NumPadDivide".into(),
+    )]))
+    .unwrap();
+    assert!(commands::binding_for_id("actions.show-list", &bindings).is_empty());
+    let mut input = test_shortcut_input(Key::Character("/".into()), Modifiers::SHIFT);
+    assert_eq!(commands::from_shortcut_input(&input, &bindings, &[]), None);
+    input.physical_key = Physical::Code(Code::NumpadDivide);
+    input.location = Location::Numpad;
+    assert_eq!(
+        commands::from_shortcut_input(&input, &bindings, &[]),
+        Some(CommandId::Undo)
+    );
 }

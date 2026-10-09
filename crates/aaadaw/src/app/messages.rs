@@ -165,6 +165,7 @@ pub(crate) enum Message {
     ShowMainWorkspace(MainWorkspace),
     MobileNavigateBack,
     ToggleMediaBrowserPanel,
+    ToggleMixerPanel,
     OpenSettings,
     OpenActionList,
     OpenActionMacroEditor,

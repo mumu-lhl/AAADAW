@@ -26,6 +26,7 @@ pub(crate) enum CommandId {
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedItem,
@@ -76,6 +77,7 @@ enum CommandKind {
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
     DuplicateSelectedItem,
@@ -256,6 +258,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Arrange workspace",
         aliases: &["arrangement", "arrange", "show arrange"],
         shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleMixerPanel,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Toggle mixer visible",
+        aliases: &["show mixer", "hide mixer", "mixer dock"],
+        shortcuts: &[Shortcut::character('m', Modifiers::COMMAND)],
         destructive: false,
         separator_before: false,
     },
@@ -583,6 +595,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::ToggleOfflineJobsPanel
             | CommandKind::ShowArrangement
             | CommandKind::ShowMixer
+            | CommandKind::ToggleMixerPanel
             | CommandKind::AddMidiItem
             | CommandKind::DuplicateSelectedItem
             | CommandKind::DuplicateSelectedAudioItem
@@ -698,13 +711,39 @@ pub(super) fn staged_binding_for_id(app: &App, id: &str) -> String {
         .unwrap_or_else(|| config_binding_for(app, id, defaults))
 }
 
+fn default_may_yield(kind: CommandKind) -> bool {
+    matches!(
+        kind,
+        CommandKind::OpenActionList | CommandKind::AddTrack | CommandKind::ToggleMixerPanel
+    )
+}
+
+fn effective_defaults(
+    definition: &CommandDefinition,
+    bindings: &ShortcutBindings,
+) -> Vec<Shortcut> {
+    definition
+        .shortcuts
+        .iter()
+        .copied()
+        .filter(|shortcut| {
+            !default_may_yield(definition.kind)
+                || !bindings
+                    .values()
+                    .filter_map(|value| parse_bindings(value).ok())
+                    .flatten()
+                    .any(|bound| shortcut.conflicts(bound))
+        })
+        .collect()
+}
+
 pub(super) fn binding_for_id(id: &str, bindings: &ShortcutBindings) -> String {
     bindings.get(id).cloned().unwrap_or_else(|| {
         COMMANDS
             .iter()
             .find(|definition| command_kind_id(definition.kind) == id)
             .map_or_else(String::new, |definition| {
-                serialize_bindings(definition.shortcuts)
+                serialize_bindings(&effective_defaults(definition, bindings))
             })
     })
 }
@@ -769,6 +808,12 @@ pub(super) fn validate_bindings_with_macros(
             continue;
         }
         for shortcut in definition.shortcuts {
+            // Adding a new factory binding must not invalidate older custom maps.
+            if default_may_yield(definition.kind)
+                && resolved.iter().any(|(bound, _)| shortcut.conflicts(*bound))
+            {
+                continue;
+            }
             register_shortcut(*shortcut, id, &mut resolved)?;
         }
     }
@@ -908,18 +953,24 @@ fn find_shortcut(
     }) {
         return Some(CommandId::Macro(action_macro.id));
     }
-    COMMANDS.iter().find_map(|definition| {
-        let id = command_kind_id(definition.kind);
-        let custom = bindings
-            .get(id)
-            .and_then(|binding| parse_bindings(binding).ok());
-        match custom {
-            Some(shortcuts) => shortcuts.iter().any(&matches),
-            None if bindings.contains_key(id) => false,
-            None => definition.shortcuts.iter().any(&matches),
-        }
-        .then(|| command_id(definition.kind))
-    })
+    COMMANDS
+        .iter()
+        .find_map(|definition| {
+            bindings
+                .get(command_kind_id(definition.kind))
+                .and_then(|value| parse_bindings(value).ok())
+                .is_some_and(|shortcuts| shortcuts.iter().any(&matches))
+                .then(|| command_id(definition.kind))
+        })
+        .or_else(|| {
+            COMMANDS.iter().find_map(|definition| {
+                (!bindings.contains_key(command_kind_id(definition.kind))
+                    && effective_defaults(definition, bindings)
+                        .iter()
+                        .any(&matches))
+                .then(|| command_id(definition.kind))
+            })
+        })
 }
 
 pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
@@ -966,19 +1017,12 @@ pub(super) fn shortcut_capture_help() -> String {
     "Select a binding, then press a character, function key, or navigation key with Ctrl, Alt, Shift, or Super. Escape cancels; unmodified Backspace clears.".to_owned()
 }
 
-fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
+fn config_binding_for(app: &App, id: &str, _defaults: &[Shortcut]) -> String {
     let custom = app
         .shortcut_bindings
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(binding) = custom.get(id) {
-        return binding.clone();
-    }
-    defaults
-        .iter()
-        .map(|shortcut| shortcut.config_label())
-        .collect::<Vec<_>>()
-        .join("; ")
+    binding_for_id(id, &custom)
 }
 
 fn command_kind_id(kind: CommandKind) -> &'static str {
@@ -997,6 +1041,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
+        CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
@@ -1066,6 +1111,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
+        CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
@@ -1269,7 +1315,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ToggleOfflineJobsPanel => true,
-        CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
+        CommandKind::ShowArrangement | CommandKind::ShowMixer | CommandKind::ToggleMixerPanel => {
+            true
+        }
         CommandKind::AddMidiItem => {
             !project_edit_busy(app)
                 && app.timeline.selected_track.is_some_and(|selected_track| {
@@ -1380,6 +1428,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleOfflineJobsPanel => CommandId::ToggleOfflineJobsPanel,
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
+        CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
@@ -1548,6 +1597,11 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
     match command {
         CommandId::ToggleMediaBrowserPanel => Some(app.media_panel_dock.open),
         CommandId::ToggleOfflineJobsPanel => Some(app.offline_jobs_panel_open),
+        CommandId::ToggleMixerPanel => Some(if app.is_mobile_main_window() {
+            app.main_workspace == MainWorkspace::Mixer
+        } else {
+            app.media_panel_dock.mixer_open
+        }),
         CommandId::SelectedTrack(TrackCommand::ToggleMute) => app
             .selected_track_id()
             .and_then(|id| track_state(app, id))
