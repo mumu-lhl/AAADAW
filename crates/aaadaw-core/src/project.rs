@@ -35,22 +35,30 @@ fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool 
             .all(|pair| pair[0].sample() < pair[1].sample())
 }
 
-fn valid_track_routing(tracks: &[crate::Track]) -> bool {
+fn routing_destinations(track: &Track) -> impl Iterator<Item = TrackId> + '_ {
+    // Dormant connections remain part of validation so toggling mute/main send
+    // cannot introduce a cycle that was hidden while the route was disabled.
+    track
+        .output_track
+        .into_iter()
+        .chain(track.sends.iter().map(|send| send.destination))
+}
+
+fn valid_track_routing(tracks: &[Track]) -> bool {
     for source in tracks {
-        let mut next = source.output_track;
-        let mut visited = 0;
-        while let Some(target_id) = next {
+        let mut pending: Vec<_> = routing_destinations(source).collect();
+        let mut visited = HashSet::new();
+        while let Some(target_id) = pending.pop() {
             if target_id == source.id {
                 return false;
+            }
+            if !visited.insert(target_id) {
+                continue;
             }
             let Some(target) = tracks.iter().find(|track| track.id == target_id) else {
                 return false;
             };
-            visited += 1;
-            if visited > tracks.len() {
-                return false;
-            }
-            next = target.output_track;
+            pending.extend(routing_destinations(target));
         }
     }
     true
@@ -88,12 +96,23 @@ struct ProjectState {
 #[derive(Clone, Debug, Default)]
 struct IdAllocator {
     next_track_id: u64,
+    next_send_id: u64,
     next_item_id: u64,
     next_note_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    TrackMainSendChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
+    TrackSendsChanged {
+        track_id: TrackId,
+        before: Vec<crate::AudioSend>,
+        after: Vec<crate::AudioSend>,
+    },
     TrackCreated {
         index: usize,
         track: Track,
@@ -299,6 +318,24 @@ impl ProjectEvent {
                 track: track.clone(),
                 audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
+            },
+            Self::TrackMainSendChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackMainSendChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackSendsChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackSendsChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::TrackVolumeChanged {
                 track_id,
@@ -665,6 +702,34 @@ impl Project {
         }
     }
 
+    /// Whether adding a connection between two tracks keeps the graph acyclic.
+    pub fn can_route_to(&self, source: TrackId, destination: TrackId) -> bool {
+        if source == destination
+            || !self.state.tracks.iter().any(|track| track.id == source)
+            || !self
+                .state
+                .tracks
+                .iter()
+                .any(|track| track.id == destination)
+        {
+            return false;
+        }
+        let mut pending = vec![destination];
+        let mut visited = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if id == source {
+                return false;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(track) = self.state.tracks.iter().find(|track| track.id == id) {
+                pending.extend(routing_destinations(track));
+            }
+        }
+        true
+    }
+
     /// Returns the project's immutable sample-rate and PPQ settings.
     pub fn settings(&self) -> ProjectSettings {
         self.state
@@ -845,6 +910,16 @@ impl Project {
                     name: track.name.clone(),
                     is_bus: track.is_bus,
                     output_track_id: track.output_track.map(TrackId::value),
+                    main_send_enabled: track.main_send_enabled,
+                    sends: track
+                        .sends
+                        .iter()
+                        .map(|send| crate::AudioSendSnapshot {
+                            id: send.id.value(),
+                            destination_track_id: send.destination.value(),
+                            parameters: send.parameters,
+                        })
+                        .collect(),
                     volume_db: track.volume_db,
                     pan: track.pan,
                     muted: track.muted,
@@ -955,6 +1030,8 @@ impl Project {
     /// Restores project state from a validated snapshot with a fresh undo history.
     pub fn from_snapshot(snapshot: ProjectSnapshot) -> Result<Self, SnapshotError> {
         let settings = snapshot.settings;
+        let mut send_ids = HashSet::new();
+        let mut max_send_id = None;
         let mut tempo_map = TempoMap::new(settings);
         let first_tempo = snapshot
             .tempo_points
@@ -1066,11 +1143,25 @@ impl Project {
                 return Err(SnapshotError::InvalidProjectData);
             }
             max_track_id = Some(max_track_id.map_or(track.id, |max: u64| max.max(track.id)));
+            let mut sends = Vec::new();
+            for send in track.sends {
+                if !send_ids.insert(send.id) || !send.parameters.is_valid() {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                max_send_id = Some(max_send_id.map_or(send.id, |max: u64| max.max(send.id)));
+                sends.push(crate::AudioSend {
+                    id: crate::SendId::from_value(send.id),
+                    destination: TrackId::from_raw(send.destination_track_id),
+                    parameters: send.parameters,
+                });
+            }
             tracks.push(Track {
                 id: TrackId::from_raw(track.id),
                 name: track.name,
                 is_bus: track.is_bus,
                 output_track: track.output_track_id.map(TrackId::from_raw),
+                main_send_enabled: track.main_send_enabled,
+                sends,
                 volume_db: track.volume_db,
                 pan: track.pan,
                 pan_mode: settings.pan_mode(),
@@ -1203,6 +1294,7 @@ impl Project {
             },
             ids: IdAllocator {
                 next_track_id: next_id(max_track_id)?,
+                next_send_id: next_id(max_send_id)?,
                 next_item_id: next_id(max_item_id)?,
                 next_note_id: next_id(max_note_id)?,
             },
@@ -1254,6 +1346,8 @@ impl Project {
                     name,
                     is_bus: false,
                     output_track: None,
+                    main_send_enabled: true,
+                    sends: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
                     pan_mode: state.pan_mode,
@@ -1284,6 +1378,8 @@ impl Project {
                     name,
                     is_bus: true,
                     output_track: None,
+                    main_send_enabled: true,
+                    sends: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
                     pan_mode: state.pan_mode,
@@ -1443,6 +1539,89 @@ impl Project {
                     after: points,
                 }
             }
+            DawAction::SetTrackMainSend { track_id, enabled } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackMainSendChanged {
+                    track_id,
+                    before: track.main_send_enabled,
+                    after: enabled,
+                }
+            }
+            DawAction::CreateAudioSend {
+                track_id,
+                destination,
+                parameters,
+            } => {
+                let next = ids
+                    .next_send_id
+                    .checked_add(1)
+                    .ok_or(ActionError::SendIdExhausted)?;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                after.push(crate::AudioSend {
+                    id: crate::SendId::from_value(ids.next_send_id),
+                    destination,
+                    parameters,
+                });
+                validate_send_edit(&state.tracks, track_id, &after)?;
+                ids.next_send_id = next;
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
+            DawAction::UpdateAudioSend {
+                track_id,
+                send_id,
+                destination,
+                parameters,
+            } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                let send = after
+                    .iter_mut()
+                    .find(|send| send.id == send_id)
+                    .ok_or(ActionError::AudioSendNotFound { send_id })?;
+                send.destination = destination;
+                send.parameters = parameters;
+                validate_send_edit(&state.tracks, track_id, &after)?;
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
+            DawAction::DeleteAudioSend { track_id, send_id } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                let index = after
+                    .iter()
+                    .position(|send| send.id == send_id)
+                    .ok_or(ActionError::AudioSendNotFound { send_id })?;
+                after.remove(index);
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
             DawAction::SetTrackOutput {
                 track_id,
                 output_track,
@@ -1455,17 +1634,19 @@ impl Project {
                 if output_track == Some(track_id) {
                     return Err(ActionError::InvalidTrackOutput);
                 }
-                let mut next = output_track;
-                while let Some(target_id) = next {
-                    if target_id == track_id {
-                        return Err(ActionError::TrackRoutingCycle);
-                    }
-                    let target = state
-                        .tracks
-                        .iter()
-                        .find(|track| track.id == target_id)
-                        .ok_or(ActionError::InvalidTrackOutput)?;
-                    next = target.output_track;
+                if output_track
+                    .is_some_and(|target| !state.tracks.iter().any(|track| track.id == target))
+                {
+                    return Err(ActionError::InvalidTrackOutput);
+                }
+                let mut candidate = state.tracks.clone();
+                candidate
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .unwrap()
+                    .output_track = output_track;
+                if !valid_track_routing(&candidate) {
+                    return Err(ActionError::TrackRoutingCycle);
                 }
                 ProjectEvent::TrackOutputChanged {
                     track_id,
@@ -2359,11 +2540,9 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
-                if state
-                    .tracks
-                    .iter()
-                    .any(|track| track.output_track == Some(track_id))
-                {
+                if state.tracks.iter().any(|track| {
+                    routing_destinations(track).any(|destination| destination == track_id)
+                }) {
                     return Err(ActionError::TrackHasRoutingDependents { track_id });
                 }
                 let audio_items = state
@@ -2398,6 +2577,37 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::TrackMainSendChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.main_send_enabled != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.main_send_enabled = *after;
+            }
+            ProjectEvent::TrackSendsChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.sends != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.sends = after.clone();
+            }
+
             ProjectEvent::TrackCreated { index, track } => {
                 if *index > state.tracks.len()
                     || state.tracks.iter().any(|item| item.id == track.id)
@@ -3225,4 +3435,29 @@ fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {
     max_id.map_or(Ok(0), |id| {
         id.checked_add(1).ok_or(SnapshotError::IdentifierExhausted)
     })
+}
+
+fn validate_send_edit(
+    tracks: &[Track],
+    source: TrackId,
+    sends: &[crate::AudioSend],
+) -> Result<(), ActionError> {
+    if sends.iter().any(|send| !send.parameters.is_valid()) {
+        return Err(ActionError::InvalidAudioSend);
+    }
+    if sends.iter().any(|send| {
+        send.destination == source || !tracks.iter().any(|track| track.id == send.destination)
+    }) {
+        return Err(ActionError::InvalidTrackOutput);
+    }
+    let mut candidate = tracks.to_vec();
+    candidate
+        .iter_mut()
+        .find(|track| track.id == source)
+        .unwrap()
+        .sends = sends.to_vec();
+    if !valid_track_routing(&candidate) {
+        return Err(ActionError::TrackRoutingCycle);
+    }
+    Ok(())
 }

@@ -64,6 +64,7 @@ mod project_io;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
+mod routing;
 mod shortcut;
 #[cfg(test)]
 mod tests;
@@ -316,6 +317,9 @@ struct App {
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    routing_window_id: Option<iced::window::Id>,
+    routing_track_id: Option<TrackId>,
+    routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
     action_list_window_id: Option<iced::window::Id>,
     action_list: action_list::ActionListState,
     render_window_id: Option<iced::window::Id>,
@@ -570,7 +574,12 @@ struct MeterMapEdit {
 #[cfg(feature = "audio-device")]
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
-        DawAction::SetTrackFxChain { .. }
+        DawAction::SetTrackOutput { .. }
+        | DawAction::SetTrackMainSend { .. }
+        | DawAction::CreateAudioSend { .. }
+        | DawAction::UpdateAudioSend { .. }
+        | DawAction::DeleteAudioSend { .. }
+        | DawAction::SetTrackFxChain { .. }
         | DawAction::SetTempo { .. }
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
@@ -1303,7 +1312,14 @@ impl App {
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
-        if self.action_list_window_id == Some(window_id) {
+        if self.routing_window_id == Some(window_id) {
+            self.routing_track_id
+                .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
+                .map_or_else(
+                    || "Track routing".to_owned(),
+                    |track| format!("Routing for {}", track.name()),
+                )
+        } else if self.action_list_window_id == Some(window_id) {
             "Actions".to_owned()
         } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
@@ -1536,13 +1552,23 @@ impl App {
             &message,
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
+                    || self.routing_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
                     || self.settings_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
             || matches!(
                 &message,
-                Message::ToggleMixerPanel
+                Message::ExecuteCommand(
+                    commands::CommandId::SelectedTrack(commands::TrackCommand::Routing)
+                        | commands::CommandId::Track {
+                            command: commands::TrackCommand::Routing,
+                            ..
+                        }
+                ) | Message::OpenTrackRouting(_)
+                    | Message::CloseTrackRouting
+                    | Message::RoutingSendDraft(..)
+                    | Message::ToggleMixerPanel
                     | Message::OpenActionList
                     | Message::OpenActionMacroEditor
                     | Message::CloseActionList
@@ -1983,7 +2009,11 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
-                if self.action_list_window_id == Some(window_id) {
+                if self.routing_window_id == Some(window_id) {
+                    self.routing_window_id = None;
+                    self.routing_track_id = None;
+                    self.routing_send_drafts.clear();
+                } else if self.action_list_window_id == Some(window_id) {
                     self.action_list_window_id = None;
                     self.action_list.capture = None;
                 } else if self.settings_window_id == Some(window_id) {
@@ -2734,6 +2764,18 @@ impl App {
             Message::ActionListDeleteBinding => self.delete_action_list_binding(),
             Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if self.routing_window_id == Some(window_id) {
+                    if matches!(
+                        event,
+                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                            ..
+                        })
+                    ) {
+                        return self.close_track_routing();
+                    }
+                    return Task::none();
+                }
                 if self.action_list_window_id == Some(window_id) {
                     return self.action_list_keyboard_event(event, status);
                 }
@@ -3077,6 +3119,15 @@ impl App {
                     self.add_bus_track();
                 }
             }
+            Message::OpenTrackRouting(track_id) => task = self.open_track_routing(track_id),
+            Message::CloseTrackRouting => task = self.close_track_routing(),
+            Message::RoutingChange(action) => {
+                let _ = self.apply_routing_change(action);
+            }
+            Message::RoutingSendDraft(send_id, is_pan, value) => {
+                self.set_routing_send_draft(send_id, is_pan, value)
+            }
+            Message::CommitRoutingSend(send_id) => self.commit_routing_send(send_id),
             Message::SetTrackOutput(track_id, output_track) => {
                 if self.project_graph_edit_busy() {
                     self.status =
@@ -3598,6 +3649,8 @@ impl App {
                     Some(Ok((project, arrangement_view_state, project_lock))) => {
                         self.pending_project_transition = None;
                         self.project_lock = Some(project_lock);
+                        self.routing_track_id = None;
+                        self.routing_send_drafts.clear();
                         self.project = project;
                         self.refresh_tempo_map_edits();
                         self.refresh_meter_map_edits();
@@ -3794,6 +3847,8 @@ impl App {
                             directory,
                             lock: Some(lock),
                         });
+                        self.routing_track_id = None;
+                        self.routing_send_drafts.clear();
                         self.project = project;
                         self.project_path = None;
                         self.project_path_query.clear();
@@ -4188,6 +4243,8 @@ impl App {
             return;
         }
 
+        self.routing_track_id = None;
+        self.routing_send_drafts.clear();
         self.project = Project::new();
         self.refresh_tempo_map_edits();
         self.refresh_meter_map_edits();

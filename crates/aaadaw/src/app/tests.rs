@@ -7624,3 +7624,53 @@ fn ordinary_track_routing_is_available_as_an_undoable_action() {
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
 }
+
+#[test]
+fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let destination = app.project.tracks()[1].id();
+    app.routing_track_id = Some(source);
+    let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+        track_id: source,
+        destination,
+        parameters: Default::default(),
+    }));
+    let id = app.project.tracks()[0].sends()[0].id();
+    let before = app.project.snapshot();
+    let _ = app.update(Message::RoutingSendDraft(id, false, "-6".into()));
+    let _ = app.update(Message::RoutingSendDraft(id, true, "NaN".into()));
+    let _ = app.update(Message::CommitRoutingSend(id));
+    assert_eq!(app.project.snapshot(), before);
+    assert!(app.routing_send_drafts.contains_key(&id));
+    let _ = app.update(Message::RoutingSendDraft(id, true, "0.5".into()));
+    let _ = app.update(Message::CommitRoutingSend(id));
+    let parameters = app.project.tracks()[0].sends()[0].parameters();
+    assert_eq!((parameters.volume_db, parameters.pan), (-6.0, 0.5));
+    assert!(!app.routing_send_drafts.contains_key(&id));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::RoutingChange(DawAction::DeleteTrack {
+        track_id: destination,
+    }));
+    assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn touch_track_routing_uses_panel_navigation_and_close_keeps_project() {
+    let mut app = App {
+        shell_profile: super::ShellProfile::Touch,
+        ..Default::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let before = app.project.snapshot();
+    let _ = app.update(Message::OpenTrackRouting(source));
+    assert_eq!(app.mobile_panel, MobilePanel::Routing);
+    assert!(app.routing_window_id.is_none());
+    let _ = app.update(Message::CloseTrackRouting);
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
+    assert_eq!(app.project.snapshot(), before);
+}

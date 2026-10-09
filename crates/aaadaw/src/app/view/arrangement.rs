@@ -346,20 +346,8 @@ pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Eleme
         label: "Master".to_owned(),
     })
     .chain(app.project.tracks().iter().filter_map(|candidate| {
-        if candidate.id() == track_id {
+        if !app.project.can_route_to(track_id, candidate.id()) {
             return None;
-        }
-        let mut ancestor = candidate.output_track();
-        while let Some(ancestor_id) = ancestor {
-            if ancestor_id == track_id {
-                return None;
-            }
-            ancestor = app
-                .project
-                .tracks()
-                .iter()
-                .find(|track| track.id() == ancestor_id)
-                .and_then(Track::output_track);
         }
         Some(TrackOutputChoice {
             track_id: Some(candidate.id()),
@@ -766,6 +754,7 @@ fn track_row_layout<'a>(
             },
             name_input,
             fx_button,
+            track_routing_button(track),
             text(format!("→ {output_label}")).size(10),
             button(if automation_visible { "AUTO" } else { "auto" })
                 .style(if automation_visible {
@@ -888,6 +877,21 @@ pub(super) fn stereo_peak_meter<'a>(
     ]
     .spacing(1)
     .width(Length::Fill)
+    .into()
+}
+
+pub(super) fn track_routing_button(track: &Track) -> Element<'static, Message> {
+    button(text(if track.sends().is_empty() {
+        "IO".to_owned()
+    } else {
+        format!("IO {}", track.sends().len())
+    }))
+    .on_press(Message::ExecuteCommand(CommandId::Track {
+        track_id: track.id(),
+        command: TrackCommand::Routing,
+    }))
+    .style(iced::widget::button::secondary)
+    .padding([2, 5])
     .into()
 }
 

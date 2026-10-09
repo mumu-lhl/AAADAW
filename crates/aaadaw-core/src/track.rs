@@ -117,6 +117,8 @@ pub struct Track {
     pub(crate) name: String,
     pub(crate) is_bus: bool,
     pub(crate) output_track: Option<TrackId>,
+    pub(crate) main_send_enabled: bool,
+    pub(crate) sends: Vec<crate::AudioSend>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
     pub(crate) pan_mode: crate::PanMode,
@@ -307,6 +309,15 @@ impl TrackFxPlugin {
 }
 
 impl Track {
+    /// Whether the existing main output (Master or selected track) is enabled.
+    pub fn main_send_enabled(&self) -> bool {
+        self.main_send_enabled
+    }
+    /// Ordered sender-owned post-fader audio connections.
+    pub fn sends(&self) -> &[crate::AudioSend] {
+        &self.sends
+    }
+
     /// Returns the inherited project gain policy.
     pub fn pan_mode(&self) -> crate::PanMode {
         self.pan_mode

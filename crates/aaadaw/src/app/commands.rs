@@ -52,6 +52,7 @@ pub(crate) enum CommandId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackCommand {
+    Routing,
     Rename,
     ToggleMute,
     ToggleSolo,
@@ -376,6 +377,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Add track",
         aliases: &["create track"],
         shortcuts: ADD_TRACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::Routing),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Track routing…",
+        aliases: &["routing", "track io", "send", "receive"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -1051,6 +1062,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
+        CommandKind::Track(TrackCommand::Routing) => "track.routing",
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
@@ -1167,6 +1179,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 return Task::none();
             }
             match command {
+                TrackCommand::Routing => Message::OpenTrackRouting(track_id),
                 TrackCommand::Rename => Message::BeginTrackNameEdit(track_id),
                 TrackCommand::ToggleMute => Message::ToggleMute(track_id),
                 TrackCommand::ToggleSolo => Message::ToggleSolo(track_id),
@@ -1377,10 +1390,12 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app) && app.can_split_selected_items_at_time_selection()
         }
         CommandKind::AddTrack => !project_edit_busy(app),
+        CommandKind::Track(TrackCommand::Routing) => track.is_some(),
         CommandKind::Track(command) => {
             !project_edit_busy(app)
                 && track.is_some_and(|track| match command {
-                    TrackCommand::Rename
+                    TrackCommand::Routing
+                    | TrackCommand::Rename
                     | TrackCommand::ToggleMute
                     | TrackCommand::ToggleSolo
                     | TrackCommand::ToggleRecordArm

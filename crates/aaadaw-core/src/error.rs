@@ -17,11 +17,16 @@ pub enum ActionError {
     InvalidVolumeDb,
     /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
     InvalidVolumeAutomation,
-    /// The requested track output is not a different bus track.
+    /// The requested track output is not a different track.
     InvalidTrackOutput,
-    /// The requested bus route would create a routing cycle.
+    InvalidAudioSend,
+    SendIdExhausted,
+    AudioSendNotFound {
+        send_id: crate::SendId,
+    },
+    /// The requested route would create a routing cycle.
     TrackRoutingCycle,
-    /// A bus cannot be deleted while tracks are routed through it.
+    /// A receiving track cannot be deleted while tracks are routed through it.
     TrackHasRoutingDependents {
         track_id: TrackId,
     },
@@ -127,6 +132,9 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeAutomation => formatter.write_str(
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
             ),
+            Self::InvalidAudioSend => formatter.write_str("audio send parameters are invalid"),
+            Self::SendIdExhausted => formatter.write_str("audio send identifiers are exhausted"),
+            Self::AudioSendNotFound { send_id } => write!(formatter, "audio send {} does not exist", send_id.value()),
             Self::InvalidTrackOutput => {
                 formatter.write_str("track output must name a different track or Master")
             }

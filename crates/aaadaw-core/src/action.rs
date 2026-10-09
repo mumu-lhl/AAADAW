@@ -31,7 +31,27 @@ pub enum DawAction {
         track_id: TrackId,
         points: Vec<VolumeAutomationPoint>,
     },
-    /// Route a track to a bus, or directly to Master when `output_track` is `None`.
+    /// Enable or disable the main output without deleting any sends.
+    SetTrackMainSend { track_id: TrackId, enabled: bool },
+    /// Add an independent post-fader audio connection.
+    CreateAudioSend {
+        track_id: TrackId,
+        destination: TrackId,
+        parameters: crate::AudioSendParameters,
+    },
+    /// Change one connection while retaining its stable identity and position.
+    UpdateAudioSend {
+        track_id: TrackId,
+        send_id: crate::SendId,
+        destination: TrackId,
+        parameters: crate::AudioSendParameters,
+    },
+    /// Remove one sender-owned connection.
+    DeleteAudioSend {
+        track_id: TrackId,
+        send_id: crate::SendId,
+    },
+    /// Route a track to another track, or directly to Master when `output_track` is `None`.
     SetTrackOutput {
         track_id: TrackId,
         output_track: Option<TrackId>,

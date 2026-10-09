@@ -82,6 +82,7 @@ pub(crate) enum MobilePanel {
     TimeMap,
     FxChain,
     PluginPicker,
+    Routing,
 }
 
 impl MobilePanel {
@@ -94,6 +95,7 @@ impl MobilePanel {
             Self::TimeMap => "Time Map",
             Self::FxChain => "Track Effects",
             Self::PluginPicker => "Choose Plugin",
+            Self::Routing => "Track routing",
         }
     }
 }
@@ -297,6 +299,11 @@ pub(crate) enum Message {
     AddTrack,
     AddBusTrack,
     SetTrackOutput(TrackId, Option<TrackId>),
+    OpenTrackRouting(TrackId),
+    CloseTrackRouting,
+    RoutingChange(DawAction),
+    RoutingSendDraft(aaadaw_core::SendId, bool, String),
+    CommitRoutingSend(aaadaw_core::SendId),
     AddMidiItem,
     AddMidiNote(ItemId),
     DeleteMidiItem(ItemId),

@@ -104,14 +104,14 @@ fn schema_seventeen_preserves_legacy_mix_policy_and_new_defaults_round_trip() {
     store.close().unwrap();
     let connection = Connection::open(&path).unwrap();
     connection
-        .execute_batch("ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 17;")
+        .execute_batch("DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 17;")
         .unwrap();
     drop(connection);
     let backup_path = path.with_extension("v17-backup");
     std::fs::copy(&path, &backup_path).unwrap();
     let backup_bytes = std::fs::read(&backup_path).unwrap();
     let store = ProjectStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 18);
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     let restored = store.load().unwrap();
     assert_eq!(restored.snapshot(), project.snapshot());
     assert!(
@@ -256,7 +256,7 @@ fn schema_fourteen_migrates_track_freeze_reference_as_empty() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 14;",
+             DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 14;",
         )
         .unwrap();
     drop(connection);
@@ -303,7 +303,7 @@ fn midi_item_name_round_trips_and_schema_fifteen_defaults_existing_names() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 15;",
+            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 15;",
         )
         .unwrap();
     drop(connection);
@@ -405,7 +405,7 @@ fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
              DROP TABLE arrangement_view_meta; \
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 13;",
+             DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);
@@ -795,7 +795,7 @@ fn schema_twelve_migrates_v11_tempo_curve_values() {
              DROP TABLE arrangement_view_meta;
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id;
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name;
-             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 11;
+             DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 11;
              DROP TABLE track_fx_parameter_automation_points;
              CREATE TABLE tempo_points_v11 (
                  start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
@@ -855,7 +855,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN output_track_id; \
              ALTER TABLE tracks DROP COLUMN is_bus; \
              DROP TABLE track_fx_plugins; \
-             ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 2;",
+             DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 2;",
         )
         .expect("remove v3 columns to represent a v2 project");
     drop(connection);
@@ -1816,7 +1816,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 6;",
+            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1866,7 +1866,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1896,7 +1896,7 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
@@ -1922,12 +1922,113 @@ fn schema_nine_projects_migrate_tracks_to_master_by_default() {
     store.close().expect("project should close");
 
     let connection = Connection::open(&path).expect("project should be SQLite");
-    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 9;").unwrap();
+    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; PRAGMA user_version = 9;").unwrap();
     drop(connection);
     let store = ProjectStore::open(&path).expect("schema nine should migrate");
     let restored = store.load().unwrap();
     assert!(!restored.tracks()[0].is_bus());
     assert_eq!(restored.tracks()[0].output_track(), None);
     store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let source = project.tracks()[0].id();
+    let destination = project.tracks()[1].id();
+    for volume_db in [-6.0, -12.0] {
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination,
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db,
+                    pan: 0.5,
+                    phase_inverted: true,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::SetTrackMainSend {
+            track_id: source,
+            enabled: false,
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let mut restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(restored.snapshot(), expected);
+    restored
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination,
+            parameters: Default::default(),
+        })
+        .unwrap();
+    assert_eq!(restored.tracks()[0].sends()[2].id().value(), 2);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO track_sends VALUES(900, ?1, 2, 9999, 0, 0, 0, 0)",
+                [source.value() as i64]
+            )
+            .is_err()
+    );
+    drop(connection);
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        expected
+    );
+    remove_database(&path);
+}
+
+#[test]
+fn schema_eighteen_adds_empty_sends_and_preserves_main_outputs_and_mix_policy() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: project.tracks()[0].id(),
+            output_track: Some(project.tracks()[1].id()),
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; PRAGMA user_version = 18;").unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
     remove_database(&path);
 }

@@ -1,7 +1,7 @@
 use super::super::commands::{self, CommandId};
 use super::arrangement::{
     TrackMixLayout, stereo_peak_meter, track_fx_button, track_mix_controls, track_name_input,
-    track_output_selector, track_peak_meter, track_selection_background,
+    track_output_selector, track_peak_meter, track_routing_button, track_selection_background,
 };
 use super::tokens;
 use super::{App, Message};
@@ -133,6 +133,7 @@ fn track_strip<'a>(
         selection,
         track_name_input(app, track),
         track_fx_button(track),
+        track_routing_button(track),
     ]
     .spacing(tokens::SPACING_XS)
     .align_y(Alignment::Center);

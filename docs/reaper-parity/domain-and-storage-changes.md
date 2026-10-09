@@ -69,3 +69,7 @@ Undo/Redo 为运行会话历史；恢复历史与重开工程是否持久化按�
 ## 已实现 schema 18 切片
 
 `project_meta.pan_mode` 为受 CHECK 约束的工程级策略：0 为旧 AAADAW mono/stereo 混合策略，1 为新工程默认 0 dB balance。v17 加列默认 0，不改原轨道与媒体；新工程写 1。ProjectSettings 和 Track 构建缓存一致，Snapshot 保留 Settings；初始图与 live mix 都使用同一策略。没有 FX 前的声像补偿。并行 Send 模型尚未加入，本切片继续使用原 output_track_id 单输出。详见 [路由验证](../verification/reaper-parity/ordinary-track-routing.md)。
+
+## 已实现 schema 19 切片
+
+tracks.main_send_enabled 旧工程默认 true；track_sends 保存全局 SendId、源/目标 TrackId、顺序、volume/pan/mute/phase。Receive 不另存一份数据。外键与 Project 全图验证配合，读写及 Undo 保持身份；schema 18 保留旧单输出与 PanMode。当前 Tap 固定 Post-fader，后续增量迁移扩展。详见 [发送验证](../verification/reaper-parity/audio-sends.md)。

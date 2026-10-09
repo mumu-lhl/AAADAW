@@ -141,6 +141,24 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             notes,
         })
         .expect("MIDI note creation should succeed");
+    for index in 1..=2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Send receiver {index}"),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id,
+                destination: project.tracks()[index].id(),
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db: -12.0,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
     let (mut producer, consumer) =
         stereo_pcm_stream(128 * 128).expect("queue capacity should be valid");
     producer.set_stereo_content(true);

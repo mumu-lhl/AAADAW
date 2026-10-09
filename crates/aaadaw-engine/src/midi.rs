@@ -305,6 +305,52 @@ impl MidiEventPlan {
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
 
+        let mut reachable_solo = std::collections::HashMap::new();
+        if has_solo {
+            for track in tracks {
+                let mut pending: Vec<_> = track
+                    .output_track()
+                    .filter(|_| track.main_send_enabled())
+                    .into_iter()
+                    .chain(
+                        track
+                            .sends()
+                            .iter()
+                            .filter(|send| !send.parameters().muted)
+                            .map(|send| send.destination()),
+                    )
+                    .collect();
+                let mut visited = std::collections::HashSet::new();
+                let mut routed_to_solo = false;
+                while let Some(target_id) = pending.pop() {
+                    if !visited.insert(target_id) {
+                        continue;
+                    }
+                    let Some(target) = tracks.iter().find(|candidate| candidate.id() == target_id)
+                    else {
+                        continue;
+                    };
+                    if target.is_solo() {
+                        routed_to_solo = true;
+                        break;
+                    }
+                    pending.extend(
+                        target
+                            .output_track()
+                            .filter(|_| target.main_send_enabled())
+                            .into_iter()
+                            .chain(
+                                target
+                                    .sends()
+                                    .iter()
+                                    .filter(|send| !send.parameters().muted)
+                                    .map(|send| send.destination()),
+                            ),
+                    );
+                }
+                reachable_solo.insert(track.id(), routed_to_solo);
+            }
+        }
         for item in project.midi_items() {
             let track = tracks
                 .iter()
@@ -312,20 +358,7 @@ impl MidiEventPlan {
                 .ok_or(MidiScheduleError::MissingTrack {
                     track_id: item.track_id().value(),
                 })?;
-            let mut target = track.output_track();
-            let mut routed_to_solo = false;
-            while let Some(target_id) = target {
-                let Some(target_track) =
-                    tracks.iter().find(|candidate| candidate.id() == target_id)
-                else {
-                    break;
-                };
-                if target_track.is_solo() {
-                    routed_to_solo = true;
-                    break;
-                }
-                target = target_track.output_track();
-            }
+            let routed_to_solo = reachable_solo.get(&track.id()).copied().unwrap_or(false);
             if track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo) {
                 continue;
             }

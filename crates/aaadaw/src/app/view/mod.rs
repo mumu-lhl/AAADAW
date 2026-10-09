@@ -31,6 +31,7 @@ mod midi_editor;
 mod mixer;
 mod plugin_picker;
 mod render;
+mod routing;
 mod settings;
 mod tempo_map;
 mod tokens;
@@ -79,6 +80,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
             .main_window_size
             .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
         mobile_view(app, size.width, size.height)
+    } else if app.routing_window_id == Some(window_id) {
+        routing::view(app)
     } else if app.action_list_window_id == Some(window_id) {
         action_list::view(app)
     } else if app.settings_window_id == Some(window_id) {
@@ -374,6 +377,7 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
         super::MobilePanel::MidiEditor => midi_editor::mobile_view(app),
         super::MobilePanel::MediaBrowser => media::mobile_view(app),
         super::MobilePanel::Settings => settings::view(app),
+        super::MobilePanel::Routing => routing::view(app),
         super::MobilePanel::TimeMap => tempo_map::mobile_view(app),
         super::MobilePanel::FxChain => fx_chain::mobile_view(app),
         super::MobilePanel::PluginPicker => plugin_picker::mobile_view(app),

@@ -276,3 +276,71 @@ fn protocol_mismatch_does_not_prevent_other_isolated_tracks_from_rendering() {
     drop(graph);
     working.shutdown().unwrap();
 }
+
+#[test]
+fn audio_send_receiver_solo_keeps_source_instrument_midi_and_audio() {
+    let mut project = Project::new();
+    let source = add_track_with_note(&mut project, "Synth source");
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Solo receiver".into(),
+        })
+        .unwrap();
+    let receiver = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackMainSend {
+            track_id: source,
+            enabled: false,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination: receiver,
+            parameters: Default::default(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: receiver,
+            solo: true,
+        })
+        .unwrap();
+    let config = ClapIpcConfig::new(
+        project.settings().sample_rate(),
+        CLAP_IPC_MAX_BLOCK_FRAMES,
+        CLAP_IPC_MAX_EVENTS,
+    )
+    .unwrap();
+    let mut helper = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        Path::new("unused-test-plugin.clap"),
+        "test.synth",
+        config,
+        None,
+    )
+    .unwrap();
+    let (_, first) = pcm_stream(16_384).unwrap();
+    let (_, second) = pcm_stream(16_384).unwrap();
+    let mut graph = AudioRenderGraph::new(&project, vec![first, second], 8192).unwrap();
+    let mut instruments = vec![TrackIsolatedInstrument::new(
+        source,
+        helper.instance_id(),
+        helper.audio_port(),
+        config,
+    )];
+    graph
+        .install_isolated_instrument_ports(&project, &mut instruments)
+        .unwrap();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 128];
+    graph.render_into(&mut output).unwrap();
+    assert!(
+        output
+            .iter()
+            .all(|frame| frame[0] > 0.45 && frame[1] > 0.45)
+    );
+    drop(graph);
+    helper.shutdown().unwrap();
+}

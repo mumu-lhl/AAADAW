@@ -581,6 +581,8 @@ pub fn render_freeze_track_to_float32_wav(
         .first_mut()
         .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
     source_track.output_track_id = None;
+    source_track.main_send_enabled = true;
+    source_track.sends.clear();
     source_track.volume_db = 0.0;
     source_track.pan = 0.0;
     source_track.muted = false;

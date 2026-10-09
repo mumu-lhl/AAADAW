@@ -22,11 +22,25 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 18;
+pub const CURRENT_SCHEMA_VERSION: u32 = 19;
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
 // Additive migration: existing projects retain their historical signal path.
+const MIGRATION_19: &str = "
+ALTER TABLE tracks ADD COLUMN main_send_enabled INTEGER NOT NULL DEFAULT 1 CHECK(main_send_enabled IN (0, 1));
+CREATE TABLE track_sends (
+    id INTEGER PRIMARY KEY CHECK(id >= 0),
+    source_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    destination_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    volume_db REAL NOT NULL,
+    pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1),
+    muted INTEGER NOT NULL CHECK(muted IN (0, 1)),
+    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0, 1)),
+    UNIQUE(source_track_id, position)
+);";
+
 const MIGRATION_18: &str = "ALTER TABLE project_meta ADD COLUMN pan_mode INTEGER NOT NULL DEFAULT 0 CHECK(pan_mode IN (0, 1));";
 
 const MIGRATION_1: &str = r#"
@@ -2367,6 +2381,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             16 => transaction.execute_batch(MIGRATION_16)?,
             17 => transaction.execute_batch(MIGRATION_17)?,
             18 => transaction.execute_batch(MIGRATION_18)?,
+            19 => transaction.execute_batch(MIGRATION_19)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2383,6 +2398,7 @@ fn write_snapshot(
     transaction: &Transaction<'_>,
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM track_sends", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
@@ -2411,8 +2427,8 @@ fn write_snapshot(
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -2427,12 +2443,20 @@ fn write_snapshot(
                 track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref()),
                 track.is_bus,
                 track.output_track_id.map(to_sql_integer).transpose()?,
-                track.frozen_audio_item_id.map(to_sql_integer).transpose()?
+                track.frozen_audio_item_id.map(to_sql_integer).transpose()?,
+                track.main_send_enabled
             ],
         )?;
     }
 
     for track in &snapshot.tracks {
+        for (position, send) in track.sends.iter().enumerate() {
+            transaction.execute("INSERT INTO track_sends(id, source_track_id, position, destination_track_id, volume_db, pan, muted, phase_inverted) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![
+                to_sql_integer(send.id)?, to_sql_integer(track.id)?, usize_to_sql(position)?,
+                to_sql_integer(send.destination_track_id)?, f64::from(send.parameters.volume_db),
+                f64::from(send.parameters.pan), send.parameters.muted, send.parameters.phase_inverted,
+            ])?;
+        }
         for (position, point) in track.volume_automation.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO track_volume_automation(track_id, position, sample, gain_db) \
@@ -2646,6 +2670,7 @@ fn write_arrangement_view_state(
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
+    let mut sends = read_audio_sends(connection)?;
     let mut volume_automation = read_volume_automation(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
@@ -2781,7 +2806,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2801,10 +2826,12 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, bool>(11)?,
                 row.get::<_, Option<i64>>(12)?,
                 row.get::<_, Option<i64>>(13)?,
+                row.get::<_, bool>(14)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let tracks = rows
+        .into_iter()
         .map(
             |(
                 id,
@@ -2821,6 +2848,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 is_bus,
                 output_track_id,
                 frozen_audio_item_id,
+                main_send_enabled,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2845,6 +2873,8 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     name,
                     is_bus,
                     output_track_id: output_track_id.map(from_sql_u64).transpose()?,
+                    main_send_enabled,
+                    sends: sends.remove(&id).unwrap_or_default(),
                     volume_db: volume_db as f32,
                     pan: pan as f32,
                     muted,
@@ -2857,7 +2887,13 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !sends.is_empty() {
+        return Err(StorageError::InvalidStoredData(
+            "audio sends reference a missing source",
+        ));
+    }
+    Ok(tracks)
 }
 
 fn read_volume_automation(
@@ -3214,4 +3250,28 @@ mod saved_snapshot_tests {
 
         store.close().unwrap();
     }
+}
+
+fn read_audio_sends(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>>, StorageError> {
+    let mut statement = connection.prepare("SELECT id, source_track_id, destination_track_id, volume_db, pan, muted, phase_inverted FROM track_sends ORDER BY source_track_id, position")?;
+    let mut rows = statement.query([])?;
+    let mut sends: HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>> = HashMap::new();
+    while let Some(row) = rows.next()? {
+        sends
+            .entry(row.get(1)?)
+            .or_default()
+            .push(aaadaw_core::AudioSendSnapshot {
+                id: from_sql_u64(row.get(0)?)?,
+                destination_track_id: from_sql_u64(row.get(2)?)?,
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db: row.get::<_, f64>(3)? as f32,
+                    pan: row.get::<_, f64>(4)? as f32,
+                    muted: row.get(5)?,
+                    phase_inverted: row.get(6)?,
+                },
+            });
+    }
+    Ok(sends)
 }

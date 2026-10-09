@@ -151,11 +151,28 @@ pub struct MixerPlan {
 struct TrackGains {
     track_id: TrackId,
     output_track_index: Option<usize>,
+    main_send_enabled: bool,
+    sends: Vec<CompiledSend>,
     is_bus: bool,
     live: Arc<LiveTrackGains>,
     mix_ramp: Cell<GainRamp>,
     record_armed: bool,
     volume_automation: Vec<VolumeAutomationPoint>,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledSend {
+    destination: usize,
+    left_gain: f32,
+    right_gain: f32,
+    muted: bool,
+}
+impl TrackGains {
+    fn destinations(&self) -> impl Iterator<Item = usize> + '_ {
+        self.output_track_index
+            .into_iter()
+            .chain(self.sends.iter().map(|send| send.destination))
+    }
 }
 
 #[derive(Debug)]
@@ -245,7 +262,6 @@ impl GainCoefficients {
 struct MixBlock {
     start_sample: u64,
     advances_timeline: bool,
-    frame_count: usize,
 }
 
 /// Control-thread handle for retargeting the active graph's per-track volume and pan.
@@ -502,12 +518,18 @@ pub enum MixerPlanError {
     /// The project sample rate must be positive.
     ZeroSampleRate,
     /// The track's volume cannot be represented as an `f32` gain.
-    InvalidTrackGain { track_id: u64 },
+    InvalidTrackGain {
+        track_id: u64,
+    },
+    InvalidRouting,
 }
 
 impl fmt::Display for MixerPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRouting => {
+                formatter.write_str("routing graph has missing targets or a cycle")
+            }
             Self::ZeroBlockCapacity => formatter.write_str("maximum block size must be positive"),
             Self::ZeroSampleRate => formatter.write_str("sample rate must be positive"),
             Self::InvalidTrackGain { track_id } => {
@@ -597,9 +619,42 @@ impl MixerPlan {
             };
             compiled.push(TrackGains {
                 track_id: track.id(),
-                output_track_index: track.output_track().and_then(|output| {
-                    tracks.iter().position(|candidate| candidate.id() == output)
-                }),
+                output_track_index: track
+                    .output_track()
+                    .map(|output| {
+                        tracks
+                            .iter()
+                            .position(|candidate| candidate.id() == output)
+                            .ok_or(MixerPlanError::InvalidRouting)
+                    })
+                    .transpose()?,
+                main_send_enabled: track.main_send_enabled(),
+                sends: track
+                    .sends()
+                    .iter()
+                    .map(|send| {
+                        let destination = tracks
+                            .iter()
+                            .position(|track| track.id() == send.destination())
+                            .ok_or(MixerPlanError::InvalidRouting)?;
+                        let parameters = send.parameters();
+                        let gains = gain_coefficients(
+                            parameters.volume_db,
+                            parameters.pan,
+                            PanMode::ZeroDbBalance,
+                        )
+                        .ok_or(MixerPlanError::InvalidTrackGain {
+                            track_id: track.id().value(),
+                        })?;
+                        let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
+                        Ok(CompiledSend {
+                            destination,
+                            left_gain: gains.stereo_left * phase,
+                            right_gain: gains.stereo_right * phase,
+                            muted: parameters.muted,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, MixerPlanError>>()?,
                 is_bus: track.is_bus(),
                 live: Arc::new(LiveTrackGains::new(
                     gains,
@@ -613,16 +668,30 @@ impl MixerPlan {
             });
         }
 
-        let mut routing_order: Vec<usize> = (0..compiled.len()).collect();
-        let route_depth = |mut index: usize| {
-            let mut depth = 0;
-            while let Some(output) = compiled[index].output_track_index {
-                depth += 1;
-                index = output;
+        let mut indegrees = vec![0usize; compiled.len()];
+        for track in &compiled {
+            for destination in track.destinations() {
+                indegrees[destination] += 1;
             }
-            depth
-        };
-        routing_order.sort_by_key(|index| (std::cmp::Reverse(route_depth(*index)), *index));
+        }
+        let mut ready: std::collections::VecDeque<_> = indegrees
+            .iter()
+            .enumerate()
+            .filter_map(|(index, degree)| (*degree == 0).then_some(index))
+            .collect();
+        let mut routing_order = Vec::with_capacity(compiled.len());
+        while let Some(index) = ready.pop_front() {
+            routing_order.push(index);
+            for destination in compiled[index].destinations() {
+                indegrees[destination] -= 1;
+                if indegrees[destination] == 0 {
+                    ready.push_back(destination);
+                }
+            }
+        }
+        if routing_order.len() != compiled.len() {
+            return Err(MixerPlanError::InvalidRouting);
+        }
 
         Ok(Self {
             max_block_frames,
@@ -862,36 +931,30 @@ impl MixerPlan {
         track.mix_ramp.set(ramp);
     }
 
-    fn compile_solo_audibility(&self, audible: &mut [bool], solo_bus_subtrees: &mut [bool]) {
+    fn compile_solo_audibility(&self, downstream: &mut [bool], own_sources: &mut [bool]) {
         if !self.has_solo.load(Ordering::Acquire) {
-            audible.fill(true);
-            // A concurrent Solo enable must never expose a stale own-source mask.
-            solo_bus_subtrees.fill(true);
+            downstream.fill(true);
+            own_sources.fill(true);
             return;
         }
-        audible.fill(false);
-        solo_bus_subtrees.fill(false);
-
-        // Walk from Master toward source tracks so a soloed receiver includes every
-        // track below it without searching the full graph for each track.
-        for track_index in self.routing_order.iter().rev().copied() {
-            let track = &self.tracks[track_index];
-            solo_bus_subtrees[track_index] = track.live.solo.load(Ordering::Acquire)
+        downstream.fill(false);
+        own_sources.fill(false);
+        // A soloed receiver needs every source that feeds it, but those sources'
+        // unrelated parallel outputs must remain closed.
+        for index in self.routing_order.iter().rev().copied() {
+            let track = &self.tracks[index];
+            own_sources[index] = track.live.solo.load(Ordering::Acquire)
                 || track
-                    .output_track_index
-                    .is_some_and(|parent| solo_bus_subtrees[parent]);
-            audible[track_index] = solo_bus_subtrees[track_index];
+                    .destinations()
+                    .any(|destination| own_sources[destination]);
         }
-
-        // A soloed source and each receiving track above it must remain open on the path to Master.
-        for (track_index, track) in self.tracks.iter().enumerate() {
-            if !track.live.solo.load(Ordering::Acquire) {
-                continue;
-            }
-            let mut path = Some(track_index);
-            while let Some(index) = path {
-                audible[index] = true;
-                path = self.tracks[index].output_track_index;
+        // An explicit solo opens all paths downstream of that track.
+        for index in self.routing_order.iter().copied() {
+            downstream[index] |= self.tracks[index].live.solo.load(Ordering::Acquire);
+            if downstream[index] {
+                for destination in self.tracks[index].destinations() {
+                    downstream[destination] = true;
+                }
             }
         }
     }
@@ -1551,53 +1614,10 @@ fn isolated_window_ready(route: &InstrumentRoute) -> bool {
     })
 }
 
-#[derive(Clone, Copy)]
-struct TrackRoute {
-    source_index: usize,
-    destination_index: usize,
-}
-
-fn mix_track_buffer_to_bus(
-    buffers: &mut TrackEffectBuffers,
-    route: TrackRoute,
-    mixer: &MixerPlan,
-    block: MixBlock,
-    solo_allowed: bool,
-    mono_input: bool,
-) {
-    if route.source_index < route.destination_index {
-        let (before_destination, destination_and_after) =
-            buffers.split_at_mut(route.destination_index);
-        let source = before_destination[route.source_index]
-            .as_ref()
-            .expect("every track has a preallocated routing buffer");
-        let destination = destination_and_after[0]
-            .as_mut()
-            .expect("every bus has a preallocated routing buffer");
-        mixer.mix_stereo_routed_unchecked(
-            route.source_index,
-            &source[..block.frame_count],
-            &mut destination[..block.frame_count],
-            block,
-            solo_allowed,
-            mono_input,
-        );
-    } else {
-        let (before_source, source_and_after) = buffers.split_at_mut(route.source_index);
-        let destination = before_source[route.destination_index]
-            .as_mut()
-            .expect("every bus has a preallocated routing buffer");
-        let source = source_and_after[0]
-            .as_ref()
-            .expect("every track has a preallocated routing buffer");
-        mixer.mix_stereo_routed_unchecked(
-            route.source_index,
-            &source[..block.frame_count],
-            &mut destination[..block.frame_count],
-            block,
-            solo_allowed,
-            mono_input,
-        );
+fn add_routed_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], left: f32, right: f32) {
+    for (frame, input) in destination.iter_mut().zip(source) {
+        frame[0] += input[0] * left;
+        frame[1] += input[1] * right;
     }
 }
 
@@ -1801,6 +1821,7 @@ pub struct AudioRenderGraph {
     instruments: Vec<InstrumentRoute>,
     effects: Vec<FxRoute>,
     track_effect_buffers: TrackEffectBuffers,
+    post_fader_scratch: Vec<[f32; 2]>,
     track_has_stereo_input: Vec<bool>,
     solo_audible_tracks: Vec<bool>,
     solo_bus_subtrees: Vec<bool>,
@@ -2077,6 +2098,7 @@ impl AudioRenderGraph {
             instruments: instrument_routes,
             effects: effect_routes,
             track_effect_buffers,
+            post_fader_scratch: vec![[0.0; 2]; max_block_frames],
             track_has_stereo_input,
             solo_audible_tracks,
             solo_bus_subtrees,
@@ -3182,7 +3204,6 @@ impl AudioRenderGraph {
         let mix_block = MixBlock {
             start_sample: block.start_sample,
             advances_timeline: block.is_playing,
-            frame_count: output.len(),
         };
         self.mixer
             .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
@@ -3227,30 +3248,55 @@ impl AudioRenderGraph {
             let source = self.track_effect_buffers[track_index]
                 .as_ref()
                 .expect("every track has a preallocated routing buffer");
-            let solo_allowed = self.solo_audible_tracks[track_index];
-            if let Some(destination) = self.mixer.tracks[track_index].output_track_index {
-                mix_track_buffer_to_bus(
-                    &mut self.track_effect_buffers,
-                    TrackRoute {
-                        source_index: track_index,
-                        destination_index: destination,
-                    },
-                    &self.mixer,
-                    mix_block,
-                    solo_allowed,
-                    !self.track_has_stereo_input[track_index],
-                );
-            } else {
-                self.mixer.mix_stereo_routed_unchecked(
-                    track_index,
-                    &source[..output.len()],
-                    output,
-                    mix_block,
-                    solo_allowed,
-                    !self.track_has_stereo_input[track_index],
-                );
+            let post_fader = &mut self.post_fader_scratch[..output.len()];
+            post_fader.fill([0.0, 0.0]);
+            // Advance source automation/ramp and publish its meter exactly once,
+            // independent of the number of output connections.
+            self.mixer.mix_stereo_routed_unchecked(
+                track_index,
+                &source[..output.len()],
+                post_fader,
+                mix_block,
+                self.solo_audible_tracks[track_index] || self.solo_bus_subtrees[track_index],
+                !self.track_has_stereo_input[track_index],
+            );
+            let track = &self.mixer.tracks[track_index];
+            if track.main_send_enabled {
+                if let Some(destination) = track.output_track_index {
+                    if self.solo_audible_tracks[track_index] || self.solo_bus_subtrees[destination]
+                    {
+                        let destination_buffer = self.track_effect_buffers[destination]
+                            .as_mut()
+                            .expect("routing destination buffer");
+                        add_routed_buffer(
+                            post_fader,
+                            &mut destination_buffer[..output.len()],
+                            1.0,
+                            1.0,
+                        );
+                    }
+                } else if self.solo_audible_tracks[track_index] {
+                    add_routed_buffer(post_fader, output, 1.0, 1.0);
+                }
+            }
+            for send in &track.sends {
+                if !send.muted
+                    && (self.solo_audible_tracks[track_index]
+                        || self.solo_bus_subtrees[send.destination])
+                {
+                    let destination = self.track_effect_buffers[send.destination]
+                        .as_mut()
+                        .expect("send destination buffer");
+                    add_routed_buffer(
+                        post_fader,
+                        &mut destination[..output.len()],
+                        send.left_gain,
+                        send.right_gain,
+                    );
+                }
             }
         }
+
         let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
             self.last_midi_sample_end = Some(

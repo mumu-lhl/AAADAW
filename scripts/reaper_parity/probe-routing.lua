@@ -48,3 +48,17 @@ for _,value in ipairs({-1,-0.5,0.5,1}) do
  reaper.SetMediaTrackInfo_Value(dst,"D_PAN",value)
  render("receiver-pan-"..value)
 end
+
+-- Parallel branches distinguish upstream solo paths from unrelated outputs.
+reaper.SetMediaTrackInfo_Value(dst,"D_PAN",0)
+reaper.SetMediaTrackInfo_Value(src,"B_MAINSEND",1)
+reaper.SetTrackSendInfo_Value(src,0,send,"D_VOL",1)
+reaper.InsertTrackAtIndex(reaper.CountTracks(0),true)
+local other=reaper.GetTrack(0,reaper.CountTracks(0)-1)
+reaper.GetSetMediaTrackInfo_String(other,"P_NAME","Other",true)
+reaper.CreateTrackSend(src,other)
+reaper.SetMediaTrackInfo_Value(dst,"I_SOLO",2)
+render("parallel-receiver-solo")
+reaper.SetMediaTrackInfo_Value(dst,"I_SOLO",0)
+reaper.SetMediaTrackInfo_Value(src,"I_SOLO",2)
+render("parallel-source-solo")
