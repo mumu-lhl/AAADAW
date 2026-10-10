@@ -29,3 +29,9 @@ Item Properties 的 Position/Length 在 H:M:S:F 下按工程设置转换；Take 
 本次验证：853 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt/diff 通过。真实 X11 窗口已验证 Alt+Enter、十项菜单、第一次 Escape 收起菜单、第二次 Escape 取消；OK 选择 25 fps 后，活动恢复工程 schema 27 帧率编码为 2，一次 Ctrl+Z 恢复 30 fps 编码 5，Ctrl+Shift+Z 恢复编码 2。完整键盘菜单导航、各页布局与全部设置仍待实现。
 
 补充键盘实测：新默认配置下必须点击原厂帧率箭头打开菜单（点击数值本身只聚焦可编辑文本）。真正打开的菜单中，Escape 只收起菜单；Down + Enter 将 30 选择为 48，并保持设置窗口打开。AAADAW 已修正打开菜单时 Enter 只收起菜单、不提交整个草稿；下一次 Enter 才走 OK。方向键高亮/选择以及原厂可编辑自定义帧率仍待实现。854 项 workspace 测试和默认 Clippy warnings denied 通过；真实 AAADAW 窗口已验证菜单 Enter 后保持窗口且菜单收起。
+
+### 帧率菜单方向键
+
+[原厂键盘数值记录](project-frame-menu-reference.json) 确认十项按原菜单顺序循环：30 + Down/Enter → 48；48 + 12 次 Down/Enter → 60；60 + 12 次 Down/Enter → 23.976；23.976 + Up/Enter → 75。为处理框架菜单缺少键盘支持的问题，AAADAW 使用自有控件状态保存菜单高亮，继续复用框架菜单绘制。方向键只改高亮，Enter 才写入窗口草稿，Escape 放弃菜单高亮；鼠标选择、菜单外单击和工程 OK/Cancel 仍共用既有消息与领域接口。可编辑任意帧率、闭合控件焦点与其他导航键仍待实测和开发。
+
+本轮最终：855 passed / 0 skipped、默认 workspace Clippy warnings denied、fmt/diff 通过。真实 AAADAW 菜单 Down 高亮 48、Enter 写入草稿且保持窗口、重复方向键首尾循环至 75、Escape 保留原 75、鼠标选中 25 已验证。自有截图：[方向键高亮](project-settings-ui/frame-menu-arrow-highlight.png)、[确认草稿](project-settings-ui/frame-menu-arrow-selected.png)、[Escape 放弃新高亮](project-settings-ui/frame-menu-escape-retains-selection.png)。

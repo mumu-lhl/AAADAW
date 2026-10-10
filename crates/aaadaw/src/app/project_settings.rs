@@ -1,6 +1,7 @@
+mod frame_rate_menu;
 use super::{App, Message};
 use aaadaw_core::{DawAction, FrameRate};
-use iced::widget::{button, column, container, pick_list, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Task};
 
 #[derive(Clone, Copy)]
@@ -87,16 +88,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             text("Video").size(13),
             row![
                 text("Frame rate:").size(13).width(82),
-                iced::widget::keyed_column![(
-                    draft.menu_epoch,
-                    pick_list(
-                        FrameRate::ALL,
-                        Some(draft.rate),
-                        Message::ProjectFrameRateChanged
-                    )
-                    .on_open(Message::ProjectFrameRateMenuChanged(true))
-                    .on_close(Message::ProjectFrameRateMenuChanged(false))
-                )]
+                iced::widget::keyed_column![(draft.menu_epoch, frame_rate_menu::view(draft.rate))]
             ]
             .spacing(6),
             iced::widget::space().height(Length::Fill),

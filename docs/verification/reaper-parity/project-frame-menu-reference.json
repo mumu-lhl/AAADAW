@@ -1,0 +1,88 @@
+{
+  "reference": {
+    "platform": "Linux",
+    "application": "REAPER",
+    "version": "7.82",
+    "theme": "Default 7",
+    "configuration": "fresh factory"
+  },
+  "control": {
+    "window": "Project Settings",
+    "tab": "Video",
+    "field": "Frame rate",
+    "open": "click arrow; clicking numeric text only focuses editable text"
+  },
+  "observations": [
+    {
+      "initial": "30",
+      "keys": [
+        "Down",
+        "Enter"
+      ],
+      "selected": "48",
+      "window_open": true
+    },
+    {
+      "initial": "48",
+      "keys": [
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Enter"
+      ],
+      "selected": "60",
+      "window_open": true
+    },
+    {
+      "initial": "60",
+      "keys": [
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Enter"
+      ],
+      "selected": "23.976",
+      "window_open": true
+    },
+    {
+      "initial": "23.976",
+      "keys": [
+        "Up",
+        "Enter"
+      ],
+      "selected": "75",
+      "window_open": true
+    },
+    {
+      "menu_open": true,
+      "keys": [
+        "Escape"
+      ],
+      "menu_open_after": false,
+      "window_open": true
+    }
+  ],
+  "limitations": [
+    "Native editable arbitrary frame rates not implemented",
+    "Only tested keys are asserted; other navigation and focus remain pending"
+  ],
+  "assets": "Numeric observations only; no REAPER assets included"
+}
