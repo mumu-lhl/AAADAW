@@ -9,12 +9,24 @@ pub const DEFAULT_TEMPO_BPM: f64 = 120.0;
 // Tempo segment integration uses f64 positions; reject integers beyond its exact range.
 const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
 
-/// Immutable construction settings for a project's timebase.
+/// Track-level gain policy inherited from the project at construction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PanMode {
+    /// Historical AAADAW equal-power mono and linear stereo balance behavior.
+    LegacyMonoStereo,
+    /// REAPER factory 0 dB linear stereo balance, also applied to mono sources.
+    #[default]
+    ZeroDbBalance,
+}
+
+/// Immutable construction settings for a project.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectSettings {
     sample_rate: u32,
     ppq: u32,
     initial_tempo_bpm: f64,
+    pan_mode: PanMode,
+    frame_rate: crate::FrameRate,
 }
 
 impl ProjectSettings {
@@ -33,7 +45,31 @@ impl ProjectSettings {
             sample_rate,
             ppq,
             initial_tempo_bpm,
+            pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         })
+    }
+
+    /// Selects the gain policy without changing timebase settings.
+    pub fn with_pan_mode(mut self, mode: PanMode) -> Self {
+        self.pan_mode = mode;
+        self
+    }
+
+    /// Returns the project gain policy.
+    pub fn pan_mode(self) -> PanMode {
+        self.pan_mode
+    }
+
+    /// Selects the project video/timecode frame rate.
+    pub fn with_frame_rate(mut self, rate: crate::FrameRate) -> Self {
+        self.frame_rate = rate;
+        self
+    }
+
+    /// Returns the project's video/timecode frame rate.
+    pub fn frame_rate(self) -> crate::FrameRate {
+        self.frame_rate
     }
 
     /// Returns the project sample rate.
@@ -58,6 +94,8 @@ impl Default for ProjectSettings {
             sample_rate: DEFAULT_SAMPLE_RATE,
             ppq: DEFAULT_PPQ,
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
+            pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         }
     }
 }
@@ -359,6 +397,43 @@ impl MeterMap {
         })
     }
 
+    pub(crate) fn tick_at_position(
+        &self,
+        measure: u64,
+        beat: u32,
+        tick_in_beat: f64,
+    ) -> Result<f64, TimebaseError> {
+        let invalid = TimebaseError::MusicalPositionOutOfRange;
+        if measure == 0 || beat == 0 || !tick_in_beat.is_finite() || tick_in_beat < 0.0 {
+            return Err(invalid);
+        }
+        let index = self
+            .points
+            .partition_point(|point| point.start_measure < measure)
+            - 1;
+        let point = self.points[index];
+        let ticks_per_beat = point.signature.ticks_per_beat(self.ppq)?;
+        if beat > point.signature.numerator || tick_in_beat >= ticks_per_beat as f64 {
+            return Err(invalid);
+        }
+        let tick = (measure - point.start_measure - 1)
+            .checked_mul(point.signature.ticks_per_measure(self.ppq)?)
+            .and_then(|offset| offset.checked_add(u64::from(beat - 1) * ticks_per_beat))
+            .and_then(|offset| point.start_tick.checked_add(offset))
+            .filter(|tick| *tick <= MAX_EXACT_FLOAT_POSITION)
+            .ok_or(invalid)?;
+        let position = tick as f64 + tick_in_beat;
+        if position > MAX_EXACT_FLOAT_POSITION as f64
+            || self
+                .points
+                .get(index + 1)
+                .is_some_and(|next| position >= next.start_tick as f64)
+        {
+            return Err(invalid);
+        }
+        Ok(position)
+    }
+
     pub(crate) fn signature_at_tick(&self, tick: u64) -> TimeSignature {
         let index = self
             .points
@@ -433,6 +508,8 @@ impl TempoMap {
             sample_rate: self.sample_rate,
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
+            pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         }
     }
 
@@ -552,6 +629,64 @@ impl TempoMap {
             offset,
         )?;
         rounded_position(point.start_sample + elapsed)
+    }
+
+    pub(crate) fn sample_at_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        validate_fractional_position(tick)?;
+        let index = self
+            .points
+            .partition_point(|point| point.start_tick as f64 <= tick)
+            - 1;
+        let point = self.points[index];
+        let offset = tick - point.start_tick as f64;
+        let integral = if let Some(next) = self.points.get(index + 1) {
+            let length = next.start_tick - point.start_tick;
+            segment_integral_progress(
+                point.bpm,
+                next.bpm,
+                point.curve_to_next,
+                length,
+                offset / length as f64,
+            )?
+        } else {
+            offset / point.bpm
+        };
+        let sample = point.start_sample
+            + f64::from(self.sample_rate) * 60.0 / f64::from(self.ppq) * integral;
+        validate_fractional_position(sample)?;
+        Ok(sample)
+    }
+
+    pub(crate) fn tick_at_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        validate_fractional_position(sample)?;
+        let index = self
+            .points
+            .partition_point(|point| point.start_sample <= sample)
+            - 1;
+        let point = self.points[index];
+        let offset = if let Some(next) = self.points.get(index + 1) {
+            let length = next.start_tick - point.start_tick;
+            ticks_from_sample_offset(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                next.bpm,
+                point.curve_to_next,
+                length,
+                sample - point.start_sample,
+            )?
+            .min(length as f64)
+        } else {
+            sample_offset_to_ticks(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                sample - point.start_sample,
+            )?
+        };
+        let tick = point.start_tick as f64 + offset;
+        validate_fractional_position(tick)?;
+        Ok(tick)
     }
 
     pub(crate) fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
@@ -879,6 +1014,13 @@ fn is_valid_tempo_for(sample_rate: u32, ppq: u32, bpm: f64) -> bool {
     }
     let samples_per_tick = f64::from(sample_rate) * 60.0 / (bpm * f64::from(ppq));
     samples_per_tick.is_finite() && samples_per_tick > 0.0
+}
+
+fn validate_fractional_position(position: f64) -> Result<(), TimebaseError> {
+    if !position.is_finite() || !(0.0..=MAX_EXACT_FLOAT_POSITION as f64).contains(&position) {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(())
 }
 
 fn rounded_position(position: f64) -> Result<u64, TimebaseError> {

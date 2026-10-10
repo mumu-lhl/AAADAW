@@ -2,7 +2,10 @@ use aaadaw_core::{DawAction, Project, VolumeAutomationPoint};
 use aaadaw_engine::{MixError, MixerPlan};
 
 fn project_with_tracks(names: &[&str]) -> (Project, Vec<aaadaw_core::TrackId>) {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in names.iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {

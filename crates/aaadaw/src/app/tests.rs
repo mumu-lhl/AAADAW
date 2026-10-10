@@ -1,6 +1,7 @@
 #[cfg(feature = "audio-device")]
 use super::StereoPeakHold;
 use super::commands::{self, CommandId, TrackCommand};
+use super::fader;
 use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
 use super::prepare_project_playback_file;
@@ -8,6 +9,7 @@ use super::project_io::{
     load_project_file, load_project_session, save_project_file,
     save_project_session_file_with_media,
 };
+use super::shortcut;
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
@@ -593,6 +595,7 @@ fn switching_arrange_and_mixer_preserves_track_selection_and_transport_position(
 fn mobile_utility_routes_keep_editor_state_and_use_one_main_window() {
     let mut app = App {
         main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        shell_profile: super::ShellProfile::Touch,
         ..App::default()
     };
     let _ = app.update(Message::AddTrack);
@@ -683,6 +686,7 @@ fn mobile_settings_shortcut_capture_and_system_back_are_handled() {
     let mut app = App {
         main_window_id: Some(main_window_id),
         main_window_size: Some(iced::Size::new(420.0, 800.0)),
+        shell_profile: super::ShellProfile::Touch,
         ..App::default()
     };
     let _ = app.update(Message::OpenSettings);
@@ -708,7 +712,7 @@ fn mobile_settings_shortcut_capture_and_system_back_are_handled() {
             app.shortcut_capture_id.as_deref(),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+            if action_id == "edit.undo" && key == "K" && modifiers == Modifiers::COMMAND
     ));
 
     let _ = app.update(Message::Escape);
@@ -1297,10 +1301,10 @@ fn menus_and_context_targets_survive_keyboard_input_and_background_ticks() {
         iced::event::Status::Captured,
         window_id,
     ));
-    let _ = app.update(Message::ShortcutPressed(
-        "not-a-bound-shortcut".to_owned(),
+    let _ = app.update(Message::ShortcutPressed(test_shortcut_input(
+        Key::Character("not-a-bound-shortcut".into()),
         Modifiers::NONE,
-    ));
+    )));
     let _ = app.update(Message::AudioImportFinished(
         Err("import failed".to_owned()),
     ));
@@ -1961,8 +1965,8 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             None,
             None,
         ),
-        Some(Message::ShortcutPressed(key, modifiers))
-            if key == "z" && modifiers == Modifiers::COMMAND
+        Some(Message::ShortcutPressed(input))
+            if input.logical_key == Key::Character("z".into()) && input.modifiers == Modifiers::COMMAND
     ));
     let app = App::default();
     let undo = commands::for_menu(&app, MainMenu::Edit)
@@ -1979,7 +1983,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
     );
     assert_eq!(
         redo.shortcut.as_deref(),
-        Some(commands::format_shortcut_label("Mod+Shift+Z, Mod+Y").as_str())
+        Some(commands::format_shortcut_label("Mod+Shift+Z; Mod+Y").as_str())
     );
     let escape_event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::Escape),
@@ -2008,7 +2012,7 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             Modifiers::NONE,
             &HashMap::new(),
         ),
-        Some(Message::ExecuteCommand(CommandId::TogglePlayback))
+        Some(Message::ExecuteCommand(CommandId::TogglePlayStop))
     ));
     #[cfg(not(feature = "audio-device"))]
     assert!(
@@ -2042,8 +2046,8 @@ fn midi_editor_shortcuts_use_configured_commands_only_when_unconsumed() {
             midi_editor_window_id,
             Some(midi_editor_window_id),
         ),
-        Some(Message::ShortcutPressed(key, modifiers))
-            if key == "z" && modifiers == Modifiers::COMMAND
+        Some(Message::ShortcutPressed(input))
+            if input.logical_key == Key::Character("z".into()) && input.modifiers == Modifiers::COMMAND
     ));
     assert!(
         midi_editor_shortcut_event(
@@ -2088,10 +2092,15 @@ fn midi_editor_stop_shortcut_reaches_the_transport_command() {
     .expect("unconsumed Shift+Space from the MIDI window should reach shortcuts");
     assert!(matches!(
         &shortcut,
-        Message::ShortcutPressed(key, modifiers)
-            if key == " " && *modifiers == Modifiers::SHIFT
+        Message::ShortcutPressed(input)
+            if input.logical_key == Key::Named(iced::keyboard::key::Named::Space) && input.modifiers == Modifiers::SHIFT
     ));
     let mut app = App::default();
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "transport.stop-playback".into(),
+        "Shift+Space".into(),
+    )]))
+    .unwrap();
     let _ = app.update(shortcut);
     assert!(app.status.contains("output is not open"));
     assert!(
@@ -2272,7 +2281,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
     );
     assert_eq!(
         commands::capture_binding("Delete", Modifiers::NONE).unwrap(),
-        "Delete/Backspace"
+        "Delete"
     );
 
     let main_window_id = iced::window::Id::unique();
@@ -2298,7 +2307,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "k" && modifiers == Modifiers::COMMAND
+            if action_id == "edit.undo" && key == "K" && modifiers == Modifiers::COMMAND
     ));
     assert!(matches!(
         keyboard_shortcut_event(
@@ -2327,7 +2336,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
             Some("edit.undo"),
         ),
         Some(Message::ShortcutCaptureKey { action_id, key, modifiers })
-            if action_id == "edit.undo" && key == "Delete" && modifiers == Modifiers::NONE
+            if action_id == "edit.undo" && key == "StandardDelete" && modifiers == Modifiers::NONE
     ));
     assert!(matches!(
         keyboard_shortcut_event(
@@ -2446,7 +2455,7 @@ fn documented_first_project_shortcuts_match_action_defaults() {
         ("file.open-project", "Mod+O"),
         ("file.save-project", "Mod+S"),
         ("edit.undo", "Mod+Z"),
-        ("edit.redo", "Mod+Shift+Z, Mod+Y"),
+        ("edit.redo", "Mod+Shift+Z; Mod+Y"),
         ("item.duplicate", "Mod+D"),
         ("item.delete-selected", "Delete/Backspace"),
         ("item.split-at-cursor", "S"),
@@ -2468,13 +2477,13 @@ fn documented_first_project_shortcuts_match_action_defaults() {
             .iter()
             .find(|entry| entry.id == "transport.toggle-playback")
             .expect("playback shortcut should exist in audio builds");
-        assert_eq!(playback.default_binding, "Space");
+        assert_eq!(playback.default_binding, "Enter; Ctrl+Space");
 
         let stop = shortcuts
             .iter()
             .find(|entry| entry.id == "transport.stop-playback")
             .expect("stop shortcut should exist in audio builds");
-        assert_eq!(stop.default_binding, "Shift+Space");
+        assert_eq!(stop.default_binding, "");
     }
 }
 
@@ -2483,8 +2492,8 @@ fn documented_first_project_shortcuts_match_action_defaults() {
 fn stop_shortcut_resolves_to_a_distinct_transport_command() {
     let key = Key::Named(iced::keyboard::key::Named::Space);
     assert_eq!(
-        commands::from_shortcut(&key, Modifiers::SHIFT, &HashMap::new(), &[]),
-        Some(CommandId::StopPlayback)
+        commands::from_shortcut(&key, Modifiers::NONE, &HashMap::new(), &[]),
+        Some(CommandId::TogglePlayStop)
     );
 }
 
@@ -3005,7 +3014,7 @@ fn track_context_instrument_picker_assigns_only_instruments_through_undoable_act
 #[test]
 fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
     let bindings = HashMap::from([
-        ("edit.undo".to_owned(), "Ctrl+U".to_owned()),
+        ("edit.undo".to_owned(), "Mod+U".to_owned()),
         ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
     ]);
     let bindings = commands::validate_bindings(&bindings).unwrap();
@@ -3051,6 +3060,148 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
 }
 
 #[test]
+fn shortcut_alternatives_dispatch_named_keys_and_detect_legacy_overlap() {
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "Escape".to_owned(),
+        )]))
+        .is_err()
+    );
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "Alt+Escape".to_owned(),
+        )]))
+        .is_ok()
+    );
+    let bindings = commands::validate_bindings(&HashMap::from([(
+        "edit.undo".to_owned(),
+        "Ctrl+Alt+F12; Shift+Home; Alt+7".to_owned(),
+    )]))
+    .unwrap();
+    for (key, modifiers) in [
+        (
+            Key::Named(iced::keyboard::key::Named::F12),
+            Modifiers::CTRL | Modifiers::ALT,
+        ),
+        (
+            Key::Named(iced::keyboard::key::Named::Home),
+            Modifiers::SHIFT,
+        ),
+        (Key::Character("7"), Modifiers::ALT),
+    ] {
+        assert!(matches!(
+            shortcut_message(key, modifiers, &bindings),
+            Some(Message::ExecuteCommand(CommandId::Undo))
+        ));
+    }
+    assert!(
+        commands::validate_bindings(&HashMap::from([(
+            "edit.undo".to_owned(),
+            "F1; Backspace".to_owned(),
+        )]))
+        .is_err()
+    );
+    assert!(
+        commands::validate_bindings(&HashMap::from([
+            ("edit.undo".to_owned(), "Alt+F1; Alt+F2".to_owned()),
+            ("file.save-project".to_owned(), "Alt+F2".to_owned()),
+        ]))
+        .is_err()
+    );
+}
+
+#[test]
+fn shortcut_named_key_events_reach_project_actions_without_losing_focus_guards() {
+    let mut app = App::default();
+    let window = iced::window::Id::unique();
+    app.main_window_id = Some(window);
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "track.add".to_owned(),
+        "Alt+F1".to_owned(),
+    )]))
+    .unwrap();
+    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Named(iced::keyboard::key::Named::F1),
+        modified_key: Key::Named(iced::keyboard::key::Named::F1),
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F1),
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::ALT,
+        text: None,
+        repeat: false,
+    });
+    assert!(
+        keyboard_shortcut_event(
+            event.clone(),
+            iced::event::Status::Captured,
+            window,
+            Some(window),
+            None,
+            None
+        )
+        .is_none()
+    );
+    assert!(
+        keyboard_shortcut_event(
+            event.clone(),
+            iced::event::Status::Ignored,
+            iced::window::Id::unique(),
+            Some(window),
+            None,
+            None
+        )
+        .is_none()
+    );
+    let message = keyboard_shortcut_event(
+        event,
+        iced::event::Status::Ignored,
+        window,
+        Some(window),
+        None,
+        None,
+    )
+    .unwrap();
+    let _ = app.update(message);
+    assert_eq!(app.project.tracks().len(), 1);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn shortcut_add_capture_preserves_existing_bindings_and_rejected_candidates() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "edit.undo".to_owned(),
+        key: "F12".to_owned(),
+        modifiers: Modifiers::ALT,
+    });
+    let saved = app.shortcut_binding_edits.clone();
+    assert_eq!(saved["edit.undo"], "Mod+Z; Alt+F12");
+    for (key, modifiers) in [
+        (Key::Character("z"), Modifiers::COMMAND),
+        (Key::Named(iced::keyboard::key::Named::F12), Modifiers::ALT),
+    ] {
+        assert!(matches!(
+            shortcut_message(key, modifiers, &saved),
+            Some(Message::ExecuteCommand(CommandId::Undo))
+        ));
+    }
+    let _ = app.update(Message::AddShortcutBinding("file.save-project".to_owned()));
+    let _ = app.update(Message::ShortcutCaptureKey {
+        action_id: "file.save-project".to_owned(),
+        key: "F12".to_owned(),
+        modifiers: Modifiers::ALT,
+    });
+    assert_eq!(app.shortcut_binding_edits, saved);
+    assert!(app.shortcut_editor_feedback.contains("already assigned"));
+    assert!(app.shortcut_capture_id.is_some());
+    let _ = app.update(Message::CancelShortcutCapture);
+    assert_eq!(app.shortcut_binding_edits, saved);
+}
+
+#[test]
 fn removed_workspace_shortcuts_do_not_discard_other_saved_bindings() {
     let bindings = HashMap::from([
         ("view.media".to_owned(), "Mod+M".to_owned()),
@@ -3068,7 +3219,8 @@ fn removed_workspace_shortcuts_do_not_discard_other_saved_bindings() {
 fn media_browser_dock_toggles_and_resizes_without_replacing_arrangement() {
     let mut app = App::default();
     assert!(!app.media_panel_dock.open);
-    assert!(app.media_panel_dock.panes.is_none());
+    assert!(app.media_panel_dock.mixer_open);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
     let toggle = CommandId::ToggleMediaBrowserPanel;
     assert!(commands::is_enabled(&app, toggle));
     assert!(
@@ -3079,7 +3231,7 @@ fn media_browser_dock_toggles_and_resizes_without_replacing_arrangement() {
 
     let _ = app.update(Message::ExecuteCommand(toggle));
     assert!(app.media_panel_dock.open);
-    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 3);
     let split = app.media_panel_dock.split.unwrap();
     let _ = app.update(Message::MediaPanelResized(split, 0.63));
     assert!((app.media_panel_dock.main_ratio - 0.63).abs() < f32::EPSILON);
@@ -3648,7 +3800,10 @@ fn saved_macros_run_ordered_commands_from_actions_search_and_shortcuts() {
     let _ = app.update(Message::RunActionQuery);
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
-    let _ = app.update(Message::ShortcutPressed("m".to_owned(), Modifiers::COMMAND));
+    let _ = app.update(Message::ShortcutPressed(test_shortcut_input(
+        Key::Character("m".into()),
+        Modifiers::COMMAND,
+    )));
     assert_eq!(app.main_workspace, MainWorkspace::Arrangement);
 
     app.action_macros[0].steps = vec![
@@ -4008,6 +4163,7 @@ fn project_session_round_trip_restores_arrangement_view_state() {
         })
         .unwrap();
     let view_state = ArrangementViewState {
+        folder_compact: Vec::new(),
         volume_lanes: vec![aaadaw_storage::VolumeAutomationLaneViewState {
             track_id: track_id.value(),
             visible: false,
@@ -5183,6 +5339,86 @@ fn dragging_track_volume_commits_one_undoable_action() {
     assert_eq!(app.project.tracks()[0].volume_db(), 0.0);
     let _ = app.update(Message::Undo);
     assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn master_gesture_commits_once_and_undo_restores_both_controls() {
+    let mut app = App::default();
+    let _ = app.update(Message::PreviewMasterVolume(-3.0));
+    let _ = app.update(Message::PreviewMasterVolume(-12.0));
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
+    let _ = app.update(Message::CommitMasterMix);
+    assert!(commands::is_enabled(&app, commands::CommandId::Undo));
+    assert!(!commands::is_enabled(&app, commands::CommandId::Redo));
+    app.master_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
+    assert_eq!(app.project.master_mix().volume_db(), -12.0);
+    let _ = app.update(Message::PreviewMasterPan(0.5));
+    let _ = app.update(Message::CommitMasterMix);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().pan(), 0.0);
+    assert_eq!(app.project.master_mix().volume_db(), -12.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix(), aaadaw_core::MasterMix::default());
+    assert!(!app.project.can_undo());
+}
+
+#[test]
+fn master_cancel_and_double_click_do_not_commit_first_click_preview() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetMasterMix {
+            mix: aaadaw_core::MasterMix::new(-6.0, 0.5).unwrap(),
+        })
+        .unwrap();
+    let _ = app.update(Message::PreviewMasterVolume(-20.0));
+    let _ = app.update(Message::CancelMasterMix);
+    assert_eq!(app.project.master_mix().volume_db(), -6.0);
+    let _ = app.update(Message::PreviewMasterPan(-0.8));
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.project.master_mix().pan(), 0.5);
+    let _ = app.update(Message::PreviewMasterVolume(-20.0));
+    let _ = app.update(Message::CommitMasterMix);
+    let _ = app.update(Message::ResetMasterVolume);
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
+    assert_eq!(app.project.master_mix().pan(), 0.5);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().volume_db(), -6.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix(), aaadaw_core::MasterMix::default());
+}
+
+#[test]
+fn factory_fader_range_and_silent_endpoint_preserve_undo_and_finite_storage() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let id = app.project.tracks()[0].id();
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "12".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 12.0);
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "20".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 20.0);
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "-inf".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), fader::SILENCE_DB);
+    assert!(app.project.tracks()[0].volume_db().is_finite());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), 20.0);
+    let _ = app.update(Message::PreviewMasterVolume(fader::from_position(0.0)));
+    let _ = app.update(Message::CommitMasterMix);
+    app.master_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
+    assert_eq!(app.project.master_mix().channel_gains(), [0.0, 0.0]);
+    assert_eq!(
+        Project::from_snapshot(app.project.snapshot())
+            .unwrap()
+            .master_mix()
+            .channel_gains(),
+        [0.0, 0.0]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
 }
 
 #[test]
@@ -7171,4 +7407,877 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
     let _ = app.update(Message::SplitSelectedItemsAtCursor);
     assert_eq!(app.project.snapshot(), before_noop);
     assert_eq!(app.revision, revision);
+}
+
+fn test_shortcut_input(logical_key: Key, modifiers: Modifiers) -> shortcut::ShortcutInput {
+    shortcut::ShortcutInput {
+        logical_key,
+        modifiers,
+        physical_key: iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        ),
+        location: iced::keyboard::Location::Standard,
+    }
+}
+
+fn test_input_event(input: shortcut::ShortcutInput) -> iced::Event {
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: input.logical_key.clone(),
+        modified_key: input.logical_key,
+        physical_key: input.physical_key,
+        location: input.location,
+        modifiers: input.modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
+#[test]
+fn main_keyboard_preserves_keypad_identity_through_project_actions() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Named, Physical},
+    };
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window),
+        ..App::default()
+    };
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([
+        ("track.add".into(), "Ctrl+Standard7".into()),
+        ("edit.undo".into(), "Ctrl+NumPad7".into()),
+    ]))
+    .unwrap();
+    let mut input = test_shortcut_input(Key::Character("7".into()), Modifiers::CTRL);
+    input.physical_key = Physical::Code(Code::Digit7);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input.clone()),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    input.logical_key = Key::Named(Named::Home); // NumLock off
+    input.physical_key = Physical::Code(Code::Numpad7);
+    input.location = Location::Numpad;
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn f10_custom_bindings_and_main_window_capture_precede_menu_navigation() {
+    use iced::keyboard::key::Named;
+    let window = iced::window::Id::unique();
+    for chord in ["Ctrl+F10", "Alt+F10", "F10"] {
+        let mut app = App {
+            main_window_id: Some(window),
+            ..App::default()
+        };
+        *app.shortcut_bindings.write().unwrap() =
+            commands::validate_bindings(&HashMap::from([("track.add".into(), chord.into())]))
+                .unwrap();
+        let modifiers = if chord.starts_with("Ctrl") {
+            Modifiers::CTRL
+        } else if chord.starts_with("Alt") {
+            Modifiers::ALT
+        } else {
+            Modifiers::NONE
+        };
+        let input = test_shortcut_input(Key::Named(Named::F10), modifiers);
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            test_input_event(input),
+            iced::event::Status::Ignored,
+            window,
+        ));
+        assert_eq!(app.project.tracks().len(), 1, "{chord}");
+        assert!(app.active_menu.is_none());
+    }
+    let mut app = App {
+        main_window_id: Some(window),
+        shell_profile: super::ShellProfile::Touch,
+        ..App::default()
+    };
+    let _ = app.update(Message::AddShortcutBinding("edit.undo".into()));
+    let input = test_shortcut_input(Key::Named(Named::F10), Modifiers::NONE);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.shortcut_binding_edits["edit.undo"], "Mod+Z; F10");
+    assert!(app.active_menu.is_none());
+}
+
+#[test]
+fn narrow_linux_window_keeps_desktop_profile() {
+    let app = App {
+        main_window_size: Some(iced::Size::new(420.0, 640.0)),
+        shell_profile: super::ShellProfile::Desktop,
+        ..App::default()
+    };
+    assert!(!app.is_mobile_main_window());
+}
+
+#[test]
+fn busy_project_keeps_action_list_input_available_without_allowing_project_edits() {
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        action_list_window_id: Some(window),
+        import_busy: true,
+        ..App::default()
+    };
+    app.action_list.select("track.add".into());
+    let _ = app.update(Message::ActionListRun(false));
+    assert!(app.project.tracks().is_empty());
+    app.action_list.capture = Some(super::action_list::CaptureMode::Find);
+    let input = test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Escape),
+        Modifiers::NONE,
+    );
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert!(app.action_list.capture.is_none());
+    assert_eq!(app.action_list_window_id, Some(window));
+}
+
+#[test]
+fn unidentified_logical_key_keeps_known_numpad_five_dispatch() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Physical},
+    };
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window),
+        ..App::default()
+    };
+    *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([(
+        "track.add".into(),
+        "Ctrl+NumPad5".into(),
+    )]))
+    .unwrap();
+    let mut input = test_shortcut_input(Key::Unidentified, Modifiers::CTRL);
+    input.physical_key = Physical::Code(Code::Numpad5);
+    input.location = Location::Numpad;
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+}
+
+#[test]
+fn action_list_and_custom_f10_respect_pending_save_confirmation() {
+    let main = iced::window::Id::unique();
+    let list = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main),
+        action_list_window_id: Some(list),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::NewProject);
+    assert!(app.pending_project_transition.is_some());
+    app.action_list.select("track.add".into());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.project.tracks().len(), 1);
+    *app.shortcut_bindings.write().unwrap() =
+        commands::validate_bindings(&HashMap::from([("track.add".into(), "F10".into())])).unwrap();
+    let event = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::F10),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        event,
+        iced::event::Status::Ignored,
+        main,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    assert!(app.pending_project_transition.is_some());
+}
+
+#[test]
+fn action_list_run_close_closes_even_when_undo_has_no_effect() {
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        action_list_window_id: Some(window),
+        ..App::default()
+    };
+    app.action_list.select("edit.undo".into());
+    let _ = app.update(Message::ActionListRun(true));
+    assert!(app.action_list_window_id.is_none());
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn desktop_mixer_dock_and_media_share_state_and_keep_independent_ratios() {
+    let mut app = App::default();
+    assert!(app.media_panel_dock.mixer_open);
+    let _ = app.update(Message::AddTrack);
+    let id = app.project.tracks()[0].id();
+    let _ = app.update(Message::ToggleMediaBrowserPanel);
+    let media = app.media_panel_dock.split.unwrap();
+    let mixer = app.media_panel_dock.mixer_split.unwrap();
+    assert_ne!(media, mixer);
+    let _ = app.update(Message::MediaPanelResized(media, 0.63));
+    let _ = app.update(Message::MediaPanelResized(mixer, 0.48));
+    let _ = app.update(Message::ToggleMixerPanel);
+    assert!(!app.media_panel_dock.mixer_open);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 2);
+    let _ = app.update(Message::ToggleMixerPanel);
+    assert_eq!(app.media_panel_dock.panes.as_ref().unwrap().len(), 3);
+    assert_eq!(app.media_panel_dock.main_ratio, 0.63);
+    assert_eq!(app.media_panel_dock.arrange_ratio, 0.48);
+    assert_eq!(app.project.tracks()[0].id(), id);
+    assert!(app.desktop_layout_save_at.is_some());
+}
+
+#[test]
+fn new_factory_shortcuts_preserve_existing_custom_maps_and_effective_labels() {
+    let bindings =
+        commands::validate_bindings(&HashMap::from([("edit.undo".into(), "Mod+M".into())]))
+            .unwrap();
+    let input = test_shortcut_input(Key::Character("m".into()), Modifiers::COMMAND);
+    assert_eq!(
+        commands::from_shortcut_input(&input, &bindings, &[]),
+        Some(CommandId::Undo)
+    );
+    assert!(commands::binding_for_id("view.toggle-mixer", &bindings).is_empty());
+    assert_eq!(commands::binding_for_id("edit.undo", &bindings), "Mod+M");
+}
+
+#[test]
+fn busy_project_view_menu_and_shortcut_toggle_mixer_without_editing_project() {
+    let main = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main),
+        io_busy: true,
+        ..App::default()
+    };
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleMixerPanel));
+    assert!(!app.media_panel_dock.mixer_open);
+    let input = test_shortcut_input(Key::Character("m".into()), Modifiers::COMMAND);
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(input),
+        iced::event::Status::Ignored,
+        main,
+    ));
+    assert!(app.media_panel_dock.mixer_open);
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
+fn yielded_factory_binding_is_consistent_between_labels_and_dispatch() {
+    use iced::keyboard::{
+        Location,
+        key::{Code, Physical},
+    };
+    let bindings = commands::validate_bindings(&HashMap::from([(
+        "edit.undo".into(),
+        "Shift+NumPadDivide".into(),
+    )]))
+    .unwrap();
+    assert!(commands::binding_for_id("actions.show-list", &bindings).is_empty());
+    let mut input = test_shortcut_input(Key::Character("/".into()), Modifiers::SHIFT);
+    assert_eq!(commands::from_shortcut_input(&input, &bindings, &[]), None);
+    input.physical_key = Physical::Code(Code::NumpadDivide);
+    input.location = Location::Numpad;
+    assert_eq!(
+        commands::from_shortcut_input(&input, &bindings, &[]),
+        Some(CommandId::Undo)
+    );
+}
+
+#[test]
+fn ordinary_track_routing_is_available_as_an_undoable_action() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let _ = app.update(Message::AddTrack);
+    let bus = app.project.tracks()[1].id();
+    assert!(!app.project.tracks()[1].is_bus());
+
+    let _ = app.update(Message::SetTrackOutput(source, Some(bus)));
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].output_track(), None);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].output_track(), Some(bus));
+}
+
+#[test]
+fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let destination = app.project.tracks()[1].id();
+    app.routing_track_id = Some(source);
+    let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+        track_id: source,
+        destination,
+        parameters: Default::default(),
+    }));
+    let id = app.project.tracks()[0].sends()[0].id();
+    let before = app.project.snapshot();
+    let _ = app.update(Message::RoutingSendDraft(id, false, "-6".into()));
+    let _ = app.update(Message::RoutingSendDraft(id, true, "NaN".into()));
+    let _ = app.update(Message::CommitRoutingSend(id));
+    assert_eq!(app.project.snapshot(), before);
+    assert!(app.routing_send_drafts.contains_key(&id));
+    let _ = app.update(Message::RoutingSendDraft(id, true, "0.5".into()));
+    let _ = app.update(Message::CommitRoutingSend(id));
+    let parameters = app.project.tracks()[0].sends()[0].parameters();
+    assert_eq!((parameters.volume_db, parameters.pan), (-6.0, 0.5));
+    assert!(!app.routing_send_drafts.contains_key(&id));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::RoutingChange(DawAction::DeleteTrack {
+        track_id: destination,
+    }));
+    assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn touch_track_routing_uses_panel_navigation_and_close_keeps_project() {
+    let mut app = App {
+        shell_profile: super::ShellProfile::Touch,
+        ..Default::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let before = app.project.snapshot();
+    let _ = app.update(Message::OpenTrackRouting(source));
+    assert_eq!(app.mobile_panel, MobilePanel::Routing);
+    assert!(app.routing_window_id.is_none());
+    let _ = app.update(Message::CloseTrackRouting);
+    assert_eq!(app.mobile_panel, MobilePanel::Editor);
+    assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn folder_registry_and_routing_parent_edits_share_undoable_project_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let parent = app.project.tracks()[0].id();
+    let child = app.project.tracks()[1].id();
+    let _ = app.update(Message::ExecuteCommand(commands::CommandId::Track {
+        track_id: parent,
+        command: commands::TrackCommand::ToggleFolder,
+    }));
+    assert!(app.project.tracks()[0].is_folder());
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackParent {
+        track_id: child,
+        parent: Some(parent),
+    }));
+    assert_eq!(app.project.folder_depth(child), 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[1].parent_track(), None);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.tracks()[0].is_folder());
+}
+
+#[test]
+fn folder_compact_registered_command_changes_only_persisted_view_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let folder = app.project.tracks()[0].id();
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackFolder {
+        track_id: folder,
+        enabled: true,
+    }));
+    let before = app.project.snapshot();
+    let view_before = app.timeline.arrangement_view_state(&app.project);
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(commands::CommandId::Track {
+        track_id: folder,
+        command: commands::TrackCommand::CycleFolderCompact,
+    }));
+    assert_eq!(app.project.snapshot(), before);
+    assert_ne!(
+        app.timeline.arrangement_view_state(&app.project),
+        view_before
+    );
+    assert!(app.revision > revision);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn transport_factory_bindings_separate_stop_and_pause_and_preserve_custom_maps() {
+    use iced::keyboard::key::Named;
+    for (key, modifiers, expected) in [
+        (Named::Space, Modifiers::NONE, CommandId::TogglePlayStop),
+        (Named::Enter, Modifiers::NONE, CommandId::TogglePlayback),
+        (Named::Space, Modifiers::CTRL, CommandId::TogglePlayback),
+    ] {
+        assert_eq!(
+            commands::from_shortcut(&Key::Named(key), modifiers, &HashMap::new(), &[]),
+            Some(expected)
+        );
+    }
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(Named::Space),
+            Modifiers::SHIFT,
+            &HashMap::new(),
+            &[]
+        ),
+        None
+    );
+    let custom = commands::validate_bindings(&HashMap::from([
+        ("transport.toggle-playback".into(), "Space".into()),
+        ("transport.stop-playback".into(), "Shift+Space".into()),
+    ]))
+    .unwrap();
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::Space), Modifiers::NONE, &custom, &[]),
+        Some(CommandId::TogglePlayback)
+    );
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::Space), Modifiers::SHIFT, &custom, &[]),
+        Some(CommandId::StopPlayback)
+    );
+    assert_eq!(commands::binding_for_id("transport.play-stop", &custom), "");
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn transport_stop_commands_cancel_recording_setup_through_busy_guards() {
+    for command in [CommandId::TogglePlayStop, CommandId::StopPlayback] {
+        let mut app = App {
+            recording_starting: true,
+            playback_busy: true,
+            ..App::default()
+        };
+        let _ = app.update(Message::ExecuteCommand(command));
+        assert!(app.recording_cancel_requested, "{command:?}");
+        assert!(app.status.contains("Cancelling input setup"));
+        assert!(app.project.tracks().is_empty());
+    }
+}
+
+#[test]
+fn track_phase_command_and_undo_share_domain_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track = app.project.tracks()[0].id();
+    app.timeline.select_track_only(track);
+    let command = CommandId::SelectedTrack(commands::TrackCommand::TogglePhase);
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("track.toggle-phase")
+    );
+    assert_eq!(commands::toggle_state(&app, command), Some(false));
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(app.project.tracks()[0].is_phase_inverted());
+    assert_eq!(commands::toggle_state(&app, command), Some(true));
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.tracks()[0].is_phase_inverted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.tracks()[0].is_phase_inverted());
+}
+
+#[test]
+fn item_fade_preview_commits_once_and_cancel_preserves_project_revision() {
+    use crate::timeline::TimelineEvent;
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = app.project.snapshot();
+    let revision = app.revision;
+    let first = AudioItemFades {
+        fade_in: AudioFade::new(12_000.5, FadeShape::Smooth).unwrap(),
+        ..AudioItemFades::default()
+    };
+    let last = AudioItemFades {
+        fade_in: AudioFade::new(24_000.25, FadeShape::Smooth).unwrap(),
+        ..first
+    };
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: first,
+    }));
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: last,
+    }));
+    assert_eq!(app.project.snapshot(), original);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Timeline(TimelineEvent::CommitItemFades));
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    let revision = app.revision;
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: first,
+    }));
+    let _ = app.update(Message::Escape);
+    assert!(app.timeline.item_fade_preview().is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Timeline(TimelineEvent::CommitItemFades));
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn curve_menu_converts_legacy_smooth_without_changing_lengths_and_is_undoable() {
+    use crate::timeline::{ItemFadeEdge, TimelineEvent};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = AudioItemFades {
+        fade_in: AudioFade::new(12_000.25, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(6_000.5, FadeShape::FastStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: original,
+        })
+        .unwrap();
+    let message = Message::Timeline(TimelineEvent::SetFadeCurvePreset {
+        item_id,
+        edge: ItemFadeEdge::In,
+        shape: FadeShape::Smooth,
+    });
+    let _ = app.update(message.clone());
+    let current = app.project.audio_items()[0].fades();
+    assert_eq!(current.fade_in.length_samples(), 12_000.25);
+    assert_eq!(
+        current.fade_in.curve(),
+        FadeCurve::current_preset(FadeShape::Smooth)
+    );
+    assert_eq!(current.fade_out, original.fade_out);
+    let revision = app.revision;
+    let _ = app.update(message);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), current);
+    let _ = app.update(Message::Timeline(TimelineEvent::OpenFadeMenu {
+        item_id,
+        edge: ItemFadeEdge::Out,
+        x: 1.0,
+        y: 1.0,
+    }));
+    let _ = app.update(Message::Escape);
+    assert!(app.timeline.context_fade.is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), current);
+}
+
+#[test]
+fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() {
+    use super::item_properties::{ItemProperties, ItemPropertyField};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let id = app.project.audio_items()[0].id();
+    let original = AudioItemFades {
+        fade_in: AudioFade::new(12000.25, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(6000.5, FadeShape::FastStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: id,
+            fades: original,
+        })
+        .unwrap();
+    app.item_properties = Some(ItemProperties::new(id, original, 48000));
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InCurvature,
+        "-2".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::OutLength,
+        "0:00.1255".into(),
+    ));
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let applied = app.project.audio_items()[0].fades();
+    assert_eq!(applied.fade_in.length_samples(), 12000.25);
+    assert!(
+        matches!(applied.fade_in.curve(), FadeCurve::Native(p) if p.curvature() == -1.0 && p.s_parameter() == 0.5)
+    );
+    assert_eq!(applied.fade_out.length_samples(), 6024.0);
+    assert_eq!(applied.fade_out.curve(), original.fade_out.curve());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InLength,
+        "NaN".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(true));
+    assert!(app.item_properties.as_ref().unwrap().error.is_some());
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let _ = app.update(Message::CloseItemProperties);
+    assert!(app.item_properties.is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let both = AudioItemFades {
+        fade_in: AudioFade::new(19200.0, FadeShape::FastStart).unwrap(),
+        fade_out: AudioFade::new(28800.0, FadeShape::FastStart).unwrap(),
+    };
+    let mut draft = ItemProperties::new(id, both, 48000);
+    draft.edit(ItemPropertyField::InLength, "0:00.800".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 38400.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 9600.0);
+    draft.edit(ItemPropertyField::OutLength, "0:02.000".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 0.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 48000.0);
+    draft.edit(ItemPropertyField::InLength, "0:00.600".into());
+    draft.edit(ItemPropertyField::OutLength, "0:00.600".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 19200.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 28800.0);
+}
+
+#[test]
+fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
+    use super::item_properties::{ItemProperties, ItemPropertyField};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let item = &app.project.audio_items()[0];
+    app.item_properties = Some(ItemProperties::new(item.id(), item.fades(), 48000));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InLength,
+        "0.25".into(),
+    ));
+    app.project_generation += 1;
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.item_properties.is_none());
+    assert_eq!(
+        app.project.audio_items()[0].fades(),
+        aaadaw_core::AudioItemFades::default()
+    );
+}
+
+#[test]
+fn factory_f2_toggles_item_properties_and_respects_custom_binding() {
+    use iced::keyboard::key::Named;
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(Named::F2),
+            Modifiers::NONE,
+            &HashMap::new(),
+            &[]
+        ),
+        Some(CommandId::ToggleItemProperties)
+    );
+    let custom = HashMap::from([("track.add".to_owned(), "F2".to_owned())]);
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::F2), Modifiers::NONE, &custom, &[]),
+        Some(CommandId::AddTrack)
+    );
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    app.timeline.selected_item = Some(app.project.audio_items()[0].id());
+    let _ = app.update(Message::ToggleItemProperties);
+    assert!(app.item_properties_window_id.is_some());
+    let window_id = app.item_properties_window_id.unwrap();
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::F2),
+            modified_key: Key::Named(Named::F2),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F2),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+    assert!(app.item_properties_window_id.is_none());
+    assert!(app.item_properties.is_none());
+}
+
+#[test]
+fn item_properties_apply_placement_and_fades_atomically_and_keep_oversized_requests_on_shortening()
+{
+    use super::item_properties::{ItemProperties, ItemPropertyField as Field};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 17,
+            source_offset_samples: 23,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let id = app.project.audio_items()[0].id();
+    let original_fades = AudioItemFades {
+        fade_in: AudioFade::new(38400.0, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(9600.0, FadeShape::SlowStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: id,
+            fades: original_fades,
+        })
+        .unwrap();
+    let original = app.project.snapshot();
+    app.item_properties = Some(ItemProperties::from_item(
+        &app.project.audio_items()[0],
+        48000,
+        super::item_properties::TimeUnit::Time,
+    ));
+    for (field, value) in [
+        (Field::Position, "0:00.500"),
+        (Field::Length, "0:00.250"),
+        (Field::SourceOffset, "0:00.125"),
+        (Field::InCurvature, "0.25"),
+    ] {
+        let _ = app.update(Message::ItemPropertyFieldChanged(field, value.into()));
+    }
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(
+        (
+            item.start_sample(),
+            item.length_samples(),
+            item.source_offset_samples()
+        ),
+        (24000, 12000, 6000)
+    );
+    assert_eq!(item.fades().fade_in.length_samples(), 38400.0);
+    assert_eq!(item.fades().fade_out, original_fades.fade_out);
+    assert_eq!(item.fades().fade_in.curve().parameters().curvature(), 0.25);
+    assert_eq!(item.fades().fade_in.curve().parameters().s_parameter(), 0.5);
+    let applied = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "0:00.000".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::OutLength,
+        "0:00.100".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.item_properties.as_ref().unwrap().error.is_some());
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "1e100".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "0:00.250".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::OutLength,
+        "0:00.150".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.fades().fade_out.length_samples(), 7200.0);
+    assert_eq!(item.fades().fade_in.length_samples(), 4800.0);
 }

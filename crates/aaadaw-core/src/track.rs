@@ -116,10 +116,16 @@ pub struct Track {
     pub(crate) id: TrackId,
     pub(crate) name: String,
     pub(crate) is_bus: bool,
+    pub(crate) is_folder: bool,
+    pub(crate) parent_track: Option<TrackId>,
     pub(crate) output_track: Option<TrackId>,
+    pub(crate) main_send_enabled: bool,
+    pub(crate) sends: Vec<crate::AudioSend>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
+    pub(crate) pan_mode: crate::PanMode,
     pub(crate) muted: bool,
+    pub(crate) phase_inverted: bool,
     pub(crate) solo: bool,
     pub(crate) record_armed: bool,
     pub(crate) instrument: Option<TrackInstrument>,
@@ -306,6 +312,20 @@ impl TrackFxPlugin {
 }
 
 impl Track {
+    /// Whether the existing main output (Master or selected track) is enabled.
+    pub fn main_send_enabled(&self) -> bool {
+        self.main_send_enabled
+    }
+    /// Ordered sender-owned post-fader audio connections.
+    pub fn sends(&self) -> &[crate::AudioSend] {
+        &self.sends
+    }
+
+    /// Returns the inherited project gain policy.
+    pub fn pan_mode(&self) -> crate::PanMode {
+        self.pan_mode
+    }
+
     /// Returns this track's identifier.
     pub fn id(&self) -> TrackId {
         self.id
@@ -326,6 +346,19 @@ impl Track {
         self.output_track
     }
 
+    pub fn is_folder(&self) -> bool {
+        self.is_folder
+    }
+
+    pub fn parent_track(&self) -> Option<TrackId> {
+        self.parent_track
+    }
+
+    /// Main output follows the folder parent unless an explicit output is set.
+    pub fn effective_output_track(&self) -> Option<TrackId> {
+        self.output_track.or(self.parent_track)
+    }
+
     /// Returns this track's volume in decibels.
     pub fn volume_db(&self) -> f32 {
         self.volume_db
@@ -334,6 +367,11 @@ impl Track {
     /// Returns this track's pan position in the inclusive range `-1.0..=1.0`.
     pub fn pan(&self) -> f32 {
         self.pan
+    }
+
+    /// Returns whether the post-fader track signal has inverted polarity.
+    pub fn is_phase_inverted(&self) -> bool {
+        self.phase_inverted
     }
 
     /// Returns whether this track is muted.

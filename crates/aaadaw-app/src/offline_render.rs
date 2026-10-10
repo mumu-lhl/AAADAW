@@ -539,7 +539,7 @@ pub fn render_freeze_track_to_float32_wav(
         .iter()
         .find(|track| track.id() == track_id)
         .ok_or_else(|| OfflineRenderError::Media("freeze track no longer exists".into()))?;
-    if track.is_frozen() || track.is_bus() || track.instrument().is_none() {
+    if track.is_frozen() || track.is_bus() || track.is_folder() || track.instrument().is_none() {
         return Err(OfflineRenderError::Media(
             "only an unfrozen instrument track can be frozen".into(),
         ));
@@ -581,9 +581,14 @@ pub fn render_freeze_track_to_float32_wav(
         .first_mut()
         .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
     source_track.output_track_id = None;
+    source_track.parent_track_id = None;
+    source_track.main_send_enabled = true;
+    source_track.sends.clear();
     source_track.volume_db = 0.0;
     source_track.pan = 0.0;
     source_track.muted = false;
+    source_track.phase_inverted = false;
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
     source_track.solo = false;
     source_track.record_armed = false;
     source_track.volume_automation.clear();
@@ -962,7 +967,10 @@ mod tests {
     }
 
     fn project_with_one_track() -> Project {
-        let mut project = Project::new();
+        let mut project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+        );
         project
             .apply(DawAction::CreateTrack {
                 index: 0,

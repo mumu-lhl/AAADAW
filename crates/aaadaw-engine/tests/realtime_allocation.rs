@@ -81,7 +81,10 @@ impl Drop for AllocationTracking {
 
 #[test]
 fn render_callback_does_not_allocate_on_the_rendering_thread() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -138,6 +141,42 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             notes,
         })
         .expect("MIDI note creation should succeed");
+    for index in 1..=2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Send receiver {index}"),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id,
+                destination: project.tracks()[index].id(),
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db: -12.0,
+                    tap: if index == 1 {
+                        aaadaw_core::AudioSendTap::PreFx
+                    } else {
+                        aaadaw_core::AudioSendTap::PreFader
+                    },
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    let folder = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: folder,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id,
+            parent: Some(folder),
+        })
+        .unwrap();
     let (mut producer, consumer) =
         stereo_pcm_stream(128 * 128).expect("queue capacity should be valid");
     producer.set_stereo_content(true);
@@ -180,9 +219,11 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             .expect("monitor graph should expose its control")
             .set_track_enabled(track_id, true)
     );
+    let fades = graph.item_fade_controller();
     let mix = graph.track_mix_controller();
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
+    let master_mix = graph.master_mix_controller();
     master.set_ceiling(MasterOutputCeiling::new(-12).expect("ceiling is supported"));
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
@@ -202,7 +243,29 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
     let mut midi_events_seen = 0;
-    for _ in 0..128 {
+    for index in 0..128 {
+        assert!(
+            fades.set_fades(
+                audio_item_id,
+                aaadaw_core::AudioItemFades {
+                    fade_in: aaadaw_core::AudioFade::with_curve(
+                        if index % 2 == 0 { 256.5 } else { 512.5 },
+                        aaadaw_core::FadeCurve::Native(
+                            aaadaw_core::FadeCurveParameters::new(
+                                if index % 2 == 0 { -0.25 } else { 0.25 },
+                                if index % 2 == 0 { -0.5 } else { 0.5 },
+                            )
+                            .unwrap()
+                        ),
+                    )
+                    .unwrap(),
+                    fade_out: aaadaw_core::AudioFade::default(),
+                }
+            )
+        );
+        master_mix.set_mix(
+            aaadaw_core::MasterMix::new(0.0, if index % 2 == 0 { -0.5 } else { 0.5 }).unwrap(),
+        );
         for _ in 0..128 {
             assert!(monitor_producer.push_frame([0.01, 0.01]));
         }

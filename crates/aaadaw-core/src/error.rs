@@ -17,11 +17,17 @@ pub enum ActionError {
     InvalidVolumeDb,
     /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
     InvalidVolumeAutomation,
-    /// The requested track output is not a different bus track.
+    /// The requested track output is not a different track.
     InvalidTrackOutput,
-    /// The requested bus route would create a routing cycle.
+    InvalidTrackHierarchy,
+    InvalidAudioSend,
+    SendIdExhausted,
+    AudioSendNotFound {
+        send_id: crate::SendId,
+    },
+    /// The requested route would create a routing cycle.
     TrackRoutingCycle,
-    /// A bus cannot be deleted while tracks are routed through it.
+    /// A receiving track cannot be deleted while tracks are routed through it.
     TrackHasRoutingDependents {
         track_id: TrackId,
     },
@@ -66,6 +72,8 @@ pub enum ActionError {
     InvalidAudioMediaRef,
     /// An audio item must have a positive length.
     InvalidAudioItemLength,
+    /// A manual audio Item fade duration must be finite and nonnegative.
+    InvalidAudioItemFade,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -127,9 +135,13 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeAutomation => formatter.write_str(
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
             ),
+            Self::InvalidAudioSend => formatter.write_str("audio send parameters are invalid"),
+            Self::SendIdExhausted => formatter.write_str("audio send identifiers are exhausted"),
+            Self::AudioSendNotFound { send_id } => write!(formatter, "audio send {} does not exist", send_id.value()),
             Self::InvalidTrackOutput => {
-                formatter.write_str("track output must name a different bus or Master")
+                formatter.write_str("track output must name a different track or Master")
             }
+            Self::InvalidTrackHierarchy => formatter.write_str("invalid folder hierarchy or track order"),
             Self::TrackRoutingCycle => {
                 formatter.write_str("track output would create a routing cycle")
             }
@@ -141,7 +153,7 @@ impl fmt::Display for ActionError {
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
             Self::TrackCannotBeFrozen => formatter.write_str(
-                "freeze requires a non-bus instrument track with MIDI note content and no audio items",
+                "freeze requires an instrument track outside bus/folder roles with MIDI note content and no audio items",
             ),
             Self::TrackAlreadyFrozen { track_id } => {
                 write!(formatter, "track {} is already frozen", track_id.value())
@@ -194,6 +206,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidAudioMediaRef => {
                 formatter.write_str("audio media reference must not be blank")
+            }
+            Self::InvalidAudioItemFade => {
+                write!(formatter, "audio Item fade duration must be finite and nonnegative")
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")

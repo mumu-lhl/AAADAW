@@ -4,7 +4,10 @@ use aaadaw_core::{
 use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -162,7 +165,10 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
 
 #[test]
 fn event_plan_applies_midi_source_offset_at_the_visible_start() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -552,7 +558,10 @@ fn midi_controller_schedule_is_sample_accurate_and_chases_latest_state() {
 
 #[test]
 fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -610,7 +619,10 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
 
 #[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {
@@ -683,7 +695,10 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
 
 #[test]
 fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -702,6 +717,200 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
         .apply(DawAction::SetTrackOutput {
             track_id: source,
             output_track: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 2);
+    let mut events = [None; 2];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
+    assert_eq!(events[0].unwrap().track_id, source);
+}
+
+#[test]
+fn soloed_audio_send_receiver_keeps_source_instrument_events_without_copying_midi() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination: bus,
+            parameters: aaadaw_core::AudioSendParameters::default(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 2);
+    let mut events = [None; 2];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
+    assert_eq!(events[0].unwrap().track_id, source);
+}
+
+#[test]
+fn midi_source_audibility_follows_nested_unmuted_audio_sends_without_copying_events() {
+    for muted in [false, true] {
+        let (mut project, source) = project_with_note(60, 0, 240);
+        for (index, name) in [(1, "Intermediate"), (2, "Solo receiver")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.into(),
+                })
+                .unwrap();
+        }
+        let mid = project.tracks()[1].id();
+        let receiver = project.tracks()[2].id();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination: mid,
+                parameters: aaadaw_core::AudioSendParameters {
+                    muted,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: mid,
+                destination: receiver,
+                parameters: Default::default(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackSolo {
+                track_id: receiver,
+                solo: true,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![MidiControllerData {
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![MidiPitchBendData {
+                    tick: 0,
+                    value: 9000,
+                }],
+            })
+            .unwrap();
+        let plan = MidiEventPlan::compile(&project).unwrap();
+        let mut events = [None; 4];
+        let count = plan.events_for_block(0, 1, &mut events).unwrap();
+        assert_eq!(count, if muted { 0 } else { 3 });
+        assert!(
+            events[..count]
+                .iter()
+                .all(|event| event.unwrap().track_id == source)
+        );
+    }
+}
+
+#[test]
+fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: bus,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: source,
+            parent: Some(bus),
         })
         .unwrap();
     project

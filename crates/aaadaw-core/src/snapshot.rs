@@ -8,6 +8,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectSnapshot {
     pub settings: ProjectSettings,
+    pub master_mix: crate::MasterMix,
     pub tracks: Vec<TrackSnapshot>,
     pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,
@@ -20,10 +21,15 @@ pub struct TrackSnapshot {
     pub id: u64,
     pub name: String,
     pub is_bus: bool,
+    pub is_folder: bool,
+    pub parent_track_id: Option<u64>,
     pub output_track_id: Option<u64>,
+    pub main_send_enabled: bool,
+    pub sends: Vec<crate::AudioSendSnapshot>,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
+    pub phase_inverted: bool,
     pub solo: bool,
     pub record_armed: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,
@@ -106,6 +112,7 @@ pub struct TrackFxParameterValueSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AudioItemSnapshot {
+    pub fades: crate::AudioItemFades,
     pub id: u64,
     pub track_id: u64,
     pub media_ref: String,

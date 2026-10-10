@@ -1,4 +1,5 @@
 use super::action_macros::ActionMacro;
+use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
@@ -17,14 +18,19 @@ pub(crate) enum CommandId {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenProjectSettings,
+    OpenActionList,
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
+    OpenItemProperties,
+    ToggleItemProperties,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -40,6 +46,8 @@ pub(crate) enum CommandId {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    TogglePlayStop,
+    #[cfg(feature = "audio-device")]
     StopPlayback,
     #[cfg(feature = "audio-device")]
     PanicMidi,
@@ -48,8 +56,12 @@ pub(crate) enum CommandId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackCommand {
+    Routing,
+    ToggleFolder,
+    CycleFolderCompact,
     Rename,
     ToggleMute,
+    TogglePhase,
     ToggleSolo,
     ToggleRecordArm,
     MoveUp,
@@ -66,14 +78,19 @@ enum CommandKind {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenProjectSettings,
+    OpenActionList,
     Undo,
     Redo,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
+    OpenItemProperties,
+    ToggleItemProperties,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -84,6 +101,8 @@ enum CommandKind {
     Track(TrackCommand),
     #[cfg(feature = "audio-device")]
     TogglePlayback,
+    #[cfg(feature = "audio-device")]
+    TogglePlayStop,
     #[cfg(feature = "audio-device")]
     StopPlayback,
     #[cfg(feature = "audio-device")]
@@ -102,123 +121,28 @@ struct CommandDefinition {
     separator_before: bool,
 }
 
-#[derive(Clone, Copy)]
-enum Shortcut {
-    Command(char),
-    CommandShift(char),
-    Unmodified(char),
-    Delete,
-    Space,
-    ShiftSpace,
-}
-
-impl Shortcut {
-    fn config_label(self) -> String {
-        match self {
-            Self::Command(key) => format!("Mod+{}", key.to_ascii_uppercase()),
-            Self::CommandShift(key) => {
-                format!("Mod+Shift+{}", key.to_ascii_uppercase())
-            }
-            Self::Unmodified(key) => key.to_ascii_uppercase().to_string(),
-            Self::Delete => "Delete/Backspace".to_owned(),
-            Self::Space => "Space".to_owned(),
-            Self::ShiftSpace => "Shift+Space".to_owned(),
-        }
-    }
-
-    fn parse(value: &str) -> Result<Option<Self>, String> {
-        let value = value.trim();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        if value.eq_ignore_ascii_case("space") {
-            return Ok(Some(Self::Space));
-        }
-        if value.eq_ignore_ascii_case("shift+space") {
-            return Ok(Some(Self::ShiftSpace));
-        }
-        if value.eq_ignore_ascii_case("delete")
-            || value.eq_ignore_ascii_case("backspace")
-            || value.eq_ignore_ascii_case("delete/backspace")
-        {
-            return Ok(Some(Self::Delete));
-        }
-        let mut unmodified_characters = value.chars();
-        if let Some(character) = unmodified_characters.next()
-            && character.is_ascii_alphabetic()
-            && unmodified_characters.next().is_none()
-        {
-            return Ok(Some(Self::Unmodified(character.to_ascii_lowercase())));
-        }
-        let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
-        if !(2..=3).contains(&parts.len()) {
-            return Err(format!(
-                "Use a letter, Delete, {}+letter, {}+Shift+letter, Space, or Shift+Space",
-                shortcut_modifier_name(),
-                shortcut_modifier_name()
-            ));
-        }
-        let has_mod = matches!(
-            parts[0].to_ascii_lowercase().as_str(),
-            "mod" | "ctrl" | "cmd"
-        );
-        let shifted = parts.len() == 3 && parts[1].eq_ignore_ascii_case("shift");
-        if !has_mod || (parts.len() == 3 && !shifted) {
-            return Err(format!(
-                "Use {}+key, {}+Shift+key, Space, or Shift+Space",
-                shortcut_modifier_name(),
-                shortcut_modifier_name()
-            ));
-        }
-        let key = parts.last().copied().unwrap_or_default();
-        let mut characters = key.chars();
-        let Some(character) = characters.next() else {
-            return Err("Shortcut key must be one letter".to_owned());
-        };
-        if !character.is_ascii_alphabetic() || characters.next().is_some() {
-            return Err("Shortcut key must be one letter".to_owned());
-        }
-        Ok(Some(if shifted {
-            Self::CommandShift(character.to_ascii_lowercase())
-        } else {
-            Self::Command(character.to_ascii_lowercase())
-        }))
-    }
-
-    fn matches(self, key: &Key<&str>, modifiers: Modifiers) -> bool {
-        match self {
-            Self::Command(character) => {
-                modifiers == Modifiers::COMMAND && key_matches_character(key, character)
-            }
-            Self::CommandShift(character) => {
-                modifiers == (Modifiers::COMMAND | Modifiers::SHIFT)
-                    && key_matches_character(key, character)
-            }
-            Self::Unmodified(character) => {
-                modifiers == Modifiers::NONE && key_matches_character(key, character)
-            }
-            Self::Delete => {
-                modifiers == Modifiers::NONE
-                    && matches!(key, Key::Named(Named::Delete | Named::Backspace))
-            }
-            Self::Space => modifiers == Modifiers::NONE && *key == Key::Named(Named::Space),
-            Self::ShiftSpace => modifiers == Modifiers::SHIFT && *key == Key::Named(Named::Space),
-        }
-    }
-}
-
-const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::Command('o')];
-const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::Command('n')];
-const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::Command('s')];
-const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::Command('z')];
-const REDO_SHORTCUT: &[Shortcut] = &[Shortcut::CommandShift('z'), Shortcut::Command('y')];
-const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::Command('d')];
-const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Delete];
-const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::Unmodified('s')];
+const ACTION_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('/', Modifiers::SHIFT)];
+const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::COMMAND)];
+const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
+const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
+const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
+const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
+const REDO_SHORTCUT: &[Shortcut] = &[
+    Shortcut::character('z', Modifiers::COMMAND.union(Modifiers::SHIFT)),
+    Shortcut::character('y', Modifiers::COMMAND),
+];
+const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifiers::COMMAND)];
+const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
+const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
-const PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::Space];
+const PLAYBACK_SHORTCUT: &[Shortcut] = &[
+    Shortcut::named(Named::Enter, Modifiers::NONE),
+    Shortcut::named(Named::Space, Modifiers::CTRL),
+];
 #[cfg(feature = "audio-device")]
-const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[Shortcut::ShiftSpace];
+const PLAY_STOP_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::NONE)];
+#[cfg(feature = "audio-device")]
+const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -282,6 +206,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::OpenProjectSettings,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Project settings...",
+        aliases: &["project settings", "video frame rate"],
+        shortcuts: &[Shortcut::named(Named::Enter, Modifiers::ALT)],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
         kind: CommandKind::OpenSettings,
         menu: Some(MainMenu::File),
         category: "File",
@@ -290,6 +224,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenActionList,
+        menu: Some(MainMenu::Actions),
+        category: "Actions",
+        label: "Show action list...",
+        aliases: &["actions", "action list", "find shortcut"],
+        shortcuts: ACTION_LIST_SHORTCUT,
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::Undo,
@@ -346,6 +290,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::ToggleMixerPanel,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Toggle mixer visible",
+        aliases: &["show mixer", "hide mixer", "mixer dock"],
+        shortcuts: &[Shortcut::character('m', Modifiers::COMMAND)],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::ShowMixer,
         menu: Some(MainMenu::View),
         category: "View",
@@ -371,6 +325,26 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Insert",
         label: "Import audio…",
         aliases: &["import audio", "import audio…", "audio file"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleItemProperties,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Item properties…",
+        aliases: &["toggle media item properties"],
+        shortcuts: &[Shortcut::named(Named::F2, Modifiers::NONE)],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenItemProperties,
+        menu: None,
+        category: "Item",
+        label: "Item properties…",
+        aliases: &["media item properties"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -449,6 +423,36 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Track",
         label: "Add track",
         aliases: &["create track"],
+        shortcuts: ADD_TRACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::CycleFolderCompact),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Cycle folder compact state",
+        aliases: &["folder compact", "collapse folder", "expand folder"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::ToggleFolder),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Set track as folder",
+        aliases: &["folder", "folder track"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::Routing),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Track routing…",
+        aliases: &["routing", "track io", "send", "receive"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -474,6 +478,16 @@ const COMMANDS: &[CommandDefinition] = &[
             "mute selected track",
             "unmute selected track",
         ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::Track(TrackCommand::TogglePhase),
+        menu: Some(MainMenu::Track),
+        category: "Track",
+        label: "Invert track polarity",
+        aliases: &["phase", "polarity", "invert phase"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -541,6 +555,17 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Play/Pause",
         aliases: &["play", "pause", "toggle playback"],
         shortcuts: PLAYBACK_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    #[cfg(feature = "audio-device")]
+    CommandDefinition {
+        kind: CommandKind::TogglePlayStop,
+        menu: None,
+        category: "Transport",
+        label: "Play/Stop",
+        aliases: &["play stop", "toggle play stop"],
+        shortcuts: PLAY_STOP_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -669,6 +694,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::ToggleOfflineJobsPanel
             | CommandKind::ShowArrangement
             | CommandKind::ShowMixer
+            | CommandKind::ToggleMixerPanel
             | CommandKind::AddMidiItem
             | CommandKind::DuplicateSelectedItem
             | CommandKind::DuplicateSelectedAudioItem
@@ -676,6 +702,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
             | CommandKind::AddTrack
+            | CommandKind::Track(TrackCommand::TogglePhase)
             | CommandKind::Track(TrackCommand::ToggleMute)
             | CommandKind::Track(TrackCommand::ToggleSolo)
             | CommandKind::Track(TrackCommand::ToggleRecordArm)
@@ -683,7 +710,10 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::Track(TrackCommand::MoveDown)
     ) || {
         #[cfg(feature = "audio-device")]
-        if kind == CommandKind::TogglePlayback {
+        if matches!(
+            kind,
+            CommandKind::TogglePlayback | CommandKind::TogglePlayStop
+        ) {
             return true;
         }
         false
@@ -724,7 +754,7 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                     .iter()
                     .map(|shortcut| shortcut.config_label())
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join("; ")
             } else {
                 app.shortcut_binding_edits
                     .get(id)
@@ -742,7 +772,7 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
                         .iter()
                         .map(|shortcut| shortcut.config_label())
                         .collect::<Vec<_>>()
-                        .join(", "),
+                        .join("; "),
                 ),
             }
         })
@@ -768,6 +798,69 @@ pub(super) fn shortcut_entries(app: &App) -> Vec<ShortcutEntry> {
         }
     }));
     entries
+}
+
+pub(super) fn staged_binding_for_id(app: &App, id: &str) -> String {
+    let defaults = COMMANDS
+        .iter()
+        .find(|definition| command_kind_id(definition.kind) == id)
+        .map_or(&[][..], |definition| definition.shortcuts);
+    if app.shortcut_defaults_restored.contains(id) {
+        return serialize_bindings(defaults);
+    }
+    app.shortcut_binding_edits
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| config_binding_for(app, id, defaults))
+}
+
+fn default_may_yield(kind: CommandKind) -> bool {
+    #[cfg(feature = "audio-device")]
+    if matches!(
+        kind,
+        CommandKind::TogglePlayback | CommandKind::TogglePlayStop
+    ) {
+        return true;
+    }
+    matches!(
+        kind,
+        CommandKind::OpenActionList
+            | CommandKind::OpenProjectSettings
+            | CommandKind::OpenItemProperties
+            | CommandKind::ToggleItemProperties
+            | CommandKind::AddTrack
+            | CommandKind::ToggleMixerPanel
+    )
+}
+
+fn effective_defaults(
+    definition: &CommandDefinition,
+    bindings: &ShortcutBindings,
+) -> Vec<Shortcut> {
+    definition
+        .shortcuts
+        .iter()
+        .copied()
+        .filter(|shortcut| {
+            !default_may_yield(definition.kind)
+                || !bindings
+                    .values()
+                    .filter_map(|value| parse_bindings(value).ok())
+                    .flatten()
+                    .any(|bound| shortcut.conflicts(bound))
+        })
+        .collect()
+}
+
+pub(super) fn binding_for_id(id: &str, bindings: &ShortcutBindings) -> String {
+    bindings.get(id).cloned().unwrap_or_else(|| {
+        COMMANDS
+            .iter()
+            .find(|definition| command_kind_id(definition.kind) == id)
+            .map_or_else(String::new, |definition| {
+                serialize_bindings(&effective_defaults(definition, bindings))
+            })
+    })
 }
 
 pub(super) fn label_for_id(app: &App, id: &str) -> Option<String> {
@@ -808,7 +901,7 @@ pub(super) fn validate_bindings_with_macros(
             return Err(format!("unknown action ID: {id}"));
         }
     }
-    let mut resolved = HashMap::<String, String>::new();
+    let mut resolved = Vec::<(Shortcut, String)>::new();
     let mut normalized_bindings = ShortcutBindings::new();
     for definition in COMMANDS {
         let id = command_kind_id(definition.kind);
@@ -830,36 +923,50 @@ pub(super) fn validate_bindings_with_macros(
             continue;
         }
         for shortcut in definition.shortcuts {
-            let normalized = shortcut.config_label();
-            if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned())
-                && other_id != id
+            // Adding a new factory binding must not invalidate older custom maps.
+            if default_may_yield(definition.kind)
+                && resolved.iter().any(|(bound, _)| shortcut.conflicts(*bound))
             {
-                return Err(format!("{normalized} conflicts with the default for {id}"));
+                continue;
             }
+            register_shortcut(*shortcut, id, &mut resolved)?;
         }
     }
     Ok(normalized_bindings)
 }
 
+fn register_shortcut(
+    shortcut: Shortcut,
+    id: &str,
+    resolved: &mut Vec<(Shortcut, String)>,
+) -> Result<(), String> {
+    if shortcut.is_reserved() {
+        return Err("Escape is reserved for cancelling the current operation".to_owned());
+    }
+    if let Some((_, other_id)) = resolved
+        .iter()
+        .find(|(other, other_id)| other_id != id && shortcut.conflicts(*other))
+    {
+        return Err(format!(
+            "{} is already assigned to both {other_id} and {id}",
+            shortcut.config_label()
+        ));
+    }
+    resolved.push((shortcut, id.to_owned()));
+    Ok(())
+}
+
 fn insert_normalized_binding(
     id: &str,
     value: &str,
-    resolved: &mut HashMap<String, String>,
+    resolved: &mut Vec<(Shortcut, String)>,
     normalized_bindings: &mut ShortcutBindings,
 ) -> Result<(), String> {
-    if value.trim().is_empty() {
-        normalized_bindings.insert(id.to_owned(), String::new());
-        return Ok(());
+    let shortcuts = parse_bindings(value)?;
+    for shortcut in &shortcuts {
+        register_shortcut(*shortcut, id, resolved)?;
     }
-    let shortcut =
-        Shortcut::parse(value)?.ok_or_else(|| "Shortcut cannot be empty here".to_owned())?;
-    let normalized = shortcut.config_label();
-    if let Some(other_id) = resolved.insert(normalized.clone(), id.to_owned()) {
-        return Err(format!(
-            "{normalized} is already assigned to both {other_id} and {id}"
-        ));
-    }
-    normalized_bindings.insert(id.to_owned(), normalized);
+    normalized_bindings.insert(id.to_owned(), serialize_bindings(&shortcuts));
     Ok(())
 }
 
@@ -932,54 +1039,57 @@ pub(super) fn from_shortcut(
     bindings: &ShortcutBindings,
     macros: &[ActionMacro],
 ) -> Option<CommandId> {
+    find_shortcut(
+        |shortcut| shortcut.matches(key, modifiers),
+        bindings,
+        macros,
+    )
+}
+
+pub(super) fn from_shortcut_input(
+    input: &super::shortcut::ShortcutInput,
+    bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
+) -> Option<CommandId> {
+    find_shortcut(|shortcut| shortcut.matches_input(input), bindings, macros)
+}
+
+fn find_shortcut(
+    matches: impl Fn(&Shortcut) -> bool,
+    bindings: &ShortcutBindings,
+    macros: &[ActionMacro],
+) -> Option<CommandId> {
     if let Some(action_macro) = macros.iter().find(|action_macro| {
         let id = macro_id(action_macro.id);
         bindings
             .get(&id)
-            .and_then(|binding| Shortcut::parse(binding).ok().flatten())
-            .is_some_and(|shortcut| shortcut.matches(key, modifiers))
+            .and_then(|binding| parse_bindings(binding).ok())
+            .is_some_and(|shortcuts| shortcuts.iter().any(&matches))
     }) {
         return Some(CommandId::Macro(action_macro.id));
     }
-    COMMANDS.iter().find_map(|definition| {
-        let id = command_kind_id(definition.kind);
-        let custom = bindings
-            .get(id)
-            .and_then(|binding| Shortcut::parse(binding).ok().flatten());
-        match custom {
-            Some(shortcut) => shortcut.matches(key, modifiers),
-            None if bindings.contains_key(id) => false,
-            None => definition
-                .shortcuts
-                .iter()
-                .any(|shortcut| shortcut.matches(key, modifiers)),
-        }
-        .then(|| command_id(definition.kind))
-    })
+    COMMANDS
+        .iter()
+        .find_map(|definition| {
+            bindings
+                .get(command_kind_id(definition.kind))
+                .and_then(|value| parse_bindings(value).ok())
+                .is_some_and(|shortcuts| shortcuts.iter().any(&matches))
+                .then(|| command_id(definition.kind))
+        })
+        .or_else(|| {
+            COMMANDS.iter().find_map(|definition| {
+                (!bindings.contains_key(command_kind_id(definition.kind))
+                    && effective_defaults(definition, bindings)
+                        .iter()
+                        .any(&matches))
+                .then(|| command_id(definition.kind))
+            })
+        })
 }
 
 pub(super) fn capture_binding(key: &str, modifiers: Modifiers) -> Result<String, String> {
-    let candidate = if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::SHIFT {
-        "Shift+Space".to_owned()
-    } else if key.eq_ignore_ascii_case("space") && modifiers == Modifiers::NONE {
-        "Space".to_owned()
-    } else if key.eq_ignore_ascii_case("delete") && modifiers == Modifiers::NONE {
-        "Delete".to_owned()
-    } else if modifiers == Modifiers::NONE
-        && key.len() == 1
-        && key.chars().all(|character| character.is_ascii_alphabetic())
-    {
-        key.to_ascii_uppercase()
-    } else if modifiers == Modifiers::COMMAND {
-        format!("Mod+{key}")
-    } else if modifiers == (Modifiers::COMMAND | Modifiers::SHIFT) {
-        format!("Mod+Shift+{key}")
-    } else {
-        return Err(shortcut_capture_help());
-    };
-    Shortcut::parse(&candidate)?
-        .map(Shortcut::config_label)
-        .ok_or_else(|| "That key cannot be used as a shortcut".to_owned())
+    Shortcut::capture(key, modifiers).map(Shortcut::config_label)
 }
 
 pub(super) fn friendly_shortcut_error(error: &str, macros: &[ActionMacro]) -> String {
@@ -1014,34 +1124,20 @@ fn format_shortcut_label_for_platform(binding: &str, is_macos: bool) -> String {
         .replace("Mod+", &modifier)
 }
 
-pub(super) fn shortcut_modifier_name() -> &'static str {
-    modifier_name_for_platform(cfg!(target_os = "macos"))
-}
-
 fn modifier_name_for_platform(is_macos: bool) -> &'static str {
     if is_macos { "Cmd" } else { "Ctrl" }
 }
 
 pub(super) fn shortcut_capture_help() -> String {
-    let modifier = shortcut_modifier_name();
-    format!(
-        "Select a binding, then press a letter, Delete, {modifier}+letter, {modifier}+Shift+letter, Space, or Shift+Space."
-    )
+    "Select a binding, then press a character, function key, or navigation key with Ctrl, Alt, Shift, or Super. Escape cancels; unmodified Backspace clears.".to_owned()
 }
 
-fn config_binding_for(app: &App, id: &str, defaults: &[Shortcut]) -> String {
+fn config_binding_for(app: &App, id: &str, _defaults: &[Shortcut]) -> String {
     let custom = app
         .shortcut_bindings
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(binding) = custom.get(id) {
-        return binding.clone();
-    }
-    defaults
-        .iter()
-        .map(|shortcut| shortcut.config_label())
-        .collect::<Vec<_>>()
-        .join(", ")
+    binding_for_id(id, &custom)
 }
 
 fn command_kind_id(kind: CommandKind) -> &'static str {
@@ -1053,14 +1149,19 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
+        CommandKind::OpenProjectSettings => "file.project-settings",
+        CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
+        CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
+        CommandKind::OpenItemProperties => "item.properties",
+        CommandKind::ToggleItemProperties => "item.properties.toggle",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
@@ -1068,8 +1169,12 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
+        CommandKind::Track(TrackCommand::Routing) => "track.routing",
+        CommandKind::Track(TrackCommand::ToggleFolder) => "track.toggle-folder",
+        CommandKind::Track(TrackCommand::CycleFolderCompact) => "track.cycle-folder-compact",
         CommandKind::Track(TrackCommand::Rename) => "track.rename",
         CommandKind::Track(TrackCommand::ToggleMute) => "track.toggle-mute",
+        CommandKind::Track(TrackCommand::TogglePhase) => "track.toggle-phase",
         CommandKind::Track(TrackCommand::ToggleSolo) => "track.toggle-solo",
         CommandKind::Track(TrackCommand::ToggleRecordArm) => "track.toggle-record-arm",
         CommandKind::Track(TrackCommand::MoveUp) => "track.move-up",
@@ -1077,6 +1182,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::Track(TrackCommand::Delete) => "track.delete",
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => "transport.toggle-playback",
+        #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => "transport.play-stop",
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => "transport.stop-playback",
         #[cfg(feature = "audio-device")]
@@ -1121,14 +1228,19 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ExportWav => Message::OpenRenderWindow,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
+        CommandId::OpenProjectSettings => Message::OpenProjectSettings,
+        CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
+        CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
+        CommandId::OpenItemProperties => Message::OpenItemProperties,
+        CommandId::ToggleItemProperties => Message::ToggleItemProperties,
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
@@ -1182,8 +1294,25 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 return Task::none();
             }
             match command {
+                TrackCommand::Routing => Message::OpenTrackRouting(track_id),
+                TrackCommand::CycleFolderCompact => {
+                    Message::Timeline(crate::timeline::TimelineEvent::CycleFolderCompact(track_id))
+                }
+                TrackCommand::ToggleFolder => {
+                    Message::RoutingChange(aaadaw_core::DawAction::SetTrackFolder {
+                        track_id,
+                        enabled: !app
+                            .project
+                            .tracks()
+                            .iter()
+                            .find(|track| track.id() == track_id)
+                            .expect("validated track")
+                            .is_folder(),
+                    })
+                }
                 TrackCommand::Rename => Message::BeginTrackNameEdit(track_id),
                 TrackCommand::ToggleMute => Message::ToggleMute(track_id),
+                TrackCommand::TogglePhase => Message::TogglePhase(track_id),
                 TrackCommand::ToggleSolo => Message::ToggleSolo(track_id),
                 TrackCommand::ToggleRecordArm => Message::ToggleRecordArm(track_id),
                 TrackCommand::MoveUp => Message::MoveTrack(track_id, -1),
@@ -1193,6 +1322,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         #[cfg(feature = "audio-device")]
         CommandId::TogglePlayback => Message::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandId::TogglePlayStop => Message::TogglePlayStop,
         #[cfg(feature = "audio-device")]
         CommandId::StopPlayback => Message::StopPlayback,
         #[cfg(feature = "audio-device")]
@@ -1267,8 +1398,10 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
 struct TrackState {
     index: usize,
     muted: bool,
+    phase_inverted: bool,
     solo: bool,
     record_armed: bool,
+    folder: bool,
 }
 
 fn entry_for(
@@ -1282,6 +1415,9 @@ fn entry_for(
             "Unmute track"
         }
         (CommandKind::Track(TrackCommand::ToggleSolo), Some(track)) if track.solo => "Unsolo track",
+        (CommandKind::Track(TrackCommand::ToggleFolder), Some(track)) if track.folder => {
+            "Set track as normal track"
+        }
         (CommandKind::Track(TrackCommand::ToggleRecordArm), Some(track)) if track.record_armed => {
             "Disarm track"
         }
@@ -1308,7 +1444,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
     match kind {
         CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
         CommandKind::SaveProject => !project_file_busy(app),
-        CommandKind::OpenSettings => true,
+        CommandKind::OpenSettings
+        | CommandKind::OpenProjectSettings
+        | CommandKind::OpenActionList => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.media_store_path().is_some()
@@ -1316,17 +1454,28 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && app.offline_job_submission_allowed()
         }
         CommandKind::CancelOfflineRender => app.offline_render_busy,
-        CommandKind::Undo => history_command_enabled(
-            app,
-            app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
-        ),
+        CommandKind::Undo => {
+            (app.project.can_undo()
+                || app.track_mix_commit_at.is_some()
+                || app.master_mix_commit_at.is_some())
+                && history_command_enabled(
+                    app,
+                    app.project.can_undo_track_mix()
+                        || app.track_mix_commit_at.is_some()
+                        || app.master_mix_commit_at.is_some(),
+                )
+        }
         CommandKind::Redo => {
-            app.track_mix_commit_at.is_none()
+            app.project.can_redo()
+                && app.track_mix_commit_at.is_none()
+                && app.master_mix_commit_at.is_none()
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ToggleOfflineJobsPanel => true,
-        CommandKind::ShowArrangement | CommandKind::ShowMixer => true,
+        CommandKind::ShowArrangement | CommandKind::ShowMixer | CommandKind::ToggleMixerPanel => {
+            true
+        }
         CommandKind::AddMidiItem => {
             !project_edit_busy(app)
                 && app.timeline.selected_track.is_some_and(|selected_track| {
@@ -1336,6 +1485,11 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.id() == selected_track && !track.is_bus())
                 })
         }
+        CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
+        CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
+            .timeline
+            .selected_item
+            .is_some_and(|id| app.project.audio_items().iter().any(|item| item.id() == id)),
         CommandKind::DuplicateSelectedItem => {
             !project_edit_busy(app)
                 && !app.timeline.selected_items.is_empty()
@@ -1386,20 +1540,45 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app) && app.can_split_selected_items_at_time_selection()
         }
         CommandKind::AddTrack => !project_edit_busy(app),
+        CommandKind::Track(TrackCommand::Routing) => track.is_some(),
+        CommandKind::Track(TrackCommand::CycleFolderCompact) => {
+            track.is_some_and(|track| track.folder)
+        }
         CommandKind::Track(command) => {
             !project_edit_busy(app)
                 && track.is_some_and(|track| match command {
-                    TrackCommand::Rename
+                    TrackCommand::ToggleFolder => {
+                        let target = &app.project.tracks()[track.index];
+                        !target.is_frozen()
+                            && (!target.is_folder()
+                                || !app
+                                    .project
+                                    .tracks()
+                                    .iter()
+                                    .any(|candidate| candidate.parent_track() == Some(target.id())))
+                    }
+                    TrackCommand::Routing
+                    | TrackCommand::CycleFolderCompact
+                    | TrackCommand::Rename
+                    | TrackCommand::TogglePhase
                     | TrackCommand::ToggleMute
                     | TrackCommand::ToggleSolo
                     | TrackCommand::ToggleRecordArm
                     | TrackCommand::Delete => true,
                     TrackCommand::MoveUp => track.index > 0,
-                    TrackCommand::MoveDown => track.index + 1 < app.project.tracks().len(),
+                    TrackCommand::MoveDown => {
+                        track.index
+                            + app
+                                .project
+                                .track_subtree_len(app.project.tracks()[track.index].id())
+                            < app.project.tracks().len()
+                    }
                 })
         }
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => true,
+        #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => true,
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => true,
         #[cfg(feature = "audio-device")]
@@ -1416,8 +1595,10 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
         .map(|(index, track)| TrackState {
             index,
             muted: track.is_muted(),
+            phase_inverted: track.is_phase_inverted(),
             solo: track.is_solo(),
             record_armed: track.is_record_armed(),
+            folder: track.is_folder(),
         })
 }
 
@@ -1430,14 +1611,19 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
+        CommandKind::OpenProjectSettings => CommandId::OpenProjectSettings,
+        CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
         CommandKind::ToggleOfflineJobsPanel => CommandId::ToggleOfflineJobsPanel,
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
+        CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
+        CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
+        CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
@@ -1450,6 +1636,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandKind::TogglePlayStop => CommandId::TogglePlayStop,
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => CommandId::StopPlayback,
         #[cfg(feature = "audio-device")]
@@ -1490,10 +1678,6 @@ fn history_command_enabled(app: &App, track_mix_only: bool) -> bool {
         && (!app.playback_active() || track_mix_only)
 }
 
-fn key_matches_character(key: &Key<&str>, expected: char) -> bool {
-    matches!(key, Key::Character(character) if character.eq_ignore_ascii_case(&expected.to_string()))
-}
-
 #[cfg(test)]
 mod shortcut_label_tests {
     use super::*;
@@ -1515,17 +1699,6 @@ mod shortcut_label_tests {
         assert_eq!(
             format_shortcut_label_for_platform("Ctrl/Cmd+N", false),
             "Ctrl+N"
-        );
-        let current_modifier = if cfg!(target_os = "macos") {
-            "Cmd"
-        } else {
-            "Ctrl"
-        };
-        assert_eq!(
-            shortcut_capture_help(),
-            format!(
-                "Select a binding, then press a letter, Delete, {current_modifier}+letter, {current_modifier}+Shift+letter, Space, or Shift+Space."
-            )
         );
         assert_eq!(
             capture_binding("Space", Modifiers::SHIFT).unwrap(),
@@ -1552,7 +1725,7 @@ mod macro_tests {
     #[test]
     fn macro_shortcuts_validate_and_resolve_by_stable_id() {
         let macros = [test_macro()];
-        let bindings = ShortcutBindings::from([("macro.23".to_owned(), "Ctrl+M".to_owned())]);
+        let bindings = ShortcutBindings::from([("macro.23".to_owned(), "Mod+M".to_owned())]);
         let bindings = validate_bindings_with_macros(&bindings, &macros).unwrap();
         assert_eq!(bindings.get("macro.23").map(String::as_str), Some("Mod+M"));
         assert_eq!(
@@ -1601,5 +1774,49 @@ mod macro_tests {
     fn destructive_actions_are_not_available_as_macro_steps() {
         assert!(!macro_step_ids().contains("item.delete-selected"));
         assert!(!macro_step_ids().contains("track.delete"));
+    }
+}
+
+/// Stable registry identity, independent of labels and the current selection.
+pub(super) fn stable_id(command: CommandId) -> Option<String> {
+    if let CommandId::Macro(id) = command {
+        return Some(macro_id(id));
+    }
+    COMMANDS
+        .iter()
+        .find(|definition| command_id(definition.kind) == command)
+        .map(|definition| command_kind_id(definition.kind).to_owned())
+}
+
+pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
+    match command {
+        CommandId::ToggleMediaBrowserPanel => Some(app.media_panel_dock.open),
+        CommandId::ToggleOfflineJobsPanel => Some(app.offline_jobs_panel_open),
+        CommandId::ToggleMixerPanel => Some(if app.is_mobile_main_window() {
+            app.main_workspace == MainWorkspace::Mixer
+        } else {
+            app.media_panel_dock.mixer_open
+        }),
+        CommandId::SelectedTrack(TrackCommand::ToggleFolder) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.folder),
+        CommandId::SelectedTrack(TrackCommand::ToggleMute) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.muted),
+        CommandId::SelectedTrack(TrackCommand::TogglePhase) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.phase_inverted),
+        CommandId::SelectedTrack(TrackCommand::ToggleSolo) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.solo),
+        CommandId::SelectedTrack(TrackCommand::ToggleRecordArm) => app
+            .selected_track_id()
+            .and_then(|id| track_state(app, id))
+            .map(|track| track.record_armed),
+        _ => None,
     }
 }

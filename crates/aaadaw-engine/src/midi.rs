@@ -298,6 +298,19 @@ impl MidiEventPlan {
     /// excluded by the project's solo state are omitted. Call this off the
     /// audio callback; the returned plan can be queried without allocation.
     pub fn compile(project: &Project) -> Result<Self, MidiScheduleError> {
+        Self::compile_with_audibility(project, true)
+    }
+
+    // Instruments must retain muted/excluded notes so live mix changes can
+    // restore their current voices without rebuilding or seeking the graph.
+    pub(crate) fn compile_for_render(project: &Project) -> Result<Self, MidiScheduleError> {
+        Self::compile_with_audibility(project, false)
+    }
+
+    fn compile_with_audibility(
+        project: &Project,
+        filter_audibility: bool,
+    ) -> Result<Self, MidiScheduleError> {
         let tracks = project.tracks();
         let has_solo = tracks.iter().any(Track::is_solo);
         let mut events = Vec::new();
@@ -305,6 +318,52 @@ impl MidiEventPlan {
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
 
+        let mut reachable_solo = std::collections::HashMap::new();
+        if filter_audibility && has_solo {
+            for track in tracks {
+                let mut pending: Vec<_> = track
+                    .effective_output_track()
+                    .filter(|_| track.main_send_enabled())
+                    .into_iter()
+                    .chain(
+                        track
+                            .sends()
+                            .iter()
+                            .filter(|send| !send.parameters().muted)
+                            .map(|send| send.destination()),
+                    )
+                    .collect();
+                let mut visited = std::collections::HashSet::new();
+                let mut routed_to_solo = false;
+                while let Some(target_id) = pending.pop() {
+                    if !visited.insert(target_id) {
+                        continue;
+                    }
+                    let Some(target) = tracks.iter().find(|candidate| candidate.id() == target_id)
+                    else {
+                        continue;
+                    };
+                    if target.is_solo() {
+                        routed_to_solo = true;
+                        break;
+                    }
+                    pending.extend(
+                        target
+                            .effective_output_track()
+                            .filter(|_| target.main_send_enabled())
+                            .into_iter()
+                            .chain(
+                                target
+                                    .sends()
+                                    .iter()
+                                    .filter(|send| !send.parameters().muted)
+                                    .map(|send| send.destination()),
+                            ),
+                    );
+                }
+                reachable_solo.insert(track.id(), routed_to_solo);
+            }
+        }
         for item in project.midi_items() {
             let track = tracks
                 .iter()
@@ -312,21 +371,10 @@ impl MidiEventPlan {
                 .ok_or(MidiScheduleError::MissingTrack {
                     track_id: item.track_id().value(),
                 })?;
-            let mut target = track.output_track();
-            let mut routed_to_solo = false;
-            while let Some(target_id) = target {
-                let Some(target_track) =
-                    tracks.iter().find(|candidate| candidate.id() == target_id)
-                else {
-                    break;
-                };
-                if target_track.is_solo() {
-                    routed_to_solo = true;
-                    break;
-                }
-                target = target_track.output_track();
-            }
-            if track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo) {
+            let routed_to_solo = reachable_solo.get(&track.id()).copied().unwrap_or(false);
+            if filter_audibility
+                && (track.is_muted() || (has_solo && !track.is_solo() && !routed_to_solo))
+            {
                 continue;
             }
 

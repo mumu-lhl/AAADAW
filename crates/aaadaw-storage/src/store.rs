@@ -1,8 +1,8 @@
 use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
 use aaadaw_core::{
     AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
-    MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
-    TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectSettings, ProjectSnapshot,
+    SnapshotError, TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
@@ -22,9 +22,43 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 17;
+pub const CURRENT_SCHEMA_VERSION: u32 = 27;
+
+const MIGRATION_27: &str = "CREATE TABLE IF NOT EXISTS project_timecode(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), frame_rate INTEGER NOT NULL CHECK(frame_rate BETWEEN 0 AND 9)); INSERT OR IGNORE INTO project_timecode VALUES(1, 5);";
+
+const MIGRATION_26: &str = "CREATE TABLE IF NOT EXISTS audio_item_fade_curves(item_id INTEGER PRIMARY KEY REFERENCES audio_item_fades(item_id) ON DELETE CASCADE, in_curvature REAL, in_s REAL, out_curvature REAL, out_s REAL, CHECK((in_curvature IS NULL) = (in_s IS NULL)), CHECK((out_curvature IS NULL) = (out_s IS NULL)), CHECK(in_curvature BETWEEN -1 AND 1 AND in_s BETWEEN -1 AND 1), CHECK(out_curvature BETWEEN -1 AND 1 AND out_s BETWEEN -1 AND 1), CHECK(in_curvature IS NOT NULL OR out_curvature IS NOT NULL));";
+
+const MIGRATION_25: &str = "CREATE TABLE IF NOT EXISTS audio_item_fades(item_id INTEGER PRIMARY KEY REFERENCES audio_items(id) ON DELETE CASCADE, fade_in_samples REAL NOT NULL CHECK(fade_in_samples >= 0), fade_out_samples REAL NOT NULL CHECK(fade_out_samples >= 0), fade_in_shape INTEGER NOT NULL CHECK(fade_in_shape BETWEEN 0 AND 6), fade_out_shape INTEGER NOT NULL CHECK(fade_out_shape BETWEEN 0 AND 6));";
+
+const MIGRATION_24: &str = "CREATE TABLE project_master_mix(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), volume_db REAL NOT NULL, pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1)); INSERT INTO project_master_mix VALUES(1, 0, 0);";
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
+
+// Additive migration: existing projects retain their historical signal path.
+const MIGRATION_23: &str = "ALTER TABLE tracks ADD COLUMN phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK(phase_inverted IN (0, 1));";
+
+const MIGRATION_22: &str = "CREATE TABLE arrangement_folder_compact (track_id INTEGER PRIMARY KEY CHECK(track_id >= 0), mode INTEGER NOT NULL CHECK(mode BETWEEN 0 AND 2));";
+
+const MIGRATION_21: &str = "ALTER TABLE tracks ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0 CHECK(is_folder IN (0, 1)); ALTER TABLE tracks ADD COLUMN parent_track_id INTEGER REFERENCES tracks(id);";
+
+const MIGRATION_20: &str =
+    "ALTER TABLE track_sends ADD COLUMN tap INTEGER NOT NULL DEFAULT 0 CHECK(tap IN (0, 1, 3));";
+
+const MIGRATION_19: &str = "
+ALTER TABLE tracks ADD COLUMN main_send_enabled INTEGER NOT NULL DEFAULT 1 CHECK(main_send_enabled IN (0, 1));
+CREATE TABLE track_sends (
+    id INTEGER PRIMARY KEY CHECK(id >= 0),
+    source_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    destination_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    volume_db REAL NOT NULL,
+    pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1),
+    muted INTEGER NOT NULL CHECK(muted IN (0, 1)),
+    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0, 1)),
+    UNIQUE(source_track_id, position)
+);";
+
+const MIGRATION_18: &str = "ALTER TABLE project_meta ADD COLUMN pan_mode INTEGER NOT NULL DEFAULT 0 CHECK(pan_mode IN (0, 1));";
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE project_meta (
@@ -442,6 +476,7 @@ mod arrangement_view_state_tests {
             })
             .unwrap();
         let view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: vec![VolumeAutomationLaneViewState {
                 track_id: track_id.value(),
                 visible: false,
@@ -503,6 +538,7 @@ mod arrangement_view_state_tests {
         store.save(&project).unwrap();
 
         let invalid_view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: Vec::new(),
             fx_lanes: vec![FxAutomationLaneViewState {
                 track_id: 1,
@@ -2144,26 +2180,67 @@ impl ProjectStore {
                 height,
             });
         }
+        let mut statement = self
+            .connection
+            .prepare("SELECT track_id, mode FROM arrangement_folder_compact ORDER BY track_id")?;
+        let rows =
+            statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (id, mode) = row?;
+            if !(0..=2).contains(&mode) {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid folder compact mode",
+                ));
+            }
+            view_state
+                .folder_compact
+                .push(crate::FolderCompactViewState {
+                    track_id: from_sql_u64(id)?,
+                    mode: mode as u8,
+                });
+        }
         Ok(Some(view_state))
     }
 
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
+        let frame_rate = self.connection.query_row(
+            "SELECT frame_rate FROM project_timecode WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let frame_rate = u32::try_from(frame_rate)
+            .ok()
+            .and_then(aaadaw_core::FrameRate::from_storage_code)
+            .ok_or(StorageError::InvalidStoredData("unsupported frame rate"))?;
+        let master_mix = self
+            .connection
+            .query_row(
+                "SELECT volume_db, pan FROM project_master_mix WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, f32>(0)?, row.get::<_, f32>(1)?)),
+            )
+            .map_err(StorageError::from)
+            .and_then(|(volume, pan)| {
+                aaadaw_core::MasterMix::new(volume, pan)
+                    .map_err(|_| StorageError::InvalidStoredData("invalid Master mix"))
+            })?;
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, f64>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((sample_rate, ppq, initial_tempo_bpm)) = metadata else {
+        let Some((sample_rate, ppq, initial_tempo_bpm, pan_mode)) = metadata else {
             let rows: i64 = self.connection.query_row(
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
             (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
@@ -2173,7 +2250,10 @@ impl ProjectStore {
                 [],
                 |row| row.get(0),
             )?;
-            return if rows == 0 {
+            return if rows == 0
+                && master_mix == aaadaw_core::MasterMix::default()
+                && frame_rate == aaadaw_core::FrameRate::default()
+            {
                 Ok(Project::new())
             } else {
                 Err(StorageError::InvalidStoredData(
@@ -2187,7 +2267,13 @@ impl ProjectStore {
             from_sql_u32(ppq)?,
             initial_tempo_bpm,
         )
-        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?;
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_frame_rate(frame_rate)
+        .with_pan_mode(match pan_mode {
+            0 => PanMode::LegacyMonoStereo,
+            1 => PanMode::ZeroDbBalance,
+            _ => return Err(StorageError::InvalidStoredData("unsupported pan mode")),
+        });
 
         let tracks = read_tracks(&self.connection)?;
         let audio_items = read_audio_items(&self.connection)?;
@@ -2202,6 +2288,7 @@ impl ProjectStore {
 
         Project::from_snapshot(ProjectSnapshot {
             settings,
+            master_mix,
             tracks,
             audio_items,
             midi_items,
@@ -2357,6 +2444,16 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             15 => transaction.execute_batch(MIGRATION_15)?,
             16 => transaction.execute_batch(MIGRATION_16)?,
             17 => transaction.execute_batch(MIGRATION_17)?,
+            18 => transaction.execute_batch(MIGRATION_18)?,
+            19 => transaction.execute_batch(MIGRATION_19)?,
+            20 => transaction.execute_batch(MIGRATION_20)?,
+            21 => transaction.execute_batch(MIGRATION_21)?,
+            22 => transaction.execute_batch(MIGRATION_22)?,
+            23 => transaction.execute_batch(MIGRATION_23)?,
+            24 => transaction.execute_batch(MIGRATION_24)?,
+            25 => transaction.execute_batch(MIGRATION_25)?,
+            26 => transaction.execute_batch(MIGRATION_26)?,
+            27 => transaction.execute_batch(MIGRATION_27)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2373,32 +2470,49 @@ fn write_snapshot(
     transaction: &Transaction<'_>,
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM track_sends", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
+    transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
+    transaction.execute("DELETE FROM audio_item_fades", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
     transaction.execute("DELETE FROM meter_points", [])?;
     transaction.execute("DELETE FROM project_meta", [])?;
+    transaction.execute("DELETE FROM project_master_mix", [])?;
+    transaction.execute(
+        "INSERT INTO project_master_mix(singleton, volume_db, pan) VALUES(1, ?1, ?2)",
+        params![snapshot.master_mix.volume_db(), snapshot.master_mix.pan()],
+    )?;
 
     let settings = snapshot.settings;
+    transaction.execute("DELETE FROM project_timecode", [])?;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm) \
-         VALUES(1, ?1, ?2, ?3)",
+        "INSERT INTO project_timecode(singleton, frame_rate) VALUES(1, ?1)",
+        params![i64::from(settings.frame_rate().storage_code())],
+    )?;
+    transaction.execute(
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode) \
+         VALUES(1, ?1, ?2, ?3, ?4)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
-            settings.initial_tempo_bpm()
+            settings.initial_tempo_bpm(),
+            match settings.pan_mode() {
+                PanMode::LegacyMonoStereo => 0,
+                PanMode::ZeroDbBalance => 1,
+            },
         ],
     )?;
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -2413,12 +2527,24 @@ fn write_snapshot(
                 track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref()),
                 track.is_bus,
                 track.output_track_id.map(to_sql_integer).transpose()?,
-                track.frozen_audio_item_id.map(to_sql_integer).transpose()?
+                track.frozen_audio_item_id.map(to_sql_integer).transpose()?,
+                track.main_send_enabled,
+                track.is_folder,
+                track.parent_track_id.map(to_sql_integer).transpose()?,
+                track.phase_inverted
             ],
         )?;
     }
 
     for track in &snapshot.tracks {
+        for (position, send) in track.sends.iter().enumerate() {
+            transaction.execute("INSERT INTO track_sends(id, source_track_id, position, destination_track_id, volume_db, pan, muted, phase_inverted, tap) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", params![
+                to_sql_integer(send.id)?, to_sql_integer(track.id)?, usize_to_sql(position)?,
+                to_sql_integer(send.destination_track_id)?, f64::from(send.parameters.volume_db),
+                f64::from(send.parameters.pan), send.parameters.muted, send.parameters.phase_inverted,
+                match send.parameters.tap { aaadaw_core::AudioSendTap::PostFader => 0, aaadaw_core::AudioSendTap::PreFx => 1, aaadaw_core::AudioSendTap::PreFader => 3 },
+            ])?;
+        }
         for (position, point) in track.volume_automation.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO track_volume_automation(track_id, position, sample, gain_db) \
@@ -2498,6 +2624,16 @@ fn write_snapshot(
                 to_sql_integer(item.length_samples)?
             ],
         )?;
+        transaction.execute(
+            "INSERT INTO audio_item_fades(item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), legacy_fade_code(item.fades.fade_in.curve()), legacy_fade_code(item.fades.fade_out.curve())],
+        )?;
+        let in_parameters = native_fade_parameters(item.fades.fade_in.curve());
+        let out_parameters = native_fade_parameters(item.fades.fade_out.curve());
+        if in_parameters.is_some() || out_parameters.is_some() {
+            transaction.execute("INSERT INTO audio_item_fade_curves(item_id, in_curvature, in_s, out_curvature, out_s) VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![to_sql_integer(item.id)?, in_parameters.map(|p| p.curvature()), in_parameters.map(|p| p.s_parameter()), out_parameters.map(|p| p.curvature()), out_parameters.map(|p| p.s_parameter())])?;
+        }
     }
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
@@ -2583,6 +2719,18 @@ fn write_arrangement_view_state(
     transaction: &Transaction<'_>,
     view_state: &ArrangementViewState,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM arrangement_folder_compact", [])?;
+    for folder in &view_state.folder_compact {
+        if folder.mode > 2 {
+            return Err(StorageError::InvalidStoredData(
+                "invalid folder compact mode",
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO arrangement_folder_compact(track_id, mode) VALUES(?1, ?2)",
+            params![to_sql_integer(folder.track_id)?, folder.mode],
+        )?;
+    }
     transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
     transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
     transaction.execute(
@@ -2632,6 +2780,7 @@ fn write_arrangement_view_state(
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
+    let mut sends = read_audio_sends(connection)?;
     let mut volume_automation = read_volume_automation(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
@@ -2767,7 +2916,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2787,10 +2936,15 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, bool>(11)?,
                 row.get::<_, Option<i64>>(12)?,
                 row.get::<_, Option<i64>>(13)?,
+                row.get::<_, bool>(14)?,
+                row.get::<_, bool>(15)?,
+                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, bool>(17)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let tracks = rows
+        .into_iter()
         .map(
             |(
                 id,
@@ -2807,6 +2961,10 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 is_bus,
                 output_track_id,
                 frozen_audio_item_id,
+                main_send_enabled,
+                is_folder,
+                parent_track_id,
+                phase_inverted,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2831,6 +2989,11 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     name,
                     is_bus,
                     output_track_id: output_track_id.map(from_sql_u64).transpose()?,
+                    phase_inverted,
+                    main_send_enabled,
+                    is_folder,
+                    parent_track_id: parent_track_id.map(from_sql_u64).transpose()?,
+                    sends: sends.remove(&id).unwrap_or_default(),
                     volume_db: volume_db as f32,
                     pan: pan as f32,
                     muted,
@@ -2843,7 +3006,13 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !sends.is_empty() {
+        return Err(StorageError::InvalidStoredData(
+            "audio sends reference a missing source",
+        ));
+    }
+    Ok(tracks)
 }
 
 fn read_volume_automation(
@@ -2872,7 +3041,94 @@ fn read_volume_automation(
     Ok(points_by_track)
 }
 
+fn legacy_fade_code(curve: aaadaw_core::FadeCurve) -> u8 {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(shape) => shape.code(),
+        aaadaw_core::FadeCurve::Native(_) => 0,
+    }
+}
+
+fn native_fade_parameters(
+    curve: aaadaw_core::FadeCurve,
+) -> Option<aaadaw_core::FadeCurveParameters> {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(_) => None,
+        aaadaw_core::FadeCurve::Native(parameters) => Some(parameters),
+    }
+}
+
+fn read_native_fade_curve(
+    curvature: Option<f64>,
+    s: Option<f64>,
+) -> Result<Option<aaadaw_core::FadeCurve>, StorageError> {
+    match (curvature, s) {
+        (None, None) => Ok(None),
+        (Some(curvature), Some(s)) => aaadaw_core::FadeCurveParameters::new(curvature, s)
+            .map(|p| Some(aaadaw_core::FadeCurve::Native(p)))
+            .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        _ => Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+    }
+}
+
 fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {
+    let mut curves = HashMap::new();
+    let mut curve_statement = connection.prepare(
+        "SELECT item_id, in_curvature, in_s, out_curvature, out_s FROM audio_item_fade_curves",
+    )?;
+    let curve_rows = curve_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<f64>>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+            row.get::<_, Option<f64>>(3)?,
+            row.get::<_, Option<f64>>(4)?,
+        ))
+    })?;
+    for row in curve_rows {
+        let (id, in_curvature, in_s, out_curvature, out_s) = row?;
+        let fade_in = read_native_fade_curve(in_curvature, in_s)?;
+        let fade_out = read_native_fade_curve(out_curvature, out_s)?;
+        if fade_in.is_none() && fade_out.is_none() {
+            return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+        }
+        curves.insert(from_sql_u64(id)?, (fade_in, fade_out));
+    }
+    let mut fades = HashMap::new();
+    let mut fade_statement = connection.prepare("SELECT item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape FROM audio_item_fades")?;
+    let fade_rows = fade_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, u8>(3)?,
+            row.get::<_, u8>(4)?,
+        ))
+    })?;
+    for row in fade_rows {
+        let (id, fade_in, fade_out, in_shape, out_shape) = row?;
+        let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
+        let in_shape = aaadaw_core::FadeShape::from_code(in_shape).ok_or_else(invalid)?;
+        let out_shape = aaadaw_core::FadeShape::from_code(out_shape).ok_or_else(invalid)?;
+        let (in_curve, out_curve) = curves.remove(&from_sql_u64(id)?).unwrap_or((None, None));
+        fades.insert(
+            from_sql_u64(id)?,
+            aaadaw_core::AudioItemFades {
+                fade_in: aaadaw_core::AudioFade::with_curve(
+                    fade_in,
+                    in_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(in_shape)),
+                )
+                .map_err(|_| invalid())?,
+                fade_out: aaadaw_core::AudioFade::with_curve(
+                    fade_out,
+                    out_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(out_shape)),
+                )
+                .map_err(|_| invalid())?,
+            },
+        );
+    }
+    if !curves.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
          length_samples FROM audio_items ORDER BY position",
@@ -2890,11 +3146,13 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let items = rows
+        .into_iter()
         .map(
             |(id, track_id, position, media_ref, start_sample, source_offset, length)| {
                 let _ = from_sql_u64(position)?;
                 Ok(AudioItemSnapshot {
+                    fades: fades.remove(&from_sql_u64(id)?).unwrap_or_default(),
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
                     media_ref,
@@ -2904,7 +3162,11 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !fades.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    Ok(items)
 }
 
 fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
@@ -3200,4 +3462,34 @@ mod saved_snapshot_tests {
 
         store.close().unwrap();
     }
+}
+
+fn read_audio_sends(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>>, StorageError> {
+    let mut statement = connection.prepare("SELECT id, source_track_id, destination_track_id, volume_db, pan, muted, phase_inverted, tap FROM track_sends ORDER BY source_track_id, position")?;
+    let mut rows = statement.query([])?;
+    let mut sends: HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>> = HashMap::new();
+    while let Some(row) = rows.next()? {
+        sends
+            .entry(row.get(1)?)
+            .or_default()
+            .push(aaadaw_core::AudioSendSnapshot {
+                id: from_sql_u64(row.get(0)?)?,
+                destination_track_id: from_sql_u64(row.get(2)?)?,
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db: row.get::<_, f64>(3)? as f32,
+                    pan: row.get::<_, f64>(4)? as f32,
+                    muted: row.get(5)?,
+                    phase_inverted: row.get(6)?,
+                    tap: match row.get::<_, i64>(7)? {
+                        0 => aaadaw_core::AudioSendTap::PostFader,
+                        1 => aaadaw_core::AudioSendTap::PreFx,
+                        3 => aaadaw_core::AudioSendTap::PreFader,
+                        _ => return Err(StorageError::InvalidStoredData("invalid audio send tap")),
+                    },
+                },
+            });
+    }
+    Ok(sends)
 }

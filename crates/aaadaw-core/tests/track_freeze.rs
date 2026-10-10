@@ -58,6 +58,18 @@ fn freezing_is_one_undoable_source_preserving_action() {
     assert_eq!(project.midi_items().len(), 1);
 
     let frozen = project.snapshot();
+    assert!(
+        project
+            .apply(DawAction::SetTrackFolder {
+                track_id,
+                enabled: true
+            })
+            .is_err()
+    );
+    assert_eq!(project.snapshot(), frozen);
+    let mut invalid_folder = frozen.clone();
+    invalid_folder.tracks[0].is_folder = true;
+    assert!(Project::from_snapshot(invalid_folder).is_err());
     assert_eq!(
         Project::from_snapshot(frozen.clone()).unwrap().snapshot(),
         frozen

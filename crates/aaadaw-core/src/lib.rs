@@ -7,15 +7,21 @@
 mod action;
 mod audio;
 mod error;
+mod fades;
+mod master;
 mod midi;
 mod project;
+mod routing;
 mod snapshot;
 mod timebase;
+mod timecode;
 mod track;
 
 pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
+pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
+pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };
@@ -27,10 +33,13 @@ pub use snapshot::{
     TrackInstrumentSnapshot, TrackSnapshot,
 };
 pub use timebase::{
-    DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,
+    DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition, PanMode,
     ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
+pub use timecode::FrameRate;
 pub use track::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES,
     Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
+
+pub use routing::{AudioSend, AudioSendParameters, AudioSendSnapshot, AudioSendTap, SendId};

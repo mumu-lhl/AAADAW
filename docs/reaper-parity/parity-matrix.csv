@@ -1,0 +1,63 @@
+id,kind,parent_id,platform,reference_version,surface,requirement,phase,status,blocked,current_code,reference_evidence,acceptance,verification_evidence,difference
+UI-001,category,,linux,7.82,主菜单,File/Edit/View/Insert/Item/Track/Options/Actions/Help、子菜单、禁用、勾选、助记键、导航,P1/P2,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-002,category,,linux,7.82,工具栏,默认/浮动工具栏、右键、按钮状态、编辑器、自定义图标/动作、位置,P1/P2/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-003,category,,linux,7.82,Docker 与窗口,四向位置、Tabs、浮动、置顶、分隔、关闭恢复、多屏、Screensets,P2,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-004,category,,linux,7.82,TCP,各高度布局、Name/Index、Arm/Input/Monitor、FX/Route/Trim、Gain/Pan/Width、Phase、Meter、文件夹,P2/P3/P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-005,category,,linux,7.82,MCP/Master,Layout、Fader、Meter/Peak、FX/Sends、Master、滚动、显示过滤、选择同步,P2/P3,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-006,category,,linux,7.82,Arrange 与标尺,Item/Track/Time/Loop 选择、鼠标修饰键、Snap/Grid、缩放、滚动、播放跟随、标尺单位,P1/P4,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-007,category,,linux,7.82,Transport,播放/停止/暂停/录音/Repeat、时间显示、Rate、Tempo、拍号、选区、右键、Big Clock,P6,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-008,category,,linux,7.82,工程与模板,New/Open/Save/Close、项目标签、Settings 全页、模板、Subproject、Notes、Recovery,P10,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-009,category,,linux,7.82,Track/Item 属性,重命名、颜色、轨道设置、Item/Take/Source 属性、精确值和批量编辑,P3/P4/P5,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-010,category,,linux,7.82,Item 编辑,Move/Copy/Trim/Extend/Slip、Fade/Crossfade、Gain、Split/Heal/Glue/Reverse、Source Loop,P4,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-011,category,,linux,7.82,Take/Lane/Comp,录音 Take、Fixed Lanes、Comp Areas、激活/多 Take、评级、Marker、Explode/Implode,P5/P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-012,category,,linux,7.82,高级与谱编辑,Razor、Ripple、Grouping、Lock、Stretch、Pitch、瞬态、动态分割、谱图/谱编辑/Sample 编辑,P5,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-013,category,,linux,7.82,Tempo/Marker/Region,标尺 Lane、Tempo/Meter、属性、管理窗口、Region 编辑、Timebase、负时间偏移,P4/P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-014,category,,linux,7.82,路由,Track I/O、Send/Receive、Hardware、Matrix、Wiring、Channel/MIDI Bus、反馈、PDC,P3,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-015,category,,linux,7.82,Pan/Group/VCA,Pan Law/Modes、Width/Dual Pan、Phase、Grouping Matrix/Manager、VCA,P3/P8,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-016,category,,linux,7.82,音频设备与录音,后端、设备/通道、别名、缓冲/时钟、Monitor、模式、Punch/Loop、录音结束、恢复,P6,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-017,category,,linux,7.82,节拍器与同步,Metronome/Count-in/Pre-roll、路由、Scrub/Jog、外部 LTC/MTC/MIDI Clock 等适用入口,P6/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-018,category,,linux,7.82,MIDI Piano Roll,菜单/工具栏、音符/键盘、工具、试听、颜色、选择、过滤、缩放、局部动作,P7,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-019,category,,linux,7.82,MIDI 事件与处理,CC Lane、Velocity/Pitch、Program/Bank、Pressure/SysEx、事件列表、属性、量化/Humanize,P7,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-020,category,,linux,7.82,MIDI 其他编辑器,Inline、Pool、多 Item、Drum、Virtual Keyboard、导入导出、Notation,P7,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-021,category,,linux,7.82,包络与自动化,Envelope 选择/属性/曲线、Track/Take/FX、模式、写入、Automation Item/Pool、Trim,P8,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-022,category,,linux,7.82,调制与 Learn,LFO/Audio Control/Parameter Link、MIDI/OSC Learn、冲突及控制优先级,P8/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-023,category,,linux,7.82,FX Browser/Chain,格式/类别/收藏/搜索、插入删除排序复制、Presets、浮动、Generic UI、参数与焦点,P9,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-024,category,,linux,7.82,FX 包装与位置,Track/Input/Take/Master/Monitor、Pin、Wet/Dry/Delta、Oversampling、Offline/Bypass,P9,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-025,category,,linux,7.82,原厂处理与特殊 FX,内置 DSP、JSFX、空间声像、外部 Insert、网络 FX、插件故障/缺失,P9/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-026,category,,linux,7.82,Media Explorer,目录/数据库、搜索、元数据、波形、试听、Tempo/Rate、选区、拖入,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-027,category,,linux,7.82,工程管理,Project Bay、Track Manager、Undo History、Notes、目录清理、Consolidate、冻结,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-028,category,,linux,7.82,Render 设置,Source/Bounds、Rate/Channels、格式/Tail、Wildcards、Presets、Metadata、Normalize/Limit,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-029,category,,linux,7.82,Render 管理,Queue、Region Matrix、Stems、Online/Offline、Dry Run、统计、Batch Converter,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-030,category,,linux,7.82,Action List,Sections、搜索/运行、绑定、Custom Action、ReaScript、导入导出与管理,P1/P11,in_progress,false,,LNX-782-ACTIONS-001 / LNX-782-ACTIONLIST-002; docs/verification/reaper-parity/action-list-and-input.md,展开全部适用原子条目并完成双向入口复查,AAADAW-INPUT-002; 727 workspace tests passed; GUI Add/Find/Delete,动作列表基础已实现；Section/原厂录入确认/重复绑定规则等仍待对齐
+UI-031,category,,linux,7.82,Preferences,所有适用叶子页、类别导航、搜索、Apply/OK/Cancel、默认值与配置恢复,P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-032,category,,linux,7.82,Theme 与自定义,Theme Adjuster/Tweaker、Layout、Screensets、菜单/工具栏编辑、Color Picker、语言,P2/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-033,category,,linux,7.82,辅助窗口,Navigator、Big Clock、Performance Meter、资源/项目管理窗口、Help/About,P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-034,category,,linux,7.82,视频,Video Window、媒体、Processor、参数/预设、脚本、编码/Render 和相关设置,P10/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-035,category,,linux,7.82,脚本与扩展入口,ReaScript/JSFX Editor、运行、调试、Console、API 行为、资源路径,P9/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-036,category,,linux,7.82,外设与网络,MIDI/OSC Mapping、Control Surfaces、双向反馈、Web Remote、网络能力和服务生命周期,P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-037,category,,linux,7.82,系统与失败状态,文件选择器、保存保护、缺媒体/插件、设备掉线、磁盘满、取消、恢复、置顶/DPI,P2–P12,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-038,category,,linux,7.82,跨平台回归,Windows/macOS 构建及适用功能、Android 触控/生命周期/工程互通,P12,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+SHELL-DOCK-001,atomic,UI-003,linux,7.82,Docker,Arrange 与 Mixer 在同一主窗口同时可见,P2,uninvestigated,false,crates/aaadaw/src/app/view/mod.rs,,打开 Mixer 后 Arrange 保留；各控制作用于同一轨道状态,,当前互斥 workspace
+SHELL-PROFILE-001,atomic,UI-003,linux,7.82,Desktop profile,窄桌面窗口维持参照桌面交互,P2,in_progress,false,crates/aaadaw/src/app/view/mod.rs,LNX-782-ACTIONS-001 / LNX-782-ACTIONLIST-002; docs/verification/reaper-parity/action-list-and-input.md,窄 Linux 窗口使用实测桌面布局；Android 触控保持可用,AAADAW-INPUT-002; 727 workspace tests passed; GUI Add/Find/Delete,已明确区分 Desktop/Touch；窄 Linux 不切换触控，窄窗视觉布局仍待参照验收
+INPUT-BIND-001,atomic,UI-030,linux,7.82,Action List,完整修饰键和命名键组合,P1,in_progress,false,crates/aaadaw/src/app/commands.rs,LNX-782-ACTIONS-001 / LNX-782-ACTIONLIST-002; docs/verification/reaper-parity/action-list-and-input.md,参照适用按键可绑定和执行；冲突不破坏原配置,AAADAW-INPUT-002; 727 workspace tests passed; GUI Add/Find/Delete,动作列表基础已实现；Section/原厂录入确认/重复绑定规则等仍待对齐
+INPUT-FOCUS-001,atomic,UI-030,linux,7.82,Focus,文本与编辑器 Action Section 的输入归属,P1,uninvestigated,false,crates/aaadaw/src/app/commands.rs,,输入文本不执行误触全局动作；参照允许穿透逐项验证,,现有焦点能力需对照验证
+MIX-FADER-001,atomic,UI-005,linux,7.82,Mixer,Fader/Meter 的几何和操作,P2,in_progress,false,crates/aaadaw/src/app/view/mixer.rs,scripts/reaper_parity/probe-layout.lua; scripts/reaper_parity/probe-fader-curve.lua,默认 MCP 推子方向/曲线/精调/重置及 Meter 布局匹配证据,docs/verification/reaper-parity/mcp-vertical-layout.md; docs/verification/reaper-parity/default-fader-curve.md,纵向布局及实测Default曲线/+12/零增益/范围外精确值已实现；网格外误差与原厂灵敏度、自定义形状、完整主题Meter仍缺
+ROUTE-SEND-001,atomic,UI-014,linux,7.82,Track routing,通用轨道 Send/Receive,P3,in_progress,false,crates/aaadaw-core/src/track.rs,docs/verification/reaper-parity/ordinary-track-routing.md,可建立非 Bus 目标发送且图中实际处理正确；保存撤销一致,docs/verification/reaper-parity/audio-sends.md,普通输出与并行Send/Receive及三种Tap已实现；通道/MIDI映射等仍缺
+ROUTE-FOLDER-001,atomic,UI-004,linux,7.82,Folder,嵌套文件夹与 Parent Send,P3,in_progress,false,crates/aaadaw-core/src/track.rs,,嵌套/折叠/TCP-MCP/实际汇总路径与参照一致,,嵌套Parent路径与子树移动及三态压缩已实现；普通高度与完整手势仍缺
+EDIT-FADE-001,atomic,UI-010,linux,7.82,Item Fade,淡化手柄、曲线与交叉淡化,P4,in_progress,false,crates/aaadaw-core/src/fades.rs,scripts/reaper_parity/probe-item-fade-interaction.lua,拖动和数值输入得到相同曲线；播放导出保存重开一致,docs/verification/reaper-parity/item-fades.md,手动长度手柄及七种曲线菜单与预览撤销已接入；单Audio属性数值编辑已接入；连续鼠标编辑及低通与Crossfade仍待完成
+EDIT-TAKE-001,atomic,UI-011,linux,7.82,Take,多 Take 与激活状态,P5,uninvestigated,false,crates/aaadaw-core/src/audio.rs,,录音产生正确 Take；切换播放、撤销和保存正确,,当前 AudioItem 只有单 placement
+TRANSPORT-LOOP-001,atomic,UI-007,linux,7.82,Repeat,块内循环边界,P6,uninvestigated,false,crates/aaadaw-engine/src/transport.rs,,样本跨 Loop 终点正确拆块和回绕；MIDI chase/reset 无漏挂音,,当前 Transport 无循环范围
+MIDI-NOTATION-001,atomic,UI-020,linux,7.82,Notation,乐谱与 MIDI 事件一致,P7,uninvestigated,false,crates/aaadaw/src/app/view/midi_editor.rs,,同一事件在谱面和 Piano Roll 可互编辑及持久化,,当前仅 Piano Roll 基础
+AUTO-MODE-001,atomic,UI-021,linux,7.82,Automation,完整模式下的参数写入,P8,uninvestigated,false,crates/aaadaw-core/src/track.rs,,逐模式手势写入/停止/回放与固定参照一致,,当前 Volume Read 和 FX Lane 基础
+FX-LOCATIONS-001,atomic,UI-024,linux,7.82,FX,Input/Take/Master/Monitor 挂载点,P9,uninvestigated,false,crates/aaadaw-core/src/track.rs,,处理顺序正确；Monitor 不进入最终导出；状态重开正确,,当前 Track Instrument/Chain 为主要模型
+RENDER-BOUNDS-001,atomic,UI-028,linux,7.82,Render,Source/Bounds/Rate/Tail 设置,P10,uninvestigated,false,crates/aaadaw/src/app/view/render.rs,,选择范围输出帧数/采样率/尾音正确；取消不替换目标,,当前 WAV 格式和 Dither 简化界面
+PREF-TREE-001,atomic,UI-031,linux,7.82,Preferences,完整适用类别树,P11,uninvestigated,false,crates/aaadaw/src/app/view/settings.rs,,每个适用叶子页真实配置可恢复；没有空类别,,当前四个 SettingsCategory
+DATA-MIGRATE-001,atomic,UI-037,linux,7.82,Storage,v17 工程迁移保留原语义,P12,uninvestigated,false,crates/aaadaw-storage/src/store.rs,,旧工程迁移后音频/路由/FX/冻结源一致；失败可恢复,,尚无本计划新增模型的迁移
+TRANSPORT-PLAY-001,atomic,UI-007,linux,7.82,Play-Stop-Pause,默认传输动作与状态轨迹,P6,in_progress,false,crates/aaadaw/src/app/commands.rs,,同一组合触发等价动作且状态位置和停止录音轨迹一致,,工厂组合与独立按钮已实现；全部状态偏好和实际设备输出待验收
+ROUTE-PHASE-001,atomic,UI-004,linux,7.82,Track Phase,轨道反相与发送边界,P3,in_progress,false,crates/aaadaw-engine/src/lib.rs,,主输出及三种Tap极性与实际参照一致且默认控件可操作,,音频边界schema23及IO和MCP入口已实现；默认TCP布局和动态偏好待对齐
+ROUTE-MASTER-001,atomic,UI-005,linux,7.82,Master gain/balance,Master混音独立状态与真实输出,P2/P3,in_progress,false,crates/aaadaw-core/src/master.rs,scripts/reaper_parity/probe-master-mix.lua,默认及修改后输出与参照一致；撤销保存恢复；控件操作完整,docs/verification/reaper-parity/master-mix.md,gain/balance及schema24和实时处理已实现；Master其他控件及全部监听导出规则待验收
+ITEM-FADE-001,atomic,UI-010,linux,7.82,Audio Item manual fades,七种曲线及有效长度与完整操作,P4,in_progress,false,crates/aaadaw-core/src/fades.rs,scripts/reaper_parity/probe-item-fades.lua,默认与手动曲线输出和鼠标菜单及存储与参照一致,docs/verification/reaper-parity/item-fades.md,逐帧参照和schema25/26及实时DSP与单Item手柄及七种菜单已接入；低通及完整曲线编辑与自动Crossfade未完成
+ITEM-FADE-CURVE-001,atomic,UI-010,linux,7.82,Fade curvature/S,连续曲率和兼容模式保留,P4,in_progress,false,crates/aaadaw-core/src/fades.rs,scripts/reaper_parity/probe-item-fade-parameters.lua,旧新模式音频和参数编辑及重开与参照一致,docs/verification/reaper-parity/item-fades.md,连续参数及模式和schema26及真实DSP已实现；单Audio属性数值编辑已接入；连续鼠标编辑及全面参数空间验收未完成
+ITEM-PROPERTIES-001,atomic,UI-009,linux,7.82,Media Item Properties,独立属性窗口及完整字段和批量编辑,P4,in_progress,false,crates/aaadaw/src/app/item_properties.rs,scripts/reaper_parity/probe-item-fade-interaction.lua,F2和菜单及Apply与取消和批量编辑及字段与参照一致,docs/verification/reaper-parity/item-fades.md,单Audio淡化及位置与长度和源起点草稿及事务历史已接入；Time/Samples已接入；其他单位和负/分数位置及完整属性与批量和原厂布局未完成
+ITEM-PROPERTIES-UNITS-001,atomic,UI-009,linux,7.82,Item Properties display units,Time与Beats与H:M:S:F和Samples及草稿与持久化,P4,in_progress,false,crates/aaadaw/src/app/item_properties.rs,scripts/reaper_parity/probe-time-displays.lua,全部单位格式与转换和切换及重启状态与参照一致,docs/verification/reaper-parity/item-fades.md,四种单位与原厂草稿刷新和毫秒/拍内/帧格式及配置重启已验证；跨拍号非互逆数值已记录；十种帧率领域和存储已实现；宽松输入与完整Project Settings及时间偏移仍待实现
+PROJECT-FRAME-RATE-001,atomic,UI-008,linux,7.82,Project video frame rate,十种帧率与DF时间码及保存撤销,P10,in_progress,false,crates/aaadaw-core/src/timecode.rs,scripts/reaper_parity/probe-frame-displays.lua,默认与全部预设数值和设置界面及工程恢复与参照一致,docs/verification/reaper-parity/project-timecode.md,十种预设数值与Core和schema27迁移已验证；完整Project Settings入口和几何及时间偏移和视频仍待完成

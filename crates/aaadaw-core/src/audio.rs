@@ -13,6 +13,7 @@ pub struct AudioItem {
     pub(crate) start_sample: u64,
     pub(crate) source_offset_samples: u64,
     pub(crate) length_samples: u64,
+    pub(crate) fades: crate::AudioItemFades,
 }
 
 impl AudioItem {
@@ -44,6 +45,11 @@ impl AudioItem {
     /// Returns the item's duration in project samples.
     pub fn length_samples(&self) -> u64 {
         self.length_samples
+    }
+
+    /// Returns the manual fade parameters.
+    pub fn fades(&self) -> crate::AudioItemFades {
+        self.fades
     }
 
     /// Returns the exclusive end position in project samples.

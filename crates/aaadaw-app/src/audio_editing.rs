@@ -63,11 +63,9 @@ pub fn duplicate_audio_item(
         .checked_add(item.length_samples())
         .ok_or(AudioEditError::PositionOutOfRange)?;
 
-    Ok(DawAction::InsertAudioItem {
+    Ok(DawAction::DuplicateAudioItemAt {
+        item_id,
         track_id: item.track_id(),
-        media_ref: item.media_ref().to_owned(),
         start_sample,
-        source_offset_samples: item.source_offset_samples(),
-        length_samples: item.length_samples(),
     })
 }

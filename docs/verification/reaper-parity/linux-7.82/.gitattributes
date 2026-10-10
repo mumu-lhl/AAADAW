@@ -1,0 +1,2 @@
+# Exported TSV rows end with an empty shortcut cell for unbound actions.
+actions.tsv text eol=lf whitespace=-blank-at-eol

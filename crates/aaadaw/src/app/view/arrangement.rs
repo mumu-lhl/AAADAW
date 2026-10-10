@@ -1,4 +1,5 @@
 use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
+use super::super::fader;
 use super::super::{App, Message, StereoPeakHold, TrackDraftField};
 use super::tokens;
 use crate::timeline::{
@@ -343,27 +344,26 @@ pub(super) fn track_output_selector<'a>(app: &'a App, track: &'a Track) -> Eleme
     let track_id = track.id();
     let output_choices: Vec<_> = std::iter::once(TrackOutputChoice {
         track_id: None,
-        label: "Master".to_owned(),
+        label: track
+            .parent_track()
+            .and_then(|id| {
+                app.project
+                    .tracks()
+                    .iter()
+                    .find(|candidate| candidate.id() == id)
+            })
+            .map_or_else(
+                || "Master".into(),
+                |parent| format!("Parent: {}", parent.name()),
+            ),
     })
     .chain(app.project.tracks().iter().filter_map(|candidate| {
-        if !candidate.is_bus() || candidate.id() == track_id {
+        if !app.project.can_route_to(track_id, candidate.id()) {
             return None;
-        }
-        let mut ancestor = candidate.output_track();
-        while let Some(ancestor_id) = ancestor {
-            if ancestor_id == track_id {
-                return None;
-            }
-            ancestor = app
-                .project
-                .tracks()
-                .iter()
-                .find(|track| track.id() == ancestor_id)
-                .and_then(Track::output_track);
         }
         Some(TrackOutputChoice {
             track_id: Some(candidate.id()),
-            label: format!("{} (Bus)", candidate.name()),
+            label: candidate.name().to_owned(),
         })
     }))
     .collect();
@@ -538,6 +538,22 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .spacing(0)
         .width(Length::Fill)
         .height(Length::Fill);
+    if let Some(context) = app.timeline.context_fade {
+        let popup = float(fade_curve_menu(app, context)).translate(move |bounds, viewport| {
+            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+            let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+            let x = (bounds.x + context.x).clamp(viewport.x, max_x);
+            let y = (bounds.y + 32.0 + context.y - app.timeline.vertical_scroll)
+                .clamp(viewport.y, max_y);
+            iced::Vector::new(x - bounds.x, y - bounds.y)
+        });
+        let dismiss =
+            mouse_area(contents).on_press(Message::Timeline(TimelineEvent::CloseFadeMenu));
+        return stack![dismiss, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     if let Some(context) = app.timeline.context_automation_point {
         let (x, y) = app
             .timeline
@@ -573,6 +589,163 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn fade_curve_menu(app: &App, context: timeline::FadeMenuContext) -> Element<'_, Message> {
+    let selected = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == context.item_id)
+        .and_then(|item| {
+            match context.edge {
+                timeline::ItemFadeEdge::In => item.fades().fade_in,
+                timeline::ItemFadeEdge::Out => item.fades().fade_out,
+            }
+            .curve()
+            .current_preset_shape()
+        });
+    let choices = (0..=6).map(|code| {
+        let shape = aaadaw_core::FadeShape::from_code(code).expect("seven curve menu presets");
+        let glyph: Element<'_, Message> = Element::new(FadeCurveGlyph {
+            shape,
+            fade_out: context.edge == timeline::ItemFadeEdge::Out,
+        });
+        button(
+            row![
+                text(if selected == Some(shape) { "✓" } else { "" })
+                    .size(18)
+                    .width(24),
+                glyph
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(152)
+        .height(28)
+        .padding([2, 6])
+        .style(|_, status| {
+            let gray = if status == button::Status::Hovered {
+                38
+            } else {
+                179
+            };
+            button::Style {
+                background: Some(iced::Color::from_rgb8(gray, gray, gray).into()),
+                text_color: if status == button::Status::Hovered {
+                    iced::Color::from_rgb8(179, 179, 179)
+                } else {
+                    iced::Color::from_rgb8(38, 38, 38)
+                },
+                ..button::Style::default()
+            }
+        })
+        .on_press(Message::Timeline(TimelineEvent::SetFadeCurvePreset {
+            item_id: context.item_id,
+            edge: context.edge,
+            shape,
+        }))
+        .into()
+    });
+    container(column(choices).spacing(0))
+        .width(152)
+        .padding([6, 0])
+        .style(|_| container::Style {
+            background: Some(iced::Color::from_rgb8(179, 179, 179).into()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+struct FadeCurveGlyph {
+    shape: aaadaw_core::FadeShape,
+    fade_out: bool,
+}
+
+impl Widget<Message, Theme, iced::Renderer> for FadeCurveGlyph {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(Length::Fixed(96.0), Length::Fixed(24.0))
+    }
+    fn layout(
+        &mut self,
+        _: &mut Tree,
+        _: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(limits.resolve(
+            Length::Fixed(96.0),
+            Length::Fixed(24.0),
+            iced::Size::new(96.0, 24.0),
+        ))
+    }
+    fn draw(
+        &self,
+        _: &Tree,
+        renderer: &mut iced::Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer;
+        let bounds = layout.bounds();
+        let Some(clip) = bounds.intersection(viewport) else {
+            return;
+        };
+        renderer.with_layer(clip, |renderer| {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: iced::Border::default()
+                        .color(iced::Color::from_rgb8(168, 168, 168))
+                        .width(1.0),
+                    ..renderer::Quad::default()
+                },
+                iced::Color::from_rgb8(179, 179, 179),
+            );
+            let fade = aaadaw_core::AudioFade::with_curve(
+                1.0,
+                aaadaw_core::FadeCurve::current_preset(self.shape),
+            )
+            .expect("finite preset length");
+            let mut previous = None;
+            for x in 0..=48 {
+                let progress = f64::from(x) / 48.0;
+                let gain = fade.gain_at_progress(if self.fade_out {
+                    1.0 - progress
+                } else {
+                    progress
+                });
+                let y = (23.0 * (1.0 - gain)).round();
+                let top = previous.map_or(y, |previous: f32| previous.min(y));
+                let height = previous.map_or(1.0, |previous: f32| (previous - y).abs() + 1.0);
+                let plot_x = bounds.x + x as f32 + if self.fade_out { 48.0 } else { 0.0 };
+                if y > 1.0 {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: iced::Rectangle::new(
+                                iced::Point::new(plot_x, bounds.y + 1.0),
+                                iced::Size::new(1.0, y - 1.0),
+                            ),
+                            ..renderer::Quad::default()
+                        },
+                        iced::Color::from_rgb8(142, 142, 142),
+                    );
+                }
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: iced::Rectangle::new(
+                            iced::Point::new(plot_x, bounds.y + top),
+                            iced::Size::new(1.0, height),
+                        ),
+                        ..renderer::Quad::default()
+                    },
+                    iced::Color::from_rgb8(38, 38, 38),
+                );
+                previous = Some(y);
+            }
+        });
+    }
 }
 
 fn automation_point_context_menu(
@@ -712,9 +885,67 @@ fn track_row_layout<'a>(
     height: f32,
 ) -> Element<'a, Message> {
     let track_id = track.id();
+    if height <= 25.0 {
+        let selected = app.timeline.is_track_selected(track_id);
+        let controls: Element<'a, Message> = if height <= 4.0 {
+            iced::widget::Space::new()
+                .width(Length::Fill)
+                .height(height)
+                .into()
+        } else {
+            row![
+                track_name_input(app, track),
+                button(text("M").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_muted() {
+                        button::warning
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleMute(track_id)),
+                button(text("S").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_solo() {
+                        button::warning
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleSolo(track_id)),
+                button(text("R").size(11))
+                    .padding([0, 3])
+                    .style(if track.is_record_armed() {
+                        button::danger
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::ToggleRecordArm(track_id)),
+                track_routing_button(track),
+            ]
+            .spacing(2)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        return mouse_area(
+            container(controls)
+                .height(height)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(track_selection_background(selected).into()),
+                    ..container::Style::default()
+                }),
+        )
+        .on_press(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+            track_id,
+            modifiers: app.keyboard_modifiers,
+        }))
+        .on_right_press(Message::Timeline(TimelineEvent::OpenTrackContextMenu(
+            track_id,
+        )))
+        .into();
+    }
     let has_edit = app.track_name_edits.contains_key(&track_id);
     let output_label = track
-        .output_track()
+        .effective_output_track()
         .and_then(|output_id| {
             app.project
                 .tracks()
@@ -766,6 +997,7 @@ fn track_row_layout<'a>(
             },
             name_input,
             fx_button,
+            track_routing_button(track),
             text(format!("→ {output_label}")).size(10),
             button(if automation_visible { "AUTO" } else { "auto" })
                 .style(if automation_visible {
@@ -891,6 +1123,21 @@ pub(super) fn stereo_peak_meter<'a>(
     .into()
 }
 
+pub(super) fn track_routing_button(track: &Track) -> Element<'static, Message> {
+    button(text(if track.sends().is_empty() {
+        "IO".to_owned()
+    } else {
+        format!("IO {}", track.sends().len())
+    }))
+    .on_press(Message::ExecuteCommand(CommandId::Track {
+        track_id: track.id(),
+        command: TrackCommand::Routing,
+    }))
+    .style(iced::widget::button::secondary)
+    .padding([2, 5])
+    .into()
+}
+
 pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
     let fx_chain = track.fx_chain();
     let has_bypassed_fx = fx_chain.iter().any(|plugin| !plugin.is_enabled());
@@ -922,17 +1169,48 @@ pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a
         .track_name_edits
         .get(&track_id)
         .map_or(track.name(), String::as_str);
-    text_input("Track name", edited_name)
+    let input = text_input("Track name", edited_name)
         .id(super::super::messages::track_name_input_id(track_id))
         .on_input(move |name| Message::TrackNameChanged(track_id, name))
         .on_submit(Message::CommitTrackName(track_id))
         .style(track_draft_input_style(has_error))
         .padding([2, 4])
-        .width(Length::Fill)
+        .width(Length::Fill);
+    let marker: Element<'a, Message> = if track.is_folder() {
+        button(
+            text(match app.timeline.folder_compact(track_id) {
+                1 => "▸",
+                2 => "▹",
+                _ => "▾",
+            })
+            .size(11),
+        )
+        .style(button::text)
+        .padding([0, 2])
+        .on_press(Message::ExecuteCommand(CommandId::Track {
+            track_id,
+            command: TrackCommand::CycleFolderCompact,
+        }))
         .into()
+    } else {
+        text(if track.parent_track().is_some() {
+            "↳"
+        } else {
+            ""
+        })
+        .size(11)
+        .into()
+    };
+    row![
+        text("  ".repeat(app.project.folder_depth(track_id))).size(11),
+        marker,
+        input
+    ]
+    .align_y(Alignment::Center)
+    .into()
 }
 
-fn track_draft_input_style(
+pub(super) fn track_draft_input_style(
     has_error: bool,
 ) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
     move |theme, status| {
@@ -1106,17 +1384,17 @@ pub(super) fn track_mix_controls<'a>(
         .track_volume_edits
         .get(&track_id)
         .cloned()
-        .unwrap_or_else(|| format!("{volume_db:.1}"));
+        .unwrap_or_else(|| fader::format_db(volume_db));
     let pan_text = app
         .track_pan_edits
         .get(&track_id)
         .cloned()
         .unwrap_or_else(|| format!("{pan:.2}"));
-    let volume_slider = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
-        Message::PreviewTrackVolume(track_id, value)
+    let volume_slider = slider(0.0..=1000.0, fader::to_position(volume_db), move |value| {
+        Message::PreviewTrackVolume(track_id, fader::from_position(value))
     })
-    .step(0.1_f32)
-    .shift_step(0.01_f32)
+    .step(1.0_f32)
+    .shift_step(0.1_f32)
     .on_release(Message::CommitTrackVolume(track_id))
     .height(if touch {
         tokens::TOUCH_TARGET_MIN

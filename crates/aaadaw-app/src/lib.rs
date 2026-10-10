@@ -491,6 +491,8 @@ impl PreparedAudioPlayback {
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_mix_controller = self.graph.master_mix_controller();
+        let item_fade_controller = self.graph.item_fade_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -502,6 +504,8 @@ impl PreparedAudioPlayback {
         Ok(RunningJackPlayback {
             output,
             mix_controller,
+            master_mix_controller,
+            item_fade_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -531,6 +535,8 @@ impl PreparedAudioPlayback {
         _cpal_device_id: Option<&str>,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_mix_controller = self.graph.master_mix_controller();
+        let item_fade_controller = self.graph.item_fade_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -558,6 +564,8 @@ impl PreparedAudioPlayback {
         Ok(RunningAudioPlayback {
             output,
             mix_controller,
+            master_mix_controller,
+            item_fade_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -728,6 +736,8 @@ enum DeviceAudioOutput {
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
+    master_mix_controller: aaadaw_engine::MasterMixController,
+    item_fade_controller: aaadaw_engine::ItemFadeController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -777,9 +787,28 @@ impl RunningAudioPlayback {
         self.mix_controller.reset_track_peaks();
     }
 
+    /// Publishes live manual Item fades without replacing the graph.
+    pub fn set_item_fades(
+        &self,
+        item_id: aaadaw_core::ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) -> bool {
+        self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Updates live stereo Master output controls.
+    pub fn set_master_mix(&self, mix: aaadaw_core::MasterMix) {
+        self.master_mix_controller.set_mix(mix);
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
     }
 
     /// Updates a track's live mute and solo state without replacing the graph.
@@ -1051,6 +1080,8 @@ impl RunningAudioPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_mix_controller = prepared.graph.master_mix_controller();
+        let item_fade_controller = prepared.graph.item_fade_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1097,6 +1128,8 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Unavailable => {}
         }
         self.mix_controller = mix_controller;
+        self.master_mix_controller = master_mix_controller;
+        self.item_fade_controller = item_fade_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
@@ -1333,6 +1366,8 @@ impl From<CpalOutputStats> for PlaybackStats {
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
     mix_controller: TrackMixController,
+    master_mix_controller: aaadaw_engine::MasterMixController,
+    item_fade_controller: aaadaw_engine::ItemFadeController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -1381,9 +1416,28 @@ impl RunningJackPlayback {
         self.mix_controller.reset_track_peaks();
     }
 
+    /// Publishes live manual Item fades without replacing the graph.
+    pub fn set_item_fades(
+        &self,
+        item_id: aaadaw_core::ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) -> bool {
+        self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Updates live stereo Master output controls.
+    pub fn set_master_mix(&self, mix: aaadaw_core::MasterMix) {
+        self.master_mix_controller.set_mix(mix);
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
     }
 
     /// Updates a track's live mute and solo state without replacing the graph.
@@ -1494,6 +1548,8 @@ impl RunningJackPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_mix_controller = prepared.graph.master_mix_controller();
+        let item_fade_controller = prepared.graph.item_fade_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1502,6 +1558,8 @@ impl RunningJackPlayback {
             .replace_graph(graph, self.is_playing)
             .map_err(PlaybackBuildError::Jack)?;
         self.mix_controller = mix_controller;
+        self.master_mix_controller = master_mix_controller;
+        self.item_fade_controller = item_fade_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;

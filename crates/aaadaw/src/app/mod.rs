@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 pub(super) const MIDI_EDITOR_KEY_WIDTH: f32 = 84.0;
 pub(super) const MIDI_EDITOR_CONTENT_WIDTH_INSET: f32 = MIDI_EDITOR_KEY_WIDTH + 32.0;
 
+mod action_list;
 mod action_macros;
 mod audio_config;
 mod audio_export;
@@ -54,14 +55,21 @@ mod clap_track_fx;
 mod clap_track_instrument;
 mod commands;
 mod config_paths;
+mod desktop_layout;
+mod fader;
+mod fader_data;
+mod item_properties;
 mod keyboard_config;
 mod media;
 mod messages;
 mod offline_job_queue;
 mod project_io;
+mod project_settings;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
+mod routing;
+mod shortcut;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -241,6 +249,22 @@ impl Drop for UnsavedSessionMedia {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellProfile {
+    Desktop,
+    Touch,
+}
+
+impl Default for ShellProfile {
+    fn default() -> Self {
+        if cfg!(target_os = "android") {
+            Self::Touch
+        } else {
+            Self::Desktop
+        }
+    }
+}
+
 #[derive(Default)]
 struct App {
     project: Project,
@@ -256,7 +280,9 @@ struct App {
     shortcut_binding_edits: commands::ShortcutBindings,
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
+    desktop_layout_save_at: Option<Instant>,
     main_workspace: MainWorkspace,
+    shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
     mobile_panel_history: Vec<MobilePanel>,
     main_window_size: Option<iced::Size>,
@@ -280,6 +306,8 @@ struct App {
     active_track_draft: Option<(TrackId, TrackDraftField)>,
     track_draft_errors: HashMap<(TrackId, TrackDraftField), String>,
     track_mix_gesture: Option<TrackMixGesture>,
+    master_mix_gesture: Option<(TrackMixParameter, aaadaw_core::MasterMix)>,
+    master_mix_commit_at: Option<Instant>,
     track_mix_commit_at: Option<Instant>,
     track_peak_levels: HashMap<TrackId, [f32; 2]>,
     master_peak_level: [f32; 2],
@@ -289,12 +317,24 @@ struct App {
     master_peak_hold: StereoPeakHold,
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
+    item_properties: Option<item_properties::ItemProperties>,
+    item_properties_window_id: Option<iced::window::Id>,
+    item_properties_generation: u64,
+    item_properties_unit: item_properties::TimeUnit,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    project_settings_window_id: Option<iced::window::Id>,
+    project_settings: Option<project_settings::Draft>,
+    routing_window_id: Option<iced::window::Id>,
+    routing_track_id: Option<TrackId>,
+    routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
+    action_list_window_id: Option<iced::window::Id>,
+    action_input_window_id: Option<iced::window::Id>,
+    action_list: action_list::ActionListState,
     render_window_id: Option<iced::window::Id>,
     tempo_map_window_id: Option<iced::window::Id>,
     time_map_tab: TimeMapTab,
@@ -340,6 +380,7 @@ struct App {
     plugin_picker_instrument_track_id: Option<TrackId>,
     plugin_picker_search: String,
     shortcut_capture_id: Option<String>,
+    shortcut_capture_append: bool,
     shortcut_editor_feedback: String,
     settings_category: SettingsCategory,
     audio_settings: audio_config::AudioSettings,
@@ -543,10 +584,25 @@ struct MeterMapEdit {
     denominator: String,
 }
 
+fn action_updates_item_fades(action: &DawAction) -> bool {
+    match action {
+        DawAction::SetAudioItemFades { .. } => true,
+        DawAction::BatchTransaction { actions, .. } => {
+            actions.iter().any(action_updates_item_fades)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(feature = "audio-device")]
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
-        DawAction::SetTrackFxChain { .. }
+        DawAction::SetTrackOutput { .. }
+        | DawAction::SetTrackMainSend { .. }
+        | DawAction::CreateAudioSend { .. }
+        | DawAction::UpdateAudioSend { .. }
+        | DawAction::DeleteAudioSend { .. }
+        | DawAction::SetTrackFxChain { .. }
         | DawAction::SetTempo { .. }
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
@@ -774,46 +830,95 @@ impl std::fmt::Debug for SharedRecordingStop {
 enum MainPane {
     Arrangement,
     MediaBrowser,
+    Mixer,
 }
 
 struct MediaPanelDock {
     panes: Option<pane_grid::State<MainPane>>,
     split: Option<Split>,
+    mixer_split: Option<Split>,
     open: bool,
+    mixer_open: bool,
     main_ratio: f32,
+    arrange_ratio: f32,
 }
 
 impl Default for MediaPanelDock {
     fn default() -> Self {
-        Self {
-            panes: None,
-            split: None,
-            open: false,
-            main_ratio: 0.72,
-        }
+        Self::from_layout(desktop_layout::DesktopLayout::default())
     }
 }
 
 impl MediaPanelDock {
-    fn toggle(&mut self) {
-        if self.panes.is_none() {
-            let (mut panes, arrangement) = pane_grid::State::new(MainPane::Arrangement);
+    fn from_layout(layout: desktop_layout::DesktopLayout) -> Self {
+        let mut dock = Self {
+            panes: None,
+            split: None,
+            mixer_split: None,
+            open: layout.media_open,
+            mixer_open: layout.mixer_open,
+            main_ratio: layout.media_ratio,
+            arrange_ratio: layout.arrange_ratio,
+        };
+        dock.rebuild();
+        dock
+    }
+    fn layout(&self) -> desktop_layout::DesktopLayout {
+        desktop_layout::DesktopLayout {
+            media_open: self.open,
+            mixer_open: self.mixer_open,
+            media_ratio: self.main_ratio,
+            arrange_ratio: self.arrange_ratio,
+            ..Default::default()
+        }
+    }
+    fn rebuild(&mut self) {
+        self.split = None;
+        self.mixer_split = None;
+        if !self.open && !self.mixer_open {
+            self.panes = None;
+            return;
+        }
+        let (mut panes, arrangement) = pane_grid::State::new(MainPane::Arrangement);
+        if self.open {
             let (_, split) = panes
                 .split(Axis::Vertical, arrangement, MainPane::MediaBrowser)
-                .expect("the arrangement pane is present");
+                .expect("arrangement exists");
             panes.resize(split, self.main_ratio);
-            self.panes = Some(panes);
             self.split = Some(split);
         }
-        self.open = !self.open;
+        if self.mixer_open {
+            let (_, split) = panes
+                .split(Axis::Horizontal, arrangement, MainPane::Mixer)
+                .expect("arrangement exists");
+            panes.resize(split, self.arrange_ratio);
+            self.mixer_split = Some(split);
+        }
+        self.panes = Some(panes);
     }
-
+    fn toggle(&mut self) {
+        self.open = !self.open;
+        self.rebuild();
+    }
+    fn toggle_mixer(&mut self) {
+        self.mixer_open = !self.mixer_open;
+        self.rebuild();
+    }
     fn resize(&mut self, split: Split, ratio: f32) {
-        if self.split == Some(split) && ratio.is_finite() {
+        if !ratio.is_finite() {
+            return;
+        }
+        let ratio = if self.split == Some(split) {
             self.main_ratio = ratio.clamp(0.55, 0.86);
-            if let Some(panes) = &mut self.panes {
-                panes.resize(split, self.main_ratio);
-            }
+            self.main_ratio
+        } else if self.mixer_split == Some(split) {
+            self.arrange_ratio = ratio.clamp(0.20, 0.90);
+            self.arrange_ratio
+        } else {
+            return;
+        };
+        if let Some(panes) = &mut self.panes {
+            panes.resize(split, ratio);
         }
     }
 }
@@ -1002,7 +1107,7 @@ fn duplicate_item_actions(
 
 impl App {
     fn is_mobile_main_window(&self) -> bool {
-        cfg!(target_os = "android") || self.main_window_size.is_some_and(|size| size.width < 720.0)
+        self.shell_profile == ShellProfile::Touch
     }
 
     fn show_mobile_panel(&mut self, panel: MobilePanel) {
@@ -1073,6 +1178,18 @@ impl App {
             iced::Size::new(1280.0, 800.0)
         });
         let main_window_task = main_window_task.discard();
+        if !app.is_mobile_main_window() {
+            match desktop_layout::load() {
+                Ok(layout) => app.media_panel_dock = MediaPanelDock::from_layout(layout),
+                Err(error) => app.status = format!("Desktop layout unavailable: {error}"),
+            }
+        }
+        match item_properties::load_unit() {
+            Ok(unit) => app.item_properties_unit = unit,
+            Err(error) => {
+                app.status = format!("Item Properties configuration unavailable: {error}")
+            }
+        }
         match action_macros::load().and_then(commands::validate_action_macros) {
             Ok(macros) => app.action_macros = macros,
             Err(error) => {
@@ -1224,7 +1341,22 @@ impl App {
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
-        if self.settings_window_id == Some(window_id) {
+        if self.item_properties_window_id == Some(window_id) {
+            "Media Item Properties".to_owned()
+        } else if self.routing_window_id == Some(window_id) {
+            self.routing_track_id
+                .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
+                .map_or_else(
+                    || "Track routing".to_owned(),
+                    |track| format!("Routing for {}", track.name()),
+                )
+        } else if self.action_input_window_id == Some(window_id) {
+            "Keyboard input".to_owned()
+        } else if self.action_list_window_id == Some(window_id) {
+            "Actions".to_owned()
+        } else if self.project_settings_window_id == Some(window_id) {
+            "Project Settings".to_owned()
+        } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
         } else if self.render_window_id == Some(window_id) {
             "Render project to WAV".to_owned()
@@ -1299,6 +1431,8 @@ impl App {
                 || self.audio_asset_management_busy
                 || self.audio_waveform_worker.is_some()
                 || self.track_mix_gesture.is_some()
+                || self.master_mix_gesture.is_some()
+                || self.desktop_layout_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
@@ -1325,7 +1459,40 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.action_input_window_id.is_some()
+            && matches!(
+                &message,
+                Message::ActionListQueryChanged(_)
+                    | Message::ActionListSelect(_)
+                    | Message::ActionListSelectBinding(_)
+                    | Message::ActionListAddBinding
+                    | Message::ActionListDeleteBinding
+                    | Message::ActionListFindShortcut
+                    | Message::ActionListRun(_)
+                    | Message::OpenActionMacroEditor
+            )
+        {
+            return Task::none();
+        }
         let revision_before_message = self.revision;
+        let preserves_master_gesture = matches!(
+            &message,
+            Message::BackgroundTick
+                | Message::MeterTick
+                | Message::RuntimeKeyboardEvent(..)
+                | Message::PreviewMasterVolume(_)
+                | Message::PreviewMasterPan(_)
+                | Message::CommitMasterMix
+                | Message::CancelMasterMix
+                | Message::ResetMasterVolume
+                | Message::ResetMasterPan
+                | Message::Escape
+        );
+        if !preserves_master_gesture && self.master_mix_commit_at.is_some() {
+            self.commit_master_mix();
+        } else if !preserves_master_gesture && self.master_mix_gesture.is_some() {
+            self.cancel_master_mix();
+        }
         #[cfg(feature = "audio-device")]
         let standby_input_completion = matches!(
             &message,
@@ -1441,6 +1608,7 @@ impl App {
         let menu_ui_message = matches!(
             &message,
             Message::ActionQueryChanged(_)
+                | Message::ShortcutPressed(_)
                 | Message::ActionMenuScrolled(_)
                 | Message::MenuKeyboard(
                     MenuNavigation::Open
@@ -1453,15 +1621,55 @@ impl App {
             &message,
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
+                    || self.item_properties_window_id == Some(*window_id)
+                    || self.routing_window_id == Some(*window_id)
+                    || self.action_input_window_id == Some(*window_id)
+                    || self.action_list_window_id == Some(*window_id)
+                    || self.settings_window_id == Some(*window_id)
+                    || self.project_settings_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
             || matches!(
                 &message,
-                Message::OpenSettings
+                Message::ExecuteCommand(
+                    commands::CommandId::SelectedTrack(
+                        commands::TrackCommand::Routing
+                            | commands::TrackCommand::CycleFolderCompact
+                    ) | commands::CommandId::Track {
+                        command: commands::TrackCommand::Routing
+                            | commands::TrackCommand::CycleFolderCompact,
+                        ..
+                    }
+                ) | Message::OpenTrackRouting(_)
+                    | Message::CloseTrackRouting
+                    | Message::RoutingSendDraft(..)
+                    | Message::ToggleMixerPanel
+                    | Message::OpenActionList
+                    | Message::OpenActionMacroEditor
+                    | Message::CloseActionList
+                    | Message::ActionListQueryChanged(_)
+                    | Message::ActionListSelect(_)
+                    | Message::ActionListSelectBinding(_)
+                    | Message::ActionInputConfirm
+                    | Message::ActionInputCancel
+                    | Message::ActionListAddBinding
+                    | Message::ActionListDeleteBinding
+                    | Message::ActionListFindShortcut
+                    | Message::ActionListRun(_)
+                    | Message::OpenSettings
+                    | Message::OpenProjectSettings
+                    | Message::CloseProjectSettings
+                    | Message::ProjectFrameRateChanged(_)
+                    | Message::ProjectFrameRateMenuChanged(_)
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
+                    | Message::ToggleItemProperties
+                    | Message::OpenItemProperties
+                    | Message::ItemPropertiesUnitChanged(_)
+                    | Message::ItemPropertyFieldChanged(..)
+                    | Message::CloseItemProperties
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -1490,15 +1698,19 @@ impl App {
                     | Message::PluginPickerSearchChanged(_)
                     | Message::SelectFxChainPlugin(_)
                     | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                    | Message::ExecuteCommand(commands::CommandId::OpenProjectSettings)
+                    | Message::ExecuteCommand(commands::CommandId::OpenActionList)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
+                    | Message::ExecuteCommand(commands::CommandId::ToggleMixerPanel)
                     | Message::ToggleOfflineJobsPanel
                     | Message::ToggleTransportDetails
                     | Message::ExecuteCommand(commands::CommandId::ToggleOfflineJobsPanel)
                     | Message::WindowClosed(_)
                     | Message::WindowCloseRequested(_)
                     | Message::StartShortcutCapture(_)
+                    | Message::AddShortcutBinding(_)
                     | Message::ClearShortcutBinding(_)
                     | Message::RestoreShortcutDefault(_)
                     | Message::SelectSettingsCategory(_)
@@ -1547,6 +1759,25 @@ impl App {
                     | Message::BackgroundTick
                     | Message::MeterTick
             );
+        if matches!(
+            &message,
+            Message::Timeline(
+                timeline::TimelineEvent::PreviewItemFades { .. }
+                    | timeline::TimelineEvent::CommitItemFades
+                    | timeline::TimelineEvent::SetFadeCurvePreset { .. }
+            ) | Message::ApplyItemProperties(_)
+        ) && let Some(status) = item_drag_edit_guard_status(
+            self.path_picker_busy,
+            self.import_busy,
+            self.audio_asset_management_busy,
+            self.playback_busy(),
+            false,
+            self.io_busy,
+        ) {
+            self.cancel_item_fades();
+            self.status = status.to_owned();
+            return Task::none();
+        }
         if matches!(
             &message,
             Message::Timeline(
@@ -1656,8 +1887,18 @@ impl App {
         }
         #[cfg(feature = "audio-device")]
         {
+            let recording_stop_command = (self.recording.is_some() || self.recording_starting)
+                && matches!(
+                    &message,
+                    Message::TogglePlayStop
+                        | Message::StopPlayback
+                        | Message::ExecuteCommand(
+                            commands::CommandId::TogglePlayStop | commands::CommandId::StopPlayback
+                        )
+                );
             if (self.recording.is_some() || self.recording_starting || self.recording_stopping)
                 && !window_safe_message
+                && !recording_stop_command
                 && !matches!(
                     &message,
                     Message::StopPlayback
@@ -1684,6 +1925,7 @@ impl App {
                 return Task::none();
             }
             if self.playback_busy
+                && !recording_stop_command
                 && !window_safe_message
                 && !standby_input_completion
                 && !matches!(
@@ -1793,20 +2035,69 @@ impl App {
             Message::MenuKeyboard(navigation) => {
                 task = self.navigate_main_menu(navigation);
             }
+            Message::ToggleMixerPanel => {
+                if self.is_mobile_main_window() {
+                    self.main_workspace = if self.main_workspace == MainWorkspace::Mixer {
+                        MainWorkspace::Arrangement
+                    } else {
+                        MainWorkspace::Mixer
+                    };
+                } else {
+                    self.media_panel_dock.toggle_mixer();
+                    self.schedule_desktop_layout_save();
+                }
+            }
             Message::ShowMainWorkspace(workspace) => {
                 self.cancel_shortcut_capture();
                 self.main_workspace = workspace;
+                if !self.is_mobile_main_window()
+                    && workspace == MainWorkspace::Mixer
+                    && !self.media_panel_dock.mixer_open
+                {
+                    self.media_panel_dock.toggle_mixer();
+                    self.schedule_desktop_layout_save();
+                }
                 self.mobile_panel = MobilePanel::Editor;
                 self.mobile_panel_history.clear();
                 self.active_menu = None;
             }
             Message::MobileNavigateBack => self.navigate_back_mobile_panel(),
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenProjectSettings => task = self.open_project_settings(),
+            Message::CloseProjectSettings => task = self.close_project_settings(),
+            Message::ApplyProjectSettings => task = self.apply_project_settings(),
+            Message::ProjectFrameRateMenuChanged(open) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.menu_open = open;
+                }
+            }
+            Message::ProjectFrameRateChanged(rate) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.rate = rate;
+                    draft.menu_open = false;
+                }
+            }
             Message::OpenClapPluginSettings => {
                 self.settings_category = SettingsCategory::ClapPlugins;
                 task = self.open_settings();
             }
             Message::OpenRenderWindow => task = self.open_render_window(),
+            Message::OpenItemProperties => task = self.open_item_properties(),
+            Message::ToggleItemProperties => {
+                task = if self.item_properties_window_id.is_some() {
+                    self.close_item_properties()
+                } else {
+                    self.open_item_properties()
+                }
+            }
+            Message::CloseItemProperties => task = self.close_item_properties(),
+            Message::ItemPropertiesUnitChanged(unit) => self.change_item_properties_unit(unit),
+            Message::ItemPropertyFieldChanged(field, text) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.edit(field, text);
+                }
+            }
+            Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
             Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
@@ -1865,7 +2156,26 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
-                if self.settings_window_id == Some(window_id) {
+                if self.project_settings_window_id == Some(window_id) {
+                    self.project_settings_window_id = None;
+                    self.project_settings = None;
+                } else if self.item_properties_window_id == Some(window_id) {
+                    self.item_properties_window_id = None;
+                    self.item_properties = None;
+                } else if self.routing_window_id == Some(window_id) {
+                    self.routing_window_id = None;
+                    self.routing_track_id = None;
+                    self.routing_send_drafts.clear();
+                } else if self.action_input_window_id == Some(window_id) {
+                    self.action_input_window_id = None;
+                    self.action_list.capture = None;
+                    self.action_list.input_action = None;
+                    self.action_list.input_draft = None;
+                } else if self.action_list_window_id == Some(window_id) {
+                    task = self.close_action_input();
+                    self.action_list_window_id = None;
+                    self.action_list.capture = None;
+                } else if self.settings_window_id == Some(window_id) {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
@@ -1907,6 +2217,9 @@ impl App {
                 }
             }
             Message::WindowCloseRequested(window_id) => {
+                if self.main_window_id == Some(window_id) {
+                    self.flush_desktop_layout();
+                }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
                 } else if self.main_window_id == Some(window_id) {
@@ -2411,8 +2724,15 @@ impl App {
             }
             Message::StartShortcutCapture(action_id) => {
                 self.shortcut_capture_id = Some(action_id);
+                self.shortcut_capture_append = false;
                 self.shortcut_editor_feedback =
                     "Press a shortcut; Backspace clears it; Escape cancels".to_owned();
+            }
+            Message::AddShortcutBinding(action_id) => {
+                self.shortcut_capture_id = Some(action_id);
+                self.shortcut_capture_append = true;
+                self.shortcut_editor_feedback =
+                    "Press an additional shortcut; Escape cancels".to_owned();
             }
             Message::ClearShortcutBinding(action_id) => self.clear_shortcut_binding(action_id),
             Message::RestoreShortcutDefault(action_id) => self.restore_shortcut_default(action_id),
@@ -2581,11 +2901,162 @@ impl App {
                 key,
                 modifiers,
             } => self.capture_shortcut_key(action_id, &key, modifiers),
+            Message::OpenActionList => task = self.open_action_list(),
+            Message::OpenActionMacroEditor => {
+                self.settings_category = SettingsCategory::ActionMacros;
+                task = self.open_settings();
+            }
+            Message::CloseActionList => task = self.close_action_list(),
+            Message::ActionListQueryChanged(query) => self.action_list.set_query(query),
+            Message::ActionListSelect(id) => self.action_list.select(id),
+            Message::ActionListSelectBinding(index) => {
+                self.action_list.selected_binding = Some(index)
+            }
+            Message::ActionListAddBinding => task = self.open_action_input(),
+            Message::ActionInputConfirm => task = self.confirm_action_input(),
+            Message::ActionInputCancel => task = self.close_action_input(),
+            Message::ActionListFindShortcut => {
+                self.action_list.feedback.clear();
+                self.action_list.capture = Some(action_list::CaptureMode::Find)
+            }
+            Message::ActionListDeleteBinding => self.delete_action_list_binding(),
+            Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if self.project_settings_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        if let Some(draft) = &mut self.project_settings
+                            && draft.menu_open
+                        {
+                            draft.menu_open = false;
+                            draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+                            return Task::none();
+                        }
+                        return self.close_project_settings();
+                    }
+                    if status == iced::event::Status::Ignored
+                        && matches!(&event, iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {key:iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),modifiers,repeat:false,..}) if modifiers.is_empty())
+                    {
+                        if let Some(draft) = &mut self.project_settings
+                            && draft.menu_open
+                        {
+                            draft.menu_open = false;
+                            draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+                            return Task::none();
+                        }
+                        return self.apply_project_settings();
+                    }
+                    return Task::none();
+                }
+                if self.item_properties_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key,
+                            modifiers,
+                            repeat: false,
+                            ..
+                        }) = &event
+                    {
+                        let toggle = {
+                            let bindings = self
+                                .shortcut_bindings
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            commands::from_shortcut(
+                                &key.as_ref(),
+                                *modifiers,
+                                &bindings,
+                                &self.action_macros,
+                            ) == Some(CommandId::ToggleItemProperties)
+                        };
+                        if toggle {
+                            return self.close_item_properties();
+                        }
+                    }
+                    if matches!(
+                        &event,
+                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                            ..
+                        })
+                    ) {
+                        return self.close_item_properties();
+                    }
+                    return Task::none();
+                }
+                if self.routing_window_id == Some(window_id) {
+                    if matches!(
+                        event,
+                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                            ..
+                        })
+                    ) {
+                        return self.close_track_routing();
+                    }
+                    return Task::none();
+                }
+                if self.action_input_window_id == Some(window_id) {
+                    return self.action_list_keyboard_event(event, status);
+                }
+                if self.action_input_window_id.is_some() {
+                    return Task::none();
+                }
+                if self.action_list_window_id == Some(window_id) {
+                    return self.action_list_keyboard_event(event, status);
+                }
+
                 if let iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) =
                     &event
                 {
                     self.keyboard_modifiers = *modifiers;
+                }
+                if self.shortcut_capture_id.is_some() {
+                    if let Some(message) = keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        self.main_window_id,
+                        self.settings_window_id,
+                        self.shortcut_capture_id.as_deref(),
+                    ) {
+                        return self.update(message);
+                    }
+                    return Task::none();
+                }
+                if self.main_window_id == Some(window_id)
+                    && self.active_menu.is_none()
+                    && status == iced::event::Status::Ignored
+                    && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F10),
+                        modifiers,
+                        repeat: false,
+                        ..
+                    }) = &event
+                    && *modifiers == iced::keyboard::Modifiers::NONE
+                {
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let command = commands::from_shortcut(
+                        &iced::keyboard::Key::Named(iced::keyboard::key::Named::F10),
+                        *modifiers,
+                        &bindings,
+                        &self.action_macros,
+                    );
+                    drop(bindings);
+                    if let Some(command) = command {
+                        return self.update(Message::ExecuteCommand(command));
+                    }
                 }
                 let message = menu_navigation_event(
                     &event,
@@ -2650,6 +3121,17 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.timeline.context_fade.take().is_some() {
+                    return Task::none();
+                }
+                if self.timeline.item_fade_preview().is_some() {
+                    self.cancel_item_fades();
+                    return Task::none();
+                }
+                if self.master_mix_gesture.is_some() {
+                    self.cancel_master_mix();
+                    return Task::none();
+                }
                 if !self.cancel_shortcut_capture() {
                     if self.pending_project_transition.is_some() {
                         self.pending_project_transition = None;
@@ -2680,6 +3162,70 @@ impl App {
             Message::NewProject => {
                 task = self.begin_project_transition(PendingProjectTransition::NewProject)
             }
+            Message::Timeline(timeline::TimelineEvent::SetFadeCurvePreset {
+                item_id,
+                edge,
+                shape,
+            }) => {
+                self.timeline.context_fade = None;
+                if let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                {
+                    let mut fades = item.fades();
+                    let fade = match edge {
+                        timeline::ItemFadeEdge::In => &mut fades.fade_in,
+                        timeline::ItemFadeEdge::Out => &mut fades.fade_out,
+                    };
+                    *fade = aaadaw_core::AudioFade::with_curve(
+                        fade.length_samples(),
+                        aaadaw_core::FadeCurve::current_preset(shape),
+                    )
+                    .expect("validated existing fade length");
+                    if fades != item.fades() {
+                        self.apply_action(
+                            DawAction::SetAudioItemFades { item_id, fades },
+                            "Audio item fade curve changed",
+                        );
+                    }
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::PreviewItemFades { item_id, fades }) => {
+                if self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .any(|item| item.id() == item_id)
+                    && !self
+                        .project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                {
+                    self.timeline.set_item_fade_preview(item_id, fades);
+                    #[cfg(feature = "audio-device")]
+                    if let Some(playback) = &self.playback {
+                        let _ = playback.set_item_fades(item_id, fades);
+                    }
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::CommitItemFades) => {
+                if let Some((item_id, fades)) = self.timeline.take_item_fade_preview()
+                    && self
+                        .project
+                        .audio_items()
+                        .iter()
+                        .any(|item| item.id() == item_id && item.fades() != fades)
+                {
+                    self.apply_action(
+                        DawAction::SetAudioItemFades { item_id, fades },
+                        "Audio item fades changed",
+                    );
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::CancelItemFades) => self.cancel_item_fades(),
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::EndItemTrim) => self.finish_item_trim(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
@@ -2862,6 +3408,16 @@ impl App {
                 }
             }
             #[cfg(feature = "audio-device")]
+            Message::TogglePlayStop => {
+                task = self.update(if self.recording.is_some() || self.recording_starting {
+                    Message::StopRecording
+                } else if self.playback_playing || self.playback_paused {
+                    Message::StopPlayback
+                } else {
+                    Message::StartPlayback
+                });
+            }
+            #[cfg(feature = "audio-device")]
             Message::TogglePlayback => {
                 if self.playback_playing {
                     self.pause_playback();
@@ -2882,6 +3438,15 @@ impl App {
                     self.add_bus_track();
                 }
             }
+            Message::OpenTrackRouting(track_id) => task = self.open_track_routing(track_id),
+            Message::CloseTrackRouting => task = self.close_track_routing(),
+            Message::RoutingChange(action) => {
+                let _ = self.apply_routing_change(action);
+            }
+            Message::RoutingSendDraft(send_id, is_pan, value) => {
+                self.set_routing_send_draft(send_id, is_pan, value)
+            }
+            Message::CommitRoutingSend(send_id) => self.commit_routing_send(send_id),
             Message::SetTrackOutput(track_id, output_track) => {
                 if self.project_graph_edit_busy() {
                     self.status =
@@ -2944,6 +3509,22 @@ impl App {
                 self.begin_track_draft(track_id, TrackDraftField::Name);
             }
             Message::CommitTrackName(track_id) => self.commit_track_name(track_id),
+            Message::TogglePhase(track_id) => {
+                if let Some(track) = self
+                    .project
+                    .tracks()
+                    .iter()
+                    .find(|track| track.id() == track_id)
+                {
+                    self.apply_action(
+                        DawAction::SetTrackPhase {
+                            track_id,
+                            phase_inverted: !track.is_phase_inverted(),
+                        },
+                        "Track polarity changed",
+                    );
+                }
+            }
             Message::ToggleMute(track_id) => {
                 if let Some(track) = self
                     .project
@@ -3022,6 +3603,20 @@ impl App {
             Message::PreviewTrackVolume(track_id, volume_db) => {
                 self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
             }
+            Message::PreviewMasterVolume(value) => {
+                self.preview_master_mix(TrackMixParameter::Volume, value)
+            }
+            Message::PreviewMasterPan(value) => {
+                self.preview_master_mix(TrackMixParameter::Pan, value)
+            }
+            Message::CommitMasterMix => {
+                if self.master_mix_gesture.is_some() {
+                    self.master_mix_commit_at = Some(Instant::now() + Duration::from_millis(350));
+                }
+            }
+            Message::CancelMasterMix => self.cancel_master_mix(),
+            Message::ResetMasterVolume => self.reset_master_mix(TrackMixParameter::Volume),
+            Message::ResetMasterPan => self.reset_master_mix(TrackMixParameter::Pan),
             Message::CancelTrackMixGesture => self.cancel_track_mix_gesture(),
             Message::CommitTrackVolume(track_id) => {
                 self.finish_track_mix_gesture(track_id, TrackMixParameter::Volume);
@@ -3097,6 +3692,7 @@ impl App {
                 );
             }
             Message::Undo => {
+                self.cancel_item_fades();
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 let meter_before = self.project.time_signature_map();
@@ -3118,6 +3714,7 @@ impl App {
                 self.sync_all_track_mix_to_playback();
             }
             Message::Redo => {
+                self.cancel_item_fades();
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 let meter_before = self.project.time_signature_map();
@@ -3181,21 +3778,16 @@ impl App {
             Message::EditActionMacro(id) => self.edit_action_macro(id),
             Message::SaveActionMacro => self.save_action_macro(),
             Message::DeleteActionMacro(id) => self.delete_action_macro(id),
-            Message::ShortcutPressed(key, modifiers) => {
+            Message::ShortcutPressed(input) => {
                 if self.pending_project_transition.is_some() {
                     return Task::none();
                 }
-                let key = match key.as_str() {
-                    " " => iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
-                    "Delete" => iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
-                    character => iced::keyboard::Key::Character(character),
-                };
                 let shortcut = {
                     let bindings = self
                         .shortcut_bindings
                         .read()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    commands::from_shortcut(&key, modifiers, &bindings, &self.action_macros)
+                    commands::from_shortcut_input(&input, &bindings, &self.action_macros)
                         .map(Message::ExecuteCommand)
                 };
                 if let Some(message) = shortcut {
@@ -3219,10 +3811,12 @@ impl App {
                     }
                 } else {
                     self.media_panel_dock.toggle();
+                    self.schedule_desktop_layout_save();
                 }
             }
             Message::MediaPanelResized(split, ratio) => {
                 self.media_panel_dock.resize(split, ratio);
+                self.schedule_desktop_layout_save();
             }
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
@@ -3272,6 +3866,7 @@ impl App {
             }
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
+                self.flush_desktop_layout_if_due();
                 #[cfg(all(feature = "audio-device", target_os = "android"))]
                 if self.settings_category == SettingsCategory::Audio {
                     match crate::android_platform::midi_port_counts() {
@@ -3299,6 +3894,12 @@ impl App {
                     .is_some_and(|deadline| Instant::now() >= deadline)
                 {
                     self.commit_track_mix_gesture();
+                }
+                if self
+                    .master_mix_commit_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    self.commit_master_mix();
                 }
                 #[cfg(feature = "audio-device")]
                 {
@@ -3405,6 +4006,8 @@ impl App {
                     Some(Ok((project, arrangement_view_state, project_lock))) => {
                         self.pending_project_transition = None;
                         self.project_lock = Some(project_lock);
+                        self.routing_track_id = None;
+                        self.routing_send_drafts.clear();
                         self.project = project;
                         self.refresh_tempo_map_edits();
                         self.refresh_meter_map_edits();
@@ -3427,6 +4030,8 @@ impl App {
                         self.clear_track_draft_state();
                         self.track_mix_gesture = None;
                         self.track_mix_commit_at = None;
+                        self.master_mix_gesture = None;
+                        self.master_mix_commit_at = None;
                         self.audio_item_start_edits.clear();
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
@@ -3601,6 +4206,8 @@ impl App {
                             directory,
                             lock: Some(lock),
                         });
+                        self.routing_track_id = None;
+                        self.routing_send_drafts.clear();
                         self.project = project;
                         self.project_path = None;
                         self.project_path_query.clear();
@@ -3715,7 +4322,7 @@ impl App {
             Message::StopPlayback => {
                 self.release_midi_preview();
                 self.finish_fx_automation_write();
-                if self.recording.is_some() {
+                if self.recording.is_some() || self.recording_starting {
                     task = self.stop_recording();
                 } else {
                     task = self.stop_transport_to_start();
@@ -3943,6 +4550,7 @@ impl App {
         let previous_view_state = matches!(
             &event,
             timeline::TimelineEvent::ToggleVolumeAutomation(_)
+                | timeline::TimelineEvent::CycleFolderCompact(_)
                 | timeline::TimelineEvent::ToggleFxAutomation { .. }
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
         )
@@ -3995,6 +4603,8 @@ impl App {
             return;
         }
 
+        self.routing_track_id = None;
+        self.routing_send_drafts.clear();
         self.project = Project::new();
         self.refresh_tempo_map_edits();
         self.refresh_meter_map_edits();
@@ -4033,6 +4643,8 @@ impl App {
         self.clear_track_draft_state();
         self.track_mix_gesture = None;
         self.track_mix_commit_at = None;
+        self.master_mix_gesture = None;
+        self.master_mix_commit_at = None;
         self.audio_item_start_edits.clear();
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
@@ -4040,6 +4652,7 @@ impl App {
     }
 
     fn begin_project_transition(&mut self, transition: PendingProjectTransition) -> Task<Message> {
+        self.cancel_item_fades();
         if self.pending_project_transition.is_some() {
             return Task::none();
         }
@@ -4733,6 +5346,16 @@ impl App {
             }
         };
         let mut candidate = self.shortcut_binding_edits.clone();
+        let binding = if self.shortcut_capture_append {
+            let current = commands::staged_binding_for_id(self, &action_id);
+            if current.is_empty() {
+                binding
+            } else {
+                format!("{current}; {binding}")
+            }
+        } else {
+            binding
+        };
         candidate.insert(action_id, binding.clone());
         match commands::validate_bindings_with_macros(&candidate, &self.action_macros) {
             Ok(bindings) => {
@@ -5672,10 +6295,14 @@ impl App {
     }
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
+        self.cancel_item_fades();
+        let master_mix_before = self.project.master_mix();
+        let publish_item_fades = action_updates_item_fades(&action);
         #[cfg(feature = "audio-device")]
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
             DawAction::SetTrackVolume { track_id, .. }
+            | DawAction::SetTrackPhase { track_id, .. }
             | DawAction::SetTrackPan { track_id, .. } => Some(*track_id),
             _ => None,
         };
@@ -5707,6 +6334,14 @@ impl App {
                 if let Some(track_id) = live_mix_track {
                     self.sync_track_mix_to_playback(track_id);
                 }
+                if self.project.master_mix() != master_mix_before {
+                    self.sync_master_mix_to_playback();
+                }
+                if publish_item_fades {
+                    for item in self.project.audio_items() {
+                        self.sync_item_fades_to_playback(item.id());
+                    }
+                }
                 if let Some(track_id) = live_mute_solo_track {
                     self.sync_track_mute_solo_to_playback(track_id);
                 }
@@ -5726,6 +6361,7 @@ impl App {
             && let Some(playback) = &self.playback
         {
             let _ = playback.set_track_mix(track_id, track.volume_db(), track.pan());
+            let _ = playback.set_track_phase(track_id, track.is_phase_inverted());
         }
         #[cfg(not(feature = "audio-device"))]
         let _ = track_id;
@@ -5746,13 +6382,122 @@ impl App {
         let _ = track_id;
     }
 
+    fn cancel_item_fades(&mut self) {
+        if let Some((item_id, _)) = self.timeline.take_item_fade_preview() {
+            self.sync_item_fades_to_playback(item_id);
+        }
+    }
+
+    fn sync_item_fades_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_fades(item_id, item.fades());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
     fn sync_all_track_mix_to_playback(&self) {
+        self.sync_master_mix_to_playback();
+        for item in self.project.audio_items() {
+            self.sync_item_fades_to_playback(item.id());
+        }
         for track in self.project.tracks() {
             self.sync_track_mix_to_playback(track.id());
         }
     }
 
+    fn sync_master_mix_to_playback(&self) {
+        #[cfg(feature = "audio-device")]
+        if let Some(playback) = &self.playback {
+            playback.set_master_mix(self.project.master_mix());
+        }
+    }
+
+    fn preview_master_mix(&mut self, parameter: TrackMixParameter, value: f32) {
+        if !value.is_finite() {
+            return;
+        }
+        self.cancel_track_mix_gesture();
+        if self
+            .master_mix_gesture
+            .is_some_and(|(active, _)| active != parameter)
+        {
+            if self.master_mix_commit_at.is_some() {
+                self.commit_master_mix();
+            } else {
+                self.cancel_master_mix();
+            }
+        }
+        let current = self
+            .master_mix_gesture
+            .map_or(self.project.master_mix(), |(_, mix)| mix);
+        let mix = match parameter {
+            TrackMixParameter::Volume => aaadaw_core::MasterMix::new(
+                value.clamp(fader::SILENCE_DB, fader::MAX_DB),
+                current.pan(),
+            ),
+            TrackMixParameter::Pan => {
+                aaadaw_core::MasterMix::new(current.volume_db(), value.clamp(-1.0, 1.0))
+            }
+        };
+        if let Ok(mix) = mix {
+            self.master_mix_commit_at = None;
+            self.master_mix_gesture = Some((parameter, mix));
+            #[cfg(feature = "audio-device")]
+            if let Some(playback) = &self.playback {
+                playback.set_master_mix(mix);
+            }
+        }
+    }
+
+    fn commit_master_mix(&mut self) {
+        self.master_mix_commit_at = None;
+        if let Some((_, mix)) = self.master_mix_gesture.take() {
+            if mix != self.project.master_mix() {
+                self.apply_action(DawAction::SetMasterMix { mix }, "Master mix changed");
+            } else {
+                self.sync_master_mix_to_playback();
+            }
+        }
+    }
+
+    fn cancel_master_mix(&mut self) {
+        self.master_mix_commit_at = None;
+        if self.master_mix_gesture.take().is_some() {
+            self.sync_master_mix_to_playback();
+        }
+    }
+
+    fn reset_master_mix(&mut self, parameter: TrackMixParameter) {
+        // A double click's first press can have queued a gesture: replace that preview
+        // so the reset remains one history entry, like the ordinary track controls.
+        if self
+            .master_mix_gesture
+            .is_some_and(|(active, _)| active != parameter)
+        {
+            self.commit_master_mix();
+        }
+        self.cancel_master_mix();
+        let current = self.project.master_mix();
+        let mix = match parameter {
+            TrackMixParameter::Volume => aaadaw_core::MasterMix::new(0.0, current.pan()),
+            TrackMixParameter::Pan => aaadaw_core::MasterMix::new(current.volume_db(), 0.0),
+        }
+        .expect("existing Master controls are validated");
+        if mix != current {
+            self.apply_action(DawAction::SetMasterMix { mix }, "Master mix reset");
+        }
+    }
+
     fn preview_track_mix(&mut self, track_id: TrackId, parameter: TrackMixParameter, value: f32) {
+        self.cancel_master_mix();
         match parameter {
             TrackMixParameter::Volume => {
                 let discarded_draft = self.track_volume_edits.remove(&track_id).is_some();
@@ -5794,7 +6539,9 @@ impl App {
             after_pan: current_pan,
         });
         match parameter {
-            TrackMixParameter::Volume => gesture.after_volume_db = value.clamp(-60.0, 6.0),
+            TrackMixParameter::Volume => {
+                gesture.after_volume_db = value.clamp(fader::SILENCE_DB, fader::MAX_DB)
+            }
             TrackMixParameter::Pan => gesture.after_pan = value.clamp(-1.0, 1.0),
         }
         #[cfg(feature = "audio-device")]
@@ -6494,12 +7241,10 @@ impl App {
                         .project
                         .sample_at_tick(target_start_tick)
                         .map_err(|error| error.to_string())?;
-                    actions.push(DawAction::InsertAudioItem {
+                    actions.push(DawAction::DuplicateAudioItemAt {
+                        item_id: item.id(),
                         track_id: target_track_id,
-                        media_ref: item.media_ref().to_owned(),
                         start_sample: target_sample,
-                        source_offset_samples: item.source_offset_samples(),
-                        length_samples: item.length_samples(),
                     });
                 } else {
                     actions.push(DawAction::DuplicateMidiItemToTrack {
@@ -6616,8 +7361,16 @@ impl App {
             return;
         };
         let target_index = match direction {
-            -1 => index.checked_sub(1),
-            1 if index + 1 < self.project.tracks().len() => Some(index + 1),
+            -1 => (0..index).rev().find(|candidate| {
+                self.project
+                    .folder_depth(self.project.tracks()[*candidate].id())
+                    <= self.project.folder_depth(track_id)
+            }),
+            1 => self
+                .project
+                .tracks()
+                .get(index + self.project.track_subtree_len(track_id))
+                .map(|next| index + self.project.track_subtree_len(next.id())),
             _ => None,
         };
         let Some(target_index) = target_index else {
@@ -7770,14 +8523,21 @@ fn parse_midi_item_name_draft(text: &str) -> Result<String, &'static str> {
 }
 
 fn parse_track_volume_draft(text: &str) -> Result<f32, &'static str> {
+    if matches!(
+        text.trim().to_lowercase().as_str(),
+        "-inf" | "−inf" | "-∞" | "−∞"
+    ) {
+        return Ok(fader::SILENCE_DB);
+    }
     let value = text
         .trim()
         .parse::<f32>()
         .map_err(|_| "Enter a valid volume in dB")?;
-    if !value.is_finite() {
+    if !value.is_finite() || !10.0_f32.powf(value / 20.0).is_finite() {
         return Err("Enter a finite volume in dB");
     }
-    Ok(value.clamp(-60.0, 6.0))
+    // REAPER's precise entry can exceed the display fader range (e.g. +20 dB).
+    Ok(value)
 }
 
 fn parse_track_pan_draft(text: &str) -> Result<f32, &'static str> {
@@ -8157,7 +8917,8 @@ fn menu_navigation_event(
     };
     let navigation = match key.as_ref() {
         iced::keyboard::Key::Named(iced::keyboard::key::Named::F10)
-            if status == iced::event::Status::Ignored =>
+            if status == iced::event::Status::Ignored
+                && *modifiers == iced::keyboard::Modifiers::NONE =>
         {
             MenuNavigation::Open
         }
@@ -8303,6 +9064,8 @@ fn keyboard_shortcut_event(
         let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             key,
             modifiers,
+            physical_key,
+            location,
             repeat: false,
             ..
         }) = event
@@ -8310,41 +9073,32 @@ fn keyboard_shortcut_event(
             return None;
         };
         return match key.as_ref() {
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+                if modifiers == iced::keyboard::Modifiers::NONE =>
+            {
                 Some(Message::CancelShortcutCapture)
             }
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace)
+                if modifiers == iced::keyboard::Modifiers::NONE =>
+            {
                 Some(Message::ClearShortcutBinding(action_id.to_owned()))
             }
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+            _ => {
+                let input = shortcut::ShortcutInput {
+                    logical_key: key,
+                    physical_key,
+                    location,
+                    modifiers: iced::keyboard::Modifiers::NONE,
+                };
+                let key = shortcut::Shortcut::capture_input(&input)
+                    .map(|key| key.config_label())
+                    .unwrap_or_else(|_| "Unidentified".to_owned());
                 Some(Message::ShortcutCaptureKey {
                     action_id: action_id.to_owned(),
-                    key: "Delete".to_owned(),
+                    key,
                     modifiers,
                 })
             }
-            iced::keyboard::Key::Character(character) => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: character.to_owned(),
-                modifiers,
-            }),
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
-                Some(Message::ShortcutCaptureKey {
-                    action_id: action_id.to_owned(),
-                    key: "Space".to_owned(),
-                    modifiers,
-                })
-            }
-            iced::keyboard::Key::Named(named) => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: format!("{named:?}"),
-                modifiers,
-            }),
-            iced::keyboard::Key::Unidentified => Some(Message::ShortcutCaptureKey {
-                action_id: action_id.to_owned(),
-                key: "Unidentified".to_owned(),
-                modifiers,
-            }),
         };
     }
     if main_window_id != Some(window_id) {
@@ -8365,27 +9119,32 @@ fn keyboard_shortcut_event(
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key,
         modifiers,
+        physical_key,
+        location,
         repeat: false,
         ..
     }) = event
     else {
         return None;
     };
-    match key.as_ref() {
-        iced::keyboard::Key::Character(character) => {
-            Some(Message::ShortcutPressed(character.to_owned(), modifiers))
+    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+        && modifiers == iced::keyboard::Modifiers::NONE
+    {
+        Some(Message::Escape)
+    } else {
+        let input = shortcut::ShortcutInput {
+            logical_key: key,
+            physical_key,
+            location,
+            modifiers,
+        };
+        if input.logical_key == iced::keyboard::Key::Unidentified
+            && shortcut::Shortcut::capture_input(&input).is_err()
+        {
+            None
+        } else {
+            Some(Message::ShortcutPressed(input))
         }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Space) => {
-            Some(Message::ShortcutPressed(" ".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
-            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
-            Some(Message::ShortcutPressed("Delete".to_owned(), modifiers))
-        }
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => Some(Message::Escape),
-        _ => None,
     }
 }
 

@@ -72,7 +72,10 @@ fn project_with_audio_item_at(
     start_sample: u64,
     length_samples: u64,
 ) -> Project {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -593,7 +596,10 @@ fn stereo_source_trim_advances_left_and_right_together() {
     store
         .import_audio_asset("asset://stereo-trim", "trim.wav", Cursor::new(&wav))
         .expect("stereo WAV should embed");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

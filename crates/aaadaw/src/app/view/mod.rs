@@ -21,15 +21,18 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+mod action_list;
 mod arrangement;
 mod fx_chain;
 mod item_inspector;
+mod item_properties;
 mod media;
 mod menu;
 mod midi_editor;
 mod mixer;
 mod plugin_picker;
 mod render;
+mod routing;
 mod settings;
 mod tempo_map;
 mod tokens;
@@ -78,6 +81,16 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
             .main_window_size
             .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
         mobile_view(app, size.width, size.height)
+    } else if app.item_properties_window_id == Some(window_id) {
+        item_properties::view(app)
+    } else if app.routing_window_id == Some(window_id) {
+        routing::view(app)
+    } else if app.action_input_window_id == Some(window_id) {
+        action_list::input_view(app)
+    } else if app.action_list_window_id == Some(window_id) {
+        action_list::view(app)
+    } else if app.project_settings_window_id == Some(window_id) {
+        super::project_settings::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.render_window_id == Some(window_id) {
@@ -97,7 +110,7 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     responsive(move |size| {
-        if cfg!(target_os = "android") || size.width < 720.0 {
+        if app.is_mobile_main_window() {
             mobile_view(app, size.width, size.height)
         } else {
             desktop_view(app)
@@ -109,10 +122,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 fn desktop_view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
-    let workspace: Element<'_, Message> = match app.main_workspace {
-        super::MainWorkspace::Arrangement if app.media_panel_dock.open => docked_arrangement(app),
-        super::MainWorkspace::Arrangement => arrangement::view(app),
-        super::MainWorkspace::Mixer => mixer::view(app),
+    let workspace = if app.media_panel_dock.panes.is_some() {
+        docked_arrangement(app)
+    } else {
+        arrangement_with_transport(app)
     };
     let status_text = app.status.clone();
 
@@ -197,10 +210,6 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING),
         );
     }
-    let transport = container(transport_view(app))
-        .width(Length::Fill)
-        .padding(tokens::PANEL_PADDING)
-        .style(iced::widget::container::rounded_box);
     let offline_job_count = usize::from(app.offline_render_busy) + app.offline_job_queue.len();
     let status_row = row![
         text(status_text).width(Length::Fill),
@@ -211,7 +220,7 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(tokens::SECTION_GAP)
     .align_y(Alignment::Center);
-    content = content.push(workspace).push(status_row).push(transport);
+    content = content.push(workspace).push(status_row);
     let base: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -375,6 +384,7 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
         super::MobilePanel::MidiEditor => midi_editor::mobile_view(app),
         super::MobilePanel::MediaBrowser => media::mobile_view(app),
         super::MobilePanel::Settings => settings::view(app),
+        super::MobilePanel::Routing => routing::view(app),
         super::MobilePanel::TimeMap => tempo_map::mobile_view(app),
         super::MobilePanel::FxChain => fx_chain::mobile_view(app),
         super::MobilePanel::PluginPicker => plugin_picker::mobile_view(app),
@@ -500,6 +510,18 @@ fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecovery
     })
 }
 
+fn arrangement_with_transport(app: &App) -> Element<'_, Message> {
+    column![
+        arrangement::view(app),
+        container(transport_view(app))
+            .width(Length::Fill)
+            .padding(tokens::PANEL_PADDING)
+    ]
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
 fn docked_arrangement(app: &App) -> Element<'_, Message> {
     let panes = app
         .media_panel_dock
@@ -508,8 +530,9 @@ fn docked_arrangement(app: &App) -> Element<'_, Message> {
         .expect("the Media Browser dock initializes its pane grid before opening");
     pane_grid(panes, |_pane, content, _is_maximized| {
         let body: Element<'_, Message> = match content {
-            super::MainPane::Arrangement => arrangement::view(app),
+            super::MainPane::Arrangement => arrangement_with_transport(app),
             super::MainPane::MediaBrowser => media::dock_view(app),
+            super::MainPane::Mixer => mixer::view(app),
         };
         pane_grid::Content::new(body)
     })
@@ -654,6 +677,7 @@ fn transport_view(app: &App) -> Element<'_, Message> {
         };
         container(content).width(Length::Fill).into()
     })
+    .height(Length::Shrink)
     .into()
 }
 
@@ -747,16 +771,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         || (!app.playback_busy && app.playback.is_some());
     let can_record = playback_available && !preparation_busy && app.recording.is_none();
     row![
-        button(if app.playback_playing {
-            "Pause"
-        } else {
-            "Play"
-        })
-        .on_press_maybe(can_play.then_some(if app.playback_playing {
-            Message::TogglePlayback
-        } else {
-            Message::StartPlayback
-        })),
+        button("Play").on_press_maybe(can_play.then_some(Message::StartPlayback)),
+        button("Pause").on_press_maybe(can_play.then_some(Message::TogglePlayback)),
         button("Stop").on_press_maybe(if app.recording.is_some() || app.recording_starting {
             Some(Message::StopRecording)
         } else {

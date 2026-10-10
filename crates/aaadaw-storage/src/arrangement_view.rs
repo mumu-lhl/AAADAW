@@ -4,8 +4,16 @@
 /// restore entries whose track and FX instance still exist in the loaded project.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArrangementViewState {
+    pub folder_compact: Vec<FolderCompactViewState>,
     pub volume_lanes: Vec<VolumeAutomationLaneViewState>,
     pub fx_lanes: Vec<FxAutomationLaneViewState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FolderCompactViewState {
+    pub track_id: u64,
+    /// 0: normal, 1: small children, 2: tiny children.
+    pub mode: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
