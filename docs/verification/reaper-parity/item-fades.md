@@ -9,7 +9,7 @@
 
 API `AddMediaItemToTrack` 创建路径默认淡入/淡出各 0.01 秒；界面媒体插入路径 `InsertMedia` 则默认两者均为零。两条路径的默认形状均为 1。自动长度与方向均为零。不能把 API 创建默认长度错误应用到每次文件导入。
 
-归一化位置 `x` 从零到一，七种手动淡入曲线实测为：
+归一化位置 `x` 从零到一，七种兼容形状（`C_FADEINSHAPE` / `C_FADEOUTSHAPE`）的淡入曲线实测为：
 
 | 原厂编号 | 曲线 |
 | --- | --- |
@@ -57,3 +57,28 @@ ItemFadeController 按固定图中的 ItemId 发布完整淡入/淡出参数对�
 SetAudioItemFades 使用独立的参数事件，允许播放中的单项 Undo/Redo；事件只改淡化，不覆盖 Item 位置、媒体或其他参数。App 同步普通提交与含淡化的批事务；历史操作同步当前所有淡化。批事务整体历史在播放期间仍沿用现有非实时历史守卫，未将所有混合结构编辑错误归类为实时安全。
 
 21 项相关回归通过；最终 audio-device 全 workspace 822 项通过、零跳过，默认 Clippy warnings denied 通过。新增真实 PCM 更新/Undo/Redo、固定图中未知 Item 拒绝、控制写入中途停顿和并发完整参数对校验。回调分配检测新增非默认小数长度的实时发布，仍为零分配。GUI 手柄与预览状态仍未接入，原厂自动 Crossfade、方向和批量鼠标修饰键仍待推进。
+
+
+## REAPER 7.81+ 连续曲率与 S 参数
+
+[官方 ReaScript API](https://www.reaper.fm/sdk/reascript/reascripthelp.html#GetMediaItemInfo_Value)说明 `D_FADEINDIR_NEW` / `D_FADEOUTDIR_NEW` 和 `D_FADEINDIR2_NEW` / `D_FADEOUTDIR2_NEW` 是 7.81 后的连续曲率/S 参数，均为 −1..1。旧 C_FADE* 编号不能独立表达全部 7.82 曲线。
+
+补充自有渲染探针测量 13 个连续/混合参数案例；结合前 12 个案例，逐帧核对共 25 个双声道、48,000 帧输出，即 2,400,000 个声道采样点。全部误差不超过 `4.768372e-7`，小于一个 24 位 PCM 量化步长；见 [散列与误差](item-fade-curvature-reference.json)。这证明记录的输入网格与案例，未把有限案例称为任意输入的全量 UI 验收。
+
+测得曲率先在 `x` 上作变换，再应用 S 变换。定义 `P(x,a)`：`a<=0.5` 时线性插值 `x` 与 `x²`，权重 `2a`；否则插值 `x²` 与 `x⁴`，权重 `2a-1`。负曲率取 `P(x,abs(c))`，非负取 `1-P(1-x,c)`。正 S 在半段分别计算 `0.5*P(2x,s)` 与 `1-0.5*P(2(1-x),s)`；负 S 使用对应反向半段。组合 c=0.25 / s=0.5 的逐帧数据确认计算顺序。
+
+不能仅存两个曲率值后丢掉兼容模式：旧 Smooth 的 getter 也返回 c=0 / s=0.5，但其在 x=0.25 的增益是 0.15625；显式设置新 S=0.5 后增益为 0.125。自有 [参数探针](../../../scripts/reaper_parity/probe-item-fade-parameters.lua)和 [状态事实](item-fade-parameter-reference.txt)显示，Item 的公开 state chunk 分别保留兼容标志和 `FADE_NEW_PARAMETERS`，与真实输出差异相符。未通过相同 getter 值臆测两种模式等价。
+
+领域新增 `FadeCurve::Legacy` / `Native` 和验证过的 `FadeCurveParameters`；默认与 schema 25 保留已有兼容曲线，显式新曲线保留完整模式及两个参数。schema 26 的 `audio_item_fade_curves` 只存非兼容曲线的可空参数对；旧行不覆盖。加载拒绝不完整、越界、非有限参数及孤立行，事务写入和删除包含曲线表。实时控制将模式和四个曲率数值纳入同一个有界快照，避免模式与参数混读。
+
+最终 audio-device 全 workspace 825 项通过、零跳过；默认 Clippy warnings denied 通过。24 项相关回归通过；测量常量明确为 f64 后，5 项曲线集成回归再次通过。回归包括连续曲率的独立 PCM 点、81 组参数的边界/单调性、兼容/新模式的实际输出差异、混合模式保存与 schema 25 保留、非法参数对拒绝、同图 live 更新、跨模式并发发布和非默认曲率下零回调分配。
+
+迁移测试最初误把只读打开视为迁移入口，已修正测试：旧 schema 只读拒绝且字节不变，可写入口升级后保留原曲线。未改动产品的只读约定。GUI 手柄和连续曲率编辑尚未接入。
+
+## 默认淡化偏好与鼠标行为观察
+
+实机 Preferences → Project → Item Fade Defaults：默认 Fade in/out 和 Crossfade 均为 0:00.010；Imported media items 的 Fade in/out **未勾选**，Recorded media items 与 Split media items **勾选**，各自 Crossfade 为 No crossfade；限制 split 淡化到 50 pixels 未勾选，对 MIDI 应用淡化偏好未勾选。相同默认长度不能用于所有创建路径；录音和分割的自动淡化尚待实施。
+
+Preferences → Editing Behavior → Mouse Modifiers，Context=Media item fade/autocrossfade / left drag：默认 Move fade ignoring snap；Shift 为 Move crossfade ignoring snap；Ctrl 还忽略 selection/grouping；Alt 涉及 stretch crossfaded items；Ctrl+Alt 为 relative edge edit。单个无 Crossfade Item 的普通/Shift 小幅拖动均保留非网格值，与默认绑定相符；不把这些例子当作选中集合/交叉淡化/拉伸/相对边缘全部行为通过。
+
+[鼠标探针](../../../scripts/reaper_parity/probe-item-fade-interaction.lua)只在空白独立工程中插入自有媒体，逐帧记录屏幕指针、命中 Item、长度与兼容形状。初次自动化使用的指针定位/warp 事件未改变淡化；改用 Linux XTestFakeMotionEvent 后，实际参数连续更新。例如 130 像素位移生成 0.482912332838 秒，随后 6 像素位移生成 0.505200594354 秒，Ctrl+Z 恢复前值。故不以先前工具事件失败认定产品手柄有 bug，也不硬套 Trim 的默认吸附行为。参照截图只保存在 scratch。

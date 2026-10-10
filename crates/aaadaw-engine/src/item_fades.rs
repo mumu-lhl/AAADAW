@@ -1,4 +1,4 @@
-use aaadaw_core::{AudioFade, AudioItemFades, FadeShape, ItemId};
+use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape, ItemId};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU8, AtomicU64, Ordering},
@@ -10,18 +10,45 @@ struct SharedFade {
     fade_in: AtomicU64,
     fade_out: AtomicU64,
     shapes: AtomicU8,
+    parameters: [AtomicU64; 4],
+}
+
+fn encode_curve(curve: FadeCurve) -> (u8, [u64; 2]) {
+    match curve {
+        FadeCurve::Legacy(shape) => (shape.code(), [0, 0]),
+        FadeCurve::Native(parameters) => (
+            8,
+            [
+                parameters.curvature().to_bits(),
+                parameters.s_parameter().to_bits(),
+            ],
+        ),
+    }
+}
+
+fn decode_curve(code: u8, parameters: [u64; 2]) -> FadeCurve {
+    if code == 8 {
+        FadeCurve::Native(
+            FadeCurveParameters::new(f64::from_bits(parameters[0]), f64::from_bits(parameters[1]))
+                .expect("validated curve parameters"),
+        )
+    } else {
+        FadeCurve::Legacy(FadeShape::from_code(code).expect("validated fade shape"))
+    }
 }
 
 impl SharedFade {
     fn new(fades: AudioItemFades) -> Self {
+        let (in_code, in_params) = encode_curve(fades.fade_in.curve());
+        let (out_code, out_params) = encode_curve(fades.fade_out.curve());
         Self {
             writer: Mutex::new(()),
             sequence: AtomicU64::new(0),
             fade_in: AtomicU64::new(fades.fade_in.length_samples().to_bits()),
             fade_out: AtomicU64::new(fades.fade_out.length_samples().to_bits()),
-            shapes: AtomicU8::new(
-                fades.fade_in.shape().code() | (fades.fade_out.shape().code() << 4),
-            ),
+            shapes: AtomicU8::new(in_code | (out_code << 4)),
+            parameters: [in_params[0], in_params[1], out_params[0], out_params[1]]
+                .map(AtomicU64::new),
         }
     }
 
@@ -31,15 +58,22 @@ impl SharedFade {
             .writer
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let (in_code, in_params) = encode_curve(fades.fade_in.curve());
+        let (out_code, out_params) = encode_curve(fades.fade_out.curve());
         self.sequence.fetch_add(1, Ordering::SeqCst);
         self.fade_in
             .store(fades.fade_in.length_samples().to_bits(), Ordering::SeqCst);
         self.fade_out
             .store(fades.fade_out.length_samples().to_bits(), Ordering::SeqCst);
-        self.shapes.store(
-            fades.fade_in.shape().code() | (fades.fade_out.shape().code() << 4),
-            Ordering::SeqCst,
-        );
+        self.shapes
+            .store(in_code | (out_code << 4), Ordering::SeqCst);
+        for (atomic, value) in
+            self.parameters
+                .iter()
+                .zip([in_params[0], in_params[1], out_params[0], out_params[1]])
+        {
+            atomic.store(value, Ordering::SeqCst);
+        }
         self.sequence.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -75,17 +109,21 @@ impl ItemFadeReader {
                 let fade_in = shared.fade_in.load(Ordering::SeqCst);
                 let fade_out = shared.fade_out.load(Ordering::SeqCst);
                 let shapes = shared.shapes.load(Ordering::SeqCst);
+                let parameters = shared
+                    .parameters
+                    .each_ref()
+                    .map(|value| value.load(Ordering::SeqCst));
                 if shared.sequence.load(Ordering::SeqCst) == before {
                     // Publication only accepts validated domain values.
                     self.cached = AudioItemFades {
-                        fade_in: AudioFade::new(
+                        fade_in: AudioFade::with_curve(
                             f64::from_bits(fade_in),
-                            FadeShape::from_code(shapes & 15).expect("validated fade shape"),
+                            decode_curve(shapes & 15, [parameters[0], parameters[1]]),
                         )
                         .expect("validated duration"),
-                        fade_out: AudioFade::new(
+                        fade_out: AudioFade::with_curve(
                             f64::from_bits(fade_out),
-                            FadeShape::from_code(shapes >> 4).expect("validated fade shape"),
+                            decode_curve(shapes >> 4, [parameters[2], parameters[3]]),
                         )
                         .expect("validated duration"),
                     };
@@ -148,7 +186,18 @@ mod tests {
     #[test]
     fn concurrent_publish_never_reads_a_torn_duration_or_shape_pair() {
         let first = pair(1.0, FadeShape::Smooth);
-        let second = pair(9.0, FadeShape::Linear);
+        let second = AudioItemFades {
+            fade_in: AudioFade::with_curve(
+                9.0,
+                FadeCurve::Native(FadeCurveParameters::new(0.25, -0.5).unwrap()),
+            )
+            .unwrap(),
+            fade_out: AudioFade::with_curve(
+                9.5,
+                FadeCurve::Native(FadeCurveParameters::new(-0.25, 0.5).unwrap()),
+            )
+            .unwrap(),
+        };
         let shared = Arc::new(SharedFade::new(first));
         let mut reader = ItemFadeReader {
             shared: Some(shared.clone()),

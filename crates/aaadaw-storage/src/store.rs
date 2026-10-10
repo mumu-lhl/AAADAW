@@ -22,7 +22,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 25;
+pub const CURRENT_SCHEMA_VERSION: u32 = 26;
+
+const MIGRATION_26: &str = "CREATE TABLE IF NOT EXISTS audio_item_fade_curves(item_id INTEGER PRIMARY KEY REFERENCES audio_item_fades(item_id) ON DELETE CASCADE, in_curvature REAL, in_s REAL, out_curvature REAL, out_s REAL, CHECK((in_curvature IS NULL) = (in_s IS NULL)), CHECK((out_curvature IS NULL) = (out_s IS NULL)), CHECK(in_curvature BETWEEN -1 AND 1 AND in_s BETWEEN -1 AND 1), CHECK(out_curvature BETWEEN -1 AND 1 AND out_s BETWEEN -1 AND 1), CHECK(in_curvature IS NOT NULL OR out_curvature IS NOT NULL));";
 
 const MIGRATION_25: &str = "CREATE TABLE IF NOT EXISTS audio_item_fades(item_id INTEGER PRIMARY KEY REFERENCES audio_items(id) ON DELETE CASCADE, fade_in_samples REAL NOT NULL CHECK(fade_in_samples >= 0), fade_out_samples REAL NOT NULL CHECK(fade_out_samples >= 0), fade_in_shape INTEGER NOT NULL CHECK(fade_in_shape BETWEEN 0 AND 6), fade_out_shape INTEGER NOT NULL CHECK(fade_out_shape BETWEEN 0 AND 6));";
 
@@ -2435,6 +2437,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             23 => transaction.execute_batch(MIGRATION_23)?,
             24 => transaction.execute_batch(MIGRATION_24)?,
             25 => transaction.execute_batch(MIGRATION_25)?,
+            26 => transaction.execute_batch(MIGRATION_26)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2457,6 +2460,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
+    transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
     transaction.execute("DELETE FROM audio_item_fades", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
@@ -2601,8 +2605,14 @@ fn write_snapshot(
         )?;
         transaction.execute(
             "INSERT INTO audio_item_fades(item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), item.fades.fade_in.shape().code(), item.fades.fade_out.shape().code()],
+            params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), legacy_fade_code(item.fades.fade_in.curve()), legacy_fade_code(item.fades.fade_out.curve())],
         )?;
+        let in_parameters = native_fade_parameters(item.fades.fade_in.curve());
+        let out_parameters = native_fade_parameters(item.fades.fade_out.curve());
+        if in_parameters.is_some() || out_parameters.is_some() {
+            transaction.execute("INSERT INTO audio_item_fade_curves(item_id, in_curvature, in_s, out_curvature, out_s) VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![to_sql_integer(item.id)?, in_parameters.map(|p| p.curvature()), in_parameters.map(|p| p.s_parameter()), out_parameters.map(|p| p.curvature()), out_parameters.map(|p| p.s_parameter())])?;
+        }
     }
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
@@ -3010,7 +3020,58 @@ fn read_volume_automation(
     Ok(points_by_track)
 }
 
+fn legacy_fade_code(curve: aaadaw_core::FadeCurve) -> u8 {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(shape) => shape.code(),
+        aaadaw_core::FadeCurve::Native(_) => 0,
+    }
+}
+
+fn native_fade_parameters(
+    curve: aaadaw_core::FadeCurve,
+) -> Option<aaadaw_core::FadeCurveParameters> {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(_) => None,
+        aaadaw_core::FadeCurve::Native(parameters) => Some(parameters),
+    }
+}
+
+fn read_native_fade_curve(
+    curvature: Option<f64>,
+    s: Option<f64>,
+) -> Result<Option<aaadaw_core::FadeCurve>, StorageError> {
+    match (curvature, s) {
+        (None, None) => Ok(None),
+        (Some(curvature), Some(s)) => aaadaw_core::FadeCurveParameters::new(curvature, s)
+            .map(|p| Some(aaadaw_core::FadeCurve::Native(p)))
+            .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        _ => Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+    }
+}
+
 fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {
+    let mut curves = HashMap::new();
+    let mut curve_statement = connection.prepare(
+        "SELECT item_id, in_curvature, in_s, out_curvature, out_s FROM audio_item_fade_curves",
+    )?;
+    let curve_rows = curve_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<f64>>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+            row.get::<_, Option<f64>>(3)?,
+            row.get::<_, Option<f64>>(4)?,
+        ))
+    })?;
+    for row in curve_rows {
+        let (id, in_curvature, in_s, out_curvature, out_s) = row?;
+        let fade_in = read_native_fade_curve(in_curvature, in_s)?;
+        let fade_out = read_native_fade_curve(out_curvature, out_s)?;
+        if fade_in.is_none() && fade_out.is_none() {
+            return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+        }
+        curves.insert(from_sql_u64(id)?, (fade_in, fade_out));
+    }
     let mut fades = HashMap::new();
     let mut fade_statement = connection.prepare("SELECT item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape FROM audio_item_fades")?;
     let fade_rows = fade_statement.query_map([], |row| {
@@ -3027,14 +3088,25 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
         let in_shape = aaadaw_core::FadeShape::from_code(in_shape).ok_or_else(invalid)?;
         let out_shape = aaadaw_core::FadeShape::from_code(out_shape).ok_or_else(invalid)?;
+        let (in_curve, out_curve) = curves.remove(&from_sql_u64(id)?).unwrap_or((None, None));
         fades.insert(
             from_sql_u64(id)?,
             aaadaw_core::AudioItemFades {
-                fade_in: aaadaw_core::AudioFade::new(fade_in, in_shape).map_err(|_| invalid())?,
-                fade_out: aaadaw_core::AudioFade::new(fade_out, out_shape)
-                    .map_err(|_| invalid())?,
+                fade_in: aaadaw_core::AudioFade::with_curve(
+                    fade_in,
+                    in_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(in_shape)),
+                )
+                .map_err(|_| invalid())?,
+                fade_out: aaadaw_core::AudioFade::with_curve(
+                    fade_out,
+                    out_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(out_shape)),
+                )
+                .map_err(|_| invalid())?,
             },
         );
+    }
+    if !curves.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
     }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \

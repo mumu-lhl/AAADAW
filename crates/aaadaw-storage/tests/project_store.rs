@@ -2370,3 +2370,94 @@ fn item_fades_roundtrip_readonly_legacy_default_and_invalid_values() {
     store.close().unwrap();
     remove_database(&path);
 }
+
+#[test]
+fn native_fade_mode_roundtrip_and_schema25_legacy_shape_preservation() {
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    let native = AudioItemFades {
+        fade_in: AudioFade::with_curve(
+            12_000.5,
+            FadeCurve::Native(FadeCurveParameters::new(0.25, 0.5).unwrap()),
+        )
+        .unwrap(),
+        fade_out: AudioFade::new(60_000.25, FadeShape::Smooth).unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: native,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let loaded = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(loaded.snapshot(), project.snapshot());
+    assert_eq!(loaded.audio_items()[0].fades(), native);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON; UPDATE audio_item_fade_curves SET in_s = NULL;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    let mut store = ProjectStore::open(&path).unwrap();
+    let legacy = AudioItemFades {
+        fade_in: AudioFade::new(12_000.0, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(12_000.0, FadeShape::SteepSmooth).unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: legacy,
+        })
+        .unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE audio_item_fade_curves; PRAGMA user_version = 25;")
+        .unwrap();
+    drop(connection);
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion {
+            found: 25,
+            required: CURRENT_SCHEMA_VERSION
+        })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let store = ProjectStore::open(&path).unwrap();
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.audio_items()[0].fades(), legacy);
+    assert_eq!(
+        loaded.audio_items()[0].fades().gain_at(3000, 48_000),
+        0.15625
+    );
+    assert_eq!(loaded.snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}

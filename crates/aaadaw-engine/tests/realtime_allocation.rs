@@ -248,9 +248,15 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             fades.set_fades(
                 audio_item_id,
                 aaadaw_core::AudioItemFades {
-                    fade_in: aaadaw_core::AudioFade::new(
+                    fade_in: aaadaw_core::AudioFade::with_curve(
                         if index % 2 == 0 { 256.5 } else { 512.5 },
-                        aaadaw_core::FadeShape::Smooth
+                        aaadaw_core::FadeCurve::Native(
+                            aaadaw_core::FadeCurveParameters::new(
+                                if index % 2 == 0 { -0.25 } else { 0.25 },
+                                if index % 2 == 0 { -0.5 } else { 0.5 },
+                            )
+                            .unwrap()
+                        ),
                     )
                     .unwrap(),
                     fade_out: aaadaw_core::AudioFade::default(),

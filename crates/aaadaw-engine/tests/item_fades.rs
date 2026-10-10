@@ -127,6 +127,31 @@ fn live_fade_publication_and_history_change_real_pcm_without_graph_replacement()
     controller.set_fades(item_id, project.audio_items()[0].fades());
     graph.render_into(&mut output).unwrap();
     assert_eq!(output[0], [0.0625, 0.125]);
+    let native = AudioItemFades {
+        fade_in: AudioFade::with_curve(
+            48.0,
+            aaadaw_core::FadeCurve::Native(
+                aaadaw_core::FadeCurveParameters::new(0.0, 0.5).unwrap(),
+            ),
+        )
+        .unwrap(),
+        fade_out: AudioFade::default(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: native,
+        })
+        .unwrap();
+    assert!(controller.set_fades(item_id, native));
+    graph.render_into(&mut output).unwrap();
+    for (index, frame) in output.iter().enumerate() {
+        let x = (32 + index) as f32 / 48.0;
+        let gain = 1.0 - 2.0 * (1.0 - x).powi(2);
+        assert!((frame[0] - 0.125 * gain).abs() < 1e-6);
+        assert!((frame[1] - 0.25 * gain).abs() < 1e-6);
+    }
+
     project
         .apply(DawAction::DuplicateAudioItemAt {
             item_id,

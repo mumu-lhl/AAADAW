@@ -97,3 +97,7 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 ## 已实现 schema 25 切片
 
 `audio_item_fades` 用 ItemId 保存两端手动淡化的小数采样长度及形状 0–6，外键删除级联；事务另显式清理旧行。旧 Item 无行时恢复零长度、形状 1，不改变旧音频。加载拒绝非法形状、非有限/负长度和孤立行，长度可以超出 Item；渲染计算有效长度而不覆盖请求值。完整 Item 复制保留淡化，移动和修剪同样保留。实时发布与独立参数历史已接入；GUI 手势及自动 Crossfade 是后续切片。
+
+## 已实现 schema 26 连续淡化曲率
+
+新增 `audio_item_fade_curves` 表，为每个淡化 Item 保留两端可选的新曲率/S 参数对。无行表示 schema 25 的兼容曲线，getter 返回相同数值并不丢弃旧模式。外键指向 `audio_item_fades`，事务先清理曲率表再清理淡化/Item。空值必须成对，至少一端为新模式，值受 −1..1 范围与领域有限值检查。旧工程只读打开仍拒绝旧 schema；应先经现有可写迁移入口升级，不能在只读打开时悄悄写文件。

@@ -47,12 +47,89 @@ impl FadeShape {
     }
 }
 
+/// Continuous curvature and S controls introduced by REAPER 7.81.
+/// These differ from compatibility presets: native S=0.5 is piecewise
+/// quadratic, while the legacy Smooth preset remains cubic.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FadeCurveParameters {
+    curvature: f64,
+    s_parameter: f64,
+}
+
+// Validated finite values exclude NaN.
+impl Eq for FadeCurveParameters {}
+
+impl FadeCurveParameters {
+    pub fn new(curvature: f64, s_parameter: f64) -> Result<Self, ActionError> {
+        if !curvature.is_finite()
+            || !s_parameter.is_finite()
+            || !(-1.0..=1.0).contains(&curvature)
+            || !(-1.0..=1.0).contains(&s_parameter)
+        {
+            return Err(ActionError::InvalidAudioItemFade);
+        }
+        Ok(Self {
+            curvature,
+            s_parameter,
+        })
+    }
+    pub fn curvature(self) -> f64 {
+        self.curvature
+    }
+    pub fn s_parameter(self) -> f64 {
+        self.s_parameter
+    }
+    fn gain(self, x: f64) -> f64 {
+        let x = if self.curvature < 0.0 {
+            blend_power(x, -self.curvature)
+        } else {
+            1.0 - blend_power(1.0 - x, self.curvature)
+        };
+        if self.s_parameter >= 0.0 {
+            if x < 0.5 {
+                0.5 * blend_power(2.0 * x, self.s_parameter)
+            } else {
+                1.0 - 0.5 * blend_power(2.0 * (1.0 - x), self.s_parameter)
+            }
+        } else if x < 0.5 {
+            0.5 * (1.0 - blend_power(1.0 - 2.0 * x, -self.s_parameter))
+        } else {
+            0.5 + 0.5 * blend_power(2.0 * x - 1.0, -self.s_parameter)
+        }
+    }
+}
+
+fn blend_power(x: f64, amount: f64) -> f64 {
+    let squared = x * x;
+    if amount <= 0.5 {
+        x + (squared - x) * (amount * 2.0)
+    } else {
+        squared + (squared * squared - squared) * ((amount - 0.5) * 2.0)
+    }
+}
+
+/// Preserve the rendering mode, not just approximate legacy shape codes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FadeCurve {
+    Legacy(FadeShape),
+    Native(FadeCurveParameters),
+}
+
+impl FadeCurve {
+    fn gain(self, x: f64) -> f64 {
+        match self {
+            Self::Legacy(shape) => shape.gain(x),
+            Self::Native(parameters) => parameters.gain(x),
+        }
+    }
+}
+
 /// A validated manual fade duration in fractional project sample frames.
 /// Zero disables the fade without discarding its selected shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioFade {
     length_samples: f64,
-    shape: FadeShape,
+    curve: FadeCurve,
 }
 
 // Construction excludes NaN, so equality is reflexive for every valid value.
@@ -62,27 +139,31 @@ impl Default for AudioFade {
     fn default() -> Self {
         Self {
             length_samples: 0.0,
-            shape: FadeShape::default(),
+            curve: FadeCurve::Legacy(FadeShape::default()),
         }
     }
 }
 
 impl AudioFade {
     pub fn new(length_samples: f64, shape: FadeShape) -> Result<Self, ActionError> {
+        Self::with_curve(length_samples, FadeCurve::Legacy(shape))
+    }
+
+    pub fn with_curve(length_samples: f64, curve: FadeCurve) -> Result<Self, ActionError> {
         if !length_samples.is_finite() || length_samples < 0.0 {
             return Err(ActionError::InvalidAudioItemFade);
         }
         Ok(Self {
             length_samples,
-            shape,
+            curve,
         })
     }
 
     pub fn length_samples(self) -> f64 {
         self.length_samples
     }
-    pub fn shape(self) -> FadeShape {
-        self.shape
+    pub fn curve(self) -> FadeCurve {
+        self.curve
     }
 }
 
@@ -107,9 +188,9 @@ impl AudioItemFades {
         let fade_in = self.fade_in.length_samples.min(length);
         let fade_out = self.fade_out.length_samples.min(length - fade_in);
         if fade_in > 0.0 && offset < fade_in {
-            self.fade_in.shape.gain(offset / fade_in) as f32
+            self.fade_in.curve.gain(offset / fade_in) as f32
         } else if fade_out > 0.0 && length - offset < fade_out {
-            self.fade_out.shape.gain((length - offset) / fade_out) as f32
+            self.fade_out.curve.gain((length - offset) / fade_out) as f32
         } else {
             1.0
         }
@@ -177,7 +258,10 @@ mod tests {
     fn disabled_fractional_and_invalid_lengths_are_handled() {
         assert_eq!(AudioItemFades::default().gain_at(0, 48_000), 1.0);
         assert_eq!(AudioItemFades::default().gain_at(47_999, 48_000), 1.0);
-        assert_eq!(AudioFade::default().shape(), FadeShape::FastStart);
+        assert_eq!(
+            AudioFade::default().curve(),
+            FadeCurve::Legacy(FadeShape::FastStart)
+        );
         assert_eq!(fades(FadeShape::Linear, 2.5, 0.0).gain_at(1, 48_000), 0.4);
         for invalid in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert_eq!(
