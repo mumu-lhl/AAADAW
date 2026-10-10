@@ -302,6 +302,8 @@ struct App {
     active_track_draft: Option<(TrackId, TrackDraftField)>,
     track_draft_errors: HashMap<(TrackId, TrackDraftField), String>,
     track_mix_gesture: Option<TrackMixGesture>,
+    master_mix_gesture: Option<(TrackMixParameter, aaadaw_core::MasterMix)>,
+    master_mix_commit_at: Option<Instant>,
     track_mix_commit_at: Option<Instant>,
     track_peak_levels: HashMap<TrackId, [f32; 2]>,
     master_peak_level: [f32; 2],
@@ -1399,6 +1401,7 @@ impl App {
                 || self.audio_asset_management_busy
                 || self.audio_waveform_worker.is_some()
                 || self.track_mix_gesture.is_some()
+                || self.master_mix_gesture.is_some()
                 || self.desktop_layout_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
@@ -1442,6 +1445,24 @@ impl App {
             return Task::none();
         }
         let revision_before_message = self.revision;
+        let preserves_master_gesture = matches!(
+            &message,
+            Message::BackgroundTick
+                | Message::MeterTick
+                | Message::RuntimeKeyboardEvent(..)
+                | Message::PreviewMasterVolume(_)
+                | Message::PreviewMasterPan(_)
+                | Message::CommitMasterMix
+                | Message::CancelMasterMix
+                | Message::ResetMasterVolume
+                | Message::ResetMasterPan
+                | Message::Escape
+        );
+        if !preserves_master_gesture && self.master_mix_commit_at.is_some() {
+            self.commit_master_mix();
+        } else if !preserves_master_gesture && self.master_mix_gesture.is_some() {
+            self.cancel_master_mix();
+        }
         #[cfg(feature = "audio-device")]
         let standby_input_completion = matches!(
             &message,
@@ -2933,6 +2954,10 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.master_mix_gesture.is_some() {
+                    self.cancel_master_mix();
+                    return Task::none();
+                }
                 if !self.cancel_shortcut_capture() {
                     if self.pending_project_transition.is_some() {
                         self.pending_project_transition = None;
@@ -3340,6 +3365,20 @@ impl App {
             Message::PreviewTrackVolume(track_id, volume_db) => {
                 self.preview_track_mix(track_id, TrackMixParameter::Volume, volume_db);
             }
+            Message::PreviewMasterVolume(value) => {
+                self.preview_master_mix(TrackMixParameter::Volume, value)
+            }
+            Message::PreviewMasterPan(value) => {
+                self.preview_master_mix(TrackMixParameter::Pan, value)
+            }
+            Message::CommitMasterMix => {
+                if self.master_mix_gesture.is_some() {
+                    self.master_mix_commit_at = Some(Instant::now() + Duration::from_millis(350));
+                }
+            }
+            Message::CancelMasterMix => self.cancel_master_mix(),
+            Message::ResetMasterVolume => self.reset_master_mix(TrackMixParameter::Volume),
+            Message::ResetMasterPan => self.reset_master_mix(TrackMixParameter::Pan),
             Message::CancelTrackMixGesture => self.cancel_track_mix_gesture(),
             Message::CommitTrackVolume(track_id) => {
                 self.finish_track_mix_gesture(track_id, TrackMixParameter::Volume);
@@ -3616,6 +3655,12 @@ impl App {
                 {
                     self.commit_track_mix_gesture();
                 }
+                if self
+                    .master_mix_commit_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    self.commit_master_mix();
+                }
                 #[cfg(feature = "audio-device")]
                 {
                     self.poll_fx_automation_capture();
@@ -3745,6 +3790,8 @@ impl App {
                         self.clear_track_draft_state();
                         self.track_mix_gesture = None;
                         self.track_mix_commit_at = None;
+                        self.master_mix_gesture = None;
+                        self.master_mix_commit_at = None;
                         self.audio_item_start_edits.clear();
                         self.audio_asset_source_statuses.clear();
                         self.project_path_query = path.to_string_lossy().into_owned();
@@ -4356,6 +4403,8 @@ impl App {
         self.clear_track_draft_state();
         self.track_mix_gesture = None;
         self.track_mix_commit_at = None;
+        self.master_mix_gesture = None;
+        self.master_mix_commit_at = None;
         self.audio_item_start_edits.clear();
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
@@ -6005,6 +6054,7 @@ impl App {
     }
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
+        let master_mix_before = self.project.master_mix();
         #[cfg(feature = "audio-device")]
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
@@ -6040,6 +6090,9 @@ impl App {
                 }
                 if let Some(track_id) = live_mix_track {
                     self.sync_track_mix_to_playback(track_id);
+                }
+                if self.project.master_mix() != master_mix_before {
+                    self.sync_master_mix_to_playback();
                 }
                 if let Some(track_id) = live_mute_solo_track {
                     self.sync_track_mute_solo_to_playback(track_id);
@@ -6082,12 +6135,96 @@ impl App {
     }
 
     fn sync_all_track_mix_to_playback(&self) {
+        self.sync_master_mix_to_playback();
         for track in self.project.tracks() {
             self.sync_track_mix_to_playback(track.id());
         }
     }
 
+    fn sync_master_mix_to_playback(&self) {
+        #[cfg(feature = "audio-device")]
+        if let Some(playback) = &self.playback {
+            playback.set_master_mix(self.project.master_mix());
+        }
+    }
+
+    fn preview_master_mix(&mut self, parameter: TrackMixParameter, value: f32) {
+        if !value.is_finite() {
+            return;
+        }
+        self.cancel_track_mix_gesture();
+        if self
+            .master_mix_gesture
+            .is_some_and(|(active, _)| active != parameter)
+        {
+            if self.master_mix_commit_at.is_some() {
+                self.commit_master_mix();
+            } else {
+                self.cancel_master_mix();
+            }
+        }
+        let current = self
+            .master_mix_gesture
+            .map_or(self.project.master_mix(), |(_, mix)| mix);
+        let mix = match parameter {
+            TrackMixParameter::Volume => {
+                aaadaw_core::MasterMix::new(value.clamp(-60.0, 6.0), current.pan())
+            }
+            TrackMixParameter::Pan => {
+                aaadaw_core::MasterMix::new(current.volume_db(), value.clamp(-1.0, 1.0))
+            }
+        };
+        if let Ok(mix) = mix {
+            self.master_mix_commit_at = None;
+            self.master_mix_gesture = Some((parameter, mix));
+            #[cfg(feature = "audio-device")]
+            if let Some(playback) = &self.playback {
+                playback.set_master_mix(mix);
+            }
+        }
+    }
+
+    fn commit_master_mix(&mut self) {
+        self.master_mix_commit_at = None;
+        if let Some((_, mix)) = self.master_mix_gesture.take() {
+            if mix != self.project.master_mix() {
+                self.apply_action(DawAction::SetMasterMix { mix }, "Master mix changed");
+            } else {
+                self.sync_master_mix_to_playback();
+            }
+        }
+    }
+
+    fn cancel_master_mix(&mut self) {
+        self.master_mix_commit_at = None;
+        if self.master_mix_gesture.take().is_some() {
+            self.sync_master_mix_to_playback();
+        }
+    }
+
+    fn reset_master_mix(&mut self, parameter: TrackMixParameter) {
+        // A double click's first press can have queued a gesture: replace that preview
+        // so the reset remains one history entry, like the ordinary track controls.
+        if self
+            .master_mix_gesture
+            .is_some_and(|(active, _)| active != parameter)
+        {
+            self.commit_master_mix();
+        }
+        self.cancel_master_mix();
+        let current = self.project.master_mix();
+        let mix = match parameter {
+            TrackMixParameter::Volume => aaadaw_core::MasterMix::new(0.0, current.pan()),
+            TrackMixParameter::Pan => aaadaw_core::MasterMix::new(current.volume_db(), 0.0),
+        }
+        .expect("existing Master controls are validated");
+        if mix != current {
+            self.apply_action(DawAction::SetMasterMix { mix }, "Master mix reset");
+        }
+    }
+
     fn preview_track_mix(&mut self, track_id: TrackId, parameter: TrackMixParameter, value: f32) {
+        self.cancel_master_mix();
         match parameter {
             TrackMixParameter::Volume => {
                 let discarded_draft = self.track_volume_edits.remove(&track_id).is_some();

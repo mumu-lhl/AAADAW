@@ -28,7 +28,9 @@ mod cpal_output;
 mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
+mod master_mix;
 mod master_output;
+pub use master_mix::MasterMixController;
 mod midi;
 mod pcm;
 #[cfg(feature = "pipewire-backend")]
@@ -1845,6 +1847,7 @@ impl AudioItemStream {
 /// decode/resample PCM and feed one SPSC consumer per source.
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
+    master_mix: master_mix::MasterOutputMix,
     master_output_safety: master_output::MasterOutputSafety,
     midi_plan: MidiEventPlan,
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
@@ -2124,6 +2127,10 @@ impl AudioRenderGraph {
         }
         Ok(Self {
             mixer,
+            master_mix: master_mix::MasterOutputMix::new(
+                project.master_mix(),
+                project.settings().sample_rate(),
+            ),
             master_output_safety: master_output::MasterOutputSafety::default(),
             midi_plan,
             midi_scratch,
@@ -2274,6 +2281,11 @@ impl AudioRenderGraph {
     /// Returns a lock-free control handle for the final Master sample-peak ceiling.
     pub fn master_output_safety_controller(&self) -> MasterOutputSafetyController {
         self.master_output_safety.controller()
+    }
+
+    /// Updates stereo Master gain without rebuilding the graph.
+    pub fn master_mix_controller(&self) -> MasterMixController {
+        self.master_mix.controller()
     }
 
     /// Returns the callback-owned transport for start/stop/seek control.
@@ -3368,6 +3380,7 @@ impl AudioRenderGraph {
             }
         }
 
+        self.master_mix.process(output);
         let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
             self.last_midi_sample_end = Some(

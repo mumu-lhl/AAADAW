@@ -16,3 +16,5 @@ GUI 实际拖动 Audio 1 到 −23.2 dB，TCP 同步，SQLite 恢复记录为 �
 779 项 workspace 测试、默认 Clippy warnings denied、默认构建通过；audio-device check 通过，保留已有两项编译警告。最后监控按钮守卫和 Master Limit 标签调整后再次通过 Clippy、构建、音频功能检查。
 
 Master 目前只有实际输出 Meter 和限制器读数；Limit 标签不代表音量。真实 Master 推子/混音状态尚未实现。主题颜色、字体、推子曲线与范围、Pan 旋钮、全部高度变体、每通道峰值保持/刻度/RMS、默认 TCP 布局、完整 Docker 和 DPI 均待完成，不把条宽测量与功能回归视为完整像素验收。
+
+后续 2026-10-10 [Master 基础切片](master-mix.md) 已加入真实 gain/balance 与控件；其余差异继续保持未完成。

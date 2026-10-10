@@ -458,16 +458,50 @@ fn desktop_track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Messag
 }
 
 fn desktop_master_strip(app: &App) -> Element<'_, Message> {
+    let mix = app
+        .master_mix_gesture
+        .map_or(app.project.master_mix(), |(_, mix)| mix);
+    let fader = vertical_slider(
+        -60.0..=6.0,
+        mix.volume_db().clamp(-60.0, 6.0),
+        Message::PreviewMasterVolume,
+    )
+    .step(0.1_f32)
+    .shift_step(0.01_f32)
+    .width(16.0)
+    .height(Length::Fill)
+    .on_release(Message::CommitMasterMix);
+    let fader = slider_interaction(
+        fader.into(),
+        Some(Message::ResetMasterVolume),
+        Message::CancelMasterMix,
+    );
+    let pan = slider(-1.0..=1.0, mix.pan(), Message::PreviewMasterPan)
+        .step(0.01_f32)
+        .shift_step(0.001_f32)
+        .height(12.0)
+        .on_release(Message::CommitMasterMix);
+    let pan = slider_interaction(
+        pan.into(),
+        Some(Message::ResetMasterPan),
+        Message::CancelMasterMix,
+    );
     container(
         column![
             text("MASTER").size(11),
-            text("Output L/R").size(9),
-            vertical_meter(
-                app.master_peak_level,
-                app.master_peak_hold,
-                Message::ClearMasterMeter,
-                32.0
-            ),
+            pan,
+            text(format!("{:.1} dB", mix.volume_db())).size(10),
+            row![
+                fader,
+                vertical_meter(
+                    app.master_peak_level,
+                    app.master_peak_hold,
+                    Message::ClearMasterMeter,
+                    32.0
+                )
+            ]
+            .spacing(8)
+            .height(Length::Fill),
             text(format!(
                 "Limit {}",
                 app.audio_settings.master_output_ceiling

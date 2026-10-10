@@ -222,6 +222,7 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mix = graph.track_mix_controller();
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
+    let master_mix = graph.master_mix_controller();
     master.set_ceiling(MasterOutputCeiling::new(-12).expect("ceiling is supported"));
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
@@ -241,7 +242,10 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
     let mut midi_events_seen = 0;
-    for _ in 0..128 {
+    for index in 0..128 {
+        master_mix.set_mix(
+            aaadaw_core::MasterMix::new(0.0, if index % 2 == 0 { -0.5 } else { 0.5 }).unwrap(),
+        );
         for _ in 0..128 {
             assert!(monitor_producer.push_frame([0.01, 0.01]));
         }

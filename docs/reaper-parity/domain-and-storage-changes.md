@@ -89,3 +89,7 @@ arrangement_folder_compact 按 TrackId 保存视图模式 0/1/2，旧工程为�
 ## 已实现 schema 23 切片
 
 tracks.phase_inverted NOT NULL DEFAULT 0 / CHECK 0 或 1，旧工程保留原极性；Snapshot 与领域事件包含相位，Undo 属于 callback-safe mix 参数。视图压缩表与路由结构保持原事务和身份。
+
+## 已实现 schema 24 切片
+
+project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/center，旧轨道 ID 和增益不变。领域使用独立且已验证的 MasterMix 与 SetMasterMix，Snapshot/Undo 含 Master，存储与整个工程同事务写入。读取拒绝缺行、无效系数以及无 project_meta 却带非默认 Master 状态的数据库。实时输出控制在路由总和之后、guard/Meter 之前；Freeze 源快照清除 Master 增益以免重复烘焙。

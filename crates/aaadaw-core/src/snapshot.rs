@@ -8,6 +8,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectSnapshot {
     pub settings: ProjectSettings,
+    pub master_mix: crate::MasterMix,
     pub tracks: Vec<TrackSnapshot>,
     pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,

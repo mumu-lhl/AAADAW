@@ -588,6 +588,7 @@ pub fn render_freeze_track_to_float32_wav(
     source_track.pan = 0.0;
     source_track.muted = false;
     source_track.phase_inverted = false;
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
     source_track.solo = false;
     source_track.record_armed = false;
     source_track.volume_automation.clear();

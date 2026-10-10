@@ -7,6 +7,7 @@
 mod action;
 mod audio;
 mod error;
+mod master;
 mod midi;
 mod project;
 mod routing;
@@ -17,6 +18,7 @@ mod track;
 pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
+pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };

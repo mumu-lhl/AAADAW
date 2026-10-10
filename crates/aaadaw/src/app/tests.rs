@@ -5341,6 +5341,53 @@ fn dragging_track_volume_commits_one_undoable_action() {
 }
 
 #[test]
+fn master_gesture_commits_once_and_undo_restores_both_controls() {
+    let mut app = App::default();
+    let _ = app.update(Message::PreviewMasterVolume(-3.0));
+    let _ = app.update(Message::PreviewMasterVolume(-12.0));
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
+    let _ = app.update(Message::CommitMasterMix);
+    assert!(commands::is_enabled(&app, commands::CommandId::Undo));
+    assert!(!commands::is_enabled(&app, commands::CommandId::Redo));
+    app.master_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
+    assert_eq!(app.project.master_mix().volume_db(), -12.0);
+    let _ = app.update(Message::PreviewMasterPan(0.5));
+    let _ = app.update(Message::CommitMasterMix);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().pan(), 0.0);
+    assert_eq!(app.project.master_mix().volume_db(), -12.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix(), aaadaw_core::MasterMix::default());
+    assert!(!app.project.can_undo());
+}
+
+#[test]
+fn master_cancel_and_double_click_do_not_commit_first_click_preview() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetMasterMix {
+            mix: aaadaw_core::MasterMix::new(-6.0, 0.5).unwrap(),
+        })
+        .unwrap();
+    let _ = app.update(Message::PreviewMasterVolume(-20.0));
+    let _ = app.update(Message::CancelMasterMix);
+    assert_eq!(app.project.master_mix().volume_db(), -6.0);
+    let _ = app.update(Message::PreviewMasterPan(-0.8));
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.project.master_mix().pan(), 0.5);
+    let _ = app.update(Message::PreviewMasterVolume(-20.0));
+    let _ = app.update(Message::CommitMasterMix);
+    let _ = app.update(Message::ResetMasterVolume);
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
+    assert_eq!(app.project.master_mix().pan(), 0.5);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().volume_db(), -6.0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix(), aaadaw_core::MasterMix::default());
+}
+
+#[test]
 fn right_click_cancels_a_track_mix_slider_gesture() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

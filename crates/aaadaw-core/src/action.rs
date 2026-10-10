@@ -7,6 +7,10 @@ use crate::{
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DawAction {
+    /// Change the Master output gain and stereo balance as one undoable edit.
+    SetMasterMix {
+        mix: crate::MasterMix,
+    },
     /// Create a track at `index` in the project's ordered track list.
     CreateTrack {
         index: usize,

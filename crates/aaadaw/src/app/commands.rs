@@ -1407,15 +1407,20 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => {
-            (app.project.can_undo() || app.track_mix_commit_at.is_some())
+            (app.project.can_undo()
+                || app.track_mix_commit_at.is_some()
+                || app.master_mix_commit_at.is_some())
                 && history_command_enabled(
                     app,
-                    app.project.can_undo_track_mix() || app.track_mix_commit_at.is_some(),
+                    app.project.can_undo_track_mix()
+                        || app.track_mix_commit_at.is_some()
+                        || app.master_mix_commit_at.is_some(),
                 )
         }
         CommandKind::Redo => {
             app.project.can_redo()
                 && app.track_mix_commit_at.is_none()
+                && app.master_mix_commit_at.is_none()
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
         CommandKind::ToggleMediaBrowserPanel => true,

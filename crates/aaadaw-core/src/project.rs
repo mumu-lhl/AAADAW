@@ -190,6 +190,7 @@ pub struct FxParameterChange {
 
 #[derive(Clone, Debug, Default)]
 struct ProjectState {
+    master_mix: crate::MasterMix,
     pan_mode: crate::PanMode,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
@@ -208,6 +209,10 @@ struct IdAllocator {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    MasterMixChanged {
+        before: crate::MasterMix,
+        after: crate::MasterMix,
+    },
     TrackStructureChanged {
         before: TrackStructure,
         after: TrackStructure,
@@ -400,6 +405,10 @@ enum ProjectEvent {
 impl ProjectEvent {
     fn inverse(&self) -> Self {
         match self {
+            Self::MasterMixChanged { before, after } => Self::MasterMixChanged {
+                before: *after,
+                after: *before,
+            },
             Self::TrackStructureChanged { before, after } => Self::TrackStructureChanged {
                 before: after.clone(),
                 after: before.clone(),
@@ -801,6 +810,10 @@ fn duplicate_midi_item_to_track(
 }
 
 impl Project {
+    /// Current stereo Master controls, separate from ordinary track IDs.
+    pub fn master_mix(&self) -> crate::MasterMix {
+        self.state.master_mix
+    }
     /// Creates an empty project with 48 kHz, 960 PPQ and 120 BPM defaults.
     pub fn new() -> Self {
         Self::with_settings(ProjectSettings::default())
@@ -949,7 +962,7 @@ impl Project {
         self.history_cursor < self.history.len()
     }
 
-    /// Returns whether the next undo changes only a track's volume or pan.
+    /// Returns whether the next undo changes only live mix controls or volume automation.
     pub fn can_undo_track_mix(&self) -> bool {
         matches!(
             self.history_cursor
@@ -957,6 +970,7 @@ impl Project {
                 .and_then(|index| self.history.get(index)),
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
                     | ProjectEvent::TrackPhaseChanged { .. },
@@ -964,12 +978,13 @@ impl Project {
         )
     }
 
-    /// Returns whether the next redo changes only a track's volume or pan.
+    /// Returns whether the next redo changes only live mix controls or volume automation.
     pub fn can_redo_track_mix(&self) -> bool {
         matches!(
             self.history.get(self.history_cursor),
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
                     | ProjectEvent::TrackPhaseChanged { .. },
@@ -1056,6 +1071,7 @@ impl Project {
     pub fn snapshot(&self) -> ProjectSnapshot {
         ProjectSnapshot {
             settings: self.settings(),
+            master_mix: self.state.master_mix,
             tracks: self
                 .state
                 .tracks
@@ -1447,6 +1463,7 @@ impl Project {
 
         Ok(Self {
             state: ProjectState {
+                master_mix: snapshot.master_mix,
                 pan_mode: settings.pan_mode(),
                 tracks,
                 audio_items,
@@ -1492,6 +1509,10 @@ impl Project {
         }
 
         let event = match action {
+            DawAction::SetMasterMix { mix } => ProjectEvent::MasterMixChanged {
+                before: state.master_mix,
+                after: mix,
+            },
             DawAction::CreateTrack { index, name } => {
                 if index > state.tracks.len() {
                     return Err(ActionError::TrackIndexOutOfBounds {
@@ -2790,6 +2811,12 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::MasterMixChanged { before, after } => {
+                if state.master_mix != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.master_mix = *after;
+            }
             ProjectEvent::TrackStructureChanged { before, after } => {
                 if track_structure(&state.tracks) != *before {
                     return Err(ActionError::HistoryInvariantViolation);

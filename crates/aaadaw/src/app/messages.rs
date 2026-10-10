@@ -329,6 +329,12 @@ pub(crate) enum Message {
     #[cfg(feature = "audio-device")]
     ToggleInputMonitor(TrackId),
     PreviewTrackVolume(TrackId, f32),
+    PreviewMasterVolume(f32),
+    PreviewMasterPan(f32),
+    CommitMasterMix,
+    CancelMasterMix,
+    ResetMasterVolume,
+    ResetMasterPan,
     CancelTrackMixGesture,
     CommitTrackVolume(TrackId),
     PreviewTrackPan(TrackId, f32),

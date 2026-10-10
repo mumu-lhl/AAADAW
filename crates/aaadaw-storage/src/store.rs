@@ -22,7 +22,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 23;
+pub const CURRENT_SCHEMA_VERSION: u32 = 24;
+
+const MIGRATION_24: &str = "CREATE TABLE project_master_mix(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), volume_db REAL NOT NULL, pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1)); INSERT INTO project_master_mix VALUES(1, 0, 0);";
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
 
@@ -2196,6 +2198,18 @@ impl ProjectStore {
 
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
+        let master_mix = self
+            .connection
+            .query_row(
+                "SELECT volume_db, pan FROM project_master_mix WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, f32>(0)?, row.get::<_, f32>(1)?)),
+            )
+            .map_err(StorageError::from)
+            .and_then(|(volume, pan)| {
+                aaadaw_core::MasterMix::new(volume, pan)
+                    .map_err(|_| StorageError::InvalidStoredData("invalid Master mix"))
+            })?;
         let metadata = self
             .connection
             .query_row(
@@ -2221,7 +2235,7 @@ impl ProjectStore {
                 [],
                 |row| row.get(0),
             )?;
-            return if rows == 0 {
+            return if rows == 0 && master_mix == aaadaw_core::MasterMix::default() {
                 Ok(Project::new())
             } else {
                 Err(StorageError::InvalidStoredData(
@@ -2255,6 +2269,7 @@ impl ProjectStore {
 
         Project::from_snapshot(ProjectSnapshot {
             settings,
+            master_mix,
             tracks,
             audio_items,
             midi_items,
@@ -2416,6 +2431,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             21 => transaction.execute_batch(MIGRATION_21)?,
             22 => transaction.execute_batch(MIGRATION_22)?,
             23 => transaction.execute_batch(MIGRATION_23)?,
+            24 => transaction.execute_batch(MIGRATION_24)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2443,6 +2459,11 @@ fn write_snapshot(
     transaction.execute("DELETE FROM tempo_points", [])?;
     transaction.execute("DELETE FROM meter_points", [])?;
     transaction.execute("DELETE FROM project_meta", [])?;
+    transaction.execute("DELETE FROM project_master_mix", [])?;
+    transaction.execute(
+        "INSERT INTO project_master_mix(singleton, volume_db, pan) VALUES(1, ?1, ?2)",
+        params![snapshot.master_mix.volume_db(), snapshot.master_mix.pan()],
+    )?;
 
     let settings = snapshot.settings;
     transaction.execute(
