@@ -148,3 +148,18 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 最终 audio-device 全 workspace **837 passed / 0 skipped**，默认 Clippy warnings denied 通过。回归覆盖单位刷新/草稿丢弃、未编辑采样精度、非法输入、配置读写/未来版本保护和原厂时间格式事实。前一位置提交 832858b 的 Rust CI、Portable desktop archives、Native installers 全部成功。
 
 当前仅实现 Time / Samples 两个选项；原厂还包含 Beats / H:M:S:F，Source 在这两个模式下仍使用 Time，默认帧率实测 30 fps non-drop。完整单位转换、工程帧率、负/分数采样位置、完整属性和原厂布局继续推进；不关闭 ITEM-PROPERTIES-001 或 P4。
+
+## Beats 参照扩展（实现验证中）
+
+在固定 Linux REAPER 7.82 / Default 7 的空白自有临时工程中扩展 `probe-time-displays.lua`，保存 [输入数值](beat-inputs-reference.tsv) 和 [跨速度/拍号数值](beat-changes-reference.tsv)。来源仅为 API 返回的数字/文本，不包含 REAPER 二进制或主题资源。
+
+位置的起点为 `1.1.00`，长度的起点为 `0.0.00`。Beats 下 Take 的 Start in source 仍用 Time。拍内显示按百分之一拍舍入；6/8 中一拍为八分音符。位置和长度的输入不能共享同一个起点规则。
+
+跨拍号时显示与解析不是互逆：从 0 秒起跨 4/4→3/4 的 4 秒长度显示 `2.1.00`，重新解析得到 4.5 秒。显示使用起终点小节/拍之差，并按起点拍号借位；长度解析使用起点拍号把小节换为拍，再沿速度图换算。这些是固定版本实测行为。未编辑字段必须保留原始样本值，不得通过显示字符串重新解析。
+
+当前先实现非负数字的标准输入；原厂负数、无效文本及尾随文字的宽松解析已采集但尚未验收。帧格式、完整负/分数采样 Item 时钟、全属性布局和其他字段仍未完成。此段不表示 GUI 或全量验收通过。
+
+
+实际 AAADAW 窗口验证：初始 16001/12000/6000 样本显示 `1.1.67` / `0.0.50` / `0:00.125`（[选择 Beats](item-fade-ui/properties-beats-selected.png)）；一次 Apply 写入 24000/24000/12000 样本及 S=0.75（[Apply](item-fade-ui/properties-beats-applied.png)）。一次 Undo 恢复全部位置/长度/源偏移及 S=0.50（[Undo](item-fade-ui/properties-beats-undo.png)），Redo 恢复全部应用值（[Redo](item-fade-ui/properties-beats-redo.png)）；配置写入 `time_unit=beats`，重启恢复工程后保持 Beats 和已应用值（[重启](item-fade-ui/properties-beats-restart.png)）。截图仅含 AAADAW 自有窗口。尚未补齐原厂完整属性窗口几何。
+
+切换单位丢弃未应用 Beats 位置和 S 草稿，恢复已应用值并禁用 Apply（[刷新](item-fade-ui/properties-beats-refresh.png)）。最终 `cargo xtest --features aaadaw/audio-device --no-fail-fast`：842 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt 与 diff 检查通过。

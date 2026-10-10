@@ -383,6 +383,43 @@ impl MeterMap {
         })
     }
 
+    pub(crate) fn tick_at_position(
+        &self,
+        measure: u64,
+        beat: u32,
+        tick_in_beat: f64,
+    ) -> Result<f64, TimebaseError> {
+        let invalid = TimebaseError::MusicalPositionOutOfRange;
+        if measure == 0 || beat == 0 || !tick_in_beat.is_finite() || tick_in_beat < 0.0 {
+            return Err(invalid);
+        }
+        let index = self
+            .points
+            .partition_point(|point| point.start_measure < measure)
+            - 1;
+        let point = self.points[index];
+        let ticks_per_beat = point.signature.ticks_per_beat(self.ppq)?;
+        if beat > point.signature.numerator || tick_in_beat >= ticks_per_beat as f64 {
+            return Err(invalid);
+        }
+        let tick = (measure - point.start_measure - 1)
+            .checked_mul(point.signature.ticks_per_measure(self.ppq)?)
+            .and_then(|offset| offset.checked_add(u64::from(beat - 1) * ticks_per_beat))
+            .and_then(|offset| point.start_tick.checked_add(offset))
+            .filter(|tick| *tick <= MAX_EXACT_FLOAT_POSITION)
+            .ok_or(invalid)?;
+        let position = tick as f64 + tick_in_beat;
+        if position > MAX_EXACT_FLOAT_POSITION as f64
+            || self
+                .points
+                .get(index + 1)
+                .is_some_and(|next| position >= next.start_tick as f64)
+        {
+            return Err(invalid);
+        }
+        Ok(position)
+    }
+
     pub(crate) fn signature_at_tick(&self, tick: u64) -> TimeSignature {
         let index = self
             .points

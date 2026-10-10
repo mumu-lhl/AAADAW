@@ -51,3 +51,27 @@ for _, case in ipairs(cases) do
   end
 end
 log:close()
+local parsed = assert(io.open(root .. 'beat-inputs.tsv', 'w'))
+parsed:write('# REAPER ', reaper.GetAppVersion(), ' owned empty scratch project\n')
+parsed:write('numerator\tdenominator\tinput\tposition_seconds\tlength_at_zero\tlength_at_1_5\n')
+for _, meter in ipairs({{4,4},{6,8},{3,4}}) do
+  assert(reaper.SetTempoTimeSigMarker(0, 0, 0, -1, -1, 120, meter[1], meter[2], false))
+  for _, value in ipairs({'1.1.00','1.2.50','2.1.00','0.0.50','0.2.00','1','2','1.5.00','1.1.100','1.1.005','1.1.5','0.1.00','-1.1.00','invalid','1.2.50 extra'}) do
+    parsed:write(string.format('%d\t%d\t%s\t%.17g\t%.17g\t%.17g\n', meter[1],meter[2],value,reaper.parse_timestr_pos(value,2),reaper.parse_timestr_len(value,0,2),reaper.parse_timestr_len(value,1.5,2)))
+  end
+end
+parsed:close()
+
+local changed = assert(io.open(root .. 'beat-changes.tsv', 'w'))
+changed:write('# REAPER ',reaper.GetAppVersion(),' step tempo and bar-line meter changes\n')
+changed:write('case\tstart\tlength\tposition\tduration\tparsed_duration\n')
+for _, variant in ipairs({'tempo','meter','both'}) do
+  for index=reaper.CountTempoTimeSigMarkers(0)-1,1,-1 do assert(reaper.DeleteTempoTimeSigMarker(0,index)) end
+  assert(reaper.SetTempoTimeSigMarker(0,0,0,-1,-1,120,4,4,false))
+  assert(reaper.SetTempoTimeSigMarker(0,-1,2,-1,-1,variant=='meter' and 120 or 60,variant=='tempo' and 4 or 3,4,false))
+  for _, pair in ipairs({{1.5,1},{1.5,3},{2,1.5},{0,4},{3,3}}) do
+    local value=reaper.format_timestr_len(pair[2],'',pair[1],2)
+    changed:write(string.format('%s\t%.17g\t%.17g\t%s\t%s\t%.17g\n',variant,pair[1],pair[2],reaper.format_timestr_pos(pair[1],'',2),value,reaper.parse_timestr_len(value,pair[1],2)))
+  end
+end
+changed:close()

@@ -954,6 +954,19 @@ impl Project {
         self.state.meter_map.position_at_tick(tick)
     }
 
+    /// Converts a one-based measure/beat and fractional in-beat tick offset.
+    /// Rejects positions outside the active meter instead of carrying into another bar.
+    pub fn tick_at_musical_position(
+        &self,
+        measure: u64,
+        beat: u32,
+        tick_in_beat: f64,
+    ) -> Result<f64, TimebaseError> {
+        self.state
+            .meter_map
+            .tick_at_position(measure, beat, tick_in_beat)
+    }
+
     /// Returns the time signature active at a PPQ tick position.
     pub fn time_signature_at_tick(&self, tick: u64) -> TimeSignature {
         self.state.meter_map.signature_at_tick(tick)

@@ -1,4 +1,50 @@
-use aaadaw_core::{ActionError, DawAction, MeterPointSnapshot, Project, TimeSignature};
+use aaadaw_core::{
+    ActionError, DawAction, MeterPointSnapshot, Project, TimeSignature, TimebaseError,
+};
+
+#[test]
+fn inverse_musical_positions_preserve_fractional_ticks_across_meter_changes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::SetTimeSignature {
+            start_tick: 3840,
+            signature: TimeSignature::new(7, 8).unwrap(),
+        })
+        .unwrap();
+    for (measure, beat, offset, expected) in [
+        (1, 4, 959.5, 3839.5),
+        (2, 1, 0.0, 3840.0),
+        (2, 7, 479.25, 7199.25),
+        (3, 1, 0.125, 7200.125),
+    ] {
+        let tick = project
+            .tick_at_musical_position(measure, beat, offset)
+            .unwrap();
+        assert_eq!(tick, expected);
+        let position = project
+            .musical_position_at_tick(tick.floor() as u64)
+            .unwrap();
+        assert_eq!((position.measure(), position.beat()), (measure, beat));
+        assert_eq!(position.tick_in_beat() as f64 + tick.fract(), offset);
+    }
+    for (measure, beat, offset) in [
+        (0, 1, 0.0),
+        (1, 0, 0.0),
+        (1, 5, 0.0),
+        (1, 1, 960.0),
+        (2, 8, 0.0),
+        (2, 1, 480.0),
+        (2, 1, -0.1),
+        (2, 1, f64::NAN),
+        (2, 1, f64::INFINITY),
+        (u64::MAX, 1, 0.0),
+    ] {
+        assert_eq!(
+            project.tick_at_musical_position(measure, beat, offset),
+            Err(TimebaseError::MusicalPositionOutOfRange)
+        );
+    }
+}
 
 #[test]
 fn time_signature_changes_start_a_new_measure_at_the_bar_line() {

@@ -1,3 +1,4 @@
+mod beats;
 use super::{App, Message};
 use aaadaw_core::{AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId};
 use iced::Task;
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum TimeUnit {
     #[default]
     Time,
+    Beats,
     Samples,
 }
 
@@ -15,6 +17,7 @@ impl std::fmt::Display for TimeUnit {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Time => "Time",
+            Self::Beats => "Beats",
             Self::Samples => "Samples",
         })
     }
@@ -74,7 +77,9 @@ impl App {
         else {
             return;
         };
-        draft.set_unit(unit, item, self.project.settings().sample_rate());
+        if draft.unit != unit {
+            *draft = ItemProperties::from_project_item(item, &self.project, unit);
+        }
         self.item_properties_unit = unit;
         let result = super::config_paths::config_file_path("item-properties.json")
             .ok_or_else(|| "No application configuration directory".to_owned())
@@ -97,9 +102,9 @@ impl App {
             return Task::none();
         };
         self.item_properties_generation = self.project_generation;
-        self.item_properties = Some(ItemProperties::from_item(
+        self.item_properties = Some(ItemProperties::from_project_item(
             item,
-            self.project.settings().sample_rate(),
+            &self.project,
             self.item_properties_unit,
         ));
         self.timeline.context_item = None;
@@ -138,7 +143,7 @@ impl App {
         let id = item.id();
         let current = item.fades();
         let sample_rate = self.project.settings().sample_rate();
-        let placement = match draft.placement(item, sample_rate) {
+        let placement = match draft.placement_in_project(item, &self.project) {
             Ok(placement) => placement,
             Err(error) => {
                 self.item_properties.as_mut().expect("open draft").error = Some(error);
@@ -202,9 +207,9 @@ impl App {
                 .iter()
                 .find(|item| item.id() == id)
                 .expect("applied item");
-            self.item_properties = Some(ItemProperties::from_item(
+            self.item_properties = Some(ItemProperties::from_project_item(
                 item,
-                sample_rate,
+                &self.project,
                 self.item_properties_unit,
             ));
             Task::none()
@@ -241,6 +246,62 @@ pub(crate) struct ItemProperties {
 }
 
 impl ItemProperties {
+    fn from_project_item(item: &AudioItem, project: &aaadaw_core::Project, unit: TimeUnit) -> Self {
+        let mut draft = Self::from_item(item, project.settings().sample_rate(), unit);
+        if unit == TimeUnit::Beats {
+            let result =
+                beats::format_position(project, item.start_sample() as f64).and_then(|position| {
+                    beats::format_length(
+                        project,
+                        item.start_sample() as f64,
+                        item.length_samples() as f64,
+                    )
+                    .map(|length| (position, length))
+                });
+            match result {
+                Ok((position, length)) => {
+                    draft.fields[6] = position;
+                    draft.fields[7] = length;
+                }
+                Err(error) => {
+                    draft.fields[6] = "Unavailable".into();
+                    draft.fields[7] = "Unavailable".into();
+                    draft.error = Some(error);
+                }
+            }
+        }
+        draft
+    }
+
+    fn placement_in_project(
+        &self,
+        item: &AudioItem,
+        project: &aaadaw_core::Project,
+    ) -> Result<ItemPlacement, String> {
+        if self.unit != TimeUnit::Beats {
+            return self.placement(item, project.settings().sample_rate());
+        }
+        let mut converted = self.clone();
+        converted.unit = TimeUnit::Samples;
+        let start = if self.changed[6] {
+            beats::parse_position(project, &self.fields[6])?
+        } else {
+            item.start_sample() as f64
+        };
+        if self.changed[6] {
+            converted.fields[6] = start.to_string();
+        }
+        if self.changed[7] {
+            converted.fields[7] = beats::parse_length(project, &self.fields[7], start)?.to_string();
+        }
+        if self.changed[8] {
+            converted.fields[8] = (parse_time(&self.fields[8])?
+                * f64::from(project.settings().sample_rate()))
+            .to_string();
+        }
+        converted.placement(item, project.settings().sample_rate())
+    }
+
     pub(crate) fn from_item(item: &AudioItem, sample_rate: u32, unit: TimeUnit) -> Self {
         let mut draft = Self::new(item.id(), item.fades(), sample_rate);
         draft.unit = unit;
@@ -257,6 +318,7 @@ impl ItemProperties {
         draft
     }
 
+    #[cfg(test)]
     fn set_unit(&mut self, unit: TimeUnit, item: &AudioItem, sample_rate: u32) {
         if self.unit != unit {
             // REAPER refreshes every property from the model on a unit change,
@@ -279,7 +341,9 @@ impl ItemProperties {
         for (index, value) in samples.iter_mut().enumerate() {
             if self.changed[index + 6] {
                 let parsed = match self.unit {
-                    TimeUnit::Time => parse_time(&self.fields[index + 6])? * f64::from(sample_rate),
+                    TimeUnit::Time | TimeUnit::Beats => {
+                        parse_time(&self.fields[index + 6])? * f64::from(sample_rate)
+                    }
                     TimeUnit::Samples => self.fields[index + 6]
                         .trim()
                         .parse::<f64>()
@@ -437,7 +501,7 @@ fn format_time(seconds: f64) -> String {
 
 fn format_samples(samples: u64, sample_rate: u32, unit: TimeUnit) -> String {
     match unit {
-        TimeUnit::Time => format_time(samples as f64 / f64::from(sample_rate)),
+        TimeUnit::Time | TimeUnit::Beats => format_time(samples as f64 / f64::from(sample_rate)),
         TimeUnit::Samples => samples.to_string(),
     }
 }
@@ -541,6 +605,64 @@ mod tests {
         assert!(!draft.has_changes());
         draft.edit(ItemPropertyField::Position, "-0.4".into());
         assert!(draft.placement(item, 48000).is_err());
+    }
+
+    #[test]
+    fn beats_properties_keep_untouched_samples_and_anchor_length_to_edited_position() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Owned".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTempo {
+                start_tick: 3840,
+                bpm: 60.0,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://owned".into(),
+                start_sample: 16001,
+                source_offset_samples: 6000,
+                length_samples: 12000,
+            })
+            .unwrap();
+        let item = &project.audio_items()[0];
+        let mut draft = ItemProperties::from_project_item(item, &project, TimeUnit::Beats);
+        assert_eq!(&draft.fields[6..], &["1.1.67", "0.0.50", "0:00.125"]);
+        assert_eq!(
+            draft.placement_in_project(item, &project).unwrap(),
+            ItemPlacement::from_item(item)
+        );
+        draft.edit(ItemPropertyField::Position, "2.1.00".into());
+        draft.edit(ItemPropertyField::Length, "0.0.50".into());
+        draft.edit(ItemPropertyField::SourceOffset, "0:00.250".into());
+        assert_eq!(
+            draft.placement_in_project(item, &project).unwrap(),
+            ItemPlacement {
+                start: 96000,
+                length: 24000,
+                source_offset: 12000
+            }
+        );
+        for value in [
+            "NaN",
+            "invalid",
+            "-1.1.00",
+            "1.2.50 extra",
+            "18446744073709551615.1.00",
+        ] {
+            draft.edit(ItemPropertyField::Position, value.into());
+            assert!(
+                draft.placement_in_project(item, &project).is_err(),
+                "{value}"
+            );
+        }
+        assert_eq!(item.start_sample(), 16001);
     }
 
     #[test]
