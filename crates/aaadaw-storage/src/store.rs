@@ -22,7 +22,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 24;
+pub const CURRENT_SCHEMA_VERSION: u32 = 25;
+
+const MIGRATION_25: &str = "CREATE TABLE IF NOT EXISTS audio_item_fades(item_id INTEGER PRIMARY KEY REFERENCES audio_items(id) ON DELETE CASCADE, fade_in_samples REAL NOT NULL CHECK(fade_in_samples >= 0), fade_out_samples REAL NOT NULL CHECK(fade_out_samples >= 0), fade_in_shape INTEGER NOT NULL CHECK(fade_in_shape BETWEEN 0 AND 6), fade_out_shape INTEGER NOT NULL CHECK(fade_out_shape BETWEEN 0 AND 6));";
 
 const MIGRATION_24: &str = "CREATE TABLE project_master_mix(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), volume_db REAL NOT NULL, pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1)); INSERT INTO project_master_mix VALUES(1, 0, 0);";
 const APPLICATION_ID: i64 = 0x4141_4441;
@@ -2432,6 +2434,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             22 => transaction.execute_batch(MIGRATION_22)?,
             23 => transaction.execute_batch(MIGRATION_23)?,
             24 => transaction.execute_batch(MIGRATION_24)?,
+            25 => transaction.execute_batch(MIGRATION_25)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2454,6 +2457,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
+    transaction.execute("DELETE FROM audio_item_fades", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
@@ -2594,6 +2598,10 @@ fn write_snapshot(
                 to_sql_integer(item.source_offset_samples)?,
                 to_sql_integer(item.length_samples)?
             ],
+        )?;
+        transaction.execute(
+            "INSERT INTO audio_item_fades(item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), item.fades.fade_in.shape().code(), item.fades.fade_out.shape().code()],
         )?;
     }
 
@@ -3003,6 +3011,31 @@ fn read_volume_automation(
 }
 
 fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {
+    let mut fades = HashMap::new();
+    let mut fade_statement = connection.prepare("SELECT item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape FROM audio_item_fades")?;
+    let fade_rows = fade_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, u8>(3)?,
+            row.get::<_, u8>(4)?,
+        ))
+    })?;
+    for row in fade_rows {
+        let (id, fade_in, fade_out, in_shape, out_shape) = row?;
+        let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
+        let in_shape = aaadaw_core::FadeShape::from_code(in_shape).ok_or_else(invalid)?;
+        let out_shape = aaadaw_core::FadeShape::from_code(out_shape).ok_or_else(invalid)?;
+        fades.insert(
+            from_sql_u64(id)?,
+            aaadaw_core::AudioItemFades {
+                fade_in: aaadaw_core::AudioFade::new(fade_in, in_shape).map_err(|_| invalid())?,
+                fade_out: aaadaw_core::AudioFade::new(fade_out, out_shape)
+                    .map_err(|_| invalid())?,
+            },
+        );
+    }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
          length_samples FROM audio_items ORDER BY position",
@@ -3020,11 +3053,13 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let items = rows
+        .into_iter()
         .map(
             |(id, track_id, position, media_ref, start_sample, source_offset, length)| {
                 let _ = from_sql_u64(position)?;
                 Ok(AudioItemSnapshot {
+                    fades: fades.remove(&from_sql_u64(id)?).unwrap_or_default(),
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
                     media_ref,
@@ -3034,7 +3069,11 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !fades.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    Ok(items)
 }
 
 fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {

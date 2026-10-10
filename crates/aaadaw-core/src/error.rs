@@ -72,6 +72,8 @@ pub enum ActionError {
     InvalidAudioMediaRef,
     /// An audio item must have a positive length.
     InvalidAudioItemLength,
+    /// A manual audio Item fade duration must be finite and nonnegative.
+    InvalidAudioItemFade,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -204,6 +206,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidAudioMediaRef => {
                 formatter.write_str("audio media reference must not be blank")
+            }
+            Self::InvalidAudioItemFade => {
+                write!(formatter, "audio Item fade duration must be finite and nonnegative")
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")

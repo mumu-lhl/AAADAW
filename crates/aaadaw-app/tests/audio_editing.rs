@@ -29,10 +29,18 @@ fn project_with_audio_item(
 #[test]
 fn duplicate_audio_item_preserves_source_and_can_be_undone() {
     let (mut project, item_id) = project_with_audio_item(240, 960);
+    let fades = aaadaw_core::AudioItemFades {
+        fade_in: aaadaw_core::AudioFade::new(120.5, aaadaw_core::FadeShape::Smooth).unwrap(),
+        fade_out: aaadaw_core::AudioFade::default(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades { item_id, fades })
+        .unwrap();
     let action = duplicate_audio_item(&project, item_id).expect("duplicate action should be built");
     project.apply(action).expect("duplicate should apply");
 
     let duplicate = &project.audio_items()[1];
+    assert_eq!(duplicate.fades(), fades);
     assert_eq!(duplicate.start_sample(), 1_200);
     assert_eq!(duplicate.source_offset_samples(), 120);
     assert_eq!(duplicate.length_samples(), 960);

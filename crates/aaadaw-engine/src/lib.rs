@@ -1660,6 +1660,7 @@ struct RenderGraphSources {
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
     item_ids: Vec<Option<ItemId>>,
+    fades: Vec<aaadaw_core::AudioItemFades>,
 }
 
 fn compile_fx_routes(
@@ -1875,6 +1876,7 @@ pub struct AudioRenderGraph {
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
     source_item_ids: Vec<Option<ItemId>>,
+    source_fades: Vec<aaadaw_core::AudioItemFades>,
     scratch: Vec<Vec<[f32; 2]>>,
     input_monitor: Option<AudioMonitorConsumer>,
     input_monitor_gate: Option<AudioInputMonitorGate>,
@@ -1904,6 +1906,7 @@ impl AudioRenderGraph {
             ranges: vec![None; streams.len()],
             cursors: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
+            fades: vec![aaadaw_core::AudioItemFades::default(); streams.len()],
             streams: streams
                 .into_iter()
                 .map(AudioItemPcmConsumer::Mono)
@@ -1981,6 +1984,7 @@ impl AudioRenderGraph {
             ranges: Vec::with_capacity(item_streams.len()),
             cursors: Vec::with_capacity(item_streams.len()),
             item_ids: Vec::with_capacity(item_streams.len()),
+            fades: Vec::with_capacity(item_streams.len()),
         };
         for (item, stream) in project.audio_items().iter().zip(item_streams) {
             if item.id() != stream.item_id {
@@ -2011,6 +2015,7 @@ impl AudioRenderGraph {
                 .push(Some((item.start_sample(), item.end_sample())));
             sources.cursors.push(Some(source_start_sample));
             sources.item_ids.push(Some(item.id()));
+            sources.fades.push(item.fades());
         }
 
         Self::build(project, sources, instruments, effects, max_block_frames)
@@ -2158,6 +2163,7 @@ impl AudioRenderGraph {
             source_ranges: sources.ranges,
             source_cursors: sources.cursors,
             source_item_ids: sources.item_ids,
+            source_fades: sources.fades,
             scratch,
             input_monitor: None,
             input_monitor_gate: None,
@@ -3046,6 +3052,15 @@ impl AudioRenderGraph {
                         &mut input[offset..offset + length],
                         overlap_start,
                     );
+                    let fades = self.source_fades[stream_index];
+                    for (index, frame) in input[offset..offset + length].iter_mut().enumerate() {
+                        let gain = fades.gain_at(
+                            overlap_start - item_start + index as u64,
+                            item_end - item_start,
+                        );
+                        frame[0] *= gain;
+                        frame[1] *= gain;
+                    }
                     underrun_samples = underrun_samples.saturating_add(underruns);
                     if underruns > 0
                         && let Some(position) = &self.stream_positions[stream_index]

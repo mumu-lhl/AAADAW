@@ -93,3 +93,7 @@ tracks.phase_inverted NOT NULL DEFAULT 0 / CHECK 0 或 1，旧工程保留原极
 ## 已实现 schema 24 切片
 
 project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/center，旧轨道 ID 和增益不变。领域使用独立且已验证的 MasterMix 与 SetMasterMix，Snapshot/Undo 含 Master，存储与整个工程同事务写入。读取拒绝缺行、无效系数以及无 project_meta 却带非默认 Master 状态的数据库。实时输出控制在路由总和之后、guard/Meter 之前；Freeze 源快照清除 Master 增益以免重复烘焙。
+
+## 已实现 schema 25 切片
+
+`audio_item_fades` 用 ItemId 保存两端手动淡化的小数采样长度及形状 0–6，外键删除级联；事务另显式清理旧行。旧 Item 无行时恢复零长度、形状 1，不改变旧音频。加载拒绝非法形状、非有限/负长度和孤立行，长度可以超出 Item；渲染计算有效长度而不覆盖请求值。完整 Item 复制保留淡化，移动和修剪同样保留。GUI 手势、实时发布及自动 Crossfade 是后续切片。

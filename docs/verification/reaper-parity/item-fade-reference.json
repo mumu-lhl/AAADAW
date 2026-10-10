@@ -1,0 +1,62 @@
+[
+  {
+    "file": "item-fade-shape-0.wav",
+    "sha256": "fc3f20450405f39f25d92b80fe0eb6be345c134df26c1eb0c7dd327a91cde8f3",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-shape-1.wav",
+    "sha256": "d0554af21a3ca9764f3902a5c61fe3a2074846fcaf2140ccc527df780f3d19dc",
+    "max_normalized_error": 4.7677951386937423e-07
+  },
+  {
+    "file": "item-fade-shape-2.wav",
+    "sha256": "bbd1b8ed0749fd49d3cf753fa8a70aaa361e672a3751568b64bd637c20499809",
+    "max_normalized_error": 4.7677951388888987e-07
+  },
+  {
+    "file": "item-fade-shape-3.wav",
+    "sha256": "a7cdacb8f879b4b28f11e4e69313df65a2ca7d1491b16ef51943820f1bca1962",
+    "max_normalized_error": 4.767582947318161e-07
+  },
+  {
+    "file": "item-fade-shape-4.wav",
+    "sha256": "32f190ec6ccf14881bf3edd3e950e8d5d9e7c1de7f82d252afec5ec24547a47f",
+    "max_normalized_error": 4.7675829475308656e-07
+  },
+  {
+    "file": "item-fade-shape-5.wav",
+    "sha256": "ffea7aac0ce5fe7f3558251048c39577d37e2dc511c561043286a1e382479554",
+    "max_normalized_error": 4.7675457538753907e-07
+  },
+  {
+    "file": "item-fade-shape-6.wav",
+    "sha256": "5dea06250384469512b3e45b07fedb09b0af4a4988d698c3cf3f8d75ffa01d4e",
+    "max_normalized_error": 4.7672411510046864e-07
+  },
+  {
+    "file": "item-fade-overlap-linear.wav",
+    "sha256": "927ff20cda1b02edd21863e0f6fc8d9a9e4728270e2acc1a4cb6274c0a08f7ba",
+    "max_normalized_error": 4.764133029744322e-07
+  },
+  {
+    "file": "item-fade-overlap-asymmetric.wav",
+    "sha256": "a0b211d00338f9418deac4329e4612f56cdc94ed767ec8515ef785abab6ffae4",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-overlap-full.wav",
+    "sha256": "d84d354d906a4742ac08dad224f6ab5f0819dad3a2338f8d47c393f9753cd368",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-long-in.wav",
+    "sha256": "50c20927e617073a14ab12e713c68e92c59fe4c87181076a65e65799a55cf1f0",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-long-out.wav",
+    "sha256": "e9e24a637b7eeac9e6d21874e9bcf43bfe7f38c97dfa0d8c6cd56648492a3713",
+    "max_normalized_error": 4.755655924615354e-07
+  }
+]

@@ -1147,6 +1147,7 @@ impl Project {
                 .audio_items
                 .iter()
                 .map(|item| AudioItemSnapshot {
+                    fades: item.fades,
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     media_ref: item.media_ref.clone(),
@@ -1375,6 +1376,7 @@ impl Project {
             }
             max_item_id = Some(max_item_id.map_or(item.id, |max: u64| max.max(item.id)));
             audio_items.push(AudioItem {
+                fades: item.fades,
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 media_ref: item.media_ref,
@@ -1987,6 +1989,7 @@ impl Project {
                     .checked_add(1)
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -2199,12 +2202,69 @@ impl Project {
                     .checked_add(1)
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
                     start_sample,
                     source_offset_samples,
                     length_samples,
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::AudioItemInserted {
+                    index: state.audio_items.len(),
+                    item,
+                }
+            }
+            DawAction::SetAudioItemFades { item_id, fades } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    fades,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::DuplicateAudioItemAt {
+                item_id,
+                track_id,
+                start_sample,
+            } => {
+                let source = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let target = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if target.frozen_audio_item_id.is_some() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                if start_sample.checked_add(source.length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    start_sample,
+                    ..source.clone()
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::AudioItemInserted {

@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 未开始 | 基础编辑 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；GUI、完整基本编辑和自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -101,3 +101,11 @@ Add 独立键盘录入窗口与手动 OK/Cancel 已实现，取消不写入，�
 ## 2026-10-10 Default 推子曲线
 
 公共 API 采样的双向曲线、+12 dB 推子上限、有限零增益端点、TCP/MCP/Master 同步与 -inf 显示已实现；精确录入按实机保留 +20 dB。813 项 audio-device 全量、末次 18 项 focused、Clippy 和构建通过，GUI 端点/重置/撤销及范围外数值有[证据](../verification/reaper-parity/default-fader-curve.md)。网格外插值、自定义形状、原厂灵敏度及完整主题仍未关闭。前一 Master 提交 cd65161 的 Rust CI、Portable、Installers 全部成功；继续推进其余编辑基础。
+
+## 2026-10-10 Item 手动淡化基础推进
+
+`ITEM-FADE-001` 开始实现，参照与边界见 [逐帧证据](../verification/reaper-parity/item-fades.md)。七种曲线、超长/重叠长度规则已用原厂真实输出核对；schema 25 保留旧工程无淡化语义。模型、撤销、复制、存储与真实 PCM 处理已接入，UI 手柄及实时发布仍待实现，不能视为 P4 或全量对齐已完成。
+
+上一推子提交 `f47bfe4` 的 Rust CI、Portable desktop archives、Native installers 三条工作流均已成功。
+
+本地音频功能全量 819 项通过、零跳过；默认 Clippy warnings denied 通过，原厂 12 组输出逐帧校验通过。GUI 淡化和实时发布尚未实现，完整参照与未完成边界保留在证据文档。

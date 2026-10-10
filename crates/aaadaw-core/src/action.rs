@@ -171,6 +171,17 @@ pub enum DawAction {
         source_offset_samples: u64,
         length_samples: u64,
     },
+    /// Set both manual Item fades as one undoable edit.
+    SetAudioItemFades {
+        item_id: ItemId,
+        fades: crate::AudioItemFades,
+    },
+    /// Duplicate the complete audio Item at a new track and position.
+    DuplicateAudioItemAt {
+        item_id: ItemId,
+        track_id: TrackId,
+        start_sample: u64,
+    },
     /// Move, trim, or extend an audio item.
     EditAudioItem {
         item_id: ItemId,

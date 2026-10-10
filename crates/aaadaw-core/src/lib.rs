@@ -7,6 +7,7 @@
 mod action;
 mod audio;
 mod error;
+mod fades;
 mod master;
 mod midi;
 mod project;
@@ -18,6 +19,7 @@ mod track;
 pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
+pub use fades::{AudioFade, AudioItemFades, FadeShape};
 pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,

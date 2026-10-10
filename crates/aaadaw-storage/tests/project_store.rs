@@ -2310,3 +2310,63 @@ fn track_phase_roundtrip_and_schema_twenty_two_default_keep_existing_view() {
     store.close().unwrap();
     remove_database(&path);
 }
+
+#[test]
+fn item_fades_roundtrip_readonly_legacy_default_and_invalid_values() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 100,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let fades = aaadaw_core::AudioItemFades {
+        fade_in: aaadaw_core::AudioFade::new(12_000.5, aaadaw_core::FadeShape::Smooth).unwrap(),
+        fade_out: aaadaw_core::AudioFade::new(60_000.25, aaadaw_core::FadeShape::SlowStart)
+            .unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: project.audio_items()[0].id(),
+            fades,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        project.snapshot()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("PRAGMA ignore_check_constraints = ON; UPDATE audio_item_fades SET fade_in_samples = -1;").unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE audio_item_fades; PRAGMA user_version = 24;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    let restored = store.load().unwrap();
+    assert_eq!(
+        restored.audio_items()[0].fades(),
+        aaadaw_core::AudioItemFades::default()
+    );
+    assert_eq!(restored.audio_items()[0].source_offset_samples(), 200);
+    store.close().unwrap();
+    remove_database(&path);
+}
