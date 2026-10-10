@@ -64,6 +64,7 @@ mod media;
 mod messages;
 mod offline_job_queue;
 mod project_io;
+mod project_settings;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
@@ -326,6 +327,8 @@ struct App {
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    project_settings_window_id: Option<iced::window::Id>,
+    project_settings: Option<project_settings::Draft>,
     routing_window_id: Option<iced::window::Id>,
     routing_track_id: Option<TrackId>,
     routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
@@ -1351,6 +1354,8 @@ impl App {
             "Keyboard input".to_owned()
         } else if self.action_list_window_id == Some(window_id) {
             "Actions".to_owned()
+        } else if self.project_settings_window_id == Some(window_id) {
+            "Project Settings".to_owned()
         } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
         } else if self.render_window_id == Some(window_id) {
@@ -1621,6 +1626,7 @@ impl App {
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
                     || self.settings_window_id == Some(*window_id)
+                    || self.project_settings_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
             || matches!(
@@ -1651,6 +1657,10 @@ impl App {
                     | Message::ActionListFindShortcut
                     | Message::ActionListRun(_)
                     | Message::OpenSettings
+                    | Message::OpenProjectSettings
+                    | Message::CloseProjectSettings
+                    | Message::ProjectFrameRateChanged(_)
+                    | Message::ProjectFrameRateMenuChanged(_)
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
@@ -1688,6 +1698,7 @@ impl App {
                     | Message::PluginPickerSearchChanged(_)
                     | Message::SelectFxChainPlugin(_)
                     | Message::ExecuteCommand(commands::CommandId::OpenSettings)
+                    | Message::ExecuteCommand(commands::CommandId::OpenProjectSettings)
                     | Message::ExecuteCommand(commands::CommandId::OpenActionList)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
@@ -2052,6 +2063,20 @@ impl App {
             }
             Message::MobileNavigateBack => self.navigate_back_mobile_panel(),
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenProjectSettings => task = self.open_project_settings(),
+            Message::CloseProjectSettings => task = self.close_project_settings(),
+            Message::ApplyProjectSettings => task = self.apply_project_settings(),
+            Message::ProjectFrameRateMenuChanged(open) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.menu_open = open;
+                }
+            }
+            Message::ProjectFrameRateChanged(rate) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.rate = rate;
+                    draft.menu_open = false;
+                }
+            }
             Message::OpenClapPluginSettings => {
                 self.settings_category = SettingsCategory::ClapPlugins;
                 task = self.open_settings();
@@ -2131,7 +2156,10 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
-                if self.item_properties_window_id == Some(window_id) {
+                if self.project_settings_window_id == Some(window_id) {
+                    self.project_settings_window_id = None;
+                    self.project_settings = None;
+                } else if self.item_properties_window_id == Some(window_id) {
                     self.item_properties_window_id = None;
                     self.item_properties = None;
                 } else if self.routing_window_id == Some(window_id) {
@@ -2894,6 +2922,33 @@ impl App {
             Message::ActionListDeleteBinding => self.delete_action_list_binding(),
             Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if self.project_settings_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        if let Some(draft) = &mut self.project_settings
+                            && draft.menu_open
+                        {
+                            draft.menu_open = false;
+                            draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+                            return Task::none();
+                        }
+                        return self.close_project_settings();
+                    }
+                    if status == iced::event::Status::Ignored
+                        && matches!(&event, iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {key:iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),modifiers,repeat:false,..}) if modifiers.is_empty())
+                    {
+                        return self.apply_project_settings();
+                    }
+                    return Task::none();
+                }
                 if self.item_properties_window_id == Some(window_id) {
                     if status == iced::event::Status::Ignored
                         && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {

@@ -18,6 +18,7 @@ pub(crate) enum CommandId {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenProjectSettings,
     OpenActionList,
     Undo,
     Redo,
@@ -77,6 +78,7 @@ enum CommandKind {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenProjectSettings,
     OpenActionList,
     Undo,
     Redo,
@@ -202,6 +204,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenProjectSettings,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Project settings...",
+        aliases: &["project settings", "video frame rate"],
+        shortcuts: &[Shortcut::named(Named::Enter, Modifiers::ALT)],
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::OpenSettings,
@@ -813,6 +825,7 @@ fn default_may_yield(kind: CommandKind) -> bool {
     matches!(
         kind,
         CommandKind::OpenActionList
+            | CommandKind::OpenProjectSettings
             | CommandKind::OpenItemProperties
             | CommandKind::ToggleItemProperties
             | CommandKind::AddTrack
@@ -1136,6 +1149,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
+        CommandKind::OpenProjectSettings => "file.project-settings",
         CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
@@ -1214,6 +1228,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ExportWav => Message::OpenRenderWindow,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
+        CommandId::OpenProjectSettings => Message::OpenProjectSettings,
         CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
@@ -1429,7 +1444,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
     match kind {
         CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
         CommandKind::SaveProject => !project_file_busy(app),
-        CommandKind::OpenSettings | CommandKind::OpenActionList => true,
+        CommandKind::OpenSettings
+        | CommandKind::OpenProjectSettings
+        | CommandKind::OpenActionList => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.media_store_path().is_some()
@@ -1594,6 +1611,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
+        CommandKind::OpenProjectSettings => CommandId::OpenProjectSettings,
         CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,

@@ -89,6 +89,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         action_list::input_view(app)
     } else if app.action_list_window_id == Some(window_id) {
         action_list::view(app)
+    } else if app.project_settings_window_id == Some(window_id) {
+        super::project_settings::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.render_window_id == Some(window_id) {
