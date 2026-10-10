@@ -154,6 +154,18 @@ pub(crate) enum TimelineEvent {
         y: f32,
     },
     CloseItemContextMenu,
+    OpenFadeMenu {
+        item_id: ItemId,
+        edge: ItemFadeEdge,
+        x: f32,
+        y: f32,
+    },
+    CloseFadeMenu,
+    SetFadeCurvePreset {
+        item_id: ItemId,
+        edge: ItemFadeEdge,
+        shape: aaadaw_core::FadeShape,
+    },
     OpenVolumeAutomationPointMenu {
         track_id: TrackId,
         index: usize,
@@ -732,6 +744,7 @@ pub(crate) struct TimelineState {
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
+    pub(crate) context_fade: Option<FadeMenuContext>,
     pub(crate) context_item_position: Option<(f32, f32)>,
     pub(crate) context_automation_point: Option<AutomationPointContext>,
     pub(crate) context_automation_position: Option<(f32, f32)>,
@@ -925,6 +938,7 @@ impl Default for TimelineState {
             time_selection: None,
             context_track: None,
             context_item: None,
+            context_fade: None,
             context_item_position: None,
             context_automation_point: None,
             context_automation_position: None,
@@ -966,6 +980,8 @@ impl TimelineState {
         project: &Project,
         view_state: Option<&ArrangementViewState>,
     ) {
+        self.context_fade = None;
+        self.item_fade_preview = None;
         self.folder_compact.clear();
         self.volume_automation_tracks.clear();
         self.hidden_volume_automation_tracks.clear();
@@ -1199,6 +1215,12 @@ impl TimelineState {
             .is_some_and(|track_id| !self.cache.track_ids.contains(&track_id))
         {
             self.context_track = None;
+        }
+        if self
+            .context_fade
+            .is_some_and(|context| !self.cache.item_indices.contains_key(&context.item_id))
+        {
+            self.context_fade = None;
         }
         if self
             .context_item
@@ -1436,6 +1458,9 @@ impl TimelineState {
     }
 
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
+        if !matches!(event, TimelineEvent::OpenFadeMenu { .. }) {
+            self.context_fade = None;
+        }
         match event {
             TimelineEvent::PanByPixels(delta_x) => {
                 let delta = -(f64::from(delta_x) / f64::from(self.pixels_per_tick))
@@ -1474,6 +1499,26 @@ impl TimelineState {
                 bottom,
                 additive,
             } => self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive),
+            TimelineEvent::OpenFadeMenu {
+                item_id,
+                edge,
+                x,
+                y,
+            } => {
+                if self.cache.item_indices.contains_key(&item_id) {
+                    self.context_item = None;
+                    self.context_item_position = None;
+                    self.context_automation_point = None;
+                    self.context_fade = Some(FadeMenuContext {
+                        item_id,
+                        edge,
+                        x,
+                        y,
+                    });
+                }
+            }
+            TimelineEvent::CloseFadeMenu => self.context_fade = None,
+            TimelineEvent::SetFadeCurvePreset { .. } => {}
             TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
                 if self.cache.item_indices.contains_key(&item_id) {
                     if !self.selected_items.contains(&item_id) {
@@ -2136,9 +2181,17 @@ struct TimelineInteractionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ItemFadeEdge {
+pub(crate) enum ItemFadeEdge {
     In,
     Out,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FadeMenuContext {
+    pub(crate) item_id: ItemId,
+    pub(crate) edge: ItemFadeEdge,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2763,6 +2816,19 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let position = cursor.position_in(bounds)?;
+                if let Some((item_id, edge, _)) = self.fade_handle_at(position) {
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::OpenFadeMenu {
+                                item_id,
+                                edge,
+                                x: position.x,
+                                y: position.y,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let (track_index, row_y) = row_at_y(self.row_layout, position.y)?;
                 if let Some(track) = self.project.tracks().get(track_index)

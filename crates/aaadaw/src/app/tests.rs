@@ -7946,3 +7946,66 @@ fn item_fade_preview_commits_once_and_cancel_preserves_project_revision() {
     let _ = app.update(Message::Timeline(TimelineEvent::CommitItemFades));
     assert_eq!(app.revision, revision);
 }
+
+#[test]
+fn curve_menu_converts_legacy_smooth_without_changing_lengths_and_is_undoable() {
+    use crate::timeline::{ItemFadeEdge, TimelineEvent};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = AudioItemFades {
+        fade_in: AudioFade::new(12_000.25, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(6_000.5, FadeShape::FastStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: original,
+        })
+        .unwrap();
+    let message = Message::Timeline(TimelineEvent::SetFadeCurvePreset {
+        item_id,
+        edge: ItemFadeEdge::In,
+        shape: FadeShape::Smooth,
+    });
+    let _ = app.update(message.clone());
+    let current = app.project.audio_items()[0].fades();
+    assert_eq!(current.fade_in.length_samples(), 12_000.25);
+    assert_eq!(
+        current.fade_in.curve(),
+        FadeCurve::current_preset(FadeShape::Smooth)
+    );
+    assert_eq!(current.fade_out, original.fade_out);
+    let revision = app.revision;
+    let _ = app.update(message);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), current);
+    let _ = app.update(Message::Timeline(TimelineEvent::OpenFadeMenu {
+        item_id,
+        edge: ItemFadeEdge::Out,
+        x: 1.0,
+        y: 1.0,
+    }));
+    let _ = app.update(Message::Escape);
+    assert!(app.timeline.context_fade.is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), current);
+}

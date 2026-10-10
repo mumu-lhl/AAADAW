@@ -1734,6 +1734,7 @@ impl App {
             Message::Timeline(
                 timeline::TimelineEvent::PreviewItemFades { .. }
                     | timeline::TimelineEvent::CommitItemFades
+                    | timeline::TimelineEvent::SetFadeCurvePreset { .. }
             )
         ) && let Some(status) = item_drag_edit_guard_status(
             self.path_picker_busy,
@@ -2984,6 +2985,9 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.timeline.context_fade.take().is_some() {
+                    return Task::none();
+                }
                 if self.timeline.item_fade_preview().is_some() {
                     self.cancel_item_fades();
                     return Task::none();
@@ -3021,6 +3025,36 @@ impl App {
             }
             Message::NewProject => {
                 task = self.begin_project_transition(PendingProjectTransition::NewProject)
+            }
+            Message::Timeline(timeline::TimelineEvent::SetFadeCurvePreset {
+                item_id,
+                edge,
+                shape,
+            }) => {
+                self.timeline.context_fade = None;
+                if let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                {
+                    let mut fades = item.fades();
+                    let fade = match edge {
+                        timeline::ItemFadeEdge::In => &mut fades.fade_in,
+                        timeline::ItemFadeEdge::Out => &mut fades.fade_out,
+                    };
+                    *fade = aaadaw_core::AudioFade::with_curve(
+                        fade.length_samples(),
+                        aaadaw_core::FadeCurve::current_preset(shape),
+                    )
+                    .expect("validated existing fade length");
+                    if fades != item.fades() {
+                        self.apply_action(
+                            DawAction::SetAudioItemFades { item_id, fades },
+                            "Audio item fade curve changed",
+                        );
+                    }
+                }
             }
             Message::Timeline(timeline::TimelineEvent::PreviewItemFades { item_id, fades }) => {
                 if self

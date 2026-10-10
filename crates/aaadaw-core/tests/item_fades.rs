@@ -210,3 +210,33 @@ fn fade_gesture_clock_preserves_fractional_positions_and_ramp_time() {
         }
     }
 }
+
+#[test]
+fn current_curve_menu_presets_preserve_legacy_modes_except_smooth() {
+    use aaadaw_core::{FadeCurve, FadeCurveParameters};
+    for code in 0..=6 {
+        let shape = FadeShape::from_code(code).unwrap();
+        let curve = FadeCurve::current_preset(shape);
+        assert_eq!(curve.current_preset_shape(), Some(shape));
+        if shape != FadeShape::Smooth {
+            assert_eq!(curve, FadeCurve::Legacy(shape));
+        }
+    }
+    let curve = FadeCurve::current_preset(FadeShape::Smooth);
+    assert_eq!(
+        curve,
+        FadeCurve::Native(FadeCurveParameters::new(0.0, 0.5).unwrap())
+    );
+    let current = AudioFade::with_curve(1.0, curve).unwrap();
+    let legacy = AudioFade::new(1.0, FadeShape::Smooth).unwrap();
+    assert_eq!(current.gain_at_progress(0.25), 0.125);
+    assert_eq!(legacy.gain_at_progress(0.25), 0.15625);
+    assert_eq!(
+        legacy.curve().current_preset_shape(),
+        Some(FadeShape::Smooth)
+    );
+    assert_eq!(
+        FadeCurve::Native(FadeCurveParameters::new(0.25, 0.25).unwrap()).current_preset_shape(),
+        None
+    );
+}

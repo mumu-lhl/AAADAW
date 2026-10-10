@@ -14,7 +14,7 @@ local item=reaper.GetTrackMediaItem(track,0)
 reaper.SetMediaItemSelected(item,true)
 reaper.GetSet_ArrangeView2(0,true,0,0,0,2.5)
 local log=assert(io.open(root..'fade-interaction.csv','w'))
-log:write('time,x,y,surface,item_hit,fade_in,fade_out,in_shape,out_shape,item_start,item_length\n')
+log:write('time,x,y,surface,item_hit,fade_in,fade_out,in_shape,out_shape,item_start,item_length,in_curvature,in_s,out_curvature,out_s,lpf_flags\n')
 local previous=''
 reaper.atexit(function() log:close() end)
 local function observe()
@@ -27,7 +27,16 @@ local function observe()
   reaper.GetMediaItemInfo_Value(item,'D_FADEINLEN'),reaper.GetMediaItemInfo_Value(item,'D_FADEOUTLEN'),
   reaper.GetMediaItemInfo_Value(item,'C_FADEINSHAPE'),reaper.GetMediaItemInfo_Value(item,'C_FADEOUTSHAPE'),
   reaper.GetMediaItemInfo_Value(item,'D_POSITION'),reaper.GetMediaItemInfo_Value(item,'D_LENGTH'))
- if row~=previous then log:write(string.format('%.6f,',reaper.time_precise())..row..'\n');log:flush();previous=row end
+ for _,field in ipairs({'D_FADEINDIR_NEW','D_FADEINDIR2_NEW','D_FADEOUTDIR_NEW','D_FADEOUTDIR2_NEW','I_FADELPF'}) do
+  row=row..','..string.format('%.12g',reaper.GetMediaItemInfo_Value(item,field))
+ end
+ if row~=previous then
+  log:write(string.format('%.6f,',reaper.time_precise())..row..'\n');log:flush();previous=row
+  local ok,chunk=reaper.GetItemStateChunk(item,'',false);assert(ok)
+  local state=assert(io.open(root..'fade-state.txt','w'))
+  for line in chunk:gmatch('[^\r\n]+') do if line:match('^FADE') then state:write(line..'\n') end end
+  state:close()
+ end
  reaper.defer(observe)
 end
 observe()

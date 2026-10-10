@@ -538,6 +538,22 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .spacing(0)
         .width(Length::Fill)
         .height(Length::Fill);
+    if let Some(context) = app.timeline.context_fade {
+        let popup = float(fade_curve_menu(app, context)).translate(move |bounds, viewport| {
+            let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+            let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+            let x = (bounds.x + context.x).clamp(viewport.x, max_x);
+            let y = (bounds.y + 32.0 + context.y - app.timeline.vertical_scroll)
+                .clamp(viewport.y, max_y);
+            iced::Vector::new(x - bounds.x, y - bounds.y)
+        });
+        let dismiss =
+            mouse_area(contents).on_press(Message::Timeline(TimelineEvent::CloseFadeMenu));
+        return stack![dismiss, popup]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     if let Some(context) = app.timeline.context_automation_point {
         let (x, y) = app
             .timeline
@@ -573,6 +589,163 @@ fn timeline_content(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn fade_curve_menu(app: &App, context: timeline::FadeMenuContext) -> Element<'_, Message> {
+    let selected = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == context.item_id)
+        .and_then(|item| {
+            match context.edge {
+                timeline::ItemFadeEdge::In => item.fades().fade_in,
+                timeline::ItemFadeEdge::Out => item.fades().fade_out,
+            }
+            .curve()
+            .current_preset_shape()
+        });
+    let choices = (0..=6).map(|code| {
+        let shape = aaadaw_core::FadeShape::from_code(code).expect("seven curve menu presets");
+        let glyph: Element<'_, Message> = Element::new(FadeCurveGlyph {
+            shape,
+            fade_out: context.edge == timeline::ItemFadeEdge::Out,
+        });
+        button(
+            row![
+                text(if selected == Some(shape) { "✓" } else { "" })
+                    .size(18)
+                    .width(24),
+                glyph
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(152)
+        .height(28)
+        .padding([2, 6])
+        .style(|_, status| {
+            let gray = if status == button::Status::Hovered {
+                38
+            } else {
+                179
+            };
+            button::Style {
+                background: Some(iced::Color::from_rgb8(gray, gray, gray).into()),
+                text_color: if status == button::Status::Hovered {
+                    iced::Color::from_rgb8(179, 179, 179)
+                } else {
+                    iced::Color::from_rgb8(38, 38, 38)
+                },
+                ..button::Style::default()
+            }
+        })
+        .on_press(Message::Timeline(TimelineEvent::SetFadeCurvePreset {
+            item_id: context.item_id,
+            edge: context.edge,
+            shape,
+        }))
+        .into()
+    });
+    container(column(choices).spacing(0))
+        .width(152)
+        .padding([6, 0])
+        .style(|_| container::Style {
+            background: Some(iced::Color::from_rgb8(179, 179, 179).into()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+struct FadeCurveGlyph {
+    shape: aaadaw_core::FadeShape,
+    fade_out: bool,
+}
+
+impl Widget<Message, Theme, iced::Renderer> for FadeCurveGlyph {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(Length::Fixed(96.0), Length::Fixed(24.0))
+    }
+    fn layout(
+        &mut self,
+        _: &mut Tree,
+        _: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(limits.resolve(
+            Length::Fixed(96.0),
+            Length::Fixed(24.0),
+            iced::Size::new(96.0, 24.0),
+        ))
+    }
+    fn draw(
+        &self,
+        _: &Tree,
+        renderer: &mut iced::Renderer,
+        _: &Theme,
+        _: &renderer::Style,
+        layout: Layout<'_>,
+        _: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer;
+        let bounds = layout.bounds();
+        let Some(clip) = bounds.intersection(viewport) else {
+            return;
+        };
+        renderer.with_layer(clip, |renderer| {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: iced::Border::default()
+                        .color(iced::Color::from_rgb8(168, 168, 168))
+                        .width(1.0),
+                    ..renderer::Quad::default()
+                },
+                iced::Color::from_rgb8(179, 179, 179),
+            );
+            let fade = aaadaw_core::AudioFade::with_curve(
+                1.0,
+                aaadaw_core::FadeCurve::current_preset(self.shape),
+            )
+            .expect("finite preset length");
+            let mut previous = None;
+            for x in 0..=48 {
+                let progress = f64::from(x) / 48.0;
+                let gain = fade.gain_at_progress(if self.fade_out {
+                    1.0 - progress
+                } else {
+                    progress
+                });
+                let y = (23.0 * (1.0 - gain)).round();
+                let top = previous.map_or(y, |previous: f32| previous.min(y));
+                let height = previous.map_or(1.0, |previous: f32| (previous - y).abs() + 1.0);
+                let plot_x = bounds.x + x as f32 + if self.fade_out { 48.0 } else { 0.0 };
+                if y > 1.0 {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: iced::Rectangle::new(
+                                iced::Point::new(plot_x, bounds.y + 1.0),
+                                iced::Size::new(1.0, y - 1.0),
+                            ),
+                            ..renderer::Quad::default()
+                        },
+                        iced::Color::from_rgb8(142, 142, 142),
+                    );
+                }
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: iced::Rectangle::new(
+                            iced::Point::new(plot_x, bounds.y + top),
+                            iced::Size::new(1.0, height),
+                        ),
+                        ..renderer::Quad::default()
+                    },
+                    iced::Color::from_rgb8(38, 38, 38),
+                );
+                previous = Some(y);
+            }
+        });
+    }
 }
 
 fn automation_point_context_menu(

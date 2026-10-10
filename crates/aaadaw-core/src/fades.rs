@@ -116,6 +116,38 @@ pub enum FadeCurve {
 }
 
 impl FadeCurve {
+    /// REAPER 7.82's curve menu preserves compatibility mode except for
+    /// Smooth, which selects the current piecewise-quadratic S preset.
+    pub fn current_preset(shape: FadeShape) -> Self {
+        if shape == FadeShape::Smooth {
+            Self::Native(FadeCurveParameters {
+                curvature: 0.0,
+                s_parameter: 0.5,
+            })
+        } else {
+            Self::Legacy(shape)
+        }
+    }
+
+    pub fn current_preset_shape(self) -> Option<FadeShape> {
+        match self {
+            Self::Legacy(shape) => Some(shape),
+            Self::Native(parameters) => (0..=6).find_map(|code| {
+                let shape = FadeShape::from_code(code)?;
+                let expected = match shape {
+                    FadeShape::Linear => (0.0, 0.0),
+                    FadeShape::FastStart => (0.5, 0.0),
+                    FadeShape::SlowStart => (-0.5, 0.0),
+                    FadeShape::VeryFastStart => (1.0, 0.0),
+                    FadeShape::VerySlowStart => (-1.0, 0.0),
+                    FadeShape::Smooth => (0.0, 0.5),
+                    FadeShape::SteepSmooth => (0.0, 1.0),
+                };
+                ((parameters.curvature(), parameters.s_parameter()) == expected).then_some(shape)
+            }),
+        }
+    }
+
     fn gain(self, x: f64) -> f64 {
         match self {
             Self::Legacy(shape) => shape.gain(x),

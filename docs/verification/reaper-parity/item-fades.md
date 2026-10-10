@@ -96,3 +96,15 @@ Window test: at 62.399998 pixels/quarter, a 20-pixel drag changed fade-in from 3
 Final `cargo xtest --features aaadaw/audio-device --no-fail-fast`: 828 passed, zero skipped. The intervening display-service exit caused two CLAP GUI test failures; after restoring the owned displays the full final suite passed. Default `cargo clippy --workspace --all-targets -- -D warnings` passed. Focused gesture/history/fractional-clock regressions also passed, including changing the timeline bounds while the pointer drag is active.
 
 Remaining: numeric fade inputs, current-version curve editor/menu, selected/grouped-item behavior, Shift crossfade and other modifiers, native drag-overlap adjustment, moving/trimming curve previews, automatic recording/split fades, auto/manual Crossfade, complete Item Properties, and visual comparison across sizes/DPI. This slice does not close EDIT-FADE-001, ITEM-FADE-001, P4, or whole-product parity. Physical playback monitoring is unavailable here; controller/PCM proof is covered by the earlier audio tests.
+
+## 七种曲线菜单（Linux 7.82 实测）
+
+右键单个音频 Item 的淡化手柄打开七种预设，淡入图位于 96×24 图框的左半段，淡出图位于右半段。行间距 28、菜单宽 152，以及灰色背景、曲线填充和悬停颜色来自实机测量；数值和自有工程的 FADE 状态事实见 [菜单参照](item-fade-menu-reference.json)。原厂截图仅留在 scratch，未纳入仓库。
+
+原厂选择 0–4 和 6 保留兼容模式；选择 5（Smooth）写入 FADE_NEW_PARAMETERS，使用 c=0、s=0.5。旧 Smooth 即使显示同一选中项，再选择仍须转换模式，不能因为编号相同跳过。当前菜单经公开 DawAction 提交、只改变指定一端曲线；重复选择同一实际模式不增加历史。
+
+AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](item-fade-ui/curve-menu-out.png)均可选择。淡入 Smooth 保存后两端长度仍为 28846.1549042245 / 7692.307974459873 samples，曲线表为 (0, 0.5) / NULL；Undo 恢复 shape 1 并删除 Native 行，Redo 恢复。随后将淡出改为 Linear，仅修改其兼容编号为 0，保留淡入 Native 参数及两端长度。Escape 和点击菜单外时间线关闭菜单；后一点击仍执行普通编辑光标定位。
+
+最终 audio-device 全 workspace **830 passed / 0 skipped**；默认 Clippy warnings denied 通过。新增回归覆盖全部预设模式、旧/新 Smooth 输出差异以及曲线选择的历史、重复选择、长度与另一端参数保护。上一手柄提交 d2bfbe2 的 Rust CI、Portable desktop archives、Native installers 全部成功。
+
+仍待完成：原厂菜单末尾的 Low pass fade（I_FADELPF 淡入/淡出位标志独立）、曲率数值/连续编辑、菜单方向键导航、抗锯齿/DPI 精确验收、多 Item/分组修饰键和 Crossfade。当前七行菜单高度 208，原厂含低通入口为 224；这项差异保留为未完成，不宣称整个菜单对齐。
