@@ -244,12 +244,14 @@ pub(crate) struct ItemProperties {
     pub(crate) fields: [String; 9],
     changed: [bool; 9],
     pub(crate) unit: TimeUnit,
+    frame_rate: aaadaw_core::FrameRate,
     pub(crate) error: Option<String>,
 }
 
 impl ItemProperties {
     fn from_project_item(item: &AudioItem, project: &aaadaw_core::Project, unit: TimeUnit) -> Self {
         let mut draft = Self::from_item(item, project.settings().sample_rate(), unit);
+        draft.frame_rate = project.settings().frame_rate();
         if unit == TimeUnit::Beats {
             let result =
                 beats::format_position(project, item.start_sample() as f64).and_then(|position| {
@@ -305,6 +307,15 @@ impl ItemProperties {
         }
         let mut converted = self.clone();
         converted.unit = TimeUnit::Samples;
+        if self.unit == TimeUnit::Hmsf
+            && self.has_changes()
+            && self.frame_rate != project.settings().frame_rate()
+        {
+            // Native retains old text while Project Settings changes, then
+            // reparses frame fields on a subsequent effective Apply.
+            converted.changed[6] = true;
+            converted.changed[7] = true;
+        }
         let parse_frame = |text: &str| {
             project
                 .settings()
@@ -313,7 +324,7 @@ impl ItemProperties {
                 .map(|seconds| seconds * f64::from(project.settings().sample_rate()))
                 .map_err(|error| error.to_string())
         };
-        let start = if self.changed[6] {
+        let start = if converted.changed[6] {
             if self.unit == TimeUnit::Hmsf {
                 parse_frame(&self.fields[6])?
             } else {
@@ -322,10 +333,10 @@ impl ItemProperties {
         } else {
             item.start_sample() as f64
         };
-        if self.changed[6] {
+        if converted.changed[6] {
             converted.fields[6] = start.to_string();
         }
-        if self.changed[7] {
+        if converted.changed[7] {
             converted.fields[7] = if self.unit == TimeUnit::Hmsf {
                 parse_frame(&self.fields[7])?
             } else {
@@ -426,6 +437,7 @@ impl ItemProperties {
             ],
             changed: [false; 9],
             unit: TimeUnit::Time,
+            frame_rate: aaadaw_core::FrameRate::default(),
             error: None,
         }
     }
@@ -646,6 +658,76 @@ mod tests {
         assert!(!draft.has_changes());
         draft.edit(ItemPropertyField::Position, "-0.4".into());
         assert!(draft.placement(item, 48000).is_err());
+    }
+
+    #[test]
+    fn changed_project_rate_keeps_draft_but_reinterprets_frame_fields_on_effective_apply() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Owned".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://owned".into(),
+                start_sample: 16001,
+                source_offset_samples: 6001,
+                length_samples: 12001,
+            })
+            .unwrap();
+        let mut draft =
+            ItemProperties::from_project_item(&project.audio_items()[0], &project, TimeUnit::Hmsf);
+        assert_eq!(
+            &draft.fields[6..],
+            &["00:00:00:10", "00:00:00:07", "0:00.125"]
+        );
+        draft.edit(ItemPropertyField::InCurvature, "0.25".into());
+        assert_eq!(
+            draft
+                .placement_in_project(&project.audio_items()[0], &project)
+                .unwrap(),
+            ItemPlacement {
+                start: 16001,
+                length: 12001,
+                source_offset: 6001
+            }
+        );
+        draft =
+            ItemProperties::from_project_item(&project.audio_items()[0], &project, TimeUnit::Hmsf);
+        project
+            .apply(DawAction::SetFrameRate {
+                rate: aaadaw_core::FrameRate::Fps25,
+            })
+            .unwrap();
+        assert!(!draft.has_changes());
+        assert_eq!(
+            draft
+                .placement_in_project(&project.audio_items()[0], &project)
+                .unwrap(),
+            ItemPlacement {
+                start: 16001,
+                length: 12001,
+                source_offset: 6001
+            }
+        );
+        draft.edit(ItemPropertyField::InCurvature, "0.75".into());
+        assert_eq!(
+            draft
+                .placement_in_project(&project.audio_items()[0], &project)
+                .unwrap(),
+            ItemPlacement {
+                start: 19200,
+                length: 13440,
+                source_offset: 6001
+            }
+        );
+        assert_eq!(
+            &draft.fields[6..],
+            &["00:00:00:10", "00:00:00:07", "0:00.125"]
+        );
     }
 
     #[test]

@@ -11,3 +11,11 @@ Core `FrameRate` 精确比率与标准格式/解析、`ProjectSettings`、可撤
 Item Properties 的 Position/Length 在 H:M:S:F 下按工程设置转换；Take Start in source 仍为 Time，淡化长度仍为 Time；未编辑字段保留完整样本值。完整 Project Settings 的入口/分组/几何、视频和时间偏移设置尚未完成；新增 Core 帧率接口不表示这些 UI 已验收。视频编解码、SMPTE/MTC 同步及负/分数采样 Item 时钟仍待后续实施。
 
 实际 AAADAW GUI：四种单位按原厂顺序提供（[菜单](item-fade-ui/properties-frames-menu.png)），默认 30 fps 的位置与长度 .5 秒显示 `00:00:00:15`（[显示](item-fade-ui/properties-frames-selected.png)）。Apply `00:00:01:15` / `00:00:00:07` / Time 源偏移 .125 秒后存储 72000/11200/6000 样本，schema 27、帧率代码 5（[应用](item-fade-ui/properties-frames-applied.png)）。[一次 Undo](item-fade-ui/properties-frames-undo.png) 恢复 24000/24000/12000，[Redo](item-fade-ui/properties-frames-redo.png) 恢复全部已应用字段。[重启](item-fade-ui/properties-frames-restart.png) 保持 H:M:S:F 配置和工程值。截图仅含 AAADAW 自有窗口。
+
+## 帧率变化与已打开属性窗口的联动
+
+[自有采样级探针](../../../scripts/reaper_parity/probe-item-timecode-settings.lua) 使用 48 kHz 自有媒体，初始位置/长度/源起点分别 16001/12001/6001 样本。初始化后打开 H:M:S:F 属性，只改 C=.25 并 Apply，三项精度保持；工程帧率 30→25 后，旧文本 `00:00:00:10` / `00:00:00:07` 保持且 Apply 仍禁用，工程媒体位置不立即变化。随后只改 C=.75 并有效 Apply，旧帧文本按 25 fps 解释，位置/长度变为 19200/13440，源起点仍 6001 样本。最后工程帧率 25→24，干净属性直接 OK，媒体仍保持前值。[数值记录](item-timecode-settings-reference.tsv) 保存完整变化序列。
+
+实现为草稿记录显示时帧率：单位刷新/重开时更新；外部帧率修改不主动丢弃草稿。只有 H:M:S:F 草稿有实际编辑且帧率变化时，在提交前重新解析位置/长度两项，使用既有一次事务与播放守卫；干净 OK 不重解析。相同帧率下，未编辑字段仍保留精度。完整工程设置 UI 尚待推进，此联动规则先由领域设置变更回归验证。
+
+联动修正最终验证：849 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt 与 diff 检查通过。
