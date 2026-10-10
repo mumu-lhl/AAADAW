@@ -134,3 +134,17 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 最终 audio-device 全 workspace **834 passed / 0 skipped**，默认 Clippy warnings denied 通过。新增事务回归包含位置/长度/源起点与曲率同时提交及一次 Undo/Redo、缩短时保留超长淡化请求、无效长度/超范围输入的原子拒绝，以及用新长度处理淡化重叠。
 
 仍待：原厂 Time/Beats/H:M:S:F/Samples 单位切换、负位置和分数采样 Item/源位置、Loop source、Take 等完整字段和批量编辑；当前窗口 526×310 的字段切片不视为完整 526×693 原厂窗口验收。自有 [参照事实](item-fade-properties-reference.json)补记单位选择：Samples 会同时改变 Position/Length/Start in source，淡化时间仍为 Time。
+
+## Time / Samples 显示与单位切换
+
+属性窗口接入 Time / Samples，默认 Time；Samples 同时改变 Position、Length 和 Start in source，淡化时间仍显示 Time。单位在独立版本化配置 item-properties.json 中原子保存，关闭/重开及重启恢复；未知版本或非法值加载失败且不改原文件。工程 schema 仍为 26。
+
+进一步实测修正初版假设：原厂切换单位会从当前工程刷新**全部字段**，丢弃尚未 Apply 的位置和曲率草稿，并禁用 Apply。当前实现按此行为处理，不保留未应用草稿。已应用的数值不被显示格式改写：Native Samples 位置 16001 经 Apply 后为 0.333354166667 秒，切回 Time 仅显示 0:00.333；24035 显示 0:00.500。
+
+自有 [时间格式探针](../../../scripts/reaper_parity/probe-time-displays.lua)在独立空白工程读取当前帧率并控制 48 kHz、Tempo/Meter 案例，产生 [27 组、108 行数值事实](time-displays-reference.tsv)。Time 在 10 ns 级边界容差后截取完整毫秒，不使用三位小数四舍五入；1 小时后显示 H:MM:SS.mmm。当前 Time 回归逐项核对 27 组 position/length 共 54 个输出，包含纳秒边界、分钟/小时、手动小数淡化和精确采样位置。Beats 和 H:M:S:F 数据作为后续实现参照，未将采集本身记为 GUI 通过。
+
+最新构建实窗中，将 Samples 位置改为 20000、淡入曲率改为 0.9 后切回 Time，恢复已应用的位置 16001（显示 0:00.333）和曲率 0.25，保存行保持 (16001,12000,6000) 及 Native (0.25,0.5)。[刷新后窗口](item-fade-ui/properties-units-refresh.png)中 Apply 禁用。随后选 Samples、重启并恢复会话，[重启窗口](item-fade-ui/properties-units-restart.png)恢复 Samples 和三个精确整数值；淡入显示 0:00.600 而非先前的 0:00.601，原请求仍为 28846.1549042245 samples。
+
+最终 audio-device 全 workspace **837 passed / 0 skipped**，默认 Clippy warnings denied 通过。回归覆盖单位刷新/草稿丢弃、未编辑采样精度、非法输入、配置读写/未来版本保护和原厂时间格式事实。前一位置提交 832858b 的 Rust CI、Portable desktop archives、Native installers 全部成功。
+
+当前仅实现 Time / Samples 两个选项；原厂还包含 Beats / H:M:S:F，Source 在这两个模式下仍使用 Time，默认帧率实测 30 fps non-drop。完整单位转换、工程帧率、负/分数采样位置、完整属性和原厂布局继续推进；不关闭 ITEM-PROPERTIES-001 或 P4。

@@ -8221,6 +8221,7 @@ fn item_properties_apply_placement_and_fades_atomically_and_keep_oversized_reque
     app.item_properties = Some(ItemProperties::from_item(
         &app.project.audio_items()[0],
         48000,
+        super::item_properties::TimeUnit::Time,
     ));
     for (field, value) in [
         (Field::Position, "0:00.500"),

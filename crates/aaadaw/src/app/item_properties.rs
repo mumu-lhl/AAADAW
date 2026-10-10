@@ -1,8 +1,89 @@
 use super::{App, Message};
 use aaadaw_core::{AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId};
 use iced::Task;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TimeUnit {
+    #[default]
+    Time,
+    Samples,
+}
+
+impl std::fmt::Display for TimeUnit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Time => "Time",
+            Self::Samples => "Samples",
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PropertiesConfig {
+    version: u32,
+    time_unit: TimeUnit,
+}
+
+pub(super) fn load_unit() -> Result<TimeUnit, String> {
+    let Some(path) = super::config_paths::config_file_path("item-properties.json") else {
+        return Ok(TimeUnit::default());
+    };
+    load_unit_path(&path)
+}
+
+fn load_unit_path(path: &std::path::Path) -> Result<TimeUnit, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(TimeUnit::default());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let config: PropertiesConfig =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if config.version != 1 {
+        return Err("Unsupported Item Properties configuration version".to_owned());
+    }
+    Ok(config.time_unit)
+}
+
+fn save_unit_path(path: &std::path::Path, unit: TimeUnit) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(&PropertiesConfig {
+        version: 1,
+        time_unit: unit,
+    })
+    .map_err(|error| error.to_string())?;
+    super::config_paths::write_atomic(path, &bytes).map_err(|error| error.to_string())
+}
 
 impl App {
+    pub(super) fn change_item_properties_unit(&mut self, unit: TimeUnit) {
+        if self.item_properties_generation != self.project_generation {
+            return;
+        }
+        let Some(draft) = &mut self.item_properties else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == draft.item_id)
+        else {
+            return;
+        };
+        draft.set_unit(unit, item, self.project.settings().sample_rate());
+        self.item_properties_unit = unit;
+        let result = super::config_paths::config_file_path("item-properties.json")
+            .ok_or_else(|| "No application configuration directory".to_owned())
+            .and_then(|path| save_unit_path(&path, unit));
+        if let Err(error) = result {
+            draft.error = Some(format!("Display unit could not be saved: {error}"));
+        }
+    }
+
     pub(super) fn open_item_properties(&mut self) -> Task<Message> {
         if let Some(id) = self.item_properties_window_id {
             return iced::window::gain_focus(id);
@@ -19,12 +100,13 @@ impl App {
         self.item_properties = Some(ItemProperties::from_item(
             item,
             self.project.settings().sample_rate(),
+            self.item_properties_unit,
         ));
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
         let (id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(526.0, 310.0),
-            min_size: Some(iced::Size::new(526.0, 310.0)),
+            size: iced::Size::new(526.0, 350.0),
+            min_size: Some(iced::Size::new(526.0, 350.0)),
             ..iced::window::Settings::default()
         });
         self.item_properties_window_id = Some(id);
@@ -120,7 +202,11 @@ impl App {
                 .iter()
                 .find(|item| item.id() == id)
                 .expect("applied item");
-            self.item_properties = Some(ItemProperties::from_item(item, sample_rate));
+            self.item_properties = Some(ItemProperties::from_item(
+                item,
+                sample_rate,
+                self.item_properties_unit,
+            ));
             Task::none()
         }
     }
@@ -150,16 +236,37 @@ pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
     pub(crate) fields: [String; 9],
     changed: [bool; 9],
+    pub(crate) unit: TimeUnit,
     pub(crate) error: Option<String>,
 }
 
 impl ItemProperties {
-    pub(crate) fn from_item(item: &AudioItem, sample_rate: u32) -> Self {
+    pub(crate) fn from_item(item: &AudioItem, sample_rate: u32, unit: TimeUnit) -> Self {
         let mut draft = Self::new(item.id(), item.fades(), sample_rate);
-        draft.fields[6] = format_time(item.start_sample() as f64 / f64::from(sample_rate));
-        draft.fields[7] = format_time(item.length_samples() as f64 / f64::from(sample_rate));
-        draft.fields[8] = format_time(item.source_offset_samples() as f64 / f64::from(sample_rate));
+        draft.unit = unit;
+        for (index, samples) in [
+            item.start_sample(),
+            item.length_samples(),
+            item.source_offset_samples(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            draft.fields[index + 6] = format_samples(samples, sample_rate, unit);
+        }
         draft
+    }
+
+    fn set_unit(&mut self, unit: TimeUnit, item: &AudioItem, sample_rate: u32) {
+        if self.unit != unit {
+            // REAPER refreshes every property from the model on a unit change,
+            // discarding all unapplied text, including unrelated fade fields.
+            *self = Self::from_item(item, sample_rate, unit);
+        }
+    }
+
+    pub(crate) fn has_changes(&self) -> bool {
+        self.changed.iter().any(|changed| *changed)
     }
 
     fn placement(&self, item: &AudioItem, sample_rate: u32) -> Result<ItemPlacement, String> {
@@ -171,13 +278,18 @@ impl ItemProperties {
         let mut samples = values;
         for (index, value) in samples.iter_mut().enumerate() {
             if self.changed[index + 6] {
-                let parsed =
-                    (parse_time(&self.fields[index + 6])? * f64::from(sample_rate)).round();
+                let parsed = match self.unit {
+                    TimeUnit::Time => parse_time(&self.fields[index + 6])? * f64::from(sample_rate),
+                    TimeUnit::Samples => self.fields[index + 6]
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Invalid samples".to_owned())?,
+                };
                 // Keep conversions exact; do not saturate overflow to u64::MAX.
-                if !parsed.is_finite() || parsed > ((1_u64 << 53) - 1) as f64 {
+                if !parsed.is_finite() || parsed < 0.0 || parsed > ((1_u64 << 53) - 1) as f64 {
                     return Err("Time exceeds the supported sample range".to_owned());
                 }
-                *value = parsed as u64;
+                *value = parsed.round() as u64;
             }
         }
         if samples[1] == 0 {
@@ -210,6 +322,7 @@ impl ItemProperties {
                 "0:00.000".to_owned(),
             ],
             changed: [false; 9],
+            unit: TimeUnit::Time,
             error: None,
         }
     }
@@ -286,9 +399,47 @@ impl ItemProperties {
 }
 
 fn format_time(seconds: f64) -> String {
-    let rounded = (seconds * 1000.0).round() / 1000.0;
-    let minutes = (rounded / 60.0).floor();
-    format!("{minutes:.0}:{:06.3}", rounded - minutes * 60.0)
+    // Current native formatting truncates milliseconds with a 10 ns boundary
+    // allowance; preserve the untouched model value rather than this display.
+    let adjusted = seconds + 1e-8;
+    let milliseconds = (adjusted * 1000.0).floor();
+    if milliseconds < u64::MAX as f64 {
+        let milliseconds = milliseconds as u64;
+        let whole = milliseconds / 1000;
+        if whole < 3600 {
+            format!(
+                "{}:{:02}.{:03}",
+                whole / 60,
+                whole % 60,
+                milliseconds % 1000
+            )
+        } else {
+            format!(
+                "{}:{:02}:{:02}.{:03}",
+                whole / 3600,
+                whole / 60 % 60,
+                whole % 60,
+                milliseconds % 1000
+            )
+        }
+    } else {
+        // The domain permits finite oversized fade requests. Display them
+        // without overflowing a millisecond integer or changing the request.
+        format!(
+            "{:.0}:{:02.0}:{:02.0}.{:03.0}",
+            (adjusted / 3600.0).floor(),
+            (adjusted % 3600.0 / 60.0).floor(),
+            (adjusted % 60.0).floor(),
+            (adjusted.fract() * 1000.0).floor()
+        )
+    }
+}
+
+fn format_samples(samples: u64, sample_rate: u32, unit: TimeUnit) -> String {
+    match unit {
+        TimeUnit::Time => format_time(samples as f64 / f64::from(sample_rate)),
+        TimeUnit::Samples => samples.to_string(),
+    }
 }
 
 fn parse_time(text: &str) -> Result<f64, String> {
@@ -338,5 +489,103 @@ impl ItemPlacement {
             length: item.length_samples(),
             source_offset: item.source_offset_samples(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaadaw_core::{DawAction, Project};
+
+    #[test]
+    fn switching_units_reloads_model_and_discards_all_drafts_without_losing_applied_precision() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Owned".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://owned".into(),
+                start_sample: 16001,
+                source_offset_samples: 23,
+                length_samples: 48000,
+            })
+            .unwrap();
+        let item = &project.audio_items()[0];
+        let mut draft = ItemProperties::from_item(item, 48000, TimeUnit::Samples);
+        assert_eq!(&draft.fields[6..], &["16001", "48000", "23"]);
+        assert!(!draft.has_changes());
+        draft.edit(ItemPropertyField::Position, "24000".into());
+        draft.edit(ItemPropertyField::InCurvature, "0.25".into());
+        assert!(draft.has_changes());
+        draft.set_unit(TimeUnit::Time, item, 48000);
+        assert_eq!(draft.fields[6], "0:00.333");
+        assert_eq!(draft.fields[1], "0.50");
+        assert!(!draft.has_changes());
+        assert_eq!(
+            draft.placement(item, 48000).unwrap(),
+            ItemPlacement::from_item(item)
+        );
+        assert_eq!(
+            draft.fades(item.fades(), 48000, 48000).unwrap(),
+            item.fades()
+        );
+        draft.edit(ItemPropertyField::Length, "NaN".into());
+        draft.set_unit(TimeUnit::Samples, item, 48000);
+        assert_eq!(draft.unit, TimeUnit::Samples);
+        assert_eq!(&draft.fields[6..], &["16001", "48000", "23"]);
+        assert!(!draft.has_changes());
+        draft.edit(ItemPropertyField::Position, "-0.4".into());
+        assert!(draft.placement(item, 48000).is_err());
+    }
+
+    #[test]
+    fn time_strings_match_native_api_boundaries_and_hour_formatting() {
+        let reference =
+            include_str!("../../../../docs/verification/reaper-parity/time-displays-reference.tsv");
+        let mut checked = 0;
+        for row in reference.lines().skip(2) {
+            let fields = row.split('\t').collect::<Vec<_>>();
+            if fields[6] != "0" {
+                continue;
+            }
+            assert_eq!(
+                format_time(fields[4].parse().unwrap()),
+                fields[7],
+                "{} position",
+                fields[0]
+            );
+            assert_eq!(
+                format_time(fields[5].parse().unwrap()),
+                fields[8],
+                "{} length",
+                fields[0]
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 27);
+    }
+
+    #[test]
+    fn property_unit_config_round_trips_and_rejects_future_or_invalid_values_without_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("item-properties.json");
+        assert_eq!(load_unit_path(&path).unwrap(), TimeUnit::Time);
+        save_unit_path(&path, TimeUnit::Samples).unwrap();
+        assert_eq!(load_unit_path(&path).unwrap(), TimeUnit::Samples);
+        for text in [
+            r#"{"version":2,"time_unit":"samples"}"#,
+            r#"{"version":1,"time_unit":"bogus"}"#,
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert!(load_unit_path(&path).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        }
+        save_unit_path(&path, TimeUnit::Time).unwrap();
+        assert_eq!(load_unit_path(&path).unwrap(), TimeUnit::Time);
     }
 }

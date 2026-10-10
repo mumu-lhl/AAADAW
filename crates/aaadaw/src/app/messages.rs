@@ -185,6 +185,7 @@ pub(crate) enum Message {
     OpenRenderWindow,
     OpenItemProperties,
     ToggleItemProperties,
+    ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
     ApplyItemProperties(bool),
     CloseItemProperties,

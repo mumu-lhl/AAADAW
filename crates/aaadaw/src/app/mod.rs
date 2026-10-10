@@ -319,6 +319,7 @@ struct App {
     item_properties: Option<item_properties::ItemProperties>,
     item_properties_window_id: Option<iced::window::Id>,
     item_properties_generation: u64,
+    item_properties_unit: item_properties::TimeUnit,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
@@ -1180,6 +1181,12 @@ impl App {
                 Err(error) => app.status = format!("Desktop layout unavailable: {error}"),
             }
         }
+        match item_properties::load_unit() {
+            Ok(unit) => app.item_properties_unit = unit,
+            Err(error) => {
+                app.status = format!("Item Properties configuration unavailable: {error}")
+            }
+        }
         match action_macros::load().and_then(commands::validate_action_macros) {
             Ok(macros) => app.action_macros = macros,
             Err(error) => {
@@ -1650,6 +1657,7 @@ impl App {
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
                     | Message::OpenItemProperties
+                    | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
                     | Message::OpenTempoMap
@@ -2058,6 +2066,7 @@ impl App {
                 }
             }
             Message::CloseItemProperties => task = self.close_item_properties(),
+            Message::ItemPropertiesUnitChanged(unit) => self.change_item_properties_unit(unit),
             Message::ItemPropertyFieldChanged(field, text) => {
                 if let Some(draft) = &mut self.item_properties {
                     draft.edit(field, text);

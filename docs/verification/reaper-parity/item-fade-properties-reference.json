@@ -128,6 +128,56 @@
         "fade_in": "0:00.800",
         "fade_out": "0:00.200"
       }
+    },
+    {
+      "operation": "In Samples display, edit position to 16001 and in curvature to 0.25 without Apply; switch to Time",
+      "before_switch_fields": {
+        "position": "16001",
+        "in_curvature": "0.25"
+      },
+      "after_switch_fields": {
+        "position": "0:00.500",
+        "in_curvature": "-1.00"
+      },
+      "after_api": {
+        "item_start": 0.5,
+        "in_curvature": -1
+      },
+      "apply_enabled": false
+    },
+    {
+      "operation": "Apply Samples position 16001, then change display to Time",
+      "after_api": {
+        "item_start": 0.333354166666667
+      },
+      "after_field": {
+        "position": "0:00.333"
+      },
+      "apply_enabled": false
+    },
+    {
+      "operation": "Apply Samples position 24035, then change display to Time",
+      "after_api": {
+        "item_start": 0.500729166666667
+      },
+      "after_field": {
+        "position": "0:00.500"
+      }
+    },
+    {
+      "operation": "Select Beats / H:M:S:F on position 0.5 and length 0.25 seconds",
+      "beats": {
+        "position": "1.2.00",
+        "length": "0.0.50",
+        "take_start_in_source": "0:00.125",
+        "take_source_unit": "Time"
+      },
+      "hmsf": {
+        "position": "00:00:00:15",
+        "length": "00:00:00:07",
+        "take_start_in_source": "0:00.125",
+        "take_source_unit": "Time"
+      }
     }
   ],
   "notes": [

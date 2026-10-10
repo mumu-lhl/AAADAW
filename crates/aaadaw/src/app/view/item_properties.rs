@@ -1,5 +1,8 @@
-use super::super::{App, Message, item_properties::ItemPropertyField};
-use iced::widget::{button, column, container, row, text, text_input};
+use super::super::{
+    App, Message,
+    item_properties::{ItemPropertyField, TimeUnit},
+};
+use iced::widget::{button, column, container, pick_list, row, text, text_input};
 use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -13,6 +16,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .width(width)
     };
     let content = column![
+        row![
+            text("Display:").width(120),
+            pick_list(
+                [TimeUnit::Time, TimeUnit::Samples],
+                Some(draft.unit),
+                Message::ItemPropertiesUnitChanged
+            )
+        ]
+        .spacing(6),
         row![
             text("Position:").width(120),
             field(ItemPropertyField::Position, 130)
@@ -55,7 +67,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             iced::widget::Space::new().width(Length::Fill),
             button("OK").on_press(Message::ApplyItemProperties(true)),
             button("Cancel").on_press(Message::CloseItemProperties),
-            button("Apply").on_press(Message::ApplyItemProperties(false)),
+            button("Apply").on_press_maybe(
+                draft
+                    .has_changes()
+                    .then_some(Message::ApplyItemProperties(false))
+            ),
         ]
         .spacing(6)
     ]
