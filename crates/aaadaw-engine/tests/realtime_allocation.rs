@@ -219,6 +219,7 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             .expect("monitor graph should expose its control")
             .set_track_enabled(track_id, true)
     );
+    let fades = graph.item_fade_controller();
     let mix = graph.track_mix_controller();
     assert!(mix.set_track_mix(track_id, 6.0, 0.0));
     let master = graph.master_output_safety_controller();
@@ -243,6 +244,19 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut last_stats = None;
     let mut midi_events_seen = 0;
     for index in 0..128 {
+        assert!(
+            fades.set_fades(
+                audio_item_id,
+                aaadaw_core::AudioItemFades {
+                    fade_in: aaadaw_core::AudioFade::new(
+                        if index % 2 == 0 { 256.5 } else { 512.5 },
+                        aaadaw_core::FadeShape::Smooth
+                    )
+                    .unwrap(),
+                    fade_out: aaadaw_core::AudioFade::default(),
+                }
+            )
+        );
         master_mix.set_mix(
             aaadaw_core::MasterMix::new(0.0, if index % 2 == 0 { -0.5 } else { 0.5 }).unwrap(),
         );

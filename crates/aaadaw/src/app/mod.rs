@@ -576,6 +576,16 @@ struct MeterMapEdit {
     denominator: String,
 }
 
+fn action_updates_item_fades(action: &DawAction) -> bool {
+    match action {
+        DawAction::SetAudioItemFades { .. } => true,
+        DawAction::BatchTransaction { actions, .. } => {
+            actions.iter().any(action_updates_item_fades)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(feature = "audio-device")]
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
@@ -6057,6 +6067,7 @@ impl App {
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
         let master_mix_before = self.project.master_mix();
+        let publish_item_fades = action_updates_item_fades(&action);
         #[cfg(feature = "audio-device")]
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
@@ -6095,6 +6106,11 @@ impl App {
                 }
                 if self.project.master_mix() != master_mix_before {
                     self.sync_master_mix_to_playback();
+                }
+                if publish_item_fades {
+                    for item in self.project.audio_items() {
+                        self.sync_item_fades_to_playback(item.id());
+                    }
                 }
                 if let Some(track_id) = live_mute_solo_track {
                     self.sync_track_mute_solo_to_playback(track_id);
@@ -6136,8 +6152,26 @@ impl App {
         let _ = track_id;
     }
 
+    fn sync_item_fades_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_fades(item_id, item.fades());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
     fn sync_all_track_mix_to_playback(&self) {
         self.sync_master_mix_to_playback();
+        for item in self.project.audio_items() {
+            self.sync_item_fades_to_playback(item.id());
+        }
         for track in self.project.tracks() {
             self.sync_track_mix_to_playback(track.id());
         }

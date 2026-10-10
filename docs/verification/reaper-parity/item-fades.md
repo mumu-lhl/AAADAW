@@ -39,7 +39,7 @@ schema 25 新增 `audio_item_fades` 表；旧 Item 没有行时恢复零长度�
 
 真实 PCM 在 source 相加到轨道 FX 输入前应用一次淡化，时钟不受媒体 source offset 影响；处理涵盖 Item 起止、跨 callback 与中途 seek，不改变未放置 Item 的传统连续轨道源及输入监听路径。
 
-尚待：GUI 淡化手柄及曲线菜单、播放中的参数发布、原厂手势/修饰键、自动 Crossfade、自动分割淡化、Take/Item gain 和 Item Properties 全界面。基础模型不宣称这些能力已经完成。
+尚待：GUI 淡化手柄及曲线菜单、原厂手势/修饰键、自动 Crossfade、自动分割淡化、Take/Item gain 和 Item Properties 全界面。基础模型不宣称这些能力已经完成。
 
 ## 本地验证
 
@@ -49,3 +49,11 @@ schema 25 新增 `audio_item_fades` 表；旧 Item 没有行时恢复零长度�
 
 
 补充原厂 UI 观察：选中单个音频 Item、F2 打开 Media Item Properties，客户端 526×693。该窗口同时包含 Fade in/out 时间、两组 Curve 字段和曲线按钮；超长淡出仍显示 0:02.000，而 Item Length 显示 0:01.000，与保存请求长度的 API 行为一致。完整属性字段和批量编辑将另行实现和验收，未用简化 Inspector 代替。
+
+## 实时发布切片
+
+ItemFadeController 按固定图中的 ItemId 发布完整淡入/淡出参数对。控制侧写入串行化；callback 对原子序号和参数只尝试读取一次。若写入中断或两次序号不同，保持上一组完整值，无自旋、锁或分配。图替换时更新控制句柄，暂停期间的参数会在下一次实际源渲染读到。
+
+SetAudioItemFades 使用独立的参数事件，允许播放中的单项 Undo/Redo；事件只改淡化，不覆盖 Item 位置、媒体或其他参数。App 同步普通提交与含淡化的批事务；历史操作同步当前所有淡化。批事务整体历史在播放期间仍沿用现有非实时历史守卫，未将所有混合结构编辑错误归类为实时安全。
+
+21 项相关回归通过；最终 audio-device 全 workspace 822 项通过、零跳过，默认 Clippy warnings denied 通过。新增真实 PCM 更新/Undo/Redo、固定图中未知 Item 拒绝、控制写入中途停顿和并发完整参数对校验。回调分配检测新增非默认小数长度的实时发布，仍为零分配。GUI 手柄与预览状态仍未接入，原厂自动 Crossfade、方向和批量鼠标修饰键仍待推进。

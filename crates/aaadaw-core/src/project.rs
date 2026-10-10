@@ -348,6 +348,11 @@ enum ProjectEvent {
         index: usize,
         item: AudioItem,
     },
+    AudioItemFadesChanged {
+        item_id: ItemId,
+        before: crate::AudioItemFades,
+        after: crate::AudioItemFades,
+    },
     AudioItemChanged {
         before: AudioItem,
         after: AudioItem,
@@ -639,6 +644,15 @@ impl ProjectEvent {
             Self::AudioItemRemoved { index, item } => Self::AudioItemInserted {
                 index: *index,
                 item: item.clone(),
+            },
+            Self::AudioItemFadesChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemFadesChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
             },
             Self::AudioItemChanged { before, after } => Self::AudioItemChanged {
                 before: after.clone(),
@@ -973,7 +987,8 @@ impl Project {
                     | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
-                    | ProjectEvent::TrackPhaseChanged { .. },
+                    | ProjectEvent::TrackPhaseChanged { .. }
+                    | ProjectEvent::AudioItemFadesChanged { .. },
             )
         )
     }
@@ -987,7 +1002,8 @@ impl Project {
                     | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
-                    | ProjectEvent::TrackPhaseChanged { .. },
+                    | ProjectEvent::TrackPhaseChanged { .. }
+                    | ProjectEvent::AudioItemFadesChanged { .. },
             )
         )
     }
@@ -2225,12 +2241,11 @@ impl Project {
                 if is_frozen_render(state, item_id) {
                     return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
                 }
-                let before = item.clone();
-                let after = AudioItem {
-                    fades,
-                    ..before.clone()
-                };
-                ProjectEvent::AudioItemChanged { before, after }
+                ProjectEvent::AudioItemFadesChanged {
+                    item_id,
+                    before: item.fades,
+                    after: fades,
+                }
             }
             DawAction::DuplicateAudioItemAt {
                 item_id,
@@ -3353,6 +3368,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.audio_items.remove(*index);
+            }
+            ProjectEvent::AudioItemFadesChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.fades != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.fades = *after;
             }
             ProjectEvent::AudioItemChanged { before, after } => {
                 let index = state

@@ -28,7 +28,9 @@ fn fades_survive_move_trim_duplicate_snapshot_and_atomic_history() {
     project
         .apply(DawAction::SetAudioItemFades { item_id, fades })
         .unwrap();
+    assert!(project.can_undo_track_mix());
     project.undo().unwrap();
+    assert!(project.can_redo_track_mix());
     assert_eq!(project.audio_items()[0].fades(), AudioItemFades::default());
     project.redo().unwrap();
     assert_eq!(project.audio_items()[0].fades(), fades);

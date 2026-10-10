@@ -24,10 +24,12 @@ mod cpal_input;
     any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 mod cpal_output;
+mod item_fades;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
+pub use item_fades::ItemFadeController;
 mod master_mix;
 mod master_output;
 pub use master_mix::MasterMixController;
@@ -1876,7 +1878,8 @@ pub struct AudioRenderGraph {
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
     source_item_ids: Vec<Option<ItemId>>,
-    source_fades: Vec<aaadaw_core::AudioItemFades>,
+    source_fades: Vec<item_fades::ItemFadeReader>,
+    item_fade_controller: ItemFadeController,
     scratch: Vec<Vec<[f32; 2]>>,
     input_monitor: Option<AudioMonitorConsumer>,
     input_monitor_gate: Option<AudioInputMonitorGate>,
@@ -2130,6 +2133,8 @@ impl AudioRenderGraph {
         {
             route.processor = Some(instrument.processor);
         }
+        let (item_fade_controller, source_fades) =
+            item_fades::compile(&sources.item_ids, sources.fades);
         Ok(Self {
             mixer,
             master_mix: master_mix::MasterOutputMix::new(
@@ -2163,13 +2168,19 @@ impl AudioRenderGraph {
             source_ranges: sources.ranges,
             source_cursors: sources.cursors,
             source_item_ids: sources.item_ids,
-            source_fades: sources.fades,
+            source_fades,
+            item_fade_controller,
             scratch,
             input_monitor: None,
             input_monitor_gate: None,
             input_monitor_scratch: vec![[0.0, 0.0]; max_block_frames],
             input_monitor_states: Vec::new(),
         })
+    }
+
+    /// Returns the control-side handle for live manual Item fade publication.
+    pub fn item_fade_controller(&self) -> ItemFadeController {
+        self.item_fade_controller.clone()
     }
 
     /// Returns the project sample rate used by its tempo map.
@@ -3052,7 +3063,7 @@ impl AudioRenderGraph {
                         &mut input[offset..offset + length],
                         overlap_start,
                     );
-                    let fades = self.source_fades[stream_index];
+                    let fades = self.source_fades[stream_index].read();
                     for (index, frame) in input[offset..offset + length].iter_mut().enumerate() {
                         let gain = fades.gain_at(
                             overlap_start - item_start + index as u64,

@@ -70,3 +70,69 @@ fn real_stereo_pcm_fades_follow_item_clock_across_blocks_and_seek() {
         assert_eq!(output, rendered[43..55]);
     }
 }
+
+#[test]
+fn live_fade_publication_and_history_change_real_pcm_without_graph_replacement() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    let (mut producer, consumer) = stereo_pcm_stream(48).unwrap();
+    producer.set_stereo_content(true);
+    producer.push_frames(&[[0.125, 0.25]; 48]);
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo(item_id, consumer)],
+        8,
+    )
+    .unwrap();
+    let controller = graph.item_fade_controller();
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 8];
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.125, 0.25]; 8]);
+    let fades = AudioItemFades {
+        fade_in: AudioFade::new(48.0, FadeShape::Linear).unwrap(),
+        fade_out: AudioFade::default(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades { item_id, fades })
+        .unwrap();
+    assert!(project.can_undo_track_mix());
+    assert!(controller.set_fades(item_id, fades));
+    graph.render_into(&mut output).unwrap();
+    for (index, frame) in output.iter().enumerate() {
+        let gain = (8 + index) as f32 / 48.0;
+        assert_eq!(*frame, [0.125 * gain, 0.25 * gain]);
+    }
+    project.undo().unwrap();
+    controller.set_fades(item_id, project.audio_items()[0].fades());
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.125, 0.25]; 8]);
+    project.redo().unwrap();
+    controller.set_fades(item_id, project.audio_items()[0].fades());
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output[0], [0.0625, 0.125]);
+    project
+        .apply(DawAction::DuplicateAudioItemAt {
+            item_id,
+            track_id,
+            start_sample: 48,
+        })
+        .unwrap();
+    assert!(!controller.set_fades(project.audio_items()[1].id(), fades));
+}
