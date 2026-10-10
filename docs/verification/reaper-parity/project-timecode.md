@@ -27,3 +27,5 @@ Item Properties 的 Position/Length 在 H:M:S:F 下按工程设置转换；Take 
 窗口采用已测原厂 606×535 初始尺寸以容纳十项帧率菜单，但不表示全页、Project Settings/Media/Advanced/Notes/Video 全控件或 Save as default project settings 已实现。入口和控件仍等待下列真实 GUI 验证；完整页继续按矩阵推进。
 
 本次验证：853 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt/diff 通过。真实 X11 窗口已验证 Alt+Enter、十项菜单、第一次 Escape 收起菜单、第二次 Escape 取消；OK 选择 25 fps 后，活动恢复工程 schema 27 帧率编码为 2，一次 Ctrl+Z 恢复 30 fps 编码 5，Ctrl+Shift+Z 恢复编码 2。完整键盘菜单导航、各页布局与全部设置仍待实现。
+
+补充键盘实测：新默认配置下必须点击原厂帧率箭头打开菜单（点击数值本身只聚焦可编辑文本）。真正打开的菜单中，Escape 只收起菜单；Down + Enter 将 30 选择为 48，并保持设置窗口打开。AAADAW 已修正打开菜单时 Enter 只收起菜单、不提交整个草稿；下一次 Enter 才走 OK。方向键高亮/选择以及原厂可编辑自定义帧率仍待实现。854 项 workspace 测试和默认 Clippy warnings denied 通过；真实 AAADAW 窗口已验证菜单 Enter 后保持窗口且菜单收起。

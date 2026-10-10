@@ -2945,6 +2945,13 @@ impl App {
                     if status == iced::event::Status::Ignored
                         && matches!(&event, iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {key:iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),modifiers,repeat:false,..}) if modifiers.is_empty())
                     {
+                        if let Some(draft) = &mut self.project_settings
+                            && draft.menu_open
+                        {
+                            draft.menu_open = false;
+                            draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+                            return Task::none();
+                        }
                         return self.apply_project_settings();
                     }
                     return Task::none();

@@ -202,6 +202,41 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_an_open_frame_menu_does_not_commit_project_settings() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let mut app = App::default();
+        let _ = app.open_project_settings();
+        let window = app.project_settings_window_id.unwrap();
+        let _ = app.update(Message::ProjectFrameRateChanged(FrameRate::Fps25));
+        let _ = app.update(Message::ProjectFrameRateMenuChanged(true));
+        let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Enter),
+            modified_key: Key::Named(Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            event.clone(),
+            iced::event::Status::Ignored,
+            window,
+        ));
+        assert_eq!(app.project_settings_window_id, Some(window));
+        assert!(!app.project_settings.unwrap().menu_open);
+        assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps30);
+        assert!(!app.project.can_undo());
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            event,
+            iced::event::Status::Ignored,
+            window,
+        ));
+        assert!(app.project_settings_window_id.is_none());
+        assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps25);
+    }
+
+    #[test]
     fn factory_project_settings_shortcut_yields_to_explicit_user_binding() {
         use super::super::commands::{self, CommandId};
         use iced::keyboard::{Key, Modifiers, key::Named};
