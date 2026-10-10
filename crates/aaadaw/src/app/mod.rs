@@ -56,6 +56,8 @@ mod clap_track_instrument;
 mod commands;
 mod config_paths;
 mod desktop_layout;
+mod fader;
+mod fader_data;
 mod keyboard_config;
 mod media;
 mod messages;
@@ -6167,9 +6169,10 @@ impl App {
             .master_mix_gesture
             .map_or(self.project.master_mix(), |(_, mix)| mix);
         let mix = match parameter {
-            TrackMixParameter::Volume => {
-                aaadaw_core::MasterMix::new(value.clamp(-60.0, 6.0), current.pan())
-            }
+            TrackMixParameter::Volume => aaadaw_core::MasterMix::new(
+                value.clamp(fader::SILENCE_DB, fader::MAX_DB),
+                current.pan(),
+            ),
             TrackMixParameter::Pan => {
                 aaadaw_core::MasterMix::new(current.volume_db(), value.clamp(-1.0, 1.0))
             }
@@ -6266,7 +6269,9 @@ impl App {
             after_pan: current_pan,
         });
         match parameter {
-            TrackMixParameter::Volume => gesture.after_volume_db = value.clamp(-60.0, 6.0),
+            TrackMixParameter::Volume => {
+                gesture.after_volume_db = value.clamp(fader::SILENCE_DB, fader::MAX_DB)
+            }
             TrackMixParameter::Pan => gesture.after_pan = value.clamp(-1.0, 1.0),
         }
         #[cfg(feature = "audio-device")]
@@ -8250,14 +8255,21 @@ fn parse_midi_item_name_draft(text: &str) -> Result<String, &'static str> {
 }
 
 fn parse_track_volume_draft(text: &str) -> Result<f32, &'static str> {
+    if matches!(
+        text.trim().to_lowercase().as_str(),
+        "-inf" | "−inf" | "-∞" | "−∞"
+    ) {
+        return Ok(fader::SILENCE_DB);
+    }
     let value = text
         .trim()
         .parse::<f32>()
         .map_err(|_| "Enter a valid volume in dB")?;
-    if !value.is_finite() {
+    if !value.is_finite() || !10.0_f32.powf(value / 20.0).is_finite() {
         return Err("Enter a finite volume in dB");
     }
-    Ok(value.clamp(-60.0, 6.0))
+    // REAPER's precise entry can exceed the display fader range (e.g. +20 dB).
+    Ok(value)
 }
 
 fn parse_track_pan_draft(text: &str) -> Result<f32, &'static str> {

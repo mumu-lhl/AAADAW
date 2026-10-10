@@ -1,4 +1,5 @@
 use super::super::commands::{self, CommandId, TrackCommand};
+use super::super::fader;
 use super::super::{StereoPeakHold, TrackDraftField};
 use super::arrangement::{
     TrackMixLayout, slider_interaction, stereo_peak_meter, track_draft_input_style,
@@ -307,11 +308,11 @@ fn desktop_track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Messag
         .filter(|gesture| gesture.track_id == id);
     let volume = gesture.map_or(track.volume_db(), |gesture| gesture.after_volume_db);
     let pan = gesture.map_or(track.pan(), |gesture| gesture.after_pan);
-    let fader = vertical_slider(-60.0..=6.0, volume.clamp(-60.0, 6.0), move |value| {
-        Message::PreviewTrackVolume(id, value)
+    let fader = vertical_slider(0.0..=1000.0, fader::to_position(volume), move |value| {
+        Message::PreviewTrackVolume(id, fader::from_position(value))
     })
-    .step(0.1_f32)
-    .shift_step(0.01_f32)
+    .step(1.0_f32)
+    .shift_step(0.1_f32)
     .width(16.0)
     .height(Length::Fill)
     .on_release(Message::CommitTrackVolume(id));
@@ -391,7 +392,7 @@ fn desktop_track_strip<'a>(app: &'a App, track: &'a Track) -> Element<'a, Messag
         .track_volume_edits
         .get(&id)
         .cloned()
-        .unwrap_or_else(|| format!("{volume:.1}"));
+        .unwrap_or_else(|| fader::format_db(volume));
     let volume_value = text_input("dB", &value)
         .style(track_draft_input_style(
             app.track_draft_errors
@@ -461,13 +462,11 @@ fn desktop_master_strip(app: &App) -> Element<'_, Message> {
     let mix = app
         .master_mix_gesture
         .map_or(app.project.master_mix(), |(_, mix)| mix);
-    let fader = vertical_slider(
-        -60.0..=6.0,
-        mix.volume_db().clamp(-60.0, 6.0),
-        Message::PreviewMasterVolume,
-    )
-    .step(0.1_f32)
-    .shift_step(0.01_f32)
+    let fader = vertical_slider(0.0..=1000.0, fader::to_position(mix.volume_db()), |value| {
+        Message::PreviewMasterVolume(fader::from_position(value))
+    })
+    .step(1.0_f32)
+    .shift_step(0.1_f32)
     .width(16.0)
     .height(Length::Fill)
     .on_release(Message::CommitMasterMix);
@@ -490,7 +489,7 @@ fn desktop_master_strip(app: &App) -> Element<'_, Message> {
         column![
             text("MASTER").size(11),
             pan,
-            text(format!("{:.1} dB", mix.volume_db())).size(10),
+            text(format!("{} dB", fader::format_db(mix.volume_db()))).size(10),
             row![
                 fader,
                 vertical_meter(

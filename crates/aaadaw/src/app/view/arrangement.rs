@@ -1,4 +1,5 @@
 use super::super::commands::{self, CommandEntry, CommandId, TrackCommand};
+use super::super::fader;
 use super::super::{App, Message, StereoPeakHold, TrackDraftField};
 use super::tokens;
 use crate::timeline::{
@@ -1210,17 +1211,17 @@ pub(super) fn track_mix_controls<'a>(
         .track_volume_edits
         .get(&track_id)
         .cloned()
-        .unwrap_or_else(|| format!("{volume_db:.1}"));
+        .unwrap_or_else(|| fader::format_db(volume_db));
     let pan_text = app
         .track_pan_edits
         .get(&track_id)
         .cloned()
         .unwrap_or_else(|| format!("{pan:.2}"));
-    let volume_slider = slider(-60.0..=6.0, volume_db.clamp(-60.0, 6.0), move |value| {
-        Message::PreviewTrackVolume(track_id, value)
+    let volume_slider = slider(0.0..=1000.0, fader::to_position(volume_db), move |value| {
+        Message::PreviewTrackVolume(track_id, fader::from_position(value))
     })
-    .step(0.1_f32)
-    .shift_step(0.01_f32)
+    .step(1.0_f32)
+    .shift_step(0.1_f32)
     .on_release(Message::CommitTrackVolume(track_id))
     .height(if touch {
         tokens::TOUCH_TARGET_MIN

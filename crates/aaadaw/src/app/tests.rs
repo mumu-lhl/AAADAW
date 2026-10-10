@@ -1,6 +1,7 @@
 #[cfg(feature = "audio-device")]
 use super::StereoPeakHold;
 use super::commands::{self, CommandId, TrackCommand};
+use super::fader;
 use super::messages::SharedProjectSessionLock;
 #[cfg(feature = "audio-device")]
 use super::prepare_project_playback_file;
@@ -5385,6 +5386,39 @@ fn master_cancel_and_double_click_do_not_commit_first_click_preview() {
     assert_eq!(app.project.master_mix().volume_db(), -6.0);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.master_mix(), aaadaw_core::MasterMix::default());
+}
+
+#[test]
+fn factory_fader_range_and_silent_endpoint_preserve_undo_and_finite_storage() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let id = app.project.tracks()[0].id();
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "12".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 12.0);
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "20".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), 20.0);
+    let _ = app.update(Message::TrackVolumeTextChanged(id, "-inf".into()));
+    let _ = app.update(Message::CommitTrackVolumeText(id));
+    assert_eq!(app.project.tracks()[0].volume_db(), fader::SILENCE_DB);
+    assert!(app.project.tracks()[0].volume_db().is_finite());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_db(), 20.0);
+    let _ = app.update(Message::PreviewMasterVolume(fader::from_position(0.0)));
+    let _ = app.update(Message::CommitMasterMix);
+    app.master_mix_commit_at = Some(Instant::now() - Duration::from_secs(1));
+    let _ = app.update(Message::BackgroundTick);
+    assert_eq!(app.project.master_mix().channel_gains(), [0.0, 0.0]);
+    assert_eq!(
+        Project::from_snapshot(app.project.snapshot())
+            .unwrap()
+            .master_mix()
+            .channel_gains(),
+        [0.0, 0.0]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.master_mix().volume_db(), 0.0);
 }
 
 #[test]

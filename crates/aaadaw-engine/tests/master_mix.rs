@@ -53,3 +53,15 @@ fn live_master_changes_ramp_across_blocks_and_restore_without_graph_rebuild() {
     assert!((output[127][0] - 0.125).abs() < 1e-6);
     assert!((output[127][1] - 0.125).abs() < 1e-6);
 }
+
+#[test]
+fn master_zero_gain_endpoint_silences_both_channels_and_meter() {
+    let mut graph = graph(MasterMix::new(-1000.0, 0.5).unwrap(), 128);
+    let mut output = [[1.0; 2]; 128];
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0; 2]; 128]);
+    assert_eq!(
+        graph.master_output_safety_controller().take_output_peak(),
+        [0.0, 0.0]
+    );
+}
