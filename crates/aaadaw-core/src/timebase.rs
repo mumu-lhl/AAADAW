@@ -579,6 +579,64 @@ impl TempoMap {
         rounded_position(point.start_sample + elapsed)
     }
 
+    pub(crate) fn sample_at_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        validate_fractional_position(tick)?;
+        let index = self
+            .points
+            .partition_point(|point| point.start_tick as f64 <= tick)
+            - 1;
+        let point = self.points[index];
+        let offset = tick - point.start_tick as f64;
+        let integral = if let Some(next) = self.points.get(index + 1) {
+            let length = next.start_tick - point.start_tick;
+            segment_integral_progress(
+                point.bpm,
+                next.bpm,
+                point.curve_to_next,
+                length,
+                offset / length as f64,
+            )?
+        } else {
+            offset / point.bpm
+        };
+        let sample = point.start_sample
+            + f64::from(self.sample_rate) * 60.0 / f64::from(self.ppq) * integral;
+        validate_fractional_position(sample)?;
+        Ok(sample)
+    }
+
+    pub(crate) fn tick_at_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        validate_fractional_position(sample)?;
+        let index = self
+            .points
+            .partition_point(|point| point.start_sample <= sample)
+            - 1;
+        let point = self.points[index];
+        let offset = if let Some(next) = self.points.get(index + 1) {
+            let length = next.start_tick - point.start_tick;
+            ticks_from_sample_offset(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                next.bpm,
+                point.curve_to_next,
+                length,
+                sample - point.start_sample,
+            )?
+            .min(length as f64)
+        } else {
+            sample_offset_to_ticks(
+                self.sample_rate,
+                self.ppq,
+                point.bpm,
+                sample - point.start_sample,
+            )?
+        };
+        let tick = point.start_tick as f64 + offset;
+        validate_fractional_position(tick)?;
+        Ok(tick)
+    }
+
     pub(crate) fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
         if sample > MAX_EXACT_FLOAT_POSITION {
             return Err(TimebaseError::PositionOutOfRange);
@@ -904,6 +962,13 @@ fn is_valid_tempo_for(sample_rate: u32, ppq: u32, bpm: f64) -> bool {
     }
     let samples_per_tick = f64::from(sample_rate) * 60.0 / (bpm * f64::from(ppq));
     samples_per_tick.is_finite() && samples_per_tick > 0.0
+}
+
+fn validate_fractional_position(position: f64) -> Result<(), TimebaseError> {
+    if !position.is_finite() || !(0.0..=MAX_EXACT_FLOAT_POSITION as f64).contains(&position) {
+        return Err(TimebaseError::PositionOutOfRange);
+    }
+    Ok(())
 }
 
 fn rounded_position(position: f64) -> Result<u64, TimebaseError> {

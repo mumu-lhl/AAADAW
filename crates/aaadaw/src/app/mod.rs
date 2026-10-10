@@ -1732,6 +1732,24 @@ impl App {
         if matches!(
             &message,
             Message::Timeline(
+                timeline::TimelineEvent::PreviewItemFades { .. }
+                    | timeline::TimelineEvent::CommitItemFades
+            )
+        ) && let Some(status) = item_drag_edit_guard_status(
+            self.path_picker_busy,
+            self.import_busy,
+            self.audio_asset_management_busy,
+            self.playback_busy(),
+            false,
+            self.io_busy,
+        ) {
+            self.cancel_item_fades();
+            self.status = status.to_owned();
+            return Task::none();
+        }
+        if matches!(
+            &message,
+            Message::Timeline(
                 timeline::TimelineEvent::BeginItemDrag { .. }
                     | timeline::TimelineEvent::UpdateItemDrag { .. }
                     | timeline::TimelineEvent::EndItemDrag
@@ -2966,6 +2984,10 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.timeline.item_fade_preview().is_some() {
+                    self.cancel_item_fades();
+                    return Task::none();
+                }
                 if self.master_mix_gesture.is_some() {
                     self.cancel_master_mix();
                     return Task::none();
@@ -3000,6 +3022,40 @@ impl App {
             Message::NewProject => {
                 task = self.begin_project_transition(PendingProjectTransition::NewProject)
             }
+            Message::Timeline(timeline::TimelineEvent::PreviewItemFades { item_id, fades }) => {
+                if self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .any(|item| item.id() == item_id)
+                    && !self
+                        .project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                {
+                    self.timeline.set_item_fade_preview(item_id, fades);
+                    #[cfg(feature = "audio-device")]
+                    if let Some(playback) = &self.playback {
+                        let _ = playback.set_item_fades(item_id, fades);
+                    }
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::CommitItemFades) => {
+                if let Some((item_id, fades)) = self.timeline.take_item_fade_preview()
+                    && self
+                        .project
+                        .audio_items()
+                        .iter()
+                        .any(|item| item.id() == item_id && item.fades() != fades)
+                {
+                    self.apply_action(
+                        DawAction::SetAudioItemFades { item_id, fades },
+                        "Audio item fades changed",
+                    );
+                }
+            }
+            Message::Timeline(timeline::TimelineEvent::CancelItemFades) => self.cancel_item_fades(),
             Message::Timeline(timeline::TimelineEvent::EndItemDrag) => self.finish_item_drag(),
             Message::Timeline(timeline::TimelineEvent::EndItemTrim) => self.finish_item_trim(),
             Message::Timeline(timeline::TimelineEvent::CancelItemDrag) => {
@@ -3466,6 +3522,7 @@ impl App {
                 );
             }
             Message::Undo => {
+                self.cancel_item_fades();
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 let meter_before = self.project.time_signature_map();
@@ -3487,6 +3544,7 @@ impl App {
                 self.sync_all_track_mix_to_playback();
             }
             Message::Redo => {
+                self.cancel_item_fades();
                 self.active_menu = None;
                 let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
                 let meter_before = self.project.time_signature_map();
@@ -4424,6 +4482,7 @@ impl App {
     }
 
     fn begin_project_transition(&mut self, transition: PendingProjectTransition) -> Task<Message> {
+        self.cancel_item_fades();
         if self.pending_project_transition.is_some() {
             return Task::none();
         }
@@ -6066,6 +6125,7 @@ impl App {
     }
 
     fn apply_action(&mut self, action: DawAction, success: &str) {
+        self.cancel_item_fades();
         let master_mix_before = self.project.master_mix();
         let publish_item_fades = action_updates_item_fades(&action);
         #[cfg(feature = "audio-device")]
@@ -6150,6 +6210,12 @@ impl App {
         }
         #[cfg(not(feature = "audio-device"))]
         let _ = track_id;
+    }
+
+    fn cancel_item_fades(&mut self) {
+        if let Some((item_id, _)) = self.timeline.take_item_fade_preview() {
+            self.sync_item_fades_to_playback(item_id);
+        }
     }
 
     fn sync_item_fades_to_playback(&self, item_id: ItemId) {

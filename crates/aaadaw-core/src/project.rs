@@ -928,6 +928,17 @@ impl Project {
         self.state.tempo_map.tick_at_sample(sample)
     }
 
+    /// Converts a continuous PPQ position without quantizing to ticks or samples.
+    /// Intended for gestures and geometry; render block clocks remain integral.
+    pub fn sample_at_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        self.state.tempo_map.sample_at_tick_position(tick)
+    }
+
+    /// Converts a continuous sample position without rounding the PPQ result.
+    pub fn tick_at_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        self.state.tempo_map.tick_at_sample_position(sample)
+    }
+
     /// Returns the tempo active at a PPQ tick position.
     pub fn tempo_at_tick(&self, tick: u64) -> f64 {
         self.state.tempo_map.tempo_at_tick(tick)

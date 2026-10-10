@@ -3,9 +3,9 @@ use super::{
     TrackRowLayout, WaveformBinGeometry,
 };
 use bytemuck::{Pod, Zeroable, cast_slice};
-use iced::Rectangle;
 use iced::wgpu;
 use iced::widget::shader::{Pipeline, Primitive, Viewport};
+use iced::{Point, Rectangle};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
@@ -25,6 +25,14 @@ const AUTOMATION_SEGMENT: u32 = 12;
 const AUTOMATION_POINT: u32 = 13;
 const FX_LANE_DIVIDER: u32 = 14;
 const ITEM_MARQUEE: u32 = 15;
+const FADE_SEGMENT: u32 = 16;
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FadeSegment {
+    pub(super) start: Point,
+    pub(super) end: Point,
+    pub(super) color: [u8; 4],
+}
 
 #[derive(Debug)]
 pub(super) struct AutomationLane {
@@ -54,6 +62,7 @@ pub(super) struct ItemSelectionPreview {
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
+    pub(super) fade_segments: Vec<FadeSegment>,
     pub(super) generation: u64,
     pub(super) waveform_generation: u64,
     pub(super) waveform_render_generation: u64,
@@ -753,6 +762,15 @@ impl Primitive for TimelinePrimitive {
                 kind: PLAYHEAD,
             }));
         }
+        dynamic.extend(self.fade_segments.iter().map(|segment| GpuRect {
+            start_tick: [segment.start.x.to_bits(), 0],
+            end_tick: [segment.end.x.to_bits(), 0],
+            y_height: [segment.start.y, segment.end.y],
+            color: segment.color.map(linearize_srgb),
+            item_id: [0, 0],
+            track_index: u32::MAX,
+            kind: FADE_SEGMENT,
+        }));
         ensure_capacity(
             device,
             &mut pipeline.dynamic_buffer,

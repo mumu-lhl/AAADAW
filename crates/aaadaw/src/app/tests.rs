@@ -7884,3 +7884,65 @@ fn track_phase_command_and_undo_share_domain_state() {
     let _ = app.update(Message::Redo);
     assert!(app.project.tracks()[0].is_phase_inverted());
 }
+
+#[test]
+fn item_fade_preview_commits_once_and_cancel_preserves_project_revision() {
+    use crate::timeline::TimelineEvent;
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    let original = app.project.snapshot();
+    let revision = app.revision;
+    let first = AudioItemFades {
+        fade_in: AudioFade::new(12_000.5, FadeShape::Smooth).unwrap(),
+        ..AudioItemFades::default()
+    };
+    let last = AudioItemFades {
+        fade_in: AudioFade::new(24_000.25, FadeShape::Smooth).unwrap(),
+        ..first
+    };
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: first,
+    }));
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: last,
+    }));
+    assert_eq!(app.project.snapshot(), original);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Timeline(TimelineEvent::CommitItemFades));
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    let revision = app.revision;
+    let _ = app.update(Message::Timeline(TimelineEvent::PreviewItemFades {
+        item_id,
+        fades: first,
+    }));
+    let _ = app.update(Message::Escape);
+    assert!(app.timeline.item_fade_preview().is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), last);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::Timeline(TimelineEvent::CommitItemFades));
+    assert_eq!(app.revision, revision);
+}

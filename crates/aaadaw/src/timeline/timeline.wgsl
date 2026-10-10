@@ -93,6 +93,15 @@ fn vs_main(
     if kind == 12u {
         logical_y = mix(y_height.x, y_height.y, corner.x) + (corner.y - 0.5) * 2.5;
     }
+    if kind == 16u {
+        let start = vec2<f32>(bitcast<f32>(start_tick.x), y_height.x);
+        let end = vec2<f32>(bitcast<f32>(end_tick.x), y_height.y);
+        let delta = end - start;
+        let normal = vec2<f32>(-delta.y, delta.x) / max(length(delta), 0.001);
+        let point = mix(start, end, corner.x) + normal * (corner.y - 0.5);
+        x = point.x * uniforms.view.w;
+        logical_y = point.y;
+    }
     let y = logical_y * uniforms.view.w;
     let screen_x = x;
     let screen_y = y;

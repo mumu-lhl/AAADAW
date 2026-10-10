@@ -165,6 +165,14 @@ impl AudioFade {
     pub fn curve(self) -> FadeCurve {
         self.curve
     }
+
+    /// Samples the curve for visual feedback, clamping to its unit interval.
+    pub fn gain_at_progress(self, progress: f64) -> f32 {
+        if !progress.is_finite() {
+            return 0.0;
+        }
+        self.curve.gain(progress.clamp(0.0, 1.0)) as f32
+    }
 }
 
 /// Manual fades retain requested lengths even when they exceed the Item.

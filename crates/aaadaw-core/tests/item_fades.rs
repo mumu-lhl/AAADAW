@@ -161,3 +161,52 @@ fn continuous_curves_validate_range_and_are_monotonic_at_extremes() {
         }
     }
 }
+
+#[test]
+fn fade_gesture_clock_preserves_fractional_positions_and_ramp_time() {
+    let mut project = Project::new();
+    assert_eq!(project.sample_at_tick_position(0.5).unwrap(), 12.5);
+    assert_eq!(project.tick_at_sample_position(12.5).unwrap(), 0.5);
+    for invalid in [-1.0, f64::NAN, f64::INFINITY, 1e20] {
+        assert!(project.sample_at_tick_position(invalid).is_err());
+        assert!(project.tick_at_sample_position(invalid).is_err());
+    }
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 960,
+            bpm: 240.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .unwrap();
+    let tick = 480.5;
+    let expected = 24_000.0 * (1.0_f64 + tick / 960.0).ln();
+    assert!((project.sample_at_tick_position(tick).unwrap() - expected).abs() < 1e-8);
+    assert!((project.tick_at_sample_position(expected).unwrap() - tick).abs() < 1e-8);
+    for curve in [
+        aaadaw_core::TempoCurve::Step,
+        aaadaw_core::TempoCurve::Linear,
+        aaadaw_core::TempoCurve::Logarithmic,
+        aaadaw_core::TempoCurve::Bézier,
+    ] {
+        project
+            .apply(DawAction::SetTempoCurve {
+                start_tick: 0,
+                curve,
+            })
+            .unwrap();
+        for tick in [0.0, 0.5, 239.25, 480.5, 959.75, 960.0, 1440.5] {
+            let sample = project.sample_at_tick_position(tick).unwrap();
+            assert!((project.tick_at_sample_position(sample).unwrap() - tick).abs() < 1e-6);
+            if tick.fract() == 0.0 {
+                assert!(
+                    (sample - project.sample_at_tick(tick as u64).unwrap() as f64).abs() <= 0.5
+                );
+            }
+        }
+    }
+}

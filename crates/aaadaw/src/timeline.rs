@@ -244,6 +244,12 @@ pub(crate) enum TimelineEvent {
     },
     EndItemDrag,
     CancelItemDrag,
+    PreviewItemFades {
+        item_id: ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    },
+    CommitItemFades,
+    CancelItemFades,
     BeginItemTrim {
         item_id: ItemId,
         edge: ItemTrimEdge,
@@ -743,6 +749,7 @@ pub(crate) struct TimelineState {
     track_selection_anchor: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
     item_trim_preview: Option<ItemTrimPreview>,
+    item_fade_preview: Option<(ItemId, aaadaw_core::AudioItemFades)>,
     pub(crate) volume_automation_tracks: HashSet<TrackId>,
     pub(crate) hidden_volume_automation_tracks: HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -935,6 +942,7 @@ impl Default for TimelineState {
             track_selection_anchor: None,
             drag_preview: None,
             item_trim_preview: None,
+            item_fade_preview: None,
             volume_automation_tracks: HashSet::new(),
             hidden_volume_automation_tracks: HashSet::new(),
             selected_volume_automation_point: None,
@@ -1673,6 +1681,9 @@ impl TimelineState {
             }
             TimelineEvent::EndItemDrag => self.drag_preview = None,
             TimelineEvent::CancelItemDrag => self.drag_preview = None,
+            TimelineEvent::PreviewItemFades { .. }
+            | TimelineEvent::CommitItemFades
+            | TimelineEvent::CancelItemFades => {}
             TimelineEvent::BeginItemTrim {
                 item_id,
                 edge,
@@ -1989,6 +2000,22 @@ impl TimelineState {
         self.drag_preview
     }
 
+    pub(crate) fn item_fade_preview(&self) -> Option<(ItemId, aaadaw_core::AudioItemFades)> {
+        self.item_fade_preview
+    }
+    pub(crate) fn set_item_fade_preview(
+        &mut self,
+        item_id: ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) {
+        self.item_fade_preview = Some((item_id, fades));
+    }
+    pub(crate) fn take_item_fade_preview(
+        &mut self,
+    ) -> Option<(ItemId, aaadaw_core::AudioItemFades)> {
+        self.item_fade_preview.take()
+    }
+
     pub(crate) fn item_trim_preview(&self) -> Option<ItemTrimPreview> {
         self.item_trim_preview
     }
@@ -2040,6 +2067,7 @@ impl TimelineState {
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
             item_trim_preview: self.item_trim_preview,
+            item_fade_preview: self.item_fade_preview,
             volume_automation_tracks: &self.volume_automation_tracks,
             hidden_volume_automation_tracks: &self.hidden_volume_automation_tracks,
             selected_volume_automation_point: self.selected_volume_automation_point,
@@ -2081,6 +2109,7 @@ struct TimelineProgram<'a> {
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
     item_trim_preview: Option<ItemTrimPreview>,
+    item_fade_preview: Option<(ItemId, aaadaw_core::AudioItemFades)>,
     volume_automation_tracks: &'a HashSet<TrackId>,
     hidden_volume_automation_tracks: &'a HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -2097,12 +2126,31 @@ struct TimelineInteractionState {
     middle_drag: Option<MiddleDragState>,
     pending_item_drag: Option<PendingItemDrag>,
     pending_item_trim: Option<PendingItemTrim>,
+    pending_item_fade: Option<PendingItemFade>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     pending_item_selection_drag: Option<PendingItemSelectionDrag>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
     automation_point_preview: Option<AutomationPointPreview>,
     pending_fx_lane_resize: Option<PendingFxAutomationLaneResize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ItemFadeEdge {
+    In,
+    Out,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingItemFade {
+    item_id: ItemId,
+    edge: ItemFadeEdge,
+    start_x: f32,
+    handle_tick: f64,
+    item_start: u64,
+    item_length: u64,
+    original: aaadaw_core::AudioItemFades,
+    dragging: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2267,6 +2315,156 @@ impl PendingTimeSelectionDrag {
 }
 
 impl TimelineProgram<'_> {
+    fn fade_segments(&self, width: f32) -> Vec<renderer::FadeSegment> {
+        let mut segments = Vec::new();
+        for item in self.project.audio_items() {
+            let Some(index) = self
+                .cache
+                .track_ids
+                .iter()
+                .position(|id| *id == item.track_id())
+            else {
+                continue;
+            };
+            let Some(row) = self.row_layout.get(index).copied() else {
+                continue;
+            };
+            let track = &self.project.tracks()[index];
+            let automation = self.volume_automation_tracks.contains(&track.id())
+                || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                    && !track.volume_automation().is_empty());
+            let (top, height) = fade_body_geometry(row, automation);
+            if height < 8.0 {
+                continue;
+            }
+            let fades = self
+                .item_fade_preview
+                .filter(|(id, _)| *id == item.id())
+                .map_or(item.fades(), |(_, fades)| fades);
+            let (fade_in, fade_out) = effective_fade_lengths(fades, item.length_samples());
+            for (edge, fade, length) in [
+                (ItemFadeEdge::In, fades.fade_in, fade_in),
+                (ItemFadeEdge::Out, fades.fade_out, fade_out),
+            ] {
+                let (start, end) = match edge {
+                    ItemFadeEdge::In => (
+                        item.start_sample() as f64,
+                        item.start_sample() as f64 + length,
+                    ),
+                    ItemFadeEdge::Out => {
+                        (item.end_sample() as f64 - length, item.end_sample() as f64)
+                    }
+                };
+                let (Ok(start_tick), Ok(end_tick)) = (
+                    self.project.tick_at_sample_position(start),
+                    self.project.tick_at_sample_position(end),
+                ) else {
+                    continue;
+                };
+                let x_at = |tick: f64| {
+                    ((tick - self.origin_tick as f64) * f64::from(self.pixels_per_tick)) as f32
+                };
+                let left = x_at(start_tick);
+                let right = x_at(end_tick);
+                if right < 0.0 || left > width {
+                    continue;
+                }
+                if length > 0.0 {
+                    let visible_start = start_tick.max(self.origin_tick as f64);
+                    let visible_end = end_tick
+                        .min(self.origin_tick as f64 + f64::from(width / self.pixels_per_tick));
+                    let count = (x_at(visible_end) - x_at(visible_start))
+                        .ceil()
+                        .clamp(2.0, 128.0) as usize;
+                    let mut previous = None;
+                    for step in 0..=count {
+                        let tick = visible_start
+                            + (visible_end - visible_start) * step as f64 / count as f64;
+                        let Ok(sample) = self.project.sample_at_tick_position(tick) else {
+                            previous = None;
+                            continue;
+                        };
+                        let progress = match edge {
+                            ItemFadeEdge::In => (sample - start) / length,
+                            ItemFadeEdge::Out => (end - sample) / length,
+                        };
+                        let point = Point::new(
+                            x_at(tick),
+                            top + height * (1.0 - fade.gain_at_progress(progress)),
+                        );
+                        if let Some(start) = previous {
+                            segments.push(renderer::FadeSegment {
+                                start,
+                                end: point,
+                                color: [188, 48, 48, 255],
+                            });
+                        }
+                        previous = Some(point);
+                    }
+                }
+                if track.frozen_audio_item_id() == Some(item.id()) {
+                    continue;
+                }
+                let x = if edge == ItemFadeEdge::In {
+                    right
+                } else {
+                    left
+                };
+                if !(0.0..=width).contains(&x) {
+                    continue;
+                }
+                let corner = Point::new(x, top);
+                let side = Point::new(x + if edge == ItemFadeEdge::In { -4.0 } else { 4.0 }, top);
+                let bottom = Point::new(x, top + 4.0);
+                for (start, end) in [(corner, side), (side, bottom), (bottom, corner)] {
+                    segments.push(renderer::FadeSegment {
+                        start,
+                        end,
+                        color: [221, 225, 228, 255],
+                    });
+                }
+            }
+        }
+        segments
+    }
+
+    fn fade_handle_at(&self, position: Point) -> Option<(ItemId, ItemFadeEdge, f64)> {
+        let (row_index, _) = row_at_y(self.row_layout, position.y)?;
+        let track = self.project.tracks().get(row_index)?;
+        let row = *self.row_layout.get(row_index)?;
+        let automation = self.volume_automation_tracks.contains(&track.id())
+            || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                && !track.volume_automation().is_empty());
+        let (top, height) = fade_body_geometry(row, automation);
+        if height < 8.0 || position.y < top || position.y > top + 8.0 {
+            return None;
+        }
+        self.project
+            .audio_items()
+            .iter()
+            .rev()
+            .filter(|item| {
+                item.track_id() == track.id() && track.frozen_audio_item_id() != Some(item.id())
+            })
+            .find_map(|item| {
+                let fades = self
+                    .item_fade_preview
+                    .filter(|(id, _)| *id == item.id())
+                    .map_or(item.fades(), |(_, fades)| fades);
+                let (fade_in, fade_out) = effective_fade_lengths(fades, item.length_samples());
+                [
+                    (ItemFadeEdge::In, item.start_sample() as f64 + fade_in),
+                    (ItemFadeEdge::Out, item.end_sample() as f64 - fade_out),
+                ]
+                .into_iter()
+                .find_map(|(edge, sample)| {
+                    let tick = self.project.tick_at_sample_position(sample).ok()?;
+                    let x = (tick - self.origin_tick as f64) * f64::from(self.pixels_per_tick);
+                    ((f64::from(position.x) - x).abs() <= 6.0).then_some((item.id(), edge, tick))
+                })
+            })
+    }
+
     fn automation_point_preview(
         &self,
         drag: PendingAutomationPoint,
@@ -2464,6 +2662,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
             && *key == keyboard::Key::Named(keyboard::key::Named::Escape)
         {
+            let cancel_fade = state.pending_item_fade.take().is_some();
             let cancel_drag = state
                 .pending_item_drag
                 .take()
@@ -2482,7 +2681,14 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .is_some_and(|drag| drag.is_dragging);
             let cancel_automation_point = state.pending_automation_point.take().is_some();
             state.automation_point_preview = None;
-            return if cancel_drag {
+            return if cancel_fade {
+                Some(
+                    shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::CancelItemFades,
+                    ))
+                    .and_capture(),
+                )
+            } else if cancel_drag {
                 Some(
                     shader::Action::publish(crate::app::Message::Timeline(
                         TimelineEvent::CancelItemDrag,
@@ -2503,6 +2709,19 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             } else {
                 None
             };
+        }
+
+        if matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+        ) && state.pending_item_fade.take().is_some()
+        {
+            return Some(
+                shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::CancelItemFades,
+                ))
+                .and_capture(),
+            );
         }
 
         match event {
@@ -2665,7 +2884,45 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(middle_drag) = &mut state.middle_drag {
+                if let Some(mut fade) = state.pending_item_fade {
+                    let delta = position.x - fade.start_x;
+                    if !fade.dragging && delta.abs() < 1.0 {
+                        return Some(shader::Action::capture());
+                    }
+                    fade.dragging = true;
+                    state.pending_item_fade = Some(fade);
+                    let tick = (fade.handle_tick
+                        + f64::from(delta) / f64::from(self.pixels_per_tick))
+                    .max(0.0);
+                    let sample = self.project.sample_at_tick_position(tick).ok()?;
+                    let length = match fade.edge {
+                        ItemFadeEdge::In => sample - fade.item_start as f64,
+                        ItemFadeEdge::Out => (fade.item_start + fade.item_length) as f64 - sample,
+                    }
+                    .clamp(0.0, fade.item_length as f64);
+                    let mut fades = fade.original;
+                    match fade.edge {
+                        ItemFadeEdge::In => {
+                            fades.fade_in =
+                                aaadaw_core::AudioFade::with_curve(length, fades.fade_in.curve())
+                                    .ok()?
+                        }
+                        ItemFadeEdge::Out => {
+                            fades.fade_out =
+                                aaadaw_core::AudioFade::with_curve(length, fades.fade_out.curve())
+                                    .ok()?
+                        }
+                    }
+                    Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::PreviewItemFades {
+                                item_id: fade.item_id,
+                                fades,
+                            },
+                        ))
+                        .and_capture(),
+                    )
+                } else if let Some(middle_drag) = &mut state.middle_drag {
                     let local_position = Point::new(position.x - bounds.x, position.y - bounds.y);
                     middle_drag.update(local_position).map(|event| {
                         shader::Action::publish(crate::app::Message::Timeline(event)).and_capture()
@@ -2826,6 +3083,35 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     });
                     return Some(shader::Action::capture());
                 };
+                if let Some((item_id, edge, handle_tick)) = self.fade_handle_at(position) {
+                    let item = self
+                        .project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)?;
+                    state.pending_item_drag = None;
+                    state.pending_item_trim = None;
+                    state.pending_item_fade = Some(PendingItemFade {
+                        item_id,
+                        edge,
+                        start_x: cursor.position()?.x,
+                        handle_tick,
+                        item_start: item.start_sample(),
+                        item_length: item.length_samples(),
+                        original: item.fades(),
+                        dragging: false,
+                    });
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectItem {
+                                item_id: Some(item_id),
+                                additive: state.modifiers.control(),
+                                range: false,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let tick = snap_tick_to_grid(
                     raw_tick,
                     self.cache.snap_grid_ticks,
@@ -3179,6 +3465,18 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
+                } else if let Some(fade) = state.pending_item_fade.take() {
+                    state.last_item_click = None;
+                    if fade.dragging {
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::CommitItemFades,
+                            ))
+                            .and_capture(),
+                        )
+                    } else {
+                        Some(shader::Action::capture())
+                    }
                 } else if let Some(trim) = state.pending_item_trim.take() {
                     if trim.is_dragging {
                         state.last_item_click = None;
@@ -3412,6 +3710,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             (cached.generation, Arc::clone(&cached.bins))
         };
         renderer::TimelinePrimitive {
+            fade_segments: self.fade_segments(bounds.width),
             generation: self.cache.generation,
             waveform_generation,
             waveform_render_generation: self.cache.generation,
@@ -3469,6 +3768,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if let Some(position) = cursor.position_in(bounds) {
+            if self.fade_handle_at(position).is_some() {
+                return mouse::Interaction::ResizingHorizontally;
+            }
             let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
             if self.time_selection.is_some_and(|selection| {
                 time_selection_edge_at_tick(selection, tick, self.pixels_per_tick).is_some()
@@ -3631,7 +3933,7 @@ pub(crate) fn ruler_widget<'a>(
         .into()
 }
 
-pub(crate) fn item_labels_widget<'a>(state: &'a TimelineState) -> Element<'a, crate::app::Message> {
+pub(crate) fn item_labels_widget(state: &TimelineState) -> Element<'_, crate::app::Message> {
     canvas::Canvas::new(ItemLabelsProgram { state })
         .width(Length::Fill)
         .height(Length::Fixed(state.content_height()))
@@ -3942,6 +4244,23 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
         }
         vec![frame.into_geometry()]
     }
+}
+
+fn fade_body_geometry(row: TrackRowLayout, automation: bool) -> (f32, f32) {
+    let (top, height) = row.item_geometry(automation);
+    let header = if row.base_height >= 43.0 { 16.0 } else { 0.0 };
+    (top + header, (height - header).max(0.0))
+}
+
+fn effective_fade_lengths(fades: aaadaw_core::AudioItemFades, item_length: u64) -> (f64, f64) {
+    let fade_in = fades.fade_in.length_samples().min(item_length as f64);
+    (
+        fade_in,
+        fades
+            .fade_out
+            .length_samples()
+            .min(item_length as f64 - fade_in),
+    )
 }
 
 fn tick_at_x(origin_tick: u64, pixels_per_tick: f32, x: f32) -> u64 {
@@ -4667,6 +4986,97 @@ mod tests {
             project.midi_items()[2].id(),
         ];
         (project, tracks, items)
+    }
+
+    #[test]
+    fn fade_handle_drag_ignores_grid_and_preserves_fractional_samples() {
+        use super::{ItemFadeEdge, fade_body_geometry};
+        use iced::widget::shader;
+        let (mut project, tracks, _) = project_with_items();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: tracks[2],
+                media_ref: "asset://constant".into(),
+                start_sample: 2_500,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let row = timeline.row_layout(2).unwrap();
+        let (top, _) = fade_body_geometry(row, false);
+        let point = Point::new(10.0, top + 2.0);
+        assert_eq!(
+            program
+                .fade_handle_at(point)
+                .map(|(id, edge, _)| (id, edge)),
+            Some((item_id, ItemFadeEdge::In))
+        );
+        assert!(
+            program
+                .fade_handle_at(Point::new(10.0, top + 12.0))
+                .is_none()
+        );
+        let bounds = Rectangle::new(Point::new(40.0, 30.0), Size::new(500.0, 500.0));
+        let cursor = mouse::Cursor::Available(Point::new(bounds.x + point.x, bounds.y + point.y));
+        let mut state = TimelineInteractionState::default();
+        let _ = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        );
+        assert!(state.pending_item_fade.is_some());
+        let moved = Point::new(bounds.x + point.x + 1.5, bounds.y + point.y);
+        // Selecting the item can resize the inspector and move the timeline.
+        let moved_bounds = Rectangle {
+            x: bounds.x + 20.0,
+            ..bounds
+        };
+        let action = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::CursorMoved { position: moved }),
+            moved_bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .unwrap();
+        let (message, _, _) = action.into_inner();
+        let Some(crate::app::Message::Timeline(TimelineEvent::PreviewItemFades {
+            item_id: actual,
+            fades,
+        })) = message
+        else {
+            panic!("expected fade preview")
+        };
+        assert_eq!(actual, item_id);
+        assert!((fades.fade_in.length_samples() - 375.0).abs() < 0.001);
+        assert_eq!(
+            fades.fade_in.curve(),
+            project.audio_items()[0].fades().fade_in.curve()
+        );
+        let action = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .unwrap();
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::CancelItemFades
+            ))
+        ));
+        assert!(state.pending_item_fade.is_none());
     }
 
     #[test]
