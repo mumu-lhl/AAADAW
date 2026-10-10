@@ -1650,7 +1650,7 @@ impl App {
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
                     | Message::OpenItemProperties
-                    | Message::ItemFadeFieldChanged(..)
+                    | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
@@ -2058,7 +2058,7 @@ impl App {
                 }
             }
             Message::CloseItemProperties => task = self.close_item_properties(),
-            Message::ItemFadeFieldChanged(field, text) => {
+            Message::ItemPropertyFieldChanged(field, text) => {
                 if let Some(draft) = &mut self.item_properties {
                     draft.edit(field, text);
                 }

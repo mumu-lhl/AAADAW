@@ -8012,7 +8012,7 @@ fn curve_menu_converts_legacy_smooth_without_changing_lengths_and_is_undoable() 
 
 #[test]
 fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() {
-    use super::item_properties::{FadeField, ItemProperties};
+    use super::item_properties::{ItemProperties, ItemPropertyField};
     use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeShape};
     let mut app = App::default();
     app.project
@@ -8046,12 +8046,12 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     let _ = app.update(Message::ApplyItemProperties(false));
     assert_eq!(app.project.audio_items()[0].fades(), original);
     assert_eq!(app.revision, revision);
-    let _ = app.update(Message::ItemFadeFieldChanged(
-        FadeField::InCurvature,
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InCurvature,
         "-2".into(),
     ));
-    let _ = app.update(Message::ItemFadeFieldChanged(
-        FadeField::OutLength,
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::OutLength,
         "0:00.1255".into(),
     ));
     assert_eq!(app.project.audio_items()[0].fades(), original);
@@ -8067,8 +8067,8 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     assert_eq!(app.project.audio_items()[0].fades(), original);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items()[0].fades(), applied);
-    let _ = app.update(Message::ItemFadeFieldChanged(
-        FadeField::InLength,
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InLength,
         "NaN".into(),
     ));
     let _ = app.update(Message::ApplyItemProperties(true));
@@ -8082,16 +8082,16 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
         fade_out: AudioFade::new(28800.0, FadeShape::FastStart).unwrap(),
     };
     let mut draft = ItemProperties::new(id, both, 48000);
-    draft.edit(FadeField::InLength, "0:00.800".into());
+    draft.edit(ItemPropertyField::InLength, "0:00.800".into());
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 38400.0);
     assert_eq!(adjusted.fade_out.length_samples(), 9600.0);
-    draft.edit(FadeField::OutLength, "0:02.000".into());
+    draft.edit(ItemPropertyField::OutLength, "0:02.000".into());
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 0.0);
     assert_eq!(adjusted.fade_out.length_samples(), 48000.0);
-    draft.edit(FadeField::InLength, "0:00.600".into());
-    draft.edit(FadeField::OutLength, "0:00.600".into());
+    draft.edit(ItemPropertyField::InLength, "0:00.600".into());
+    draft.edit(ItemPropertyField::OutLength, "0:00.600".into());
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 19200.0);
     assert_eq!(adjusted.fade_out.length_samples(), 28800.0);
@@ -8099,7 +8099,7 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
 
 #[test]
 fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
-    use super::item_properties::{FadeField, ItemProperties};
+    use super::item_properties::{ItemProperties, ItemPropertyField};
     let mut app = App::default();
     app.project
         .apply(DawAction::CreateTrack {
@@ -8118,8 +8118,8 @@ fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
         .unwrap();
     let item = &app.project.audio_items()[0];
     app.item_properties = Some(ItemProperties::new(item.id(), item.fades(), 48000));
-    let _ = app.update(Message::ItemFadeFieldChanged(
-        FadeField::InLength,
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::InLength,
         "0.25".into(),
     ));
     app.project_generation += 1;
@@ -8183,4 +8183,100 @@ fn factory_f2_toggles_item_properties_and_respects_custom_binding() {
     ));
     assert!(app.item_properties_window_id.is_none());
     assert!(app.item_properties.is_none());
+}
+
+#[test]
+fn item_properties_apply_placement_and_fades_atomically_and_keep_oversized_requests_on_shortening()
+{
+    use super::item_properties::{ItemProperties, ItemPropertyField as Field};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 17,
+            source_offset_samples: 23,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let id = app.project.audio_items()[0].id();
+    let original_fades = AudioItemFades {
+        fade_in: AudioFade::new(38400.0, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(9600.0, FadeShape::SlowStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: id,
+            fades: original_fades,
+        })
+        .unwrap();
+    let original = app.project.snapshot();
+    app.item_properties = Some(ItemProperties::from_item(
+        &app.project.audio_items()[0],
+        48000,
+    ));
+    for (field, value) in [
+        (Field::Position, "0:00.500"),
+        (Field::Length, "0:00.250"),
+        (Field::SourceOffset, "0:00.125"),
+        (Field::InCurvature, "0.25"),
+    ] {
+        let _ = app.update(Message::ItemPropertyFieldChanged(field, value.into()));
+    }
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(
+        (
+            item.start_sample(),
+            item.length_samples(),
+            item.source_offset_samples()
+        ),
+        (24000, 12000, 6000)
+    );
+    assert_eq!(item.fades().fade_in.length_samples(), 38400.0);
+    assert_eq!(item.fades().fade_out, original_fades.fade_out);
+    assert_eq!(item.fades().fade_in.curve().parameters().curvature(), 0.25);
+    assert_eq!(item.fades().fade_in.curve().parameters().s_parameter(), 0.5);
+    let applied = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "0:00.000".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::OutLength,
+        "0:00.100".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.item_properties.as_ref().unwrap().error.is_some());
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "1e100".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.snapshot(), applied);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::Length,
+        "0:00.250".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        Field::OutLength,
+        "0:00.150".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.fades().fade_out.length_samples(), 7200.0);
+    assert_eq!(item.fades().fade_in.length_samples(), 4800.0);
 }

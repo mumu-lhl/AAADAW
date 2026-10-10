@@ -185,7 +185,7 @@ pub(crate) enum Message {
     OpenRenderWindow,
     OpenItemProperties,
     ToggleItemProperties,
-    ItemFadeFieldChanged(super::item_properties::FadeField, String),
+    ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
     ApplyItemProperties(bool),
     CloseItemProperties,
     OpenTempoMap,

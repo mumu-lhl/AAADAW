@@ -122,3 +122,15 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 [当前属性窗口](item-fade-ui/properties-fades.png)为 AAADAW 自有截图；[超长输入归一化](item-fade-ui/properties-normalized.png)记录支持的长度行为。原厂截图仍仅在 scratch。最终 audio-device 全 workspace **833 passed / 0 skipped**；默认 Clippy warnings denied 通过。新增回归包括草稿提交/取消、Undo/Redo、模式/精度保护、双端重叠处理、非法输入、工程 generation 防护，以及 F2 和自定义绑定。曲线菜单提交 7ab788a 的三项远端流程全部成功。
 
 仍待：完整 Item/Take/Source 属性、位置/长度显示单位、批量编辑与 mixed values、曲线按钮/连续鼠标编辑、完整主题与焦点细节、低通、自动淡化和 Crossfade。当前淡化字段切片不关闭 UI-009、P4 或全量对齐。
+
+## 属性位置、长度与源起点
+
+属性草稿新增 Position、Length、Start in source 的 Time 输入，当前使用既有非负整数采样领域时钟。位置/长度/源起点与淡化修改先全部验证，再以单动作或 BatchTransaction 一次提交、一次 Undo；结构修改在播放中受保护，纯淡化继续走实时发布。非法、零长度或超出可精确表示范围的输入保留错误草稿且不改工程。
+
+原厂实测只缩短 Item Length（1→0.25 秒）时，淡化请求 0.8/0.2 秒保持原值；本实现也仅在直接编辑淡化长度时归一化。位置修改和源偏移不改变淡化时钟或模式。长度与淡化同时编辑时，归一化使用此次拟提交的新 Item 长度，而非旧长度。
+
+最新构建实窗将 Position/Length/Start in source 一起设为 0:00.500 / 0:00.250 / 0:00.125；保存行分别为 start=24000、length=12000、source_offset=6000，淡化请求仍为 28846.1549042245 / 7692.307974459873 samples，Native 曲率/S 0.25/0.5 与另一端 Legacy Linear 保持。一次 Undo 的 [属性窗口](item-fade-ui/properties-placement-undo.png)恢复 0/48000/0，之后延迟 session snapshot 行也恢复；[Redo](item-fade-ui/properties-placement-redo.png)恢复三个值。即时读取自动保存文件可能尚未落盘，因此以当前窗口和完成防抖后的行交叉验证。
+
+最终 audio-device 全 workspace **834 passed / 0 skipped**，默认 Clippy warnings denied 通过。新增事务回归包含位置/长度/源起点与曲率同时提交及一次 Undo/Redo、缩短时保留超长淡化请求、无效长度/超范围输入的原子拒绝，以及用新长度处理淡化重叠。
+
+仍待：原厂 Time/Beats/H:M:S:F/Samples 单位切换、负位置和分数采样 Item/源位置、Loop source、Take 等完整字段和批量编辑；当前窗口 526×310 的字段切片不视为完整 526×693 原厂窗口验收。自有 [参照事实](item-fade-properties-reference.json)补记单位选择：Samples 会同时改变 Position/Length/Start in source，淡化时间仍为 Time。

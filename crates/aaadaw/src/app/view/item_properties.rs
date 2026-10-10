@@ -1,4 +1,4 @@
-use super::super::{App, Message, item_properties::FadeField};
+use super::super::{App, Message, item_properties::ItemPropertyField};
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Element, Length};
 
@@ -6,29 +6,48 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let Some(draft) = &app.item_properties else {
         return text("No item selected").into();
     };
-    let field = |id: FadeField, width| {
+    let field = |id: ItemPropertyField, width| {
         text_input("", &draft.fields[id.index()])
-            .on_input(move |value| Message::ItemFadeFieldChanged(id, value))
+            .on_input(move |value| Message::ItemPropertyFieldChanged(id, value))
             .on_submit(Message::ApplyItemProperties(true))
             .width(width)
     };
     let content = column![
-        row![text("Fade in:").width(80), field(FadeField::InLength, 130)].spacing(6),
+        row![
+            text("Position:").width(120),
+            field(ItemPropertyField::Position, 130)
+        ]
+        .spacing(6),
+        row![
+            text("Length:").width(120),
+            field(ItemPropertyField::Length, 130)
+        ]
+        .spacing(6),
+        row![
+            text("Start in source:").width(120),
+            field(ItemPropertyField::SourceOffset, 130)
+        ]
+        .spacing(6),
+        row![
+            text("Fade in:").width(80),
+            field(ItemPropertyField::InLength, 130)
+        ]
+        .spacing(6),
         row![
             text("Curve:").width(80),
-            field(FadeField::InCurvature, 80),
-            field(FadeField::InS, 80)
+            field(ItemPropertyField::InCurvature, 80),
+            field(ItemPropertyField::InS, 80)
         ]
         .spacing(6),
         row![
             text("Fade out:").width(80),
-            field(FadeField::OutLength, 130)
+            field(ItemPropertyField::OutLength, 130)
         ]
         .spacing(6),
         row![
             text("Curve:").width(80),
-            field(FadeField::OutCurvature, 80),
-            field(FadeField::OutS, 80)
+            field(ItemPropertyField::OutCurvature, 80),
+            field(ItemPropertyField::OutS, 80)
         ]
         .spacing(6),
         text(draft.error.as_deref().unwrap_or("")).size(12),

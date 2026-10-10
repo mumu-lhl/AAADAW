@@ -84,6 +84,50 @@
     {
       "operation": "Right-click fade-in handle with custom curvature=-1 S=1",
       "after": "None of the seven preset rows is checked; independent Low pass fade flag remains checked"
+    },
+    {
+      "operation": "Change Item length from 1.000 to 0.250 seconds without editing fade lengths; Apply",
+      "before": {
+        "in_length": 0.8,
+        "out_length": 0.2,
+        "item_length": 1
+      },
+      "after": {
+        "in_length": 0.8,
+        "out_length": 0.2,
+        "item_length": 0.25
+      }
+    },
+    {
+      "operation": "Edit Item position to 0:00.500 and start in source to 0:00.125; Apply",
+      "after_api": {
+        "item_start": 0.5,
+        "item_length": 0.25,
+        "in_length": 0.8,
+        "out_length": 0.2
+      },
+      "after_fields": {
+        "start_in_source": "0:00.125"
+      }
+    },
+    {
+      "operation": "Open time display dropdown",
+      "choices": [
+        "Time",
+        "Beats",
+        "H:M:S:F",
+        "Samples"
+      ]
+    },
+    {
+      "operation": "Choose Samples display on the same Item",
+      "fields": {
+        "position": "24000",
+        "length": "12000",
+        "start_in_source": "6000",
+        "fade_in": "0:00.800",
+        "fade_out": "0:00.200"
+      }
     }
   ],
   "notes": [
