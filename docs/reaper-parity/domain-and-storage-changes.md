@@ -101,3 +101,11 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 ## 已实现 schema 26 连续淡化曲率
 
 新增 `audio_item_fade_curves` 表，为每个淡化 Item 保留两端可选的新曲率/S 参数对。无行表示 schema 25 的兼容曲线，getter 返回相同数值并不丢弃旧模式。外键指向 `audio_item_fades`，事务先清理曲率表再清理淡化/Item。空值必须成对，至少一端为新模式，值受 −1..1 范围与领域有限值检查。旧工程只读打开仍拒绝旧 schema；应先经现有可写迁移入口升级，不能在只读打开时悄悄写文件。
+
+## 工程帧率扩展（实施中）
+
+现有读写边界：Core `ProjectSettings`/`ProjectSnapshot`、`Project` 构建/恢复、SQLite `project_meta` 全量事务 checkpoint；UI 只读取公开 Project 设置，修改通过 DawAction。Engine 的采样/PPQ 时钟保持原设置，帧率仅用于时间码显示与输入。MCP 及旧工程读取沿既有设置接口，后续完整导出字段另验。
+
+拟新增 schema 27 的 `project_timecode.frame_rate` 独立单行表整数枚举，默认 30 fps，保留原工程全部轨道/素材/淡化/路由数据。十种受支持原厂预设使用固定编码；分数帧率使用精确有理数，29.97DF 与 ND 分开。迁移在既有版本检查与事务中幂等执行；旧 schema 的只读读取沿既有 RequiresMigration 保护，不进行隐式写入。旧应用拒绝比自身新版本的工程，避免混合版本写坏设置。
+
+回退使用迁移前原文件副本或兼容旧 schema 的只读/导出流程，禁止把已迁移工程的版本号强行降级；本次只扩展，不删除或收缩旧字段。验证覆盖旧 26 工程默认、迁移后重复打开、十种设置 round trip、非法编码拒绝和失败事务回滚；全部通过前不标记为验收完成。

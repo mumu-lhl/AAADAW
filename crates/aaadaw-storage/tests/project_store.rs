@@ -15,6 +15,110 @@ use std::time::Duration;
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn timecode_checkpoint_failure_rolls_back_all_project_data() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Original".into(),
+        })
+        .unwrap();
+    let original = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_timecode BEFORE INSERT ON project_timecode BEGIN SELECT RAISE(ABORT,'owned failure injection'); END;").unwrap();
+    drop(connection);
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps23976,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "New".into(),
+        })
+        .unwrap();
+    assert!(store.save(&project).is_err());
+    assert_eq!(store.load().unwrap().snapshot(), original);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn frame_rates_roundtrip_and_schema26_expands_to_default_without_media_changes() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Owned".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 16001,
+            source_offset_samples: 6000,
+            length_samples: 12000,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    for rate in aaadaw_core::FrameRate::ALL {
+        project.apply(DawAction::SetFrameRate { rate }).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(
+            ProjectStore::load_read_only(&path).unwrap().snapshot(),
+            project.snapshot()
+        );
+    }
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE project_timecode; PRAGMA user_version = 26;")
+        .unwrap();
+    drop(connection);
+    let original = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::default(),
+        })
+        .unwrap();
+    for _ in 0..2 {
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(store.schema_version().unwrap(), 27);
+        store.close().unwrap();
+    }
+    let connection = Connection::open(&path).unwrap();
+    assert!(
+        connection
+            .execute("UPDATE project_timecode SET frame_rate=10", [])
+            .is_err()
+    );
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_timecode SET frame_rate=10;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        ProjectStore::open(&path).unwrap().load(),
+        Err(StorageError::InvalidStoredData("unsupported frame rate"))
+    ));
+    remove_database(&path);
+}
+
+#[test]
 fn master_mix_roundtrip_read_only_and_schema23_default_preserve_tracks() {
     let path = project_path();
     let mut project = Project::new();

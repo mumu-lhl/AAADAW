@@ -22,7 +22,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 26;
+pub const CURRENT_SCHEMA_VERSION: u32 = 27;
+
+const MIGRATION_27: &str = "CREATE TABLE IF NOT EXISTS project_timecode(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), frame_rate INTEGER NOT NULL CHECK(frame_rate BETWEEN 0 AND 9)); INSERT OR IGNORE INTO project_timecode VALUES(1, 5);";
 
 const MIGRATION_26: &str = "CREATE TABLE IF NOT EXISTS audio_item_fade_curves(item_id INTEGER PRIMARY KEY REFERENCES audio_item_fades(item_id) ON DELETE CASCADE, in_curvature REAL, in_s REAL, out_curvature REAL, out_s REAL, CHECK((in_curvature IS NULL) = (in_s IS NULL)), CHECK((out_curvature IS NULL) = (out_s IS NULL)), CHECK(in_curvature BETWEEN -1 AND 1 AND in_s BETWEEN -1 AND 1), CHECK(out_curvature BETWEEN -1 AND 1 AND out_s BETWEEN -1 AND 1), CHECK(in_curvature IS NOT NULL OR out_curvature IS NOT NULL));";
 
@@ -2202,6 +2204,15 @@ impl ProjectStore {
 
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
+        let frame_rate = self.connection.query_row(
+            "SELECT frame_rate FROM project_timecode WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let frame_rate = u32::try_from(frame_rate)
+            .ok()
+            .and_then(aaadaw_core::FrameRate::from_storage_code)
+            .ok_or(StorageError::InvalidStoredData("unsupported frame rate"))?;
         let master_mix = self
             .connection
             .query_row(
@@ -2239,7 +2250,10 @@ impl ProjectStore {
                 [],
                 |row| row.get(0),
             )?;
-            return if rows == 0 && master_mix == aaadaw_core::MasterMix::default() {
+            return if rows == 0
+                && master_mix == aaadaw_core::MasterMix::default()
+                && frame_rate == aaadaw_core::FrameRate::default()
+            {
                 Ok(Project::new())
             } else {
                 Err(StorageError::InvalidStoredData(
@@ -2254,6 +2268,7 @@ impl ProjectStore {
             initial_tempo_bpm,
         )
         .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_frame_rate(frame_rate)
         .with_pan_mode(match pan_mode {
             0 => PanMode::LegacyMonoStereo,
             1 => PanMode::ZeroDbBalance,
@@ -2438,6 +2453,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             24 => transaction.execute_batch(MIGRATION_24)?,
             25 => transaction.execute_batch(MIGRATION_25)?,
             26 => transaction.execute_batch(MIGRATION_26)?,
+            27 => transaction.execute_batch(MIGRATION_27)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2474,6 +2490,11 @@ fn write_snapshot(
     )?;
 
     let settings = snapshot.settings;
+    transaction.execute("DELETE FROM project_timecode", [])?;
+    transaction.execute(
+        "INSERT INTO project_timecode(singleton, frame_rate) VALUES(1, ?1)",
+        params![i64::from(settings.frame_rate().storage_code())],
+    )?;
     transaction.execute(
         "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode) \
          VALUES(1, ?1, ?2, ?3, ?4)",

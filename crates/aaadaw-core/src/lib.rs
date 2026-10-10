@@ -14,6 +14,7 @@ mod project;
 mod routing;
 mod snapshot;
 mod timebase;
+mod timecode;
 mod track;
 
 pub use action::DawAction;
@@ -35,6 +36,7 @@ pub use timebase::{
     DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition, PanMode,
     ProjectSettings, TempoCurve, TimeSignature, TimebaseError,
 };
+pub use timecode::FrameRate;
 pub use track::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES,
     Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,

@@ -7,6 +7,10 @@ use crate::{
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DawAction {
+    /// Change video/timecode frame rate without altering audio placement.
+    SetFrameRate {
+        rate: crate::FrameRate,
+    },
     /// Change the Master output gain and stereo balance as one undoable edit.
     SetMasterMix {
         mix: crate::MasterMix,

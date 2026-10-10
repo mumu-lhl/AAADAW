@@ -192,6 +192,7 @@ pub struct FxParameterChange {
 struct ProjectState {
     master_mix: crate::MasterMix,
     pan_mode: crate::PanMode,
+    frame_rate: crate::FrameRate,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
@@ -209,6 +210,10 @@ struct IdAllocator {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    FrameRateChanged {
+        before: crate::FrameRate,
+        after: crate::FrameRate,
+    },
     MasterMixChanged {
         before: crate::MasterMix,
         after: crate::MasterMix,
@@ -410,6 +415,10 @@ enum ProjectEvent {
 impl ProjectEvent {
     fn inverse(&self) -> Self {
         match self {
+            Self::FrameRateChanged { before, after } => Self::FrameRateChanged {
+                before: *after,
+                after: *before,
+            },
             Self::MasterMixChanged { before, after } => Self::MasterMixChanged {
                 before: *after,
                 after: *before,
@@ -838,6 +847,7 @@ impl Project {
         Self {
             state: ProjectState {
                 pan_mode: settings.pan_mode(),
+                frame_rate: settings.frame_rate(),
                 tempo_map: TempoMap::new(settings),
                 meter_map: MeterMap::new(settings.ppq()),
                 ..ProjectState::default()
@@ -916,6 +926,7 @@ impl Project {
             .tempo_map
             .settings()
             .with_pan_mode(self.state.pan_mode)
+            .with_frame_rate(self.state.frame_rate)
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -1507,6 +1518,7 @@ impl Project {
             state: ProjectState {
                 master_mix: snapshot.master_mix,
                 pan_mode: settings.pan_mode(),
+                frame_rate: settings.frame_rate(),
                 tracks,
                 audio_items,
                 midi_items,
@@ -1551,6 +1563,10 @@ impl Project {
         }
 
         let event = match action {
+            DawAction::SetFrameRate { rate } => ProjectEvent::FrameRateChanged {
+                before: state.frame_rate,
+                after: rate,
+            },
             DawAction::SetMasterMix { mix } => ProjectEvent::MasterMixChanged {
                 before: state.master_mix,
                 after: mix,
@@ -2910,6 +2926,12 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::FrameRateChanged { before, after } => {
+                if state.frame_rate != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.frame_rate = *after;
+            }
             ProjectEvent::MasterMixChanged { before, after } => {
                 if state.master_mix != *before {
                     return Err(ActionError::HistoryInvariantViolation);

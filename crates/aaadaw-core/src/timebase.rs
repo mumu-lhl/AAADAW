@@ -26,6 +26,7 @@ pub struct ProjectSettings {
     ppq: u32,
     initial_tempo_bpm: f64,
     pan_mode: PanMode,
+    frame_rate: crate::FrameRate,
 }
 
 impl ProjectSettings {
@@ -45,6 +46,7 @@ impl ProjectSettings {
             ppq,
             initial_tempo_bpm,
             pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         })
     }
 
@@ -57,6 +59,17 @@ impl ProjectSettings {
     /// Returns the project gain policy.
     pub fn pan_mode(self) -> PanMode {
         self.pan_mode
+    }
+
+    /// Selects the project video/timecode frame rate.
+    pub fn with_frame_rate(mut self, rate: crate::FrameRate) -> Self {
+        self.frame_rate = rate;
+        self
+    }
+
+    /// Returns the project's video/timecode frame rate.
+    pub fn frame_rate(self) -> crate::FrameRate {
+        self.frame_rate
     }
 
     /// Returns the project sample rate.
@@ -82,6 +95,7 @@ impl Default for ProjectSettings {
             ppq: DEFAULT_PPQ,
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
             pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         }
     }
 }
@@ -495,6 +509,7 @@ impl TempoMap {
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
             pan_mode: PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
         }
     }
 

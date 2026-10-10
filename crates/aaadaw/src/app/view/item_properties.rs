@@ -19,7 +19,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         row![
             text("Display:").width(120),
             pick_list(
-                [TimeUnit::Time, TimeUnit::Beats, TimeUnit::Samples],
+                [
+                    TimeUnit::Time,
+                    TimeUnit::Beats,
+                    TimeUnit::Hmsf,
+                    TimeUnit::Samples
+                ],
                 Some(draft.unit),
                 Message::ItemPropertiesUnitChanged
             )
