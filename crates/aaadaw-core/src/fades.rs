@@ -116,6 +116,28 @@ pub enum FadeCurve {
 }
 
 impl FadeCurve {
+    /// Values shown by the current curve editor, retaining compatibility
+    /// mode in `self` until the user actually changes either parameter.
+    pub fn parameters(self) -> FadeCurveParameters {
+        match self {
+            Self::Native(parameters) => parameters,
+            Self::Legacy(shape) => {
+                let (curvature, s_parameter) = match shape {
+                    FadeShape::Linear => (0.0, 0.0),
+                    FadeShape::FastStart => (0.5, 0.0),
+                    FadeShape::SlowStart => (-0.5, 0.0),
+                    FadeShape::VeryFastStart => (1.0, 0.0),
+                    FadeShape::VerySlowStart => (-1.0, 0.0),
+                    FadeShape::Smooth => (0.0, 0.5),
+                    FadeShape::SteepSmooth => (0.0, 1.0),
+                };
+                FadeCurveParameters {
+                    curvature,
+                    s_parameter,
+                }
+            }
+        }
+    }
     /// REAPER 7.82's curve menu preserves compatibility mode except for
     /// Smooth, which selects the current piecewise-quadratic S preset.
     pub fn current_preset(shape: FadeShape) -> Self {

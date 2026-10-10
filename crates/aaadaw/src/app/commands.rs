@@ -3,7 +3,6 @@ use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use aaadaw_core::TrackId;
 use iced::Task;
-#[cfg(feature = "audio-device")]
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
@@ -29,6 +28,8 @@ pub(crate) enum CommandId {
     ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
+    OpenItemProperties,
+    ToggleItemProperties,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -86,6 +87,8 @@ enum CommandKind {
     ToggleMixerPanel,
     AddMidiItem,
     ImportAudio,
+    OpenItemProperties,
+    ToggleItemProperties,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -310,6 +313,26 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Insert",
         label: "Import audio…",
         aliases: &["import audio", "import audio…", "audio file"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleItemProperties,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Item properties…",
+        aliases: &["toggle media item properties"],
+        shortcuts: &[Shortcut::named(Named::F2, Modifiers::NONE)],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenItemProperties,
+        menu: None,
+        category: "Item",
+        label: "Item properties…",
+        aliases: &["media item properties"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -789,7 +812,11 @@ fn default_may_yield(kind: CommandKind) -> bool {
     }
     matches!(
         kind,
-        CommandKind::OpenActionList | CommandKind::AddTrack | CommandKind::ToggleMixerPanel
+        CommandKind::OpenActionList
+            | CommandKind::OpenItemProperties
+            | CommandKind::ToggleItemProperties
+            | CommandKind::AddTrack
+            | CommandKind::ToggleMixerPanel
     )
 }
 
@@ -1119,6 +1146,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::ImportAudio => "insert.import-audio",
+        CommandKind::OpenItemProperties => "item.properties",
+        CommandKind::ToggleItemProperties => "item.properties.toggle",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
@@ -1195,6 +1224,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
+        CommandId::OpenItemProperties => Message::OpenItemProperties,
+        CommandId::ToggleItemProperties => Message::ToggleItemProperties,
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
@@ -1437,6 +1468,11 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.id() == selected_track && !track.is_bus())
                 })
         }
+        CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
+        CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
+            .timeline
+            .selected_item
+            .is_some_and(|id| app.project.audio_items().iter().any(|item| item.id() == id)),
         CommandKind::DuplicateSelectedItem => {
             !project_edit_busy(app)
                 && !app.timeline.selected_items.is_empty()
@@ -1568,6 +1604,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::ImportAudio => CommandId::ImportAudio,
+        CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
+        CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,

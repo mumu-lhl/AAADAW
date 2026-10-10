@@ -108,3 +108,17 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 最终 audio-device 全 workspace **830 passed / 0 skipped**；默认 Clippy warnings denied 通过。新增回归覆盖全部预设模式、旧/新 Smooth 输出差异以及曲线选择的历史、重复选择、长度与另一端参数保护。上一手柄提交 d2bfbe2 的 Rust CI、Portable desktop archives、Native installers 全部成功。
 
 仍待完成：原厂菜单末尾的 Low pass fade（I_FADELPF 淡入/淡出位标志独立）、曲率数值/连续编辑、菜单方向键导航、抗锯齿/DPI 精确验收、多 Item/分组修饰键和 Crossfade。当前七行菜单高度 208，原厂含低通入口为 224；这项差异保留为未完成，不宣称整个菜单对齐。
+
+## Item Properties 淡化数值编辑基础
+
+独立 Media Item Properties 窗口接入 Item 菜单和 F2，区分“打开”（原厂动作 40009）与“切换”（41589，默认 F2）。在主窗口或属性窗口获得焦点时，F2 都可切换关闭；用户显式绑定优先。当前仅单个 Audio Item 的淡化字段，窗口 526×210；原厂完整 526×693 属性窗口包含其他 Item/Take/Source 能力，尚未完成其字段及几何。
+
+输入草稿与工程分离，Apply/OK 经 SetAudioItemFades 一次提交；Cancel/Escape 不改工程。未编辑字段保留完整小数长度及 Legacy/Native 模式，编辑曲率保留同端 S 和另一端参数。非法/非有限输入留在草稿并显示错误；曲率有限值按实测限制至 −1..1。旧工程窗口草稿不能应用到另一工程 generation。
+
+[原厂事实](item-fade-properties-reference.json)确认：属性窗口的长度输入与 API 请求长度不同，编辑长度会限制到 Item 长度并缩短另一端以避免重叠。只改淡入时淡入优先；两端都改时 Apply 按淡入、淡出顺序处理，淡出优先，与输入顺序无关。底层领域继续保留 API 请求长度，不把界面归一化规则扩散到存储迁移。
+
+实窗将淡入曲率从 0 改为 0.25，输入阶段保存行仍为 (0,0.5)，Apply 后为 (0.25,0.5)；两端长度仍为 28846.1549042245 / 7692.307974459873 samples，淡出仍为 Legacy Linear。随后输入 0.9 并 Escape，Undo 恢复上次已应用的曲率 0，证明取消草稿未添加历史；Redo 恢复 0.25。将淡出输入 0:02.000 并 Apply，实窗与保存行均归一为淡入 0 / 淡出 48000 samples，曲线模式仍保留。最新构建恢复会话后再次实测 F2 开关，属性窗口焦点下第二次 F2 关闭成功。
+
+[当前属性窗口](item-fade-ui/properties-fades.png)为 AAADAW 自有截图；[超长输入归一化](item-fade-ui/properties-normalized.png)记录支持的长度行为。原厂截图仍仅在 scratch。最终 audio-device 全 workspace **833 passed / 0 skipped**；默认 Clippy warnings denied 通过。新增回归包括草稿提交/取消、Undo/Redo、模式/精度保护、双端重叠处理、非法输入、工程 generation 防护，以及 F2 和自定义绑定。曲线菜单提交 7ab788a 的三项远端流程全部成功。
+
+仍待：完整 Item/Take/Source 属性、位置/长度显示单位、批量编辑与 mixed values、曲线按钮/连续鼠标编辑、完整主题与焦点细节、低通、自动淡化和 Crossfade。当前淡化字段切片不关闭 UI-009、P4 或全量对齐。

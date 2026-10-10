@@ -166,7 +166,6 @@ impl Shortcut {
         }
     }
 
-    #[cfg(feature = "audio-device")]
     pub(super) const fn named(key: Named, modifiers: Modifiers) -> Self {
         Self {
             key: ShortcutKey::Named(key),

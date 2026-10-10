@@ -8009,3 +8009,178 @@ fn curve_menu_converts_legacy_smooth_without_changing_lengths_and_is_undoable() 
     assert!(app.timeline.context_fade.is_none());
     assert_eq!(app.project.audio_items()[0].fades(), current);
 }
+
+#[test]
+fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() {
+    use super::item_properties::{FadeField, ItemProperties};
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeShape};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let id = app.project.audio_items()[0].id();
+    let original = AudioItemFades {
+        fade_in: AudioFade::new(12000.25, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(6000.5, FadeShape::FastStart).unwrap(),
+    };
+    app.project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: id,
+            fades: original,
+        })
+        .unwrap();
+    app.item_properties = Some(ItemProperties::new(id, original, 48000));
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    assert_eq!(app.revision, revision);
+    let _ = app.update(Message::ItemFadeFieldChanged(
+        FadeField::InCurvature,
+        "-2".into(),
+    ));
+    let _ = app.update(Message::ItemFadeFieldChanged(
+        FadeField::OutLength,
+        "0:00.1255".into(),
+    ));
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let applied = app.project.audio_items()[0].fades();
+    assert_eq!(applied.fade_in.length_samples(), 12000.25);
+    assert!(
+        matches!(applied.fade_in.curve(), FadeCurve::Native(p) if p.curvature() == -1.0 && p.s_parameter() == 0.5)
+    );
+    assert_eq!(applied.fade_out.length_samples(), 6024.0);
+    assert_eq!(applied.fade_out.curve(), original.fade_out.curve());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].fades(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let _ = app.update(Message::ItemFadeFieldChanged(
+        FadeField::InLength,
+        "NaN".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(true));
+    assert!(app.item_properties.as_ref().unwrap().error.is_some());
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let _ = app.update(Message::CloseItemProperties);
+    assert!(app.item_properties.is_none());
+    assert_eq!(app.project.audio_items()[0].fades(), applied);
+    let both = AudioItemFades {
+        fade_in: AudioFade::new(19200.0, FadeShape::FastStart).unwrap(),
+        fade_out: AudioFade::new(28800.0, FadeShape::FastStart).unwrap(),
+    };
+    let mut draft = ItemProperties::new(id, both, 48000);
+    draft.edit(FadeField::InLength, "0:00.800".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 38400.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 9600.0);
+    draft.edit(FadeField::OutLength, "0:02.000".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 0.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 48000.0);
+    draft.edit(FadeField::InLength, "0:00.600".into());
+    draft.edit(FadeField::OutLength, "0:00.600".into());
+    let adjusted = draft.fades(both, 48000, 48000).unwrap();
+    assert_eq!(adjusted.fade_in.length_samples(), 19200.0);
+    assert_eq!(adjusted.fade_out.length_samples(), 28800.0);
+}
+
+#[test]
+fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
+    use super::item_properties::{FadeField, ItemProperties};
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    let item = &app.project.audio_items()[0];
+    app.item_properties = Some(ItemProperties::new(item.id(), item.fades(), 48000));
+    let _ = app.update(Message::ItemFadeFieldChanged(
+        FadeField::InLength,
+        "0.25".into(),
+    ));
+    app.project_generation += 1;
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.item_properties.is_none());
+    assert_eq!(
+        app.project.audio_items()[0].fades(),
+        aaadaw_core::AudioItemFades::default()
+    );
+}
+
+#[test]
+fn factory_f2_toggles_item_properties_and_respects_custom_binding() {
+    use iced::keyboard::key::Named;
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(Named::F2),
+            Modifiers::NONE,
+            &HashMap::new(),
+            &[]
+        ),
+        Some(CommandId::ToggleItemProperties)
+    );
+    let custom = HashMap::from([("track.add".to_owned(), "F2".to_owned())]);
+    assert_eq!(
+        commands::from_shortcut(&Key::Named(Named::F2), Modifiers::NONE, &custom, &[]),
+        Some(CommandId::AddTrack)
+    );
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48000,
+        })
+        .unwrap();
+    app.timeline.selected_item = Some(app.project.audio_items()[0].id());
+    let _ = app.update(Message::ToggleItemProperties);
+    assert!(app.item_properties_window_id.is_some());
+    let window_id = app.item_properties_window_id.unwrap();
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::F2),
+            modified_key: Key::Named(Named::F2),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F2),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+    assert!(app.item_properties_window_id.is_none());
+    assert!(app.item_properties.is_none());
+}

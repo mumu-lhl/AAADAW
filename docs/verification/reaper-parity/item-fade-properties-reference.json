@@ -1,0 +1,96 @@
+{
+  "reference": "Linux REAPER 7.82 Default 7 factory settings",
+  "source": "Owned mono source in fresh unsaved scratch project",
+  "window": {
+    "name": "Media Item Properties",
+    "client_width": 526,
+    "client_height": 693
+  },
+  "entry": {
+    "action_show": 40009,
+    "action_toggle": 41589,
+    "factory_shortcut": "F2"
+  },
+  "observations": [
+    {
+      "operation": "Edit in curvature 0.00 to 0.25; Tab, then Apply",
+      "before": {
+        "in_length": 0.297176820208,
+        "out_length": 0,
+        "in_curvature": 0,
+        "in_s": 1
+      },
+      "after": {
+        "in_length": 0.297176820208,
+        "out_length": 0,
+        "in_curvature": 0.25,
+        "in_s": 1
+      }
+    },
+    {
+      "operation": "Edit curvature to -2; Apply",
+      "after": {
+        "in_curvature": -1,
+        "in_s": 1
+      }
+    },
+    {
+      "operation": "Edit in length to 0:02.000 on a 1-second Item; Apply",
+      "after": {
+        "in_length": 1,
+        "out_length": 0
+      }
+    },
+    {
+      "operation": "Then edit out length to 0:02.000; Apply",
+      "after": {
+        "in_length": 0,
+        "out_length": 1
+      }
+    },
+    {
+      "operation": "Edit both lengths to 0:00.750; Apply",
+      "after": {
+        "in_length": 0.25,
+        "out_length": 0.75
+      }
+    },
+    {
+      "operation": "Edit out length to 0:00.600 then in length to 0:00.600; Tab before Apply",
+      "draft": {
+        "in_length": 0.6,
+        "out_length": 0.6
+      },
+      "after_apply": {
+        "in_length": 0.4,
+        "out_length": 0.6
+      }
+    },
+    {
+      "operation": "Then edit only in length to 0:00.800; Apply",
+      "after": {
+        "in_length": 0.8,
+        "out_length": 0.2
+      }
+    },
+    {
+      "operation": "Activate main REAPER window while Media Item Properties is open; press F2",
+      "after": "Properties window closes; edited values already applied remain"
+    },
+    {
+      "operation": "Press F2 while the Properties window itself has keyboard focus",
+      "after": "Properties window closes"
+    },
+    {
+      "operation": "Right-click fade-in handle with custom curvature=-1 S=1",
+      "after": "None of the seven preset rows is checked; independent Low pass fade flag remains checked"
+    }
+  ],
+  "notes": [
+    "Typing and leaving fields did not change model until Apply.",
+    "When both end lengths change, fade-out wins overlap regardless of typing order.",
+    "Only editing fade-in length lets fade-in win and reduces fade-out.",
+    "Lengths in this note are seconds. API/state model may preserve oversized requests; the observed Properties Apply path normalizes edited lengths.",
+    "Native screenshots remain in scratch only; no native image or theme asset is included."
+  ]
+}

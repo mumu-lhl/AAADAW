@@ -58,6 +58,7 @@ mod config_paths;
 mod desktop_layout;
 mod fader;
 mod fader_data;
+mod item_properties;
 mod keyboard_config;
 mod media;
 mod messages;
@@ -315,6 +316,9 @@ struct App {
     master_peak_hold: StereoPeakHold,
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
+    item_properties: Option<item_properties::ItemProperties>,
+    item_properties_window_id: Option<iced::window::Id>,
+    item_properties_generation: u64,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
@@ -1327,7 +1331,9 @@ impl App {
     }
 
     fn window_title(&self, window_id: iced::window::Id) -> String {
-        if self.routing_window_id == Some(window_id) {
+        if self.item_properties_window_id == Some(window_id) {
+            "Media Item Properties".to_owned()
+        } else if self.routing_window_id == Some(window_id) {
             self.routing_track_id
                 .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
                 .map_or_else(
@@ -1603,6 +1609,7 @@ impl App {
             &message,
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
+                    || self.item_properties_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
@@ -1641,6 +1648,10 @@ impl App {
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
+                    | Message::ToggleItemProperties
+                    | Message::OpenItemProperties
+                    | Message::ItemFadeFieldChanged(..)
+                    | Message::CloseItemProperties
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -1735,7 +1746,7 @@ impl App {
                 timeline::TimelineEvent::PreviewItemFades { .. }
                     | timeline::TimelineEvent::CommitItemFades
                     | timeline::TimelineEvent::SetFadeCurvePreset { .. }
-            )
+            ) | Message::ApplyItemProperties(_)
         ) && let Some(status) = item_drag_edit_guard_status(
             self.path_picker_busy,
             self.import_busy,
@@ -2038,6 +2049,21 @@ impl App {
                 task = self.open_settings();
             }
             Message::OpenRenderWindow => task = self.open_render_window(),
+            Message::OpenItemProperties => task = self.open_item_properties(),
+            Message::ToggleItemProperties => {
+                task = if self.item_properties_window_id.is_some() {
+                    self.close_item_properties()
+                } else {
+                    self.open_item_properties()
+                }
+            }
+            Message::CloseItemProperties => task = self.close_item_properties(),
+            Message::ItemFadeFieldChanged(field, text) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.edit(field, text);
+                }
+            }
+            Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
             Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
@@ -2096,7 +2122,10 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
-                if self.routing_window_id == Some(window_id) {
+                if self.item_properties_window_id == Some(window_id) {
+                    self.item_properties_window_id = None;
+                    self.item_properties = None;
+                } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
                     self.routing_send_drafts.clear();
@@ -2856,6 +2885,42 @@ impl App {
             Message::ActionListDeleteBinding => self.delete_action_list_binding(),
             Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if self.item_properties_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key,
+                            modifiers,
+                            repeat: false,
+                            ..
+                        }) = &event
+                    {
+                        let toggle = {
+                            let bindings = self
+                                .shortcut_bindings
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            commands::from_shortcut(
+                                &key.as_ref(),
+                                *modifiers,
+                                &bindings,
+                                &self.action_macros,
+                            ) == Some(CommandId::ToggleItemProperties)
+                        };
+                        if toggle {
+                            return self.close_item_properties();
+                        }
+                    }
+                    if matches!(
+                        &event,
+                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                            ..
+                        })
+                    ) {
+                        return self.close_item_properties();
+                    }
+                    return Task::none();
+                }
                 if self.routing_window_id == Some(window_id) {
                     if matches!(
                         event,
