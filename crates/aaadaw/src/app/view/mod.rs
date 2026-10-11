@@ -583,7 +583,7 @@ fn transport_readout_tick(app: &App) -> u64 {
 }
 
 fn transport_time_readout(project: &aaadaw_core::Project, tick: u64) -> String {
-    project
+    let musical = project
         .musical_position_at_tick(tick)
         .map(|position| {
             format!(
@@ -593,7 +593,13 @@ fn transport_time_readout(project: &aaadaw_core::Project, tick: u64) -> String {
                 position.tick_in_beat()
             )
         })
-        .unwrap_or_else(|_| format!("{tick} ticks"))
+        .unwrap_or_else(|_| format!("{tick} ticks"));
+    let clock = project
+        .sample_at_tick(tick)
+        .and_then(|sample| project.project_time_at_sample(sample))
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_else(|_| "Unavailable".to_owned());
+    format!("{musical} / {clock}")
 }
 
 fn transport_view(app: &App) -> Element<'_, Message> {
@@ -825,7 +831,11 @@ fn playback_controls(_app: &App) -> Element<'_, Message> {
 fn transport_details(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
     let sample = app.playhead_sample;
-    let seconds = sample as f64 / f64::from(app.project.settings().sample_rate().max(1));
+    let clock = app
+        .project
+        .project_time_at_sample(sample)
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_else(|_| "Unavailable".to_owned());
     let busy = app.playback_busy || app.recording_starting || app.recording_stopping;
     let controls = row![
         button("Restart").on_press_maybe(
@@ -914,7 +924,7 @@ fn transport_details(app: &App) -> Element<'_, Message> {
     };
     let mut content = column![
         row![
-            text(format!("{seconds:.3}s · {sample} samples")).size(12),
+            text(format!("{clock} · {sample} samples")).size(12),
             text(format!("Output: {backend_name}")).size(12),
         ]
         .spacing(tokens::SECTION_GAP)
@@ -958,10 +968,22 @@ mod tests {
     use aaadaw_core::Project;
 
     #[test]
-    fn transport_time_readout_uses_bars_beats_and_ticks() {
+    fn transport_time_readout_uses_musical_position_and_project_clock() {
         let project = Project::new();
 
-        assert_eq!(super::transport_time_readout(&project, 960), "1.2.0");
+        assert_eq!(
+            super::transport_time_readout(&project, 960),
+            "1.2.0 / 0:00.500"
+        );
+        let shifted = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_project_start_time_offset_seconds(-5.0)
+                .unwrap(),
+        );
+        assert_eq!(
+            super::transport_time_readout(&shifted, 960),
+            "1.2.0 / -0:04.500"
+        );
     }
 
     #[cfg(feature = "audio-device")]

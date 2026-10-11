@@ -1,5 +1,8 @@
 mod beats;
 use super::{App, Message};
+use crate::project_time::{
+    format_project_time, format_project_timecode, parse_project_time, parse_project_timecode,
+};
 use aaadaw_core::{AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId};
 use iced::Task;
 use serde::{Deserialize, Serialize};
@@ -252,6 +255,15 @@ impl ItemProperties {
     fn from_project_item(item: &AudioItem, project: &aaadaw_core::Project, unit: TimeUnit) -> Self {
         let mut draft = Self::from_item(item, project.settings().sample_rate(), unit);
         draft.frame_rate = project.settings().frame_rate();
+        if unit == TimeUnit::Time {
+            match project.project_time_at_sample(item.start_sample()) {
+                Ok(seconds) => draft.fields[6] = format_project_time(seconds),
+                Err(error) => {
+                    draft.fields[6] = "Unavailable".into();
+                    draft.error = Some(error.to_string());
+                }
+            }
+        }
         if unit == TimeUnit::Beats {
             let result =
                 beats::format_position(project, item.start_sample() as f64).and_then(|position| {
@@ -277,8 +289,9 @@ impl ItemProperties {
         if unit == TimeUnit::Hmsf {
             let rate = project.settings().frame_rate();
             let sr = f64::from(project.settings().sample_rate());
-            match rate
-                .format_timecode(item.start_sample() as f64 / sr)
+            match project
+                .project_time_at_sample(item.start_sample())
+                .and_then(|seconds| format_project_timecode(rate, seconds))
                 .and_then(|position| {
                     rate.format_timecode(item.length_samples() as f64 / sr)
                         .map(|length| (position, length))
@@ -302,6 +315,26 @@ impl ItemProperties {
         item: &AudioItem,
         project: &aaadaw_core::Project,
     ) -> Result<ItemPlacement, String> {
+        if self.unit == TimeUnit::Time {
+            let sample_rate = project.settings().sample_rate();
+            let mut converted = self.clone();
+            converted.unit = TimeUnit::Samples;
+            if self.changed[6] {
+                let displayed_seconds =
+                    parse_project_time(&self.fields[6]).map_err(str::to_owned)?;
+                let sample = project
+                    .sample_at_project_time(displayed_seconds)
+                    .map_err(|error| error.to_string())?;
+                converted.fields[6] = sample.to_string();
+            }
+            for index in [7, 8] {
+                if self.changed[index] {
+                    let seconds = parse_time(&self.fields[index])?;
+                    converted.fields[index] = (seconds * f64::from(sample_rate)).to_string();
+                }
+            }
+            return converted.placement(item, sample_rate);
+        }
         if !matches!(self.unit, TimeUnit::Beats | TimeUnit::Hmsf) {
             return self.placement(item, project.settings().sample_rate());
         }
@@ -316,7 +349,13 @@ impl ItemProperties {
             converted.changed[6] = true;
             converted.changed[7] = true;
         }
-        let parse_frame = |text: &str| {
+        let offset = project.settings().project_start_time_offset_seconds();
+        let parse_frame_position = |text: &str| {
+            parse_project_timecode(project.settings().frame_rate(), text)
+                .map(|seconds| (seconds - offset) * f64::from(project.settings().sample_rate()))
+                .map_err(|error| error.to_string())
+        };
+        let parse_frame_length = |text: &str| {
             project
                 .settings()
                 .frame_rate()
@@ -326,7 +365,7 @@ impl ItemProperties {
         };
         let start = if converted.changed[6] {
             if self.unit == TimeUnit::Hmsf {
-                parse_frame(&self.fields[6])?
+                parse_frame_position(&self.fields[6])?
             } else {
                 beats::parse_position(project, &self.fields[6])?
             }
@@ -338,7 +377,7 @@ impl ItemProperties {
         }
         if converted.changed[7] {
             converted.fields[7] = if self.unit == TimeUnit::Hmsf {
-                parse_frame(&self.fields[7])?
+                parse_frame_length(&self.fields[7])?
             } else {
                 beats::parse_length(project, &self.fields[7], start)?
             }
@@ -613,6 +652,51 @@ impl ItemPlacement {
 mod tests {
     use super::*;
     use aaadaw_core::{DawAction, Project};
+
+    #[test]
+    fn signed_project_start_offset_affects_item_position_not_duration_or_source_offset() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Owned".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://owned".into(),
+                start_sample: 48_000,
+                source_offset_samples: 96_000,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .unwrap();
+
+        let item = &project.audio_items()[0];
+        let mut time = ItemProperties::from_project_item(item, &project, TimeUnit::Time);
+        assert_eq!(&time.fields[6..], &["-0:04.000", "0:01.000", "0:02.000"]);
+        time.edit(ItemPropertyField::Position, "0:00.000".into());
+        assert_eq!(
+            time.placement_in_project(item, &project).unwrap(),
+            ItemPlacement {
+                start: 240_000,
+                length: 48_000,
+                source_offset: 96_000,
+            }
+        );
+
+        let mut frames = ItemProperties::from_project_item(item, &project, TimeUnit::Hmsf);
+        assert_eq!(frames.fields[6], "-00:00:04:00");
+        assert_eq!(frames.fields[7], "00:00:01:00");
+        frames.edit(ItemPropertyField::Position, "-00:00:03:00".into());
+        assert_eq!(
+            frames.placement_in_project(item, &project).unwrap().start,
+            96_000
+        );
+    }
 
     #[test]
     fn switching_units_reloads_model_and_discards_all_drafts_without_losing_applied_precision() {

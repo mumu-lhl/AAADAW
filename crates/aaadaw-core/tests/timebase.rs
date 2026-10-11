@@ -105,6 +105,60 @@ fn base_ruler_spacing_restores_inside_a_project_settings_transaction() {
 }
 
 #[test]
+fn project_start_time_offset_is_signed_undoable_and_round_trips_samples() {
+    let mut project = Project::new();
+    assert_eq!(project.settings().project_start_time_offset_seconds(), 0.0);
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+        .unwrap();
+    assert_eq!(project.project_time_at_sample(0).unwrap(), -5.0);
+    assert_eq!(project.project_time_at_sample(24_000).unwrap(), -4.5);
+    assert_eq!(project.sample_at_project_time(-4.5).unwrap(), 24_000);
+    assert!(project.undo().unwrap());
+    assert_eq!(project.settings().project_start_time_offset_seconds(), 0.0);
+    assert!(project.redo().unwrap());
+    assert_eq!(
+        project
+            .snapshot()
+            .settings
+            .project_start_time_offset_seconds(),
+        -5.0
+    );
+}
+
+#[test]
+fn project_start_time_offset_rejects_non_finite_values() {
+    let mut project = Project::new();
+    assert_eq!(
+        project.apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: f64::NAN }),
+        Err(aaadaw_core::ActionError::InvalidProjectTimeOffset)
+    );
+    assert!(matches!(
+        aaadaw_core::ProjectSettings::default()
+            .with_project_start_time_offset_seconds(f64::INFINITY),
+        Err(aaadaw_core::TimebaseError::InvalidProjectStartTimeOffset)
+    ));
+}
+
+#[test]
+fn project_start_time_offset_restores_inside_a_settings_transaction() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::BatchTransaction {
+            tx_id: 1,
+            actions: vec![
+                DawAction::SetProjectStartMeasure { measure: -2 },
+                DawAction::SetProjectStartTimeOffsetSeconds { seconds: 12.5 },
+            ],
+        })
+        .unwrap();
+    assert_eq!(project.settings().project_start_time_offset_seconds(), 12.5);
+    assert!(project.undo().unwrap());
+    assert_eq!(project.settings().start_measure(), 1);
+    assert_eq!(project.settings().project_start_time_offset_seconds(), 0.0);
+}
+
+#[test]
 fn sample_and_ppq_positions_follow_tempo_changes() {
     let mut project = Project::new();
 

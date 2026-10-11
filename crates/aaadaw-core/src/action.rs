@@ -23,6 +23,10 @@ pub enum DawAction {
     SetBaseRulerLabelSpacingOnMeasure {
         enabled: bool,
     },
+    /// Change the signed display-time offset at the start of the project.
+    SetProjectStartTimeOffsetSeconds {
+        seconds: f64,
+    },
     /// Change the signed measure number displayed at project tick zero.
     SetProjectStartMeasure {
         measure: i32,

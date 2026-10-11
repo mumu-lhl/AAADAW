@@ -50,6 +50,8 @@ pub enum ActionError {
     InvalidTrackFxParameterAutomation,
     /// A tempo must be finite and greater than zero.
     InvalidTempoBpm,
+    /// A project start time offset must be finite.
+    InvalidProjectTimeOffset,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
     /// The requested tempo point does not exist.
@@ -181,6 +183,9 @@ impl fmt::Display for ActionError {
             ),
             Self::InvalidTempoBpm => {
                 formatter.write_str("tempo must be finite and greater than zero")
+            }
+            Self::InvalidProjectTimeOffset => {
+                formatter.write_str("project start time offset must be finite")
             }
             Self::TempoMapOutOfRange => {
                 formatter.write_str("tempo map exceeds the sample position range")

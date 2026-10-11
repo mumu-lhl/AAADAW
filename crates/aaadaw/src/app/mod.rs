@@ -1668,6 +1668,7 @@ impl App {
                     | Message::ProjectSettingsStartMeasureChanged(_)
                     | Message::ProjectSettingsBpmBasisChanged(_)
                     | Message::ProjectSettingsBaseRulerLabelSpacingChanged(_)
+                    | Message::ProjectSettingsStartTimeChanged(_)
                     | Message::ProjectNotesTitleChanged(_)
                     | Message::ProjectNotesAuthorChanged(_)
                     | Message::ProjectNotesEdited(_)
@@ -2106,6 +2107,11 @@ impl App {
             Message::ProjectSettingsBaseRulerLabelSpacingChanged(enabled) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.base_ruler_label_spacing_on_measure = enabled;
+                }
+            }
+            Message::ProjectSettingsStartTimeChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.project_start_time = value;
                 }
             }
             Message::ProjectSettingsTabChanged(tab) => {

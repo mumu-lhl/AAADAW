@@ -2129,13 +2129,14 @@ impl TimelineState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct RulerLine {
     pub(crate) tick: u64,
     pub(crate) x: f32,
     pub(crate) measure: i64,
     pub(crate) is_measure: bool,
     pub(crate) show_label: bool,
+    pub(crate) time_label: Option<String>,
 }
 
 struct TimelineProgram<'a> {
@@ -3969,12 +3970,20 @@ fn ruler_lines(
                 || position.measure() >= 1);
         if tick >= origin_tick && (show_beat || show_label) {
             let x = (tick - origin_tick) as f32 * pixels_per_tick;
+            let time_label = show_label.then(|| {
+                project
+                    .sample_at_tick(tick)
+                    .and_then(|sample| project.project_time_at_sample(sample))
+                    .map(crate::project_time::format_project_time)
+                    .unwrap_or_else(|_| "Unavailable".to_owned())
+            });
             lines.push(RulerLine {
                 tick,
                 x,
                 measure: position.measure(),
                 is_measure,
                 show_label,
+                time_label,
             });
         }
         let until_next_beat = ticks_per_beat.saturating_sub(position.tick_in_beat());
@@ -4095,7 +4104,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             if line.show_label {
                 frame.fill_text(Text {
                     content: line.measure.to_string(),
-                    position: Point::new(line.x + 4.0, bounds.height / 2.0),
+                    position: Point::new(line.x + 4.0, bounds.height * 0.28),
                     max_width: 36.0,
                     color: Color::from_rgb8(190, 197, 201),
                     size: Pixels(11.0),
@@ -4105,6 +4114,20 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     align_y: iced::alignment::Vertical::Center,
                     shaping: Shaping::Basic,
                 });
+                if let Some(time_label) = line.time_label {
+                    frame.fill_text(Text {
+                        content: time_label,
+                        position: Point::new(line.x + 4.0, bounds.height * 0.73),
+                        max_width: 50.0,
+                        color: Color::from_rgb8(142, 151, 156),
+                        size: Pixels(9.0),
+                        line_height: LineHeight::Relative(1.0),
+                        font: Font::default(),
+                        align_x: TextAlignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: Shaping::Basic,
+                    });
+                }
             }
         }
         vec![frame.into_geometry()]
@@ -6181,6 +6204,25 @@ mod tests {
                 .measure,
             -2
         );
+    }
+
+    #[test]
+    fn ruler_clock_labels_follow_signed_project_start_time_offset() {
+        let settings = aaadaw_core::ProjectSettings::default()
+            .with_project_start_time_offset_seconds(-5.0)
+            .unwrap();
+        let project = Project::with_settings(settings);
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let measure = timeline
+            .ruler_lines(&project, 400.0)
+            .into_iter()
+            .find(|line| line.show_label && line.tick == 0)
+            .unwrap();
+        assert_eq!(measure.time_label.as_deref(), Some("-0:05.000"));
     }
 
     #[test]

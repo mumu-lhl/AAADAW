@@ -1,5 +1,6 @@
 mod frame_rate_menu;
 use super::{App, Message};
+use crate::project_time::{format_project_time, parse_project_time};
 use aaadaw_core::{BpmBasis, DawAction, FrameRate, ProjectNotes, TimeSignature};
 use iced::widget::{button, checkbox, column, container, row, text, text_editor, text_input};
 use iced::{Element, Length, Task};
@@ -21,6 +22,8 @@ pub(super) struct Draft {
     pub meter_numerator: String,
     pub meter_denominator: String,
     pub start_measure: String,
+    pub project_start_time: String,
+    original_project_start_time_offset_seconds: f64,
     pub bpm_basis: BpmBasis,
     pub base_ruler_label_spacing_on_measure: bool,
     generation: u64,
@@ -47,6 +50,13 @@ impl Draft {
                 .denominator()
                 .to_string(),
             start_measure: app.project.settings().start_measure().to_string(),
+            project_start_time: format_project_time(
+                app.project.settings().project_start_time_offset_seconds(),
+            ),
+            original_project_start_time_offset_seconds: app
+                .project
+                .settings()
+                .project_start_time_offset_seconds(),
             bpm_basis: app.project.settings().bpm_basis(),
             base_ruler_label_spacing_on_measure: app
                 .project
@@ -150,6 +160,19 @@ impl App {
                 return Task::none();
             }
         };
+        let start_time = if draft.project_start_time
+            == format_project_time(draft.original_project_start_time_offset_seconds)
+        {
+            draft.original_project_start_time_offset_seconds
+        } else {
+            match parse_project_time(&draft.project_start_time) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.status = error.to_owned();
+                    return Task::none();
+                }
+            }
+        };
         let bpm_basis = draft.bpm_basis;
         let base_ruler_label_spacing_on_measure = draft.base_ruler_label_spacing_on_measure;
         let rate = draft.rate;
@@ -173,6 +196,11 @@ impl App {
         if self.project.settings().start_measure() != start_measure {
             actions.push(DawAction::SetProjectStartMeasure {
                 measure: start_measure,
+            });
+        }
+        if self.project.settings().project_start_time_offset_seconds() != start_time {
+            actions.push(DawAction::SetProjectStartTimeOffsetSeconds {
+                seconds: start_time,
             });
         }
         if self
@@ -207,6 +235,7 @@ impl App {
                 || self.project.tempo_at_tick(0) != tempo_bpm
                 || self.project.time_signature_at_tick(0) != signature
                 || self.project.settings().start_measure() != start_measure
+                || self.project.settings().project_start_time_offset_seconds() != start_time
                 || self.project.settings().bpm_basis() != bpm_basis
                 || self
                     .project
@@ -252,6 +281,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 )
                 .text_size(13)
                 .width(Length::Fixed(110.0))
+            ]
+            .spacing(6),
+            row![
+                text("Project start time:")
+                    .size(13)
+                    .width(Length::Fixed(112.0)),
+                text_input("0:00.000", &draft.project_start_time)
+                    .on_input(Message::ProjectSettingsStartTimeChanged)
+                    .size(13)
+                    .width(Length::Fixed(120.0)),
             ]
             .spacing(6),
             row![
@@ -366,6 +405,7 @@ mod tests {
         let _ = app.update(Message::ProjectSettingsMeterNumeratorChanged("3".into()));
         let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
         let _ = app.update(Message::ProjectSettingsStartMeasureChanged("3".into()));
+        let _ = app.update(Message::ProjectSettingsStartTimeChanged("-0:05.000".into()));
         let _ = app.update(Message::ProjectSettingsBpmBasisChanged(BpmBasis::Eighth));
         let _ = app.update(Message::ProjectSettingsBaseRulerLabelSpacingChanged(false));
         assert_eq!(app.project.snapshot(), before);
@@ -376,6 +416,10 @@ mod tests {
             TimeSignature::new(3, 8).unwrap()
         );
         assert_eq!(app.project.settings().start_measure(), 3);
+        assert_eq!(
+            app.project.settings().project_start_time_offset_seconds(),
+            -5.0
+        );
         assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Eighth);
         assert!(!app.project.settings().base_ruler_label_spacing_on_measure());
         assert_eq!(app.project.sample_at_tick(960).unwrap(), 60_000);
@@ -386,6 +430,10 @@ mod tests {
             TimeSignature::new(4, 4).unwrap()
         );
         assert_eq!(app.project.settings().start_measure(), 1);
+        assert_eq!(
+            app.project.settings().project_start_time_offset_seconds(),
+            0.0
+        );
         assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Quarter);
         assert!(app.project.settings().base_ruler_label_spacing_on_measure());
         assert_eq!(app.project.project_notes(), &notes);
@@ -406,6 +454,19 @@ mod tests {
         assert_eq!(app.project.snapshot(), before);
         assert!(app.project_settings.is_some());
         assert!(!app.status.is_empty());
+    }
+
+    #[test]
+    fn invalid_project_start_time_does_not_partially_apply_general_settings() {
+        let mut app = App::default();
+        let before = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsTempoChanged("96".into()));
+        let _ = app.update(Message::ProjectSettingsStartTimeChanged("0:60.000".into()));
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.snapshot(), before);
+        assert_eq!(app.status, "Invalid project start time");
+        assert!(app.project_settings.is_some());
     }
 
     #[test]

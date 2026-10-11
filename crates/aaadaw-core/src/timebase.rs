@@ -102,6 +102,7 @@ pub struct ProjectSettings {
     start_measure: i32,
     bpm_basis: BpmBasis,
     base_ruler_label_spacing_on_measure: bool,
+    project_start_time_offset_seconds: f64,
     pan_mode: PanMode,
     frame_rate: crate::FrameRate,
 }
@@ -125,6 +126,7 @@ impl ProjectSettings {
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
+            project_start_time_offset_seconds: 0.0,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         })
@@ -188,6 +190,23 @@ impl ProjectSettings {
         self.base_ruler_label_spacing_on_measure
     }
 
+    /// Selects the signed display-time offset at the start of the project.
+    pub fn with_project_start_time_offset_seconds(
+        mut self,
+        seconds: f64,
+    ) -> Result<Self, TimebaseError> {
+        if !seconds.is_finite() {
+            return Err(TimebaseError::InvalidProjectStartTimeOffset);
+        }
+        self.project_start_time_offset_seconds = seconds;
+        Ok(self)
+    }
+
+    /// Returns the signed display-time offset at the start of the project.
+    pub fn project_start_time_offset_seconds(self) -> f64 {
+        self.project_start_time_offset_seconds
+    }
+
     /// Returns the project sample rate.
     pub fn sample_rate(self) -> u32 {
         self.sample_rate
@@ -213,6 +232,7 @@ impl Default for ProjectSettings {
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
+            project_start_time_offset_seconds: 0.0,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -228,6 +248,8 @@ pub enum TimebaseError {
     InvalidPpq,
     /// Tempo must be finite and greater than zero.
     InvalidTempo,
+    /// Project start time offset must be finite.
+    InvalidProjectStartTimeOffset,
     /// Tick/sample position exceeds the exact range of the floating-point integrator.
     PositionOutOfRange,
     /// The initial tempo point at tick zero cannot be removed.
@@ -256,6 +278,9 @@ impl fmt::Display for TimebaseError {
             Self::InvalidSampleRate => formatter.write_str("sample rate must be greater than zero"),
             Self::InvalidPpq => formatter.write_str("PPQ must be greater than zero"),
             Self::InvalidTempo => formatter.write_str("tempo must be finite and greater than zero"),
+            Self::InvalidProjectStartTimeOffset => {
+                formatter.write_str("project start time offset must be finite")
+            }
             Self::PositionOutOfRange => formatter.write_str("timebase position is out of range"),
             Self::CannotRemoveInitialTempo => {
                 formatter.write_str("the initial tempo point cannot be removed")
@@ -660,6 +685,7 @@ impl TempoMap {
             start_measure: 1,
             bpm_basis: self.bpm_basis,
             base_ruler_label_spacing_on_measure: true,
+            project_start_time_offset_seconds: 0.0,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }

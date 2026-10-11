@@ -195,6 +195,7 @@ struct ProjectState {
     pan_mode: crate::PanMode,
     frame_rate: crate::FrameRate,
     base_ruler_label_spacing_on_measure: bool,
+    project_start_time_offset_seconds: f64,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
@@ -210,6 +211,7 @@ impl Default for ProjectState {
             pan_mode: crate::PanMode::default(),
             frame_rate: crate::FrameRate::default(),
             base_ruler_label_spacing_on_measure: true,
+            project_start_time_offset_seconds: 0.0,
             tracks: Vec::new(),
             audio_items: Vec::new(),
             midi_items: Vec::new(),
@@ -244,6 +246,10 @@ enum ProjectEvent {
     BaseRulerLabelSpacingChanged {
         before: bool,
         after: bool,
+    },
+    ProjectStartTimeOffsetChanged {
+        before: f64,
+        after: f64,
     },
     ProjectStartMeasureChanged {
         before: i32,
@@ -464,6 +470,12 @@ impl ProjectEvent {
             },
             Self::BaseRulerLabelSpacingChanged { before, after } => {
                 Self::BaseRulerLabelSpacingChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectStartTimeOffsetChanged { before, after } => {
+                Self::ProjectStartTimeOffsetChanged {
                     before: *after,
                     after: *before,
                 }
@@ -904,6 +916,7 @@ impl Project {
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
                 base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
+                project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
                 tempo_map: TempoMap::new(settings),
                 meter_map: MeterMap::new(settings.ppq(), settings.start_measure()),
                 ..ProjectState::default()
@@ -987,6 +1000,8 @@ impl Project {
             .with_base_ruler_label_spacing_on_measure(
                 self.state.base_ruler_label_spacing_on_measure,
             )
+            .with_project_start_time_offset_seconds(self.state.project_start_time_offset_seconds)
+            .expect("project start time offset is validated when actions are applied")
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -997,6 +1012,34 @@ impl Project {
     /// Converts a sample index to the nearest PPQ tick position.
     pub fn tick_at_sample(&self, sample: u64) -> Result<u64, TimebaseError> {
         self.state.tempo_map.tick_at_sample(sample)
+    }
+
+    /// Converts a project sample position to its displayed clock time.
+    pub fn project_time_at_sample(&self, sample: u64) -> Result<f64, TimebaseError> {
+        if sample > 1_u64 << 53 {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let settings = self.settings();
+        let seconds = settings.project_start_time_offset_seconds()
+            + sample as f64 / f64::from(settings.sample_rate());
+        seconds
+            .is_finite()
+            .then_some(seconds)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
+    /// Converts a displayed clock time back to a project sample position.
+    pub fn sample_at_project_time(&self, seconds: f64) -> Result<u64, TimebaseError> {
+        if !seconds.is_finite() {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let settings = self.settings();
+        let sample = (seconds - settings.project_start_time_offset_seconds())
+            * f64::from(settings.sample_rate());
+        if !sample.is_finite() || !(0.0..=((1_u64 << 53) - 1) as f64).contains(&sample) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(sample.round() as u64)
     }
 
     /// Converts a continuous PPQ position without quantizing to ticks or samples.
@@ -1591,6 +1634,7 @@ impl Project {
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
                 base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
+                project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
                 tracks,
                 audio_items,
                 midi_items,
@@ -1651,6 +1695,15 @@ impl Project {
                 ProjectEvent::BaseRulerLabelSpacingChanged {
                     before: state.base_ruler_label_spacing_on_measure,
                     after: enabled,
+                }
+            }
+            DawAction::SetProjectStartTimeOffsetSeconds { seconds } => {
+                if !seconds.is_finite() {
+                    return Err(ActionError::InvalidProjectTimeOffset);
+                }
+                ProjectEvent::ProjectStartTimeOffsetChanged {
+                    before: state.project_start_time_offset_seconds,
+                    after: seconds,
                 }
             }
             DawAction::SetProjectStartMeasure { measure } => {
@@ -3047,6 +3100,15 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.base_ruler_label_spacing_on_measure = *after;
+            }
+            ProjectEvent::ProjectStartTimeOffsetChanged { before, after } => {
+                if !after.is_finite() {
+                    return Err(ActionError::InvalidProjectTimeOffset);
+                }
+                if state.project_start_time_offset_seconds != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.project_start_time_offset_seconds = *after;
             }
             ProjectEvent::ProjectStartMeasureChanged { before, after } => {
                 if state.meter_map.start_measure() != *before {
