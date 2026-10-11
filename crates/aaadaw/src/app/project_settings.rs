@@ -482,7 +482,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     container(
         column![
             row![
-                button("General").on_press(Message::ProjectSettingsTabChanged(Tab::General)),
+                button("Project Settings")
+                    .on_press(Message::ProjectSettingsTabChanged(Tab::General)),
                 button("Video").on_press(Message::ProjectSettingsTabChanged(Tab::Video)),
                 button("Notes").on_press(Message::ProjectSettingsTabChanged(Tab::Notes))
             ]

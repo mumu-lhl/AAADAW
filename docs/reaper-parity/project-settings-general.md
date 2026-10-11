@@ -1,6 +1,6 @@
 # Project Settings General（阶段实现）
 
-固定参照 Linux REAPER 7.82 / Default 7 / factory。General 页原厂默认 BPM 120、Time signature 4/4、Project start time `0:00.000`、Start measure 1、BPM basis 1/4、Base ruler label spacing 开启，与[原厂设置窗口的数值记录](project-settings-general-reference.json)互证。AAADAW 将 BPM、拍号和 BPM basis 放在同一行；Project start time 在下一行，Start measure 与动态显示其锚定小节编号的勾选框再下一行。原厂其他占位控件补齐时再对齐完整垂直分组。复现确认：勾选时等距尺标标签间隔以工程起始小节为相位，取消后以小节 1 为相位。
+固定参照 Linux REAPER 7.82 / Default 7 / factory。AAADAW 第一页签现在使用原厂标签 `Project Settings`；当前只实现了其 General 子集，原厂 Media 与 Advanced 页签及完整设置仍缺。General 页原厂默认 BPM 120、Time signature 4/4、Project start time `0:00.000`、Start measure 1、BPM basis 1/4、Base ruler label spacing 开启，与[原厂设置窗口的数值记录](project-settings-general-reference.json)互证。AAADAW 将 BPM、拍号和 BPM basis 放在同一行；Project start time 在下一行，Start measure 与动态显示其锚定小节编号的勾选框再下一行。原厂其他控件补齐时再对齐完整垂直分组。复现确认：勾选时等距尺标标签间隔以工程起始小节为相位，取消后以小节 1 为相位。
 
 起始时间/小节弹出菜单的 AAADAW 界面证据：[默认未勾选](../verification/reaper-parity/project-settings-ui/general-start-time-menu.png)与[勾选 fractional-frame 选项](../verification/reaper-parity/project-settings-ui/general-start-time-menu-fractional-frame-on.png)。
 
