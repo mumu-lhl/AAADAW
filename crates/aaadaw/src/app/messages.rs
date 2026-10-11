@@ -194,6 +194,7 @@ pub(crate) enum Message {
     ProjectStartTimeCommandChosen(super::project_settings::start_time_menu::StartTimeCommand),
     ProjectFrameRateMenuChanged(bool),
     ProjectSettingsTabChanged(super::project_settings::Tab),
+    ProjectSettingsSampleRateChanged(u32),
     ProjectSettingsTempoChanged(String),
     ProjectSettingsMeterNumeratorChanged(String),
     ProjectSettingsMeterDenominatorChanged(String),

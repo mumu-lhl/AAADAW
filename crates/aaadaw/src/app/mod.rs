@@ -598,6 +598,7 @@ fn action_updates_item_fades(action: &DawAction) -> bool {
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
         DawAction::SetTrackOutput { .. }
+        | DawAction::SetProjectSampleRate { .. }
         | DawAction::SetTrackMainSend { .. }
         | DawAction::CreateAudioSend { .. }
         | DawAction::UpdateAudioSend { .. }
@@ -614,6 +615,17 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         }
         _ => false,
     }
+}
+
+#[cfg(feature = "audio-device")]
+fn rescale_transport_sample(sample: u64, old_rate: u32, new_rate: u32) -> u64 {
+    if old_rate == 0 || new_rate == 0 {
+        return sample;
+    }
+    let numerator = u128::from(sample) * u128::from(new_rate);
+    let denominator = u128::from(old_rate);
+    let rounded = numerator / denominator + u128::from(numerator % denominator * 2 >= denominator);
+    u64::try_from(rounded).unwrap_or(u64::MAX)
 }
 
 #[cfg(feature = "audio-device")]
@@ -1662,6 +1674,7 @@ impl App {
                     | Message::ProjectFrameRateChanged(_)
                     | Message::ProjectFrameRateMenuChanged(_)
                     | Message::ProjectSettingsTabChanged(_)
+                    | Message::ProjectSettingsSampleRateChanged(_)
                     | Message::ProjectSettingsTempoChanged(_)
                     | Message::ProjectSettingsMeterNumeratorChanged(_)
                     | Message::ProjectSettingsMeterDenominatorChanged(_)
@@ -2084,6 +2097,11 @@ impl App {
             Message::ProjectSettingsTempoChanged(value) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.tempo_bpm = value;
+                }
+            }
+            Message::ProjectSettingsSampleRateChanged(sample_rate) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.sample_rate = sample_rate;
                 }
             }
             Message::ProjectSettingsMeterNumeratorChanged(value) => {
@@ -6393,6 +6411,8 @@ impl App {
     fn apply_action(&mut self, action: DawAction, success: &str) {
         self.cancel_item_fades();
         let master_mix_before = self.project.master_mix();
+        #[cfg(feature = "audio-device")]
+        let sample_rate_before = self.project.settings().sample_rate();
         let publish_item_fades = action_updates_item_fades(&action);
         #[cfg(feature = "audio-device")]
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
@@ -6410,6 +6430,20 @@ impl App {
         };
         self.status = match self.project.apply(action) {
             Ok(()) => {
+                #[cfg(feature = "audio-device")]
+                if self.project.settings().sample_rate() != sample_rate_before {
+                    let sample_rate_after = self.project.settings().sample_rate();
+                    self.playhead_sample = rescale_transport_sample(
+                        self.playhead_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                    self.playback_start_sample = rescale_transport_sample(
+                        self.playback_start_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                }
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
@@ -7580,8 +7614,24 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        #[cfg(feature = "audio-device")]
+        let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.undo() {
             Ok(true) => {
+                #[cfg(feature = "audio-device")]
+                if self.project.settings().sample_rate() != sample_rate_before {
+                    let sample_rate_after = self.project.settings().sample_rate();
+                    self.playhead_sample = rescale_transport_sample(
+                        self.playhead_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                    self.playback_start_sample = rescale_transport_sample(
+                        self.playback_start_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                }
                 self.restore_fx_chain_selection(selected_fx_instance_id);
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
@@ -7634,8 +7684,24 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        #[cfg(feature = "audio-device")]
+        let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.redo() {
             Ok(true) => {
+                #[cfg(feature = "audio-device")]
+                if self.project.settings().sample_rate() != sample_rate_before {
+                    let sample_rate_after = self.project.settings().sample_rate();
+                    self.playhead_sample = rescale_transport_sample(
+                        self.playhead_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                    self.playback_start_sample = rescale_transport_sample(
+                        self.playback_start_sample,
+                        sample_rate_before,
+                        sample_rate_after,
+                    );
+                }
                 self.restore_fx_chain_selection(selected_fx_instance_id);
                 self.midi_note_clipboard.last_paste =
                     self.midi_editor_item_id.and_then(|item_id| {

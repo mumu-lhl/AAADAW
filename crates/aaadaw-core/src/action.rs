@@ -15,6 +15,10 @@ pub enum DawAction {
     SetFrameRate {
         rate: crate::FrameRate,
     },
+    /// Change the project's sample clock while preserving content in seconds.
+    SetProjectSampleRate {
+        sample_rate: u32,
+    },
     /// Change the note value counted as one BPM beat.
     SetProjectBpmBasis {
         basis: crate::BpmBasis,

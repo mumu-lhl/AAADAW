@@ -13,12 +13,26 @@ pub(crate) enum Tab {
     Notes,
 }
 
+const COMMON_PROJECT_SAMPLE_RATES: [u32; 8] = [
+    22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+];
+
+fn project_sample_rate_options(current: u32) -> Vec<u32> {
+    let mut rates = COMMON_PROJECT_SAMPLE_RATES.to_vec();
+    if !rates.contains(&current) {
+        rates.push(current);
+        rates.sort_unstable();
+    }
+    rates
+}
+
 pub(super) struct Draft {
     pub tab: Tab,
     pub notes: ProjectNotes,
     pub notes_editor: text_editor::Content,
 
     pub rate: FrameRate,
+    pub sample_rate: u32,
     pub tempo_bpm: String,
     pub meter_numerator: String,
     pub meter_denominator: String,
@@ -132,6 +146,7 @@ impl Draft {
             notes: app.project.project_notes().clone(),
             notes_editor: text_editor::Content::with_text(&app.project.project_notes().text),
             rate: app.project.settings().frame_rate(),
+            sample_rate: app.project.settings().sample_rate(),
             tempo_bpm: app.project.tempo_at_tick(0).to_string(),
             meter_numerator: app
                 .project
@@ -223,6 +238,11 @@ impl App {
             self.status = "Wait for the current operation before applying project settings".into();
             return Task::none();
         }
+        let sample_rate = draft.sample_rate;
+        if sample_rate != self.project.settings().sample_rate() && self.playback_active() {
+            self.status = "Stop playback before changing the project sample rate".into();
+            return Task::none();
+        }
         let tempo_bpm = match draft.tempo_bpm.parse::<f64>() {
             Ok(value) if value.is_finite() && value > 0.0 => value,
             _ => {
@@ -277,6 +297,9 @@ impl App {
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
+        if self.project.settings().sample_rate() != sample_rate {
+            actions.push(DawAction::SetProjectSampleRate { sample_rate });
+        }
         if self.project.settings().bpm_basis() != bpm_basis {
             actions.push(DawAction::SetProjectBpmBasis { basis: bpm_basis });
         }
@@ -341,6 +364,7 @@ impl App {
             };
             self.apply_action(action, "Project settings changed");
             if self.project.settings().frame_rate() != rate
+                || self.project.settings().sample_rate() != sample_rate
                 || self.project.tempo_at_tick(0) != tempo_bpm
                 || self.project.time_signature_at_tick(0) != signature
                 || self.project.settings().start_measure() != start_measure
@@ -371,6 +395,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     let content: Element<'_, Message> = match draft.tab {
         Tab::General => column![
+            row![
+                text("Project sample rate:")
+                    .size(13)
+                    .width(Length::Fixed(126.0)),
+                iced::widget::pick_list(
+                    project_sample_rate_options(draft.sample_rate),
+                    Some(draft.sample_rate),
+                    Message::ProjectSettingsSampleRateChanged,
+                )
+                .text_size(13)
+                .width(Length::Fixed(120.0))
+            ]
+            .spacing(6),
             row![
                 text("BPM:").size(13).width(Length::Fixed(32.0)),
                 text_input("120", &draft.tempo_bpm)
@@ -720,6 +757,60 @@ mod tests {
         assert!(app.project.redo().unwrap());
         assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps2997Drop);
     }
+
+    #[test]
+    fn project_sample_rate_drafts_commit_rescale_items_and_undo_as_one_action() {
+        let mut app = App::default();
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".into(),
+            })
+            .unwrap();
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://tone".into(),
+                start_sample: 24_000,
+                source_offset_samples: 44_100,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let original = app.project.snapshot();
+        #[cfg(feature = "audio-device")]
+        {
+            app.playhead_sample = 24_000;
+            app.playback_start_sample = 12_000;
+        }
+
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsSampleRateChanged(96_000));
+        assert_eq!(app.project.snapshot(), original);
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.settings().sample_rate(), 96_000);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
+        assert_eq!(app.project.audio_items()[0].length_samples(), 96_000);
+        assert_eq!(app.project.audio_items()[0].source_offset_samples(), 44_100);
+        #[cfg(feature = "audio-device")]
+        {
+            assert_eq!(app.playhead_sample, 48_000);
+            assert_eq!(app.playback_start_sample, 24_000);
+        }
+
+        app.undo();
+        assert_eq!(app.project.snapshot(), original);
+        #[cfg(feature = "audio-device")]
+        {
+            assert_eq!(app.playhead_sample, 24_000);
+            assert_eq!(app.playback_start_sample, 12_000);
+        }
+        app.redo();
+        assert_eq!(app.project.settings().sample_rate(), 96_000);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
+        assert!(project_sample_rate_options(44_100).contains(&44_100));
+    }
+
     #[test]
     fn project_settings_busy_and_stale_drafts_cannot_mutate_the_project() {
         let mut app = App::default();

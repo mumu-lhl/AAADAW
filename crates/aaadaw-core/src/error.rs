@@ -52,6 +52,12 @@ pub enum ActionError {
     InvalidTempoBpm,
     /// A project start time offset must be finite.
     InvalidProjectTimeOffset,
+    /// A project sample rate must be greater than zero.
+    InvalidProjectSampleRate,
+    /// A lower project sample rate cannot represent distinct automation points.
+    ProjectSampleRateAutomationCollision,
+    /// The project sample clock cannot represent the rescaled content positions.
+    ProjectSampleClockOutOfRange,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
     /// The requested tempo point does not exist.
@@ -186,6 +192,15 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidProjectTimeOffset => {
                 formatter.write_str("project start time offset must be finite")
+            }
+            Self::InvalidProjectSampleRate => {
+                formatter.write_str("project sample rate must be greater than zero")
+            }
+            Self::ProjectSampleRateAutomationCollision => formatter.write_str(
+                "project sample rate would merge distinct automation points",
+            ),
+            Self::ProjectSampleClockOutOfRange => {
+                formatter.write_str("project sample rate exceeds the sample position range")
             }
             Self::TempoMapOutOfRange => {
                 formatter.write_str("tempo map exceeds the sample position range")

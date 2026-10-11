@@ -37,6 +37,177 @@ fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool 
 
 type TrackStructure = Vec<(TrackId, Option<TrackId>, bool)>;
 
+#[derive(Clone, Debug, PartialEq)]
+struct TrackSampleClockSnapshot {
+    track_id: TrackId,
+    volume_automation: Vec<crate::VolumeAutomationPoint>,
+    fx_parameter_automation: Vec<Vec<FxParameterAutomationLane>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ProjectSampleClockSnapshot {
+    tempo_map: TempoMap,
+    audio_items: Vec<AudioItem>,
+    tracks: Vec<TrackSampleClockSnapshot>,
+}
+
+impl ProjectSampleClockSnapshot {
+    fn capture(state: &ProjectState) -> Self {
+        Self {
+            tempo_map: state.tempo_map.clone(),
+            audio_items: state.audio_items.clone(),
+            tracks: state
+                .tracks
+                .iter()
+                .map(|track| TrackSampleClockSnapshot {
+                    track_id: track.id,
+                    volume_automation: track.volume_automation.clone(),
+                    fx_parameter_automation: track
+                        .fx_chain
+                        .iter()
+                        .map(|plugin| plugin.parameter_automation().to_vec())
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn rescale(&mut self, sample_rate: u32) -> Result<(), ActionError> {
+        let old_sample_rate = self.tempo_map.settings().sample_rate();
+        if sample_rate == 0 {
+            return Err(ActionError::InvalidProjectSampleRate);
+        }
+        if sample_rate == old_sample_rate {
+            return Ok(());
+        }
+        let scale = |sample| rescale_project_sample(sample, old_sample_rate, sample_rate);
+
+        self.tempo_map
+            .set_sample_rate(sample_rate)
+            .map_err(|error| match error {
+                TimebaseError::InvalidSampleRate => ActionError::InvalidProjectSampleRate,
+                TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
+                _ => ActionError::TempoMapOutOfRange,
+            })?;
+
+        for item in &mut self.audio_items {
+            item.start_sample = scale(item.start_sample)?;
+            item.length_samples = scale(item.length_samples)?.max(1);
+            if item.start_sample.checked_add(item.length_samples).is_none()
+                || item.start_sample + item.length_samples
+                    > crate::timebase::MAX_EXACT_FLOAT_POSITION
+            {
+                return Err(ActionError::ProjectSampleClockOutOfRange);
+            }
+            let ratio = f64::from(sample_rate) / f64::from(old_sample_rate);
+            let scale_fade = |fade: crate::AudioFade| {
+                crate::AudioFade::with_curve(fade.length_samples() * ratio, fade.curve())
+            };
+            item.fades = crate::AudioItemFades {
+                fade_in: scale_fade(item.fades.fade_in)?,
+                fade_out: scale_fade(item.fades.fade_out)?,
+            };
+        }
+
+        for track in &mut self.tracks {
+            for point in &mut track.volume_automation {
+                let sample = scale(point.sample())?;
+                *point = crate::VolumeAutomationPoint::new(sample, point.gain_db())
+                    .ok_or(ActionError::InvalidVolumeAutomation)?;
+            }
+            if track
+                .volume_automation
+                .windows(2)
+                .any(|pair| pair[0].sample() >= pair[1].sample())
+            {
+                return Err(ActionError::ProjectSampleRateAutomationCollision);
+            }
+            for lanes in &mut track.fx_parameter_automation {
+                for lane in lanes {
+                    let points = lane
+                        .points()
+                        .iter()
+                        .map(|point| {
+                            FxParameterAutomationPoint::new(scale(point.sample())?, point.value())
+                                .ok_or(ActionError::InvalidTrackFxParameterAutomation)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if points
+                        .windows(2)
+                        .any(|pair| pair[0].sample() >= pair[1].sample())
+                    {
+                        return Err(ActionError::ProjectSampleRateAutomationCollision);
+                    }
+                    *lane = FxParameterAutomationLane::new(lane.parameter_id(), points)
+                        .ok_or(ActionError::InvalidTrackFxParameterAutomation)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn matches(&self, state: &ProjectState) -> bool {
+        Self::capture(state) == *self
+    }
+
+    fn restore(&self, state: &mut ProjectState) -> Result<(), ActionError> {
+        if state.tracks.len() != self.tracks.len()
+            || state
+                .tracks
+                .iter()
+                .zip(&self.tracks)
+                .any(|(track, snapshot)| {
+                    track.id != snapshot.track_id
+                        || track.fx_chain.len() != snapshot.fx_parameter_automation.len()
+                })
+        {
+            return Err(ActionError::HistoryInvariantViolation);
+        }
+        state.tempo_map = self.tempo_map.clone();
+        state.audio_items = self.audio_items.clone();
+        for (track, snapshot) in state.tracks.iter_mut().zip(&self.tracks) {
+            track.volume_automation = snapshot.volume_automation.clone();
+            for (plugin, lanes) in track
+                .fx_chain
+                .iter_mut()
+                .zip(&snapshot.fx_parameter_automation)
+            {
+                let old_ids: Vec<_> = plugin
+                    .parameter_automation()
+                    .iter()
+                    .map(FxParameterAutomationLane::parameter_id)
+                    .collect();
+                let mut restored = plugin.clone();
+                for parameter_id in old_ids {
+                    restored = restored.with_parameter_automation(parameter_id, None);
+                }
+                for lane in lanes {
+                    restored =
+                        restored.with_parameter_automation(lane.parameter_id(), Some(lane.clone()));
+                }
+                *plugin = restored;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn rescale_project_sample(sample: u64, old_rate: u32, new_rate: u32) -> Result<u64, ActionError> {
+    if old_rate == 0 || new_rate == 0 {
+        return Err(ActionError::InvalidProjectSampleRate);
+    }
+    let numerator = u128::from(sample) * u128::from(new_rate);
+    let denominator = u128::from(old_rate);
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let rounded = quotient + u128::from(remainder * 2 >= denominator);
+    let scaled = u64::try_from(rounded).map_err(|_| ActionError::ProjectSampleClockOutOfRange)?;
+    if scaled > crate::timebase::MAX_EXACT_FLOAT_POSITION {
+        return Err(ActionError::ProjectSampleClockOutOfRange);
+    }
+    Ok(scaled)
+}
+
 fn track_structure(tracks: &[Track]) -> TrackStructure {
     tracks
         .iter()
@@ -240,6 +411,10 @@ enum ProjectEvent {
     FrameRateChanged {
         before: crate::FrameRate,
         after: crate::FrameRate,
+    },
+    ProjectSampleRateChanged {
+        before: ProjectSampleClockSnapshot,
+        after: ProjectSampleClockSnapshot,
     },
     BpmBasisChanged {
         before: crate::BpmBasis,
@@ -469,6 +644,10 @@ impl ProjectEvent {
             Self::FrameRateChanged { before, after } => Self::FrameRateChanged {
                 before: *after,
                 after: *before,
+            },
+            Self::ProjectSampleRateChanged { before, after } => Self::ProjectSampleRateChanged {
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::BpmBasisChanged { before, after } => Self::BpmBasisChanged {
                 before: *after,
@@ -1707,6 +1886,12 @@ impl Project {
                 before: state.frame_rate,
                 after: rate,
             },
+            DawAction::SetProjectSampleRate { sample_rate } => {
+                let before = ProjectSampleClockSnapshot::capture(state);
+                let mut after = before.clone();
+                after.rescale(sample_rate)?;
+                ProjectEvent::ProjectSampleRateChanged { before, after }
+            }
             DawAction::SetProjectBpmBasis { basis } => ProjectEvent::BpmBasisChanged {
                 before: state.tempo_map.settings().bpm_basis(),
                 after: basis,
@@ -3109,6 +3294,12 @@ impl Project {
                 }
                 state.frame_rate = *after;
             }
+            ProjectEvent::ProjectSampleRateChanged { before, after } => {
+                if !before.matches(state) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                after.restore(state)?;
+            }
             ProjectEvent::BpmBasisChanged { before, after } => {
                 if state.tempo_map.settings().bpm_basis() != *before {
                     return Err(ActionError::HistoryInvariantViolation);
@@ -4089,6 +4280,7 @@ fn validate_send_edit(
 fn undoable_event(event: ProjectEvent) -> Option<ProjectEvent> {
     match event {
         ProjectEvent::ProjectNotesChanged { .. } => None,
+        ProjectEvent::ProjectSampleRateChanged { before, after } if before == after => None,
         ProjectEvent::Transaction { tx_id, events } => {
             let events: Vec<_> = events.into_iter().filter_map(undoable_event).collect();
             if events.is_empty() {

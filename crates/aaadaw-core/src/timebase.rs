@@ -7,7 +7,7 @@ pub const DEFAULT_PPQ: u32 = 960;
 /// Default project tempo in quarter-note beats per minute.
 pub const DEFAULT_TEMPO_BPM: f64 = 120.0;
 // Tempo segment integration uses f64 positions; reject integers beyond its exact range.
-const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
+pub(crate) const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
 
 /// Track-level gain policy inherited from the project at construction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -707,6 +707,24 @@ impl TempoMap {
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
+    }
+
+    pub(crate) fn set_sample_rate(&mut self, sample_rate: u32) -> Result<(), TimebaseError> {
+        if sample_rate == 0 {
+            return Err(TimebaseError::InvalidSampleRate);
+        }
+        if self
+            .points
+            .iter()
+            .any(|point| !is_valid_tempo_for(sample_rate, self.ppq, point.bpm, self.bpm_basis))
+        {
+            return Err(TimebaseError::InvalidTempo);
+        }
+        let mut points = self.points.clone();
+        Self::recalculate_sample_anchors(&mut points, sample_rate, self.ppq, self.bpm_basis)?;
+        self.sample_rate = sample_rate;
+        self.points = points;
+        Ok(())
     }
 
     pub(crate) fn points(&self) -> impl Iterator<Item = (u64, f64, TempoCurve)> + '_ {
