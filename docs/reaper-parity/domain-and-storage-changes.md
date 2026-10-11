@@ -109,3 +109,9 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 拟新增 schema 27 的 `project_timecode.frame_rate` 独立单行表整数枚举，默认 30 fps，保留原工程全部轨道/素材/淡化/路由数据。十种受支持原厂预设使用固定编码；分数帧率使用精确有理数，29.97DF 与 ND 分开。迁移在既有版本检查与事务中幂等执行；旧 schema 的只读读取沿既有 RequiresMigration 保护，不进行隐式写入。旧应用拒绝比自身新版本的工程，避免混合版本写坏设置。
 
 回退使用迁移前原文件副本或兼容旧 schema 的只读/导出流程，禁止把已迁移工程的版本号强行降级；本次只扩展，不删除或收缩旧字段。验证覆盖旧 26 工程默认、迁移后重复打开、十种设置 round trip、非法编码拒绝和失败事务回滚；全部通过前不标记为验收完成。
+
+## schema 28 — Project Notes
+
+新增独立 project_notes 单行表：title/author/notes 为非空全文，show_on_load/word_wrap 严格 0/1，旧工程默认空值/false/true。与帧率、Master 和媒体快照共用既有保存事务，Notes 插入失败必须回滚全部删除和写入。迁移为独立 CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE，在 user_version 事务内提交；只读旧文件拒绝迁移且保护原字节。旧版本应用拒绝 28；回滚以升级前备份恢复。
+
+公开 ProjectNotes、Project::project_notes、DawAction::SetProjectNotes 及 Snapshot 恢复。原厂实测 Notes 非媒体 Undo：领域动作与嵌套 Batch 仍原子执行，记录媒体历史时移除 Notes 事件；既有 Redo 保留，后续 Undo 不丢弃说明。Unicode、空行与未编辑行尾保留；读取非法布尔值 fail closed。参见 [实测与验证](../verification/reaper-parity/project-notes.md)。

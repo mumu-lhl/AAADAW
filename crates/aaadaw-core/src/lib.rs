@@ -11,6 +11,7 @@ mod fades;
 mod master;
 mod midi;
 mod project;
+mod project_notes;
 mod routing;
 mod snapshot;
 mod timebase;
@@ -26,6 +27,7 @@ pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
+pub use project_notes::ProjectNotes;
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
     SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,

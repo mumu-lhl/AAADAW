@@ -1661,6 +1661,12 @@ impl App {
                     | Message::CloseProjectSettings
                     | Message::ProjectFrameRateChanged(_)
                     | Message::ProjectFrameRateMenuChanged(_)
+                    | Message::ProjectSettingsTabChanged(_)
+                    | Message::ProjectNotesTitleChanged(_)
+                    | Message::ProjectNotesAuthorChanged(_)
+                    | Message::ProjectNotesEdited(_)
+                    | Message::ProjectNotesShowOnLoadChanged(_)
+                    | Message::ProjectNotesWrapChanged(_)
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::ShowMainWorkspace(_)
@@ -2066,6 +2072,42 @@ impl App {
             Message::OpenProjectSettings => task = self.open_project_settings(),
             Message::CloseProjectSettings => task = self.close_project_settings(),
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
+            Message::ProjectSettingsTabChanged(tab) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.tab = tab;
+                    draft.menu_open = false;
+                    draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+                }
+            }
+            Message::ProjectNotesTitleChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.notes.title = value;
+                }
+            }
+            Message::ProjectNotesAuthorChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.notes.author = value;
+                }
+            }
+            Message::ProjectNotesShowOnLoadChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.notes.show_on_load = value;
+                }
+            }
+            Message::ProjectNotesWrapChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.notes.word_wrap = value;
+                }
+            }
+            Message::ProjectNotesEdited(action) => {
+                if let Some(draft) = &mut self.project_settings {
+                    let edit = action.is_edit();
+                    draft.notes_editor.perform(action);
+                    if edit {
+                        draft.notes.text = draft.notes_editor.text();
+                    }
+                }
+            }
             Message::ProjectFrameRateMenuChanged(open) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.menu_open = open;
@@ -4044,6 +4086,7 @@ impl App {
                         self.revision = 0;
                         self.saved_revision = 0;
                         self.status = format!("Opened {}", path.display());
+                        task = Task::batch([task, self.show_project_notes_on_load()]);
                         self.recording_recovery_scanning = true;
                         let recovery_path = path.clone();
                         task = Task::batch([
@@ -4223,6 +4266,7 @@ impl App {
                         self.clear_track_draft_state();
                         self.start_audio_waveform_scan(true);
                         self.status = "Unsaved project session recovered".to_owned();
+                        task = self.show_project_notes_on_load();
                     }
                     Some(Err(error)) => {
                         tracing::error!(path = %path.display(), %error, "unsaved session recovery failed");

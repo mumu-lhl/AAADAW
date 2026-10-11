@@ -15,6 +15,100 @@ use std::time::Duration;
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn project_notes_migrate_schema27_preserve_media_and_roundtrip_unicode() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keep".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps25,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE project_notes; PRAGMA user_version=27;")
+        .unwrap();
+    let original_bytes = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    for _ in 0..2 {
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        store.close().unwrap();
+    }
+    let notes = aaadaw_core::ProjectNotes {
+        title: "标题".into(),
+        author: "作者".into(),
+        text: "第一行\r\n\r\nend\r\n".into(),
+        show_on_load: true,
+        word_wrap: false,
+    };
+    project.apply(DawAction::SetProjectNotes { notes }).unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        project.snapshot()
+    );
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn failed_notes_save_rolls_back_project_and_invalid_display_flags_fail_closed() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Original".into(),
+        })
+        .unwrap();
+    let original = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    Connection::open(&path).unwrap().execute_batch("CREATE TRIGGER fail_notes BEFORE INSERT ON project_notes BEGIN SELECT RAISE(ABORT,'owned notes failure'); END;").unwrap();
+    project
+        .apply(DawAction::SetProjectNotes {
+            notes: aaadaw_core::ProjectNotes {
+                text: "New notes".into(),
+                ..aaadaw_core::ProjectNotes::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps25,
+        })
+        .unwrap();
+    assert!(store.save(&project).is_err());
+    assert_eq!(store.load().unwrap().snapshot(), original);
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE project_notes SET word_wrap=9;")
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::InvalidStoredData(_))
+    ));
+    remove_database(&path);
+}
+
+#[test]
 fn timecode_checkpoint_failure_rolls_back_all_project_data() {
     let path = project_path();
     let mut project = Project::new();
@@ -96,7 +190,7 @@ fn frame_rates_roundtrip_and_schema26_expands_to_default_without_media_changes()
     for _ in 0..2 {
         let store = ProjectStore::open(&path).unwrap();
         assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
-        assert_eq!(store.schema_version().unwrap(), 27);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         store.close().unwrap();
     }
     let connection = Connection::open(&path).unwrap();

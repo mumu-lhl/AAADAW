@@ -190,6 +190,7 @@ pub struct FxParameterChange {
 
 #[derive(Clone, Debug, Default)]
 struct ProjectState {
+    notes: crate::ProjectNotes,
     master_mix: crate::MasterMix,
     pan_mode: crate::PanMode,
     frame_rate: crate::FrameRate,
@@ -210,6 +211,10 @@ struct IdAllocator {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    ProjectNotesChanged {
+        before: crate::ProjectNotes,
+        after: crate::ProjectNotes,
+    },
     FrameRateChanged {
         before: crate::FrameRate,
         after: crate::FrameRate,
@@ -415,6 +420,10 @@ enum ProjectEvent {
 impl ProjectEvent {
     fn inverse(&self) -> Self {
         match self {
+            Self::ProjectNotesChanged { before, after } => Self::ProjectNotesChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::FrameRateChanged { before, after } => Self::FrameRateChanged {
                 before: *after,
                 after: *before,
@@ -1043,7 +1052,8 @@ impl Project {
         )
     }
 
-    /// Applies an action atomically and records it as one undoable history entry.
+    /// Applies an action atomically. Media edits add one history entry; project
+    /// documentation preserves the existing undo/redo history.
     ///
     /// A failed action, including a failed nested action in a transaction, leaves
     /// project state, identifier allocation, and history unchanged.
@@ -1060,6 +1070,9 @@ impl Project {
 
         self.state = state;
         self.ids = ids;
+        let Some(event) = undoable_event(event) else {
+            return Ok(());
+        };
         self.history.truncate(self.history_cursor);
         self.history.push(event);
         self.history_cursor += 1;
@@ -1118,9 +1131,15 @@ impl Project {
         &self.state.midi_items
     }
 
+    /// Project documentation, independent of media undo/redo history.
+    pub fn project_notes(&self) -> &crate::ProjectNotes {
+        &self.state.notes
+    }
+
     /// Creates a serialization-friendly copy of the current project state.
     pub fn snapshot(&self) -> ProjectSnapshot {
         ProjectSnapshot {
+            notes: self.state.notes.clone(),
             settings: self.settings(),
             master_mix: self.state.master_mix,
             tracks: self
@@ -1516,6 +1535,7 @@ impl Project {
 
         Ok(Self {
             state: ProjectState {
+                notes: snapshot.notes,
                 master_mix: snapshot.master_mix,
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
@@ -1563,6 +1583,10 @@ impl Project {
         }
 
         let event = match action {
+            DawAction::SetProjectNotes { notes } => ProjectEvent::ProjectNotesChanged {
+                before: state.notes.clone(),
+                after: notes,
+            },
             DawAction::SetFrameRate { rate } => ProjectEvent::FrameRateChanged {
                 before: state.frame_rate,
                 after: rate,
@@ -2926,6 +2950,12 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::ProjectNotesChanged { before, after } => {
+                if state.notes != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.notes = after.clone();
+            }
             ProjectEvent::FrameRateChanged { before, after } => {
                 if state.frame_rate != *before {
                     return Err(ActionError::HistoryInvariantViolation);
@@ -3864,4 +3894,20 @@ fn validate_send_edit(
         return Err(ActionError::TrackRoutingCycle);
     }
     Ok(())
+}
+
+// Metadata is applied atomically, including in batches, but never rewound by media history.
+fn undoable_event(event: ProjectEvent) -> Option<ProjectEvent> {
+    match event {
+        ProjectEvent::ProjectNotesChanged { .. } => None,
+        ProjectEvent::Transaction { tx_id, events } => {
+            let events: Vec<_> = events.into_iter().filter_map(undoable_event).collect();
+            if events.is_empty() {
+                None
+            } else {
+                Some(ProjectEvent::Transaction { tx_id, events })
+            }
+        }
+        event => Some(event),
+    }
 }

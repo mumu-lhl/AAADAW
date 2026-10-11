@@ -1,15 +1,38 @@
 mod frame_rate_menu;
 use super::{App, Message};
-use aaadaw_core::{DawAction, FrameRate};
-use iced::widget::{button, column, container, row, text};
+use aaadaw_core::{DawAction, FrameRate, ProjectNotes};
+use iced::widget::{button, checkbox, column, container, row, text, text_editor, text_input};
 use iced::{Element, Length, Task};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Tab {
+    Video,
+    Notes,
+}
+
 pub(super) struct Draft {
+    pub tab: Tab,
+    pub notes: ProjectNotes,
+    pub notes_editor: text_editor::Content,
+
     pub rate: FrameRate,
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
+}
+
+impl Draft {
+    fn from_app(app: &App) -> Self {
+        Self {
+            tab: Tab::Video,
+            notes: app.project.project_notes().clone(),
+            notes_editor: text_editor::Content::with_text(&app.project.project_notes().text),
+            rate: app.project.settings().frame_rate(),
+            generation: app.project_generation,
+            menu_open: false,
+            menu_epoch: 0,
+        }
+    }
 }
 
 impl App {
@@ -17,23 +40,14 @@ impl App {
         if let Some(window) = self.project_settings_window_id {
             if self
                 .project_settings
+                .as_ref()
                 .is_none_or(|draft| draft.generation != self.project_generation)
             {
-                self.project_settings = Some(Draft {
-                    rate: self.project.settings().frame_rate(),
-                    generation: self.project_generation,
-                    menu_open: false,
-                    menu_epoch: 0,
-                });
+                self.project_settings = Some(Draft::from_app(self));
             }
             return iced::window::gain_focus(window);
         }
-        self.project_settings = Some(Draft {
-            rate: self.project.settings().frame_rate(),
-            generation: self.project_generation,
-            menu_open: false,
-            menu_epoch: 0,
-        });
+        self.project_settings = Some(Draft::from_app(self));
         let (window, task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(606.0, 535.0),
             min_size: Some(iced::Size::new(400.0, 535.0)),
@@ -41,6 +55,17 @@ impl App {
         });
         self.project_settings_window_id = Some(window);
         task.discard()
+    }
+
+    pub(super) fn show_project_notes_on_load(&mut self) -> Task<Message> {
+        if !self.project.project_notes().show_on_load {
+            return Task::none();
+        }
+        let task = self.open_project_settings();
+        if let Some(draft) = &mut self.project_settings {
+            draft.tab = Tab::Notes;
+        }
+        task
     }
 
     pub(super) fn close_project_settings(&mut self) -> Task<Message> {
@@ -51,7 +76,7 @@ impl App {
     }
 
     pub(super) fn apply_project_settings(&mut self) -> Task<Message> {
-        let Some(draft) = self.project_settings else {
+        let Some(draft) = self.project_settings.as_ref() else {
             return Task::none();
         };
         if draft.generation != self.project_generation {
@@ -66,12 +91,30 @@ impl App {
             self.status = "Wait for the current operation before applying project settings".into();
             return Task::none();
         }
-        if self.project.settings().frame_rate() != draft.rate {
-            self.apply_action(
-                DawAction::SetFrameRate { rate: draft.rate },
-                "Project frame rate changed",
-            );
-            if self.project.settings().frame_rate() != draft.rate {
+        let rate = draft.rate;
+        let notes = draft.notes.clone();
+        let mut actions = Vec::new();
+        if self.project.settings().frame_rate() != rate {
+            actions.push(DawAction::SetFrameRate { rate });
+        }
+        if self.project.project_notes() != &notes {
+            actions.push(DawAction::SetProjectNotes {
+                notes: notes.clone(),
+            });
+        }
+        if !actions.is_empty() {
+            let action = if actions.len() == 1 {
+                actions.pop().unwrap()
+            } else {
+                DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                }
+            };
+            self.apply_action(action, "Project settings changed");
+            if self.project.settings().frame_rate() != rate
+                || self.project.project_notes() != &notes
+            {
                 return Task::none();
             }
         }
@@ -80,26 +123,74 @@ impl App {
 }
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
-    let Some(draft) = app.project_settings else {
+    let Some(draft) = app.project_settings.as_ref() else {
         return text("Project Settings").into();
     };
-    container(
-        column![
-            text("Video").size(13),
+    let content: Element<'_, Message> = match draft.tab {
+        Tab::Video => column![
             row![
                 text("Frame rate:").size(13).width(82),
                 iced::widget::keyed_column![(draft.menu_epoch, frame_rate_menu::view(draft.rate))]
             ]
             .spacing(6),
-            iced::widget::space().height(Length::Fill),
+            iced::widget::space().height(Length::Fill)
+        ]
+        .into(),
+        Tab::Notes => column![
+            row![
+                text("Title:").size(13).width(56),
+                text_input("", &draft.notes.title)
+                    .on_input(Message::ProjectNotesTitleChanged)
+                    .size(13)
+            ]
+            .spacing(6),
+            row![
+                text("Author:").size(13).width(56),
+                text_input("", &draft.notes.author)
+                    .on_input(Message::ProjectNotesAuthorChanged)
+                    .size(13)
+            ]
+            .spacing(6),
+            text_editor(&draft.notes_editor)
+                .on_action(Message::ProjectNotesEdited)
+                .size(13)
+                .height(Length::Fill)
+                .wrapping(if draft.notes.word_wrap {
+                    iced::widget::text::Wrapping::Word
+                } else {
+                    iced::widget::text::Wrapping::None
+                }),
+            row![
+                checkbox(draft.notes.show_on_load)
+                    .label("Show notes on project load")
+                    .on_toggle(Message::ProjectNotesShowOnLoadChanged)
+                    .text_size(13),
+                iced::widget::space().width(Length::Fill),
+                checkbox(draft.notes.word_wrap)
+                    .label("Word wrap")
+                    .on_toggle(Message::ProjectNotesWrapChanged)
+                    .text_size(13)
+            ]
+        ]
+        .spacing(8)
+        .into(),
+    };
+    container(
+        column![
+            row![
+                button("Video").on_press(Message::ProjectSettingsTabChanged(Tab::Video)),
+                button("Notes").on_press(Message::ProjectSettingsTabChanged(Tab::Notes))
+            ]
+            .spacing(4),
+            content,
             row![
                 iced::widget::space().width(Length::Fill),
                 button("OK").on_press(Message::ApplyProjectSettings),
                 button("Cancel").on_press(Message::CloseProjectSettings)
             ]
-            .spacing(8),
+            .spacing(8)
         ]
-        .spacing(14),
+        .spacing(12),
     )
     .padding(12)
     .width(Length::Fill)
@@ -111,6 +202,58 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 mod tests {
     use super::*;
     #[test]
+    fn notes_drafts_cancel_then_commit_without_rewinding_media_history() {
+        let mut app = App::default();
+        let original = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectNotesTitleChanged("标题".into()));
+        let _ = app.update(Message::ProjectNotesEdited(text_editor::Action::Edit(
+            text_editor::Edit::Paste(std::sync::Arc::new("第一行\nsecond line".into())),
+        )));
+        assert_eq!(app.project.snapshot(), original);
+        let _ = app.close_project_settings();
+        assert_eq!(app.project.snapshot(), original);
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectNotesAuthorChanged("作者".into()));
+        let _ = app.update(Message::ProjectNotesShowOnLoadChanged(true));
+        let _ = app.update(Message::ProjectNotesWrapChanged(false));
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.project_notes().author, "作者");
+        assert!(app.project.project_notes().show_on_load);
+        assert!(!app.project.project_notes().word_wrap);
+        assert!(!app.project.can_undo());
+        let _ = app.show_project_notes_on_load();
+        assert_eq!(app.project_settings.as_ref().unwrap().tab, Tab::Notes);
+        assert_eq!(
+            app.project_settings.as_ref().unwrap().notes,
+            *app.project.project_notes()
+        );
+    }
+
+    #[test]
+    fn stale_notes_and_untouched_multiline_text_are_preserved() {
+        let mut app = App::default();
+        let notes = ProjectNotes {
+            text: "多行\r\n\r\nlast\r\n".into(),
+            ..ProjectNotes::default()
+        };
+        app.project
+            .apply(DawAction::SetProjectNotes {
+                notes: notes.clone(),
+            })
+            .unwrap();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectNotesTitleChanged("Only title".into()));
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.project_notes().text, notes.text);
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectNotesTitleChanged("stale title".into()));
+        app.project_generation += 1;
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.project_notes().title, "Only title");
+    }
+
+    #[test]
     fn project_frame_rate_drafts_cancel_and_commit_as_one_undoable_action() {
         let mut app = App::default();
         let original = app.project.snapshot();
@@ -120,7 +263,10 @@ mod tests {
         let _ = app.close_project_settings();
         assert_eq!(app.project.snapshot(), original);
         let _ = app.open_project_settings();
-        assert_eq!(app.project_settings.unwrap().rate, FrameRate::Fps30);
+        assert_eq!(
+            app.project_settings.as_ref().unwrap().rate,
+            FrameRate::Fps30
+        );
         let _ = app.update(Message::ProjectFrameRateChanged(FrameRate::Fps2997Drop));
         let _ = app.apply_project_settings();
         assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps2997Drop);
@@ -149,7 +295,10 @@ mod tests {
         app.project_generation += 1;
         app.project_settings.as_mut().unwrap().rate = FrameRate::Fps25;
         let _ = app.open_project_settings();
-        assert_eq!(app.project_settings.unwrap().rate, FrameRate::Fps30);
+        assert_eq!(
+            app.project_settings.as_ref().unwrap().rate,
+            FrameRate::Fps30
+        );
         let _ = app.apply_project_settings();
         assert!(!app.project.can_undo());
     }
@@ -182,8 +331,8 @@ mod tests {
             window,
         ));
         assert_eq!(app.project_settings_window_id, Some(window));
-        assert!(!app.project_settings.unwrap().menu_open);
-        assert_eq!(app.project_settings.unwrap().menu_epoch, 1);
+        assert!(!app.project_settings.as_ref().unwrap().menu_open);
+        assert_eq!(app.project_settings.as_ref().unwrap().menu_epoch, 1);
         let _ = app.update(Message::RuntimeKeyboardEvent(
             event,
             iced::event::Status::Ignored,
@@ -216,7 +365,7 @@ mod tests {
             window,
         ));
         assert_eq!(app.project_settings_window_id, Some(window));
-        assert!(!app.project_settings.unwrap().menu_open);
+        assert!(!app.project_settings.as_ref().unwrap().menu_open);
         assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps30);
         assert!(!app.project.can_undo());
         let _ = app.update(Message::RuntimeKeyboardEvent(

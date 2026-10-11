@@ -7,6 +7,10 @@ use crate::{
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DawAction {
+    /// Replace project notes without adding to or clearing media undo/redo history.
+    SetProjectNotes {
+        notes: crate::ProjectNotes,
+    },
     /// Change video/timecode frame rate without altering audio placement.
     SetFrameRate {
         rate: crate::FrameRate,
@@ -288,7 +292,8 @@ pub enum DawAction {
     DeleteTrack {
         track_id: TrackId,
     },
-    /// Apply several actions as one atomic, undoable transaction.
+    /// Apply several actions atomically, grouping media edits in one history entry.
+    /// Project documentation remains independent of media undo/redo.
     BatchTransaction {
         tx_id: u64,
         actions: Vec<DawAction>,

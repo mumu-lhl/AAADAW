@@ -22,7 +22,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 27;
+pub const CURRENT_SCHEMA_VERSION: u32 = 28;
+
+const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
 
 const MIGRATION_27: &str = "CREATE TABLE IF NOT EXISTS project_timecode(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), frame_rate INTEGER NOT NULL CHECK(frame_rate BETWEEN 0 AND 9)); INSERT OR IGNORE INTO project_timecode VALUES(1, 5);";
 
@@ -2204,6 +2206,22 @@ impl ProjectStore {
 
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
+        let (title, author, text, show_on_load, word_wrap) = self.connection.query_row(
+            "SELECT title, author, notes, show_on_load, word_wrap FROM project_notes WHERE singleton = 1", [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)))?;
+        if !matches!(show_on_load, 0 | 1) || !matches!(word_wrap, 0 | 1) {
+            return Err(StorageError::InvalidStoredData(
+                "invalid project notes display preferences",
+            ));
+        }
+        let notes = aaadaw_core::ProjectNotes {
+            title,
+            author,
+            text,
+            show_on_load: show_on_load == 1,
+            word_wrap: word_wrap == 1,
+        };
+
         let frame_rate = self.connection.query_row(
             "SELECT frame_rate FROM project_timecode WHERE singleton = 1",
             [],
@@ -2253,6 +2271,7 @@ impl ProjectStore {
             return if rows == 0
                 && master_mix == aaadaw_core::MasterMix::default()
                 && frame_rate == aaadaw_core::FrameRate::default()
+                && notes == aaadaw_core::ProjectNotes::default()
             {
                 Ok(Project::new())
             } else {
@@ -2287,6 +2306,7 @@ impl ProjectStore {
         let meter_points = read_meter_points(&self.connection)?;
 
         Project::from_snapshot(ProjectSnapshot {
+            notes,
             settings,
             master_mix,
             tracks,
@@ -2454,6 +2474,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             25 => transaction.execute_batch(MIGRATION_25)?,
             26 => transaction.execute_batch(MIGRATION_26)?,
             27 => transaction.execute_batch(MIGRATION_27)?,
+            28 => transaction.execute_batch(MIGRATION_28)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2489,6 +2510,8 @@ fn write_snapshot(
         params![snapshot.master_mix.volume_db(), snapshot.master_mix.pan()],
     )?;
 
+    transaction.execute("DELETE FROM project_notes", [])?;
+    transaction.execute("INSERT INTO project_notes(singleton, title, author, notes, show_on_load, word_wrap) VALUES(1, ?1, ?2, ?3, ?4, ?5)", params![snapshot.notes.title, snapshot.notes.author, snapshot.notes.text, snapshot.notes.show_on_load, snapshot.notes.word_wrap])?;
     let settings = snapshot.settings;
     transaction.execute("DELETE FROM project_timecode", [])?;
     transaction.execute(

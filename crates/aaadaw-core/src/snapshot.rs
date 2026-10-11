@@ -7,6 +7,7 @@ use std::fmt;
 /// A validated, serialization-friendly copy of project state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectSnapshot {
+    pub notes: crate::ProjectNotes,
     pub settings: ProjectSettings,
     pub master_mix: crate::MasterMix,
     pub tracks: Vec<TrackSnapshot>,
