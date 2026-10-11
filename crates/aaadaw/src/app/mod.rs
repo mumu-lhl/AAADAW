@@ -1669,6 +1669,8 @@ impl App {
                     | Message::ProjectSettingsBpmBasisChanged(_)
                     | Message::ProjectSettingsBaseRulerLabelSpacingChanged(_)
                     | Message::ProjectSettingsStartTimeChanged(_)
+                    | Message::ProjectStartTimeMenuChanged(_)
+                    | Message::ProjectStartTimeCommandChosen(_)
                     | Message::ProjectNotesTitleChanged(_)
                     | Message::ProjectNotesAuthorChanged(_)
                     | Message::ProjectNotesEdited(_)
@@ -2113,6 +2115,14 @@ impl App {
                 if let Some(draft) = &mut self.project_settings {
                     draft.project_start_time = value;
                 }
+            }
+            Message::ProjectStartTimeMenuChanged(open) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.menu_open = open;
+                }
+            }
+            Message::ProjectStartTimeCommandChosen(command) => {
+                task = project_settings::apply_start_time_command(self, command);
             }
             Message::ProjectSettingsTabChanged(tab) => {
                 if let Some(draft) = &mut self.project_settings {

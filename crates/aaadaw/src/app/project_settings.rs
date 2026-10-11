@@ -1,4 +1,5 @@
 mod frame_rate_menu;
+pub(super) mod start_time_menu;
 use super::{App, Message};
 use crate::project_time::{format_project_time, parse_project_time};
 use aaadaw_core::{BpmBasis, DawAction, FrameRate, ProjectNotes, TimeSignature};
@@ -29,6 +30,84 @@ pub(super) struct Draft {
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
+}
+
+pub(super) fn apply_start_time_command(
+    app: &mut App,
+    command: start_time_menu::StartTimeCommand,
+) -> Task<Message> {
+    let Some(draft) = app.project_settings.as_ref() else {
+        return Task::none();
+    };
+    if draft.generation != app.project_generation {
+        return app.close_project_settings();
+    }
+    let result = match command {
+        start_time_menu::StartTimeCommand::SetTimeAtCursor => app
+            .project
+            .sample_at_tick(app.timeline.edit_cursor_tick)
+            .map(|sample| {
+                format_project_time(
+                    -(sample as f64 / f64::from(app.project.settings().sample_rate())),
+                )
+            })
+            .map_err(|error| error.to_string()),
+        start_time_menu::StartTimeCommand::ResetTime => Ok("0:00.000".to_owned()),
+        start_time_menu::StartTimeCommand::SetMeasureAtCursor => {
+            start_measure_for_edit_cursor(app).map(|measure| measure.to_string())
+        }
+        start_time_menu::StartTimeCommand::ResetMeasure => Ok("1".to_owned()),
+    };
+    if let Some(draft) = &mut app.project_settings {
+        match (command, result) {
+            (
+                start_time_menu::StartTimeCommand::SetTimeAtCursor
+                | start_time_menu::StartTimeCommand::ResetTime,
+                Ok(value),
+            ) => draft.project_start_time = value,
+            (
+                start_time_menu::StartTimeCommand::SetMeasureAtCursor
+                | start_time_menu::StartTimeCommand::ResetMeasure,
+                Ok(value),
+            ) => draft.start_measure = value,
+            (_, Err(error)) => app.status = error,
+        }
+        draft.menu_open = false;
+        draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+    }
+    Task::none()
+}
+
+fn start_measure_for_edit_cursor(app: &App) -> Result<i32, String> {
+    let tick = app.timeline.edit_cursor_tick;
+    let position = app
+        .project
+        .musical_position_at_tick(tick)
+        .map_err(|error| error.to_string())?;
+    let current_measure = position.measure();
+    let next_measure = current_measure
+        .checked_add(1)
+        .ok_or_else(|| "Current edit cursor is beyond the measure range".to_owned())?;
+    let current_start_tick = app
+        .project
+        .tick_at_musical_position(current_measure, 1, 0.0)
+        .map_err(|error| error.to_string())? as u64;
+    let next_start_tick = app
+        .project
+        .tick_at_musical_position(next_measure, 1, 0.0)
+        .map_err(|error| error.to_string())? as u64;
+    let nearest_measure =
+        if next_start_tick.saturating_sub(tick) < tick.saturating_sub(current_start_tick) {
+            next_measure
+        } else {
+            current_measure
+        };
+    let new_start_measure = i64::from(app.project.settings().start_measure())
+        .checked_add(1)
+        .and_then(|measure| measure.checked_sub(nearest_measure))
+        .ok_or_else(|| "Nearest measure is outside the supported range".to_owned())?;
+    i32::try_from(new_start_measure)
+        .map_err(|_| "Nearest measure is outside the supported range".to_owned())
 }
 
 impl Draft {
@@ -291,6 +370,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .on_input(Message::ProjectSettingsStartTimeChanged)
                     .size(13)
                     .width(Length::Fixed(120.0)),
+                iced::widget::keyed_column![(draft.menu_epoch, start_time_menu::view())]
+                    .width(Length::Shrink),
             ]
             .spacing(6),
             row![
@@ -467,6 +548,46 @@ mod tests {
         assert_eq!(app.project.snapshot(), before);
         assert_eq!(app.status, "Invalid project start time");
         assert!(app.project_settings.is_some());
+    }
+
+    #[test]
+    fn start_time_commands_update_the_draft_and_apply_as_one_undo() {
+        let mut app = App::default();
+        let before = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsStartTimeChanged("-10.000".into()));
+        let _ = app.update(Message::ProjectSettingsStartMeasureChanged("8".into()));
+        let _ = apply_start_time_command(&mut app, start_time_menu::StartTimeCommand::ResetTime);
+        let _ = apply_start_time_command(&mut app, start_time_menu::StartTimeCommand::ResetMeasure);
+        assert_eq!(
+            app.project_settings.as_ref().unwrap().project_start_time,
+            "0:00.000"
+        );
+        assert_eq!(app.project_settings.as_ref().unwrap().start_measure, "1");
+
+        app.timeline.edit_cursor_tick = 960;
+        let _ =
+            apply_start_time_command(&mut app, start_time_menu::StartTimeCommand::SetTimeAtCursor);
+        app.timeline.edit_cursor_tick = 3_500;
+        let _ = apply_start_time_command(
+            &mut app,
+            start_time_menu::StartTimeCommand::SetMeasureAtCursor,
+        );
+        assert_eq!(
+            app.project_settings.as_ref().unwrap().project_start_time,
+            "-0:00.500"
+        );
+        assert_eq!(app.project_settings.as_ref().unwrap().start_measure, "0");
+        assert_eq!(app.project.snapshot(), before);
+
+        let _ = app.apply_project_settings();
+        assert_eq!(
+            app.project.settings().project_start_time_offset_seconds(),
+            -0.5
+        );
+        assert_eq!(app.project.settings().start_measure(), 0);
+        assert!(app.project.undo().unwrap());
+        assert_eq!(app.project.snapshot(), before);
     }
 
     #[test]

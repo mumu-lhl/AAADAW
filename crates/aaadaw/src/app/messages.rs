@@ -190,6 +190,8 @@ pub(crate) enum Message {
     ProjectSettingsBpmBasisChanged(aaadaw_core::BpmBasis),
     ProjectSettingsBaseRulerLabelSpacingChanged(bool),
     ProjectSettingsStartTimeChanged(String),
+    ProjectStartTimeMenuChanged(bool),
+    ProjectStartTimeCommandChosen(super::project_settings::start_time_menu::StartTimeCommand),
     ProjectFrameRateMenuChanged(bool),
     ProjectSettingsTabChanged(super::project_settings::Tab),
     ProjectSettingsTempoChanged(String),
