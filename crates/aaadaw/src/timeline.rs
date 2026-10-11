@@ -3956,8 +3956,17 @@ fn ruler_lines(
         let beat_width = pixels_per_tick * ticks_per_beat as f32;
         let show_beat = is_measure || beat_width >= 18.0;
         let labels_per_measure = i64::try_from(labels_per_measure).unwrap_or(i64::MAX).max(1);
-        let measure_offset = position.measure() - i64::from(project.settings().start_measure());
-        let show_label = is_measure && measure_offset.rem_euclid(labels_per_measure) == 0;
+        let label_spacing_measure = if project.settings().base_ruler_label_spacing_on_measure() {
+            project.settings().start_measure()
+        } else {
+            1
+        };
+        let measure_offset = position.measure() - i64::from(label_spacing_measure);
+        let show_label = is_measure
+            && measure_offset.rem_euclid(labels_per_measure) == 0
+            && (project.settings().base_ruler_label_spacing_on_measure()
+                || labels_per_measure == 1
+                || position.measure() >= 1);
         if tick >= origin_tick && (show_beat || show_label) {
             let x = (tick - origin_tick) as f32 * pixels_per_tick;
             lines.push(RulerLine {
@@ -6136,6 +6145,42 @@ mod tests {
         assert!(measure_lines[0].show_label);
         assert_eq!(measure_lines[1].measure, -1);
         assert!(measure_lines[1].show_label);
+    }
+
+    #[test]
+    fn ruler_spacing_can_use_measure_one_as_its_origin() {
+        let project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_start_measure(-2)
+                .with_base_ruler_label_spacing_on_measure(false),
+        );
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.005,
+            ..TimelineState::default()
+        };
+        let labeled_measures = timeline
+            .ruler_lines(&project, 120.0)
+            .into_iter()
+            .filter(|line| line.show_label)
+            .map(|line| line.measure)
+            .collect::<Vec<_>>();
+        assert_eq!(labeled_measures.first(), Some(&1));
+
+        let detailed = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        assert_eq!(
+            detailed
+                .ruler_lines(&project, 120.0)
+                .into_iter()
+                .find(|line| line.show_label)
+                .unwrap()
+                .measure,
+            -2
+        );
     }
 
     #[test]

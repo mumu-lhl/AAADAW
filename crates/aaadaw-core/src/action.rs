@@ -19,6 +19,10 @@ pub enum DawAction {
     SetProjectBpmBasis {
         basis: crate::BpmBasis,
     },
+    /// Choose whether ruler label spacing is anchored at the project's start measure.
+    SetBaseRulerLabelSpacingOnMeasure {
+        enabled: bool,
+    },
     /// Change the signed measure number displayed at project tick zero.
     SetProjectStartMeasure {
         measure: i32,

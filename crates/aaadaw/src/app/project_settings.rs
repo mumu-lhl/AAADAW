@@ -22,6 +22,7 @@ pub(super) struct Draft {
     pub meter_denominator: String,
     pub start_measure: String,
     pub bpm_basis: BpmBasis,
+    pub base_ruler_label_spacing_on_measure: bool,
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
@@ -47,6 +48,10 @@ impl Draft {
                 .to_string(),
             start_measure: app.project.settings().start_measure().to_string(),
             bpm_basis: app.project.settings().bpm_basis(),
+            base_ruler_label_spacing_on_measure: app
+                .project
+                .settings()
+                .base_ruler_label_spacing_on_measure(),
             generation: app.project_generation,
             menu_open: false,
             menu_epoch: 0,
@@ -146,6 +151,7 @@ impl App {
             }
         };
         let bpm_basis = draft.bpm_basis;
+        let base_ruler_label_spacing_on_measure = draft.base_ruler_label_spacing_on_measure;
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
@@ -167,6 +173,16 @@ impl App {
         if self.project.settings().start_measure() != start_measure {
             actions.push(DawAction::SetProjectStartMeasure {
                 measure: start_measure,
+            });
+        }
+        if self
+            .project
+            .settings()
+            .base_ruler_label_spacing_on_measure()
+            != base_ruler_label_spacing_on_measure
+        {
+            actions.push(DawAction::SetBaseRulerLabelSpacingOnMeasure {
+                enabled: base_ruler_label_spacing_on_measure,
             });
         }
         if self.project.settings().frame_rate() != rate {
@@ -192,6 +208,11 @@ impl App {
                 || self.project.time_signature_at_tick(0) != signature
                 || self.project.settings().start_measure() != start_measure
                 || self.project.settings().bpm_basis() != bpm_basis
+                || self
+                    .project
+                    .settings()
+                    .base_ruler_label_spacing_on_measure()
+                    != base_ruler_label_spacing_on_measure
                 || self.project.project_notes() != &notes
             {
                 return Task::none();
@@ -238,7 +259,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 text_input("1", &draft.start_measure)
                     .on_input(Message::ProjectSettingsStartMeasureChanged)
                     .size(13)
-                    .width(Length::Fixed(96.0))
+                    .width(Length::Fixed(96.0)),
+                checkbox(draft.base_ruler_label_spacing_on_measure)
+                    .label(format!(
+                        "Base ruler label spacing on measure {}",
+                        draft.start_measure
+                    ))
+                    .on_toggle(Message::ProjectSettingsBaseRulerLabelSpacingChanged)
+                    .text_size(13)
             ]
             .spacing(6),
             iced::widget::space().height(Length::Fill)
@@ -339,6 +367,7 @@ mod tests {
         let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
         let _ = app.update(Message::ProjectSettingsStartMeasureChanged("3".into()));
         let _ = app.update(Message::ProjectSettingsBpmBasisChanged(BpmBasis::Eighth));
+        let _ = app.update(Message::ProjectSettingsBaseRulerLabelSpacingChanged(false));
         assert_eq!(app.project.snapshot(), before);
         let _ = app.apply_project_settings();
         assert_eq!(app.project.tempo_at_tick(0), 96.0);
@@ -348,6 +377,7 @@ mod tests {
         );
         assert_eq!(app.project.settings().start_measure(), 3);
         assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Eighth);
+        assert!(!app.project.settings().base_ruler_label_spacing_on_measure());
         assert_eq!(app.project.sample_at_tick(960).unwrap(), 60_000);
         assert!(app.project.undo().unwrap());
         assert_eq!(app.project.tempo_at_tick(0), 120.0);
@@ -357,6 +387,7 @@ mod tests {
         );
         assert_eq!(app.project.settings().start_measure(), 1);
         assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Quarter);
+        assert!(app.project.settings().base_ruler_label_spacing_on_measure());
         assert_eq!(app.project.project_notes(), &notes);
     }
 

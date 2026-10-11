@@ -63,6 +63,48 @@ fn bpm_basis_scales_tempo_time_and_is_undoable_and_persistent() {
 }
 
 #[test]
+fn base_ruler_label_spacing_on_measure_is_undoable_and_persistent() {
+    let mut project = Project::new();
+    assert!(project.settings().base_ruler_label_spacing_on_measure());
+    assert!(
+        Project::default()
+            .settings()
+            .base_ruler_label_spacing_on_measure()
+    );
+    project
+        .apply(DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled: false })
+        .unwrap();
+    assert!(!project.settings().base_ruler_label_spacing_on_measure());
+    assert!(project.undo().unwrap());
+    assert!(project.settings().base_ruler_label_spacing_on_measure());
+    assert!(project.redo().unwrap());
+    assert!(
+        !project
+            .snapshot()
+            .settings
+            .base_ruler_label_spacing_on_measure()
+    );
+}
+
+#[test]
+fn base_ruler_spacing_restores_inside_a_project_settings_transaction() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::BatchTransaction {
+            tx_id: 1,
+            actions: vec![
+                DawAction::SetProjectStartMeasure { measure: -2 },
+                DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled: false },
+            ],
+        })
+        .unwrap();
+    assert!(!project.settings().base_ruler_label_spacing_on_measure());
+    assert!(project.undo().unwrap());
+    assert_eq!(project.settings().start_measure(), 1);
+    assert!(project.settings().base_ruler_label_spacing_on_measure());
+}
+
+#[test]
 fn sample_and_ppq_positions_follow_tempo_changes() {
     let mut project = Project::new();
 

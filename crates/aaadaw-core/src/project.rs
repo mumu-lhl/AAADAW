@@ -188,17 +188,35 @@ pub struct FxParameterChange {
     pub value: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct ProjectState {
     notes: crate::ProjectNotes,
     master_mix: crate::MasterMix,
     pan_mode: crate::PanMode,
     frame_rate: crate::FrameRate,
+    base_ruler_label_spacing_on_measure: bool,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
+}
+
+impl Default for ProjectState {
+    fn default() -> Self {
+        Self {
+            notes: crate::ProjectNotes::default(),
+            master_mix: crate::MasterMix::default(),
+            pan_mode: crate::PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
+            base_ruler_label_spacing_on_measure: true,
+            tracks: Vec::new(),
+            audio_items: Vec::new(),
+            midi_items: Vec::new(),
+            tempo_map: TempoMap::default(),
+            meter_map: MeterMap::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -222,6 +240,10 @@ enum ProjectEvent {
     BpmBasisChanged {
         before: crate::BpmBasis,
         after: crate::BpmBasis,
+    },
+    BaseRulerLabelSpacingChanged {
+        before: bool,
+        after: bool,
     },
     ProjectStartMeasureChanged {
         before: i32,
@@ -440,6 +462,12 @@ impl ProjectEvent {
                 before: *after,
                 after: *before,
             },
+            Self::BaseRulerLabelSpacingChanged { before, after } => {
+                Self::BaseRulerLabelSpacingChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
             Self::ProjectStartMeasureChanged { before, after } => {
                 Self::ProjectStartMeasureChanged {
                     before: *after,
@@ -875,6 +903,7 @@ impl Project {
             state: ProjectState {
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
+                base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
                 tempo_map: TempoMap::new(settings),
                 meter_map: MeterMap::new(settings.ppq(), settings.start_measure()),
                 ..ProjectState::default()
@@ -955,6 +984,9 @@ impl Project {
             .with_pan_mode(self.state.pan_mode)
             .with_frame_rate(self.state.frame_rate)
             .with_start_measure(self.state.meter_map.start_measure())
+            .with_base_ruler_label_spacing_on_measure(
+                self.state.base_ruler_label_spacing_on_measure,
+            )
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -1558,6 +1590,7 @@ impl Project {
                 master_mix: snapshot.master_mix,
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
+                base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
                 tracks,
                 audio_items,
                 midi_items,
@@ -1614,6 +1647,12 @@ impl Project {
                 before: state.tempo_map.settings().bpm_basis(),
                 after: basis,
             },
+            DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled } => {
+                ProjectEvent::BaseRulerLabelSpacingChanged {
+                    before: state.base_ruler_label_spacing_on_measure,
+                    after: enabled,
+                }
+            }
             DawAction::SetProjectStartMeasure { measure } => {
                 ProjectEvent::ProjectStartMeasureChanged {
                     before: state.meter_map.start_measure(),
@@ -3002,6 +3041,12 @@ impl Project {
                         TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
                         _ => ActionError::TempoMapOutOfRange,
                     })?;
+            }
+            ProjectEvent::BaseRulerLabelSpacingChanged { before, after } => {
+                if state.base_ruler_label_spacing_on_measure != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.base_ruler_label_spacing_on_measure = *after;
             }
             ProjectEvent::ProjectStartMeasureChanged { before, after } => {
                 if state.meter_map.start_measure() != *before {

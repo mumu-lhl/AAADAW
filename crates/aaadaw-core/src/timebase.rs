@@ -101,6 +101,7 @@ pub struct ProjectSettings {
     initial_tempo_bpm: f64,
     start_measure: i32,
     bpm_basis: BpmBasis,
+    base_ruler_label_spacing_on_measure: bool,
     pan_mode: PanMode,
     frame_rate: crate::FrameRate,
 }
@@ -123,6 +124,7 @@ impl ProjectSettings {
             initial_tempo_bpm,
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
+            base_ruler_label_spacing_on_measure: true,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         })
@@ -175,6 +177,17 @@ impl ProjectSettings {
         self.bpm_basis
     }
 
+    /// Selects whether ruler label intervals use the project's start measure as their origin.
+    pub fn with_base_ruler_label_spacing_on_measure(mut self, enabled: bool) -> Self {
+        self.base_ruler_label_spacing_on_measure = enabled;
+        self
+    }
+
+    /// Returns whether ruler label intervals use the project's start measure as their origin.
+    pub fn base_ruler_label_spacing_on_measure(self) -> bool {
+        self.base_ruler_label_spacing_on_measure
+    }
+
     /// Returns the project sample rate.
     pub fn sample_rate(self) -> u32 {
         self.sample_rate
@@ -199,6 +212,7 @@ impl Default for ProjectSettings {
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
+            base_ruler_label_spacing_on_measure: true,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -645,6 +659,7 @@ impl TempoMap {
             initial_tempo_bpm: self.points[0].bpm,
             start_measure: 1,
             bpm_basis: self.bpm_basis,
+            base_ruler_label_spacing_on_measure: true,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }

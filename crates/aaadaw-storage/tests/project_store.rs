@@ -142,6 +142,36 @@ fn project_bpm_basis_schema29_defaults_and_round_trips() {
 }
 
 #[test]
+fn project_ruler_spacing_schema30_defaults_and_round_trips() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN base_ruler_label_spacing_on_measure; PRAGMA user_version=30;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut migrated = store.load().unwrap();
+    assert!(migrated.settings().base_ruler_label_spacing_on_measure());
+    migrated
+        .apply(DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled: false })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn failed_notes_save_rolls_back_project_and_invalid_display_flags_fail_closed() {
     let path = project_path();
     let mut project = Project::new();
