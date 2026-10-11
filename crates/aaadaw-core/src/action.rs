@@ -15,6 +15,10 @@ pub enum DawAction {
     SetFrameRate {
         rate: crate::FrameRate,
     },
+    /// Change the signed measure number displayed at project tick zero.
+    SetProjectStartMeasure {
+        measure: i32,
+    },
     /// Change the Master output gain and stereo balance as one undoable edit.
     SetMasterMix {
         mix: crate::MasterMix,

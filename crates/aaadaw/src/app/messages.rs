@@ -192,6 +192,7 @@ pub(crate) enum Message {
     ProjectSettingsTempoChanged(String),
     ProjectSettingsMeterNumeratorChanged(String),
     ProjectSettingsMeterDenominatorChanged(String),
+    ProjectSettingsStartMeasureChanged(String),
     ProjectNotesTitleChanged(String),
     ProjectNotesAuthorChanged(String),
     ProjectNotesEdited(iced::widget::text_editor::Action),

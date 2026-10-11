@@ -2133,7 +2133,7 @@ impl TimelineState {
 pub(crate) struct RulerLine {
     pub(crate) tick: u64,
     pub(crate) x: f32,
-    pub(crate) measure: u64,
+    pub(crate) measure: i64,
     pub(crate) is_measure: bool,
     pub(crate) show_label: bool,
 }
@@ -3955,8 +3955,9 @@ fn ruler_lines(
         }
         let beat_width = pixels_per_tick * ticks_per_beat as f32;
         let show_beat = is_measure || beat_width >= 18.0;
-        let show_label =
-            is_measure && (position.measure().saturating_sub(1) % labels_per_measure == 0);
+        let labels_per_measure = i64::try_from(labels_per_measure).unwrap_or(i64::MAX).max(1);
+        let measure_offset = position.measure() - i64::from(project.settings().start_measure());
+        let show_label = is_measure && measure_offset.rem_euclid(labels_per_measure) == 0;
         if tick >= origin_tick && (show_beat || show_label) {
             let x = (tick - origin_tick) as f32 * pixels_per_tick;
             lines.push(RulerLine {
@@ -6115,6 +6116,26 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(seven_eighth_beat.contains(&4320));
         assert!(seven_eighth_beat.contains(&4800));
+    }
+
+    #[test]
+    fn ruler_labels_signed_start_measure_and_anchors_spacing_there() {
+        let project =
+            Project::with_settings(aaadaw_core::ProjectSettings::default().with_start_measure(-2));
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let measure_lines = timeline
+            .ruler_lines(&project, 800.0)
+            .into_iter()
+            .filter(|line| line.is_measure)
+            .collect::<Vec<_>>();
+        assert_eq!(measure_lines[0].measure, -2);
+        assert!(measure_lines[0].show_label);
+        assert_eq!(measure_lines[1].measure, -1);
+        assert!(measure_lines[1].show_label);
     }
 
     #[test]

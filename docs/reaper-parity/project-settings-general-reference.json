@@ -33,7 +33,9 @@
       4,
       4
     ],
-    "apply": "atomic SetTempo@0 + SetTimeSignature@0",
+    "start_measure": "Signed i32 displayed measure at tick zero; 0 and -2 accepted by native UI and AAADAW",
+    "musical_positions": "Signed displayed bars round-trip in Beats properties and anchor timeline ruler labels",
+    "apply": "one atomic transaction: SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure",
     "cancel": "keeps snapshot unchanged"
   },
   "read_only_probe": {
@@ -50,6 +52,6 @@
   },
   "limitations": [
     "Start-of-project time offset, display timebase, beat-synced audio item storage, sample rate and resampling settings are not implemented",
-    "Values use only the owned project-settings probe window; no REAPER window screenshot is committed"
+    "Default values came from the owned ReaScript probe; the native dialog was inspected for signed Start measure behavior, but no REAPER screenshot is committed"
   ]
 }

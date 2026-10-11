@@ -68,6 +68,50 @@ fn project_notes_migrate_schema27_preserve_media_and_roundtrip_unicode() {
 }
 
 #[test]
+fn project_start_measure_schema28_defaults_and_round_trips() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keep".into(),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN start_measure; PRAGMA user_version=28;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.settings().start_measure(), 1);
+    assert_eq!(migrated.tracks()[0].name(), "Keep");
+
+    let mut changed = migrated;
+    changed
+        .apply(DawAction::SetProjectStartMeasure { measure: 12 })
+        .unwrap();
+    store.save(&changed).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), changed.snapshot());
+    changed
+        .apply(DawAction::SetProjectStartMeasure { measure: -2 })
+        .unwrap();
+    store.save(&changed).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), changed.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn failed_notes_save_rolls_back_project_and_invalid_display_flags_fail_closed() {
     let path = project_path();
     let mut project = Project::new();

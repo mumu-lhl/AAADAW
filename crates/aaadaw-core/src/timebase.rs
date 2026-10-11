@@ -25,6 +25,7 @@ pub struct ProjectSettings {
     sample_rate: u32,
     ppq: u32,
     initial_tempo_bpm: f64,
+    start_measure: i32,
     pan_mode: PanMode,
     frame_rate: crate::FrameRate,
 }
@@ -45,6 +46,7 @@ impl ProjectSettings {
             sample_rate,
             ppq,
             initial_tempo_bpm,
+            start_measure: 1,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         })
@@ -72,6 +74,17 @@ impl ProjectSettings {
         self.frame_rate
     }
 
+    /// Selects the measure number displayed at tick zero.
+    pub fn with_start_measure(mut self, measure: i32) -> Self {
+        self.start_measure = measure;
+        self
+    }
+
+    /// Returns the signed measure number displayed at tick zero.
+    pub fn start_measure(self) -> i32 {
+        self.start_measure
+    }
+
     /// Returns the project sample rate.
     pub fn sample_rate(self) -> u32 {
         self.sample_rate
@@ -94,6 +107,7 @@ impl Default for ProjectSettings {
             sample_rate: DEFAULT_SAMPLE_RATE,
             ppq: DEFAULT_PPQ,
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
+            start_measure: 1,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -240,17 +254,17 @@ impl TimeSignature {
     }
 }
 
-/// A one-based bar/beat position and zero-based tick offset within the beat.
+/// A signed displayed measure/beat position and zero-based tick offset within the beat.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicalPosition {
-    measure: u64,
+    measure: i64,
     beat: u32,
     tick_in_beat: u64,
 }
 
 impl MusicalPosition {
-    /// Returns the one-based measure number.
-    pub fn measure(self) -> u64 {
+    /// Returns the signed measure number.
+    pub fn measure(self) -> i64 {
         self.measure
     }
 
@@ -269,34 +283,48 @@ impl MusicalPosition {
 struct MeterPoint {
     start_tick: u64,
     signature: TimeSignature,
-    start_measure: u64,
+    start_measure: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MeterMap {
     ppq: u32,
+    start_measure: i32,
     points: Vec<MeterPoint>,
 }
 
 impl Default for MeterMap {
     fn default() -> Self {
-        Self::new(DEFAULT_PPQ)
+        Self::new(DEFAULT_PPQ, 1)
     }
 }
 
 impl MeterMap {
-    pub(crate) fn new(ppq: u32) -> Self {
+    pub(crate) fn new(ppq: u32, start_measure: i32) -> Self {
         Self {
             ppq,
+            start_measure,
             points: vec![MeterPoint {
                 start_tick: 0,
                 signature: TimeSignature {
                     numerator: 4,
                     denominator: 4,
                 },
-                start_measure: 0,
+                start_measure: i64::from(start_measure) - 1,
             }],
         }
+    }
+
+    pub(crate) fn start_measure(&self) -> i32 {
+        self.start_measure
+    }
+
+    pub(crate) fn set_start_measure(&mut self, start_measure: i32) -> Result<(), TimebaseError> {
+        let mut points = self.points.clone();
+        Self::recalculate_measures(&mut points, self.ppq, start_measure)?;
+        self.start_measure = start_measure;
+        self.points = points;
+        Ok(())
     }
 
     pub(crate) fn points(&self) -> impl Iterator<Item = (u64, TimeSignature)> + '_ {
@@ -326,7 +354,7 @@ impl MeterMap {
         for point in &replacement {
             point.signature.ticks_per_measure(self.ppq)?;
         }
-        Self::recalculate_measures(&mut replacement, self.ppq)?;
+        Self::recalculate_measures(&mut replacement, self.ppq, self.start_measure)?;
         self.points = replacement;
         Ok(())
     }
@@ -369,7 +397,7 @@ impl MeterMap {
             ),
             (Err(_), None) => return Err(TimebaseError::MeterPointNotFound),
         }
-        Self::recalculate_measures(&mut points, self.ppq)?;
+        Self::recalculate_measures(&mut points, self.ppq, self.start_measure)?;
         self.points = points;
         Ok(())
     }
@@ -384,6 +412,8 @@ impl MeterMap {
         let ticks_per_measure = point.signature.ticks_per_measure(self.ppq)?;
         let offset = tick - point.start_tick;
         let measure_offset = offset / ticks_per_measure;
+        let measure_offset =
+            i64::try_from(measure_offset).map_err(|_| TimebaseError::MusicalPositionOutOfRange)?;
         let measure = point
             .start_measure
             .checked_add(measure_offset)
@@ -399,24 +429,30 @@ impl MeterMap {
 
     pub(crate) fn tick_at_position(
         &self,
-        measure: u64,
+        measure: i64,
         beat: u32,
         tick_in_beat: f64,
     ) -> Result<f64, TimebaseError> {
         let invalid = TimebaseError::MusicalPositionOutOfRange;
-        if measure == 0 || beat == 0 || !tick_in_beat.is_finite() || tick_in_beat < 0.0 {
+        if beat == 0 || !tick_in_beat.is_finite() || tick_in_beat < 0.0 {
             return Err(invalid);
         }
         let index = self
             .points
             .partition_point(|point| point.start_measure < measure)
-            - 1;
+            .checked_sub(1)
+            .ok_or(invalid)?;
         let point = self.points[index];
+        let measure_offset = measure
+            .checked_sub(point.start_measure)
+            .and_then(|value| value.checked_sub(1))
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or(invalid)?;
         let ticks_per_beat = point.signature.ticks_per_beat(self.ppq)?;
         if beat > point.signature.numerator || tick_in_beat >= ticks_per_beat as f64 {
             return Err(invalid);
         }
-        let tick = (measure - point.start_measure - 1)
+        let tick = measure_offset
             .checked_mul(point.signature.ticks_per_measure(self.ppq)?)
             .and_then(|offset| offset.checked_add(u64::from(beat - 1) * ticks_per_beat))
             .and_then(|offset| point.start_tick.checked_add(offset))
@@ -442,8 +478,12 @@ impl MeterMap {
         self.points[index].signature
     }
 
-    fn recalculate_measures(points: &mut [MeterPoint], ppq: u32) -> Result<(), TimebaseError> {
-        points[0].start_measure = 0;
+    fn recalculate_measures(
+        points: &mut [MeterPoint],
+        ppq: u32,
+        start_measure: i32,
+    ) -> Result<(), TimebaseError> {
+        points[0].start_measure = i64::from(start_measure) - 1;
         for index in 1..points.len() {
             let previous = points[index - 1];
             let ticks_per_measure = previous.signature.ticks_per_measure(ppq)?;
@@ -451,9 +491,11 @@ impl MeterMap {
             if !offset.is_multiple_of(ticks_per_measure) {
                 return Err(TimebaseError::MeterChangeNotOnBarBoundary);
             }
+            let measure_offset = i64::try_from(offset / ticks_per_measure)
+                .map_err(|_| TimebaseError::MusicalPositionOutOfRange)?;
             points[index].start_measure = previous
                 .start_measure
-                .checked_add(offset / ticks_per_measure)
+                .checked_add(measure_offset)
                 .ok_or(TimebaseError::MusicalPositionOutOfRange)?;
         }
         Ok(())
@@ -508,6 +550,7 @@ impl TempoMap {
             sample_rate: self.sample_rate,
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
+            start_measure: 1,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }

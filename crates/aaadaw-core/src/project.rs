@@ -219,6 +219,10 @@ enum ProjectEvent {
         before: crate::FrameRate,
         after: crate::FrameRate,
     },
+    ProjectStartMeasureChanged {
+        before: i32,
+        after: i32,
+    },
     MasterMixChanged {
         before: crate::MasterMix,
         after: crate::MasterMix,
@@ -428,6 +432,12 @@ impl ProjectEvent {
                 before: *after,
                 after: *before,
             },
+            Self::ProjectStartMeasureChanged { before, after } => {
+                Self::ProjectStartMeasureChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
             Self::MasterMixChanged { before, after } => Self::MasterMixChanged {
                 before: *after,
                 after: *before,
@@ -858,7 +868,7 @@ impl Project {
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
                 tempo_map: TempoMap::new(settings),
-                meter_map: MeterMap::new(settings.ppq()),
+                meter_map: MeterMap::new(settings.ppq(), settings.start_measure()),
                 ..ProjectState::default()
             },
             ..Self::default()
@@ -936,6 +946,7 @@ impl Project {
             .settings()
             .with_pan_mode(self.state.pan_mode)
             .with_frame_rate(self.state.frame_rate)
+            .with_start_measure(self.state.meter_map.start_measure())
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -969,16 +980,16 @@ impl Project {
         self.state.tempo_map.points()
     }
 
-    /// Converts a tick to a one-based measure/beat and an in-beat tick offset.
+    /// Converts a tick to a signed measure/beat and an in-beat tick offset.
     pub fn musical_position_at_tick(&self, tick: u64) -> Result<MusicalPosition, TimebaseError> {
         self.state.meter_map.position_at_tick(tick)
     }
 
-    /// Converts a one-based measure/beat and fractional in-beat tick offset.
+    /// Converts a signed displayed measure/beat and fractional in-beat tick offset.
     /// Rejects positions outside the active meter instead of carrying into another bar.
     pub fn tick_at_musical_position(
         &self,
-        measure: u64,
+        measure: i64,
         beat: u32,
         tick_in_beat: f64,
     ) -> Result<f64, TimebaseError> {
@@ -1301,7 +1312,7 @@ impl Project {
                 .map_err(SnapshotError::InvalidTimebase)?;
         }
 
-        let mut meter_map = MeterMap::new(settings.ppq());
+        let mut meter_map = MeterMap::new(settings.ppq(), settings.start_measure());
         let first_meter = snapshot
             .meter_points
             .first()
@@ -1591,6 +1602,12 @@ impl Project {
                 before: state.frame_rate,
                 after: rate,
             },
+            DawAction::SetProjectStartMeasure { measure } => {
+                ProjectEvent::ProjectStartMeasureChanged {
+                    before: state.meter_map.start_measure(),
+                    after: measure,
+                }
+            }
             DawAction::SetMasterMix { mix } => ProjectEvent::MasterMixChanged {
                 before: state.master_mix,
                 after: mix,
@@ -2961,6 +2978,15 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.frame_rate = *after;
+            }
+            ProjectEvent::ProjectStartMeasureChanged { before, after } => {
+                if state.meter_map.start_measure() != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .meter_map
+                    .set_start_measure(*after)
+                    .map_err(|_| ActionError::MeterMapOutOfRange)?;
             }
             ProjectEvent::MasterMixChanged { before, after } => {
                 if state.master_mix != *before {

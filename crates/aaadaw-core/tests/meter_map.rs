@@ -37,7 +37,7 @@ fn inverse_musical_positions_preserve_fractional_ticks_across_meter_changes() {
         (2, 1, -0.1),
         (2, 1, f64::NAN),
         (2, 1, f64::INFINITY),
-        (u64::MAX, 1, 0.0),
+        (i64::MAX, 1, 0.0),
     ] {
         assert_eq!(
             project.tick_at_musical_position(measure, beat, offset),
@@ -137,4 +137,55 @@ fn replacing_the_meter_map_is_atomic_and_undoable() {
     );
     assert!(project.redo().unwrap());
     assert_eq!(project.time_signature_map(), points);
+}
+
+#[test]
+fn project_start_measure_shifts_bar_numbers_and_is_undoable_and_persistent() {
+    let settings = aaadaw_core::ProjectSettings::default().with_start_measure(3);
+    let mut project = Project::with_settings(settings);
+    project
+        .apply(DawAction::SetTimeSignature {
+            start_tick: 7680,
+            signature: TimeSignature::new(7, 8).unwrap(),
+        })
+        .expect("the meter change is on a measure boundary");
+
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), 3);
+    assert_eq!(project.musical_position_at_tick(3840).unwrap().measure(), 4);
+    assert_eq!(project.musical_position_at_tick(7680).unwrap().measure(), 5);
+    assert_eq!(project.tick_at_musical_position(5, 1, 0.0), Ok(7680.0));
+
+    let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(reopened.settings().start_measure(), 3);
+    assert_eq!(
+        reopened.musical_position_at_tick(7680).unwrap().measure(),
+        5
+    );
+
+    project
+        .apply(DawAction::SetProjectStartMeasure { measure: 7 })
+        .unwrap();
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), 7);
+    assert!(project.undo().unwrap());
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), 3);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), 7);
+
+    project
+        .apply(DawAction::SetProjectStartMeasure { measure: 0 })
+        .unwrap();
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), 0);
+    project
+        .apply(DawAction::SetProjectStartMeasure { measure: -2 })
+        .unwrap();
+    assert_eq!(project.musical_position_at_tick(0).unwrap().measure(), -2);
+    assert_eq!(project.musical_position_at_tick(7680).unwrap().measure(), 0);
+    assert_eq!(project.tick_at_musical_position(-2, 1, 0.0), Ok(0.0));
+    assert_eq!(project.tick_at_musical_position(0, 1, 0.0), Ok(7680.0));
+    let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(reopened.settings().start_measure(), -2);
+    assert_eq!(
+        reopened.musical_position_at_tick(7680).unwrap().measure(),
+        0
+    );
 }

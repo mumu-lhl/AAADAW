@@ -1665,6 +1665,7 @@ impl App {
                     | Message::ProjectSettingsTempoChanged(_)
                     | Message::ProjectSettingsMeterNumeratorChanged(_)
                     | Message::ProjectSettingsMeterDenominatorChanged(_)
+                    | Message::ProjectSettingsStartMeasureChanged(_)
                     | Message::ProjectNotesTitleChanged(_)
                     | Message::ProjectNotesAuthorChanged(_)
                     | Message::ProjectNotesEdited(_)
@@ -2088,6 +2089,11 @@ impl App {
             Message::ProjectSettingsMeterDenominatorChanged(value) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.meter_denominator = value;
+                }
+            }
+            Message::ProjectSettingsStartMeasureChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.start_measure = value;
                 }
             }
             Message::ProjectSettingsTabChanged(tab) => {

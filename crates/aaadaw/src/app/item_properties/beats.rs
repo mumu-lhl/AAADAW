@@ -9,7 +9,7 @@ fn beat_ticks(project: &Project, tick: f64) -> f64 {
     f64::from(project.settings().ppq()) * 4.0 / f64::from(meter.denominator())
 }
 
-fn position(project: &Project, sample: f64) -> Result<(u64, f64), String> {
+fn position(project: &Project, sample: f64) -> Result<(i64, f64), String> {
     let tick = project.tick_at_sample_position(sample).map_err(failure)?;
     let position = project
         .musical_position_at_tick(tick.floor() as u64)
@@ -61,18 +61,25 @@ pub(super) fn format_length(project: &Project, start: f64, length: f64) -> Resul
     ))
 }
 
-// Canonical nonnegative bar.beat.fraction inputs. Native permissive malformed,
-// signed and trailing-text parsing is recorded separately and remains pending.
-fn parse(text: &str) -> Result<(u64, u64, f64), String> {
+// Canonical signed bar.beat.fraction positions; beats and fractional beats stay nonnegative.
+fn parse(text: &str) -> Result<(i64, u64, f64), String> {
     let fields: Vec<_> = text.trim().split('.').collect();
+    let signed_bars = fields.first().is_some_and(|field| {
+        let digits = field.strip_prefix(['-', '+']).unwrap_or(field);
+        !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit())
+    });
     if fields.len() > 3
+        || !signed_bars
         || fields
             .iter()
+            .skip(1)
             .any(|field| field.is_empty() || !field.bytes().all(|c| c.is_ascii_digit()))
     {
-        return Err("Enter bars.beats.fraction using nonnegative digits".to_owned());
+        return Err(
+            "Enter bars.beats.fraction using a signed bar and nonnegative digits".to_owned(),
+        );
     }
-    let bars = fields[0].parse::<u64>().map_err(failure)?;
+    let bars = fields[0].parse::<i64>().map_err(failure)?;
     let beats = fields
         .get(1)
         .map_or(Ok(0), |field| field.parse::<u64>())
@@ -86,8 +93,13 @@ fn parse(text: &str) -> Result<(u64, u64, f64), String> {
 
 pub(super) fn parse_position(project: &Project, text: &str) -> Result<f64, String> {
     let (bars, beats, fraction) = parse(text)?;
+    let start_measure = i64::from(project.settings().start_measure());
+    if bars < start_measure && bars != 0 {
+        return Err("Position precedes the project start measure".to_owned());
+    }
+    let bars = bars.max(start_measure);
     let tick = project
-        .tick_at_musical_position(bars.max(1), 1, 0.0)
+        .tick_at_musical_position(bars, 1, 0.0)
         .map_err(failure)?;
     let beats = if text.trim().contains('.') { beats } else { 1 };
     let tick = (tick + (beats as f64 - 1.0 + fraction) * beat_ticks(project, tick)).max(0.0);
@@ -96,6 +108,9 @@ pub(super) fn parse_position(project: &Project, text: &str) -> Result<f64, Strin
 
 pub(super) fn parse_length(project: &Project, text: &str, start: f64) -> Result<f64, String> {
     let (bars, beats, fraction) = parse(text)?;
+    if bars < 0 {
+        return Err("Item length must not be negative".to_owned());
+    }
     let tick = project.tick_at_sample_position(start).map_err(failure)?;
     let numerator = project
         .time_signature_at_tick(tick.floor() as u64)
@@ -219,5 +234,14 @@ mod tests {
                 "{row}"
             );
         }
+    }
+
+    #[test]
+    fn signed_project_measure_formats_and_parses_at_tick_zero() {
+        let project =
+            Project::with_settings(aaadaw_core::ProjectSettings::default().with_start_measure(-2));
+        assert_eq!(format_position(&project, 0.0).unwrap(), "-2.1.00");
+        assert_eq!(parse_position(&project, "-2.1.00").unwrap(), 0.0);
+        assert_eq!(parse_position(&project, "-1.1.00").unwrap(), 2.0 * 48_000.0);
     }
 }

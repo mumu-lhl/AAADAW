@@ -20,6 +20,7 @@ pub(super) struct Draft {
     pub tempo_bpm: String,
     pub meter_numerator: String,
     pub meter_denominator: String,
+    pub start_measure: String,
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
@@ -43,6 +44,7 @@ impl Draft {
                 .time_signature_at_tick(0)
                 .denominator()
                 .to_string(),
+            start_measure: app.project.settings().start_measure().to_string(),
             generation: app.project_generation,
             menu_open: false,
             menu_epoch: 0,
@@ -134,6 +136,13 @@ impl App {
                 return Task::none();
             }
         };
+        let start_measure = match draft.start_measure.parse::<i32>() {
+            Ok(value) => value,
+            _ => {
+                self.status = "Enter a valid project start measure".into();
+                return Task::none();
+            }
+        };
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
@@ -147,6 +156,11 @@ impl App {
             actions.push(DawAction::SetTimeSignature {
                 start_tick: 0,
                 signature,
+            });
+        }
+        if self.project.settings().start_measure() != start_measure {
+            actions.push(DawAction::SetProjectStartMeasure {
+                measure: start_measure,
             });
         }
         if self.project.settings().frame_rate() != rate {
@@ -170,6 +184,7 @@ impl App {
             if self.project.settings().frame_rate() != rate
                 || self.project.tempo_at_tick(0) != tempo_bpm
                 || self.project.time_signature_at_tick(0) != signature
+                || self.project.settings().start_measure() != start_measure
                 || self.project.project_notes() != &notes
             {
                 return Task::none();
@@ -204,6 +219,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .on_input(Message::ProjectSettingsMeterDenominatorChanged)
                     .size(13)
                     .width(Length::Fixed(64.0))
+            ]
+            .spacing(6),
+            row![
+                text("Start measure:").size(13).width(Length::Fixed(112.0)),
+                text_input("1", &draft.start_measure)
+                    .on_input(Message::ProjectSettingsStartMeasureChanged)
+                    .size(13)
+                    .width(Length::Fixed(96.0))
             ]
             .spacing(6),
             iced::widget::space().height(Length::Fill)
@@ -302,6 +325,7 @@ mod tests {
         let _ = app.update(Message::ProjectSettingsTempoChanged("96".into()));
         let _ = app.update(Message::ProjectSettingsMeterNumeratorChanged("3".into()));
         let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
+        let _ = app.update(Message::ProjectSettingsStartMeasureChanged("3".into()));
         assert_eq!(app.project.snapshot(), before);
         let _ = app.apply_project_settings();
         assert_eq!(app.project.tempo_at_tick(0), 96.0);
@@ -309,12 +333,14 @@ mod tests {
             app.project.time_signature_at_tick(0),
             TimeSignature::new(3, 8).unwrap()
         );
+        assert_eq!(app.project.settings().start_measure(), 3);
         assert!(app.project.undo().unwrap());
         assert_eq!(app.project.tempo_at_tick(0), 120.0);
         assert_eq!(
             app.project.time_signature_at_tick(0),
             TimeSignature::new(4, 4).unwrap()
         );
+        assert_eq!(app.project.settings().start_measure(), 1);
         assert_eq!(app.project.project_notes(), &notes);
     }
 
@@ -325,6 +351,9 @@ mod tests {
         let _ = app.open_project_settings();
         let _ = app.update(Message::ProjectSettingsTempoChanged("NaN".into()));
         let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("3".into()));
+        let _ = app.update(Message::ProjectSettingsStartMeasureChanged(
+            "2147483648".into(),
+        ));
         let _ = app.update(Message::ProjectFrameRateChanged(FrameRate::Fps25));
         let _ = app.apply_project_settings();
         assert_eq!(app.project.snapshot(), before);
