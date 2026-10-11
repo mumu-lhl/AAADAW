@@ -1662,6 +1662,9 @@ impl App {
                     | Message::ProjectFrameRateChanged(_)
                     | Message::ProjectFrameRateMenuChanged(_)
                     | Message::ProjectSettingsTabChanged(_)
+                    | Message::ProjectSettingsTempoChanged(_)
+                    | Message::ProjectSettingsMeterNumeratorChanged(_)
+                    | Message::ProjectSettingsMeterDenominatorChanged(_)
                     | Message::ProjectNotesTitleChanged(_)
                     | Message::ProjectNotesAuthorChanged(_)
                     | Message::ProjectNotesEdited(_)
@@ -2072,6 +2075,21 @@ impl App {
             Message::OpenProjectSettings => task = self.open_project_settings(),
             Message::CloseProjectSettings => task = self.close_project_settings(),
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
+            Message::ProjectSettingsTempoChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.tempo_bpm = value;
+                }
+            }
+            Message::ProjectSettingsMeterNumeratorChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.meter_numerator = value;
+                }
+            }
+            Message::ProjectSettingsMeterDenominatorChanged(value) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.meter_denominator = value;
+                }
+            }
             Message::ProjectSettingsTabChanged(tab) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.tab = tab;

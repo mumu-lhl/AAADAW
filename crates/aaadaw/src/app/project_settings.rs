@@ -1,11 +1,12 @@
 mod frame_rate_menu;
 use super::{App, Message};
-use aaadaw_core::{DawAction, FrameRate, ProjectNotes};
+use aaadaw_core::{DawAction, FrameRate, ProjectNotes, TimeSignature};
 use iced::widget::{button, checkbox, column, container, row, text, text_editor, text_input};
 use iced::{Element, Length, Task};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Tab {
+    General,
     Video,
     Notes,
 }
@@ -16,6 +17,9 @@ pub(super) struct Draft {
     pub notes_editor: text_editor::Content,
 
     pub rate: FrameRate,
+    pub tempo_bpm: String,
+    pub meter_numerator: String,
+    pub meter_denominator: String,
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
@@ -24,10 +28,21 @@ pub(super) struct Draft {
 impl Draft {
     fn from_app(app: &App) -> Self {
         Self {
-            tab: Tab::Video,
+            tab: Tab::General,
             notes: app.project.project_notes().clone(),
             notes_editor: text_editor::Content::with_text(&app.project.project_notes().text),
             rate: app.project.settings().frame_rate(),
+            tempo_bpm: app.project.tempo_at_tick(0).to_string(),
+            meter_numerator: app
+                .project
+                .time_signature_at_tick(0)
+                .numerator()
+                .to_string(),
+            meter_denominator: app
+                .project
+                .time_signature_at_tick(0)
+                .denominator()
+                .to_string(),
             generation: app.project_generation,
             menu_open: false,
             menu_epoch: 0,
@@ -91,9 +106,49 @@ impl App {
             self.status = "Wait for the current operation before applying project settings".into();
             return Task::none();
         }
+        let tempo_bpm = match draft.tempo_bpm.parse::<f64>() {
+            Ok(value) if value.is_finite() && value > 0.0 => value,
+            _ => {
+                self.status = "Enter a finite positive project tempo".into();
+                return Task::none();
+            }
+        };
+        let numerator = match draft.meter_numerator.parse::<u32>() {
+            Ok(value) => value,
+            _ => {
+                self.status = "Enter a valid time-signature numerator".into();
+                return Task::none();
+            }
+        };
+        let denominator = match draft.meter_denominator.parse::<u32>() {
+            Ok(value) => value,
+            _ => {
+                self.status = "Enter a valid time-signature denominator".into();
+                return Task::none();
+            }
+        };
+        let signature = match TimeSignature::new(numerator, denominator) {
+            Ok(signature) => signature,
+            Err(_) => {
+                self.status = "Enter a valid time signature".into();
+                return Task::none();
+            }
+        };
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
+        if self.project.tempo_at_tick(0) != tempo_bpm {
+            actions.push(DawAction::SetTempo {
+                start_tick: 0,
+                bpm: tempo_bpm,
+            });
+        }
+        if self.project.time_signature_at_tick(0) != signature {
+            actions.push(DawAction::SetTimeSignature {
+                start_tick: 0,
+                signature,
+            });
+        }
         if self.project.settings().frame_rate() != rate {
             actions.push(DawAction::SetFrameRate { rate });
         }
@@ -113,6 +168,8 @@ impl App {
             };
             self.apply_action(action, "Project settings changed");
             if self.project.settings().frame_rate() != rate
+                || self.project.tempo_at_tick(0) != tempo_bpm
+                || self.project.time_signature_at_tick(0) != signature
                 || self.project.project_notes() != &notes
             {
                 return Task::none();
@@ -127,6 +184,32 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         return text("Project Settings").into();
     };
     let content: Element<'_, Message> = match draft.tab {
+        Tab::General => column![
+            row![
+                text("BPM:").size(13).width(Length::Fixed(112.0)),
+                text_input("120", &draft.tempo_bpm)
+                    .on_input(Message::ProjectSettingsTempoChanged)
+                    .size(13)
+                    .width(Length::Fixed(96.0))
+            ]
+            .spacing(6),
+            row![
+                text("Time signature:").size(13).width(Length::Fixed(112.0)),
+                text_input("4", &draft.meter_numerator)
+                    .on_input(Message::ProjectSettingsMeterNumeratorChanged)
+                    .size(13)
+                    .width(Length::Fixed(64.0)),
+                text("/").size(13),
+                text_input("4", &draft.meter_denominator)
+                    .on_input(Message::ProjectSettingsMeterDenominatorChanged)
+                    .size(13)
+                    .width(Length::Fixed(64.0))
+            ]
+            .spacing(6),
+            iced::widget::space().height(Length::Fill)
+        ]
+        .spacing(12)
+        .into(),
         Tab::Video => column![
             row![
                 text("Frame rate:").size(13).width(82),
@@ -178,6 +261,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     container(
         column![
             row![
+                button("General").on_press(Message::ProjectSettingsTabChanged(Tab::General)),
                 button("Video").on_press(Message::ProjectSettingsTabChanged(Tab::Video)),
                 button("Notes").on_press(Message::ProjectSettingsTabChanged(Tab::Notes))
             ]
@@ -201,6 +285,53 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn general_tempo_and_meter_apply_atomically_and_undo_without_losing_notes() {
+        let mut app = App::default();
+        let notes = ProjectNotes {
+            title: "Notes".into(),
+            ..ProjectNotes::default()
+        };
+        app.project
+            .apply(DawAction::SetProjectNotes {
+                notes: notes.clone(),
+            })
+            .unwrap();
+        let _ = app.open_project_settings();
+        let before = app.project.snapshot();
+        let _ = app.update(Message::ProjectSettingsTempoChanged("96".into()));
+        let _ = app.update(Message::ProjectSettingsMeterNumeratorChanged("3".into()));
+        let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
+        assert_eq!(app.project.snapshot(), before);
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.tempo_at_tick(0), 96.0);
+        assert_eq!(
+            app.project.time_signature_at_tick(0),
+            TimeSignature::new(3, 8).unwrap()
+        );
+        assert!(app.project.undo().unwrap());
+        assert_eq!(app.project.tempo_at_tick(0), 120.0);
+        assert_eq!(
+            app.project.time_signature_at_tick(0),
+            TimeSignature::new(4, 4).unwrap()
+        );
+        assert_eq!(app.project.project_notes(), &notes);
+    }
+
+    #[test]
+    fn invalid_general_settings_leave_every_draft_unapplied() {
+        let mut app = App::default();
+        let before = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsTempoChanged("NaN".into()));
+        let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("3".into()));
+        let _ = app.update(Message::ProjectFrameRateChanged(FrameRate::Fps25));
+        let _ = app.apply_project_settings();
+        assert_eq!(app.project.snapshot(), before);
+        assert!(app.project_settings.is_some());
+        assert!(!app.status.is_empty());
+    }
+
     #[test]
     fn notes_drafts_cancel_then_commit_without_rewinding_media_history() {
         let mut app = App::default();
@@ -340,6 +471,34 @@ mod tests {
         ));
         assert!(app.project_settings_window_id.is_none());
         assert_eq!(app.project.settings().frame_rate(), FrameRate::Fps30);
+    }
+
+    #[test]
+    fn changing_project_settings_tabs_closes_the_video_menu() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let mut app = App::default();
+        let _ = app.open_project_settings();
+        let window = app.project_settings_window_id.unwrap();
+        let _ = app.update(Message::ProjectSettingsTabChanged(Tab::Video));
+        let _ = app.update(Message::ProjectFrameRateMenuChanged(true));
+        let original_rate = app.project_settings.as_ref().unwrap().rate;
+        let _ = app.update(Message::ProjectSettingsTabChanged(Tab::General));
+        assert!(!app.project_settings.as_ref().unwrap().menu_open);
+        let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::ArrowDown),
+            modified_key: Key::Named(Named::ArrowDown),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowDown),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            event,
+            iced::event::Status::Ignored,
+            window,
+        ));
+        assert_eq!(app.project_settings.as_ref().unwrap().rate, original_rate);
     }
 
     #[test]

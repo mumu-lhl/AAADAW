@@ -1,0 +1,55 @@
+{
+  "reference": {
+    "platform": "Linux",
+    "application": "REAPER",
+    "version": "7.82",
+    "theme": "Default 7",
+    "configuration": "fresh factory"
+  },
+  "general_initial_values": {
+    "project_sample_rate_enabled": false,
+    "project_sample_rate_hz": 44100,
+    "bpm": 120,
+    "time_signature": [
+      4,
+      4
+    ],
+    "bpm_basis": [
+      1,
+      4
+    ],
+    "project_item_timebase": "Beats (position, length, rate)",
+    "timebase_affects_midi_items": false,
+    "automation_item_length_timebase": "Beats",
+    "project_start_time": "0:00.000",
+    "start_measure": 1,
+    "base_ruler_spacing_enabled": true,
+    "playback_resampling": "Sinc interpolation: 64pt (medium quality)",
+    "render_resampling": "Sinc interpolation: 192pt"
+  },
+  "implemented_subset": {
+    "initial_tempo": "120 BPM via Project::tempo_at_tick(0)",
+    "initial_meter": [
+      4,
+      4
+    ],
+    "apply": "atomic SetTempo@0 + SetTimeSignature@0",
+    "cancel": "keeps snapshot unchanged"
+  },
+  "read_only_probe": {
+    "project_sample_rate_hz": 44100,
+    "project_sample_rate_enabled": false,
+    "item_timebase_code": 1,
+    "timebase_flags": 0,
+    "initial_tempo_bpm": 120,
+    "initial_meter": [
+      4,
+      4
+    ],
+    "project_time_offset_seconds": 0
+  },
+  "limitations": [
+    "Start-of-project time offset, display timebase, beat-synced audio item storage, sample rate and resampling settings are not implemented",
+    "Values use only the owned project-settings probe window; no REAPER window screenshot is committed"
+  ]
+}
