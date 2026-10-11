@@ -1666,6 +1666,7 @@ impl App {
                     | Message::ProjectSettingsMeterNumeratorChanged(_)
                     | Message::ProjectSettingsMeterDenominatorChanged(_)
                     | Message::ProjectSettingsStartMeasureChanged(_)
+                    | Message::ProjectSettingsBpmBasisChanged(_)
                     | Message::ProjectNotesTitleChanged(_)
                     | Message::ProjectNotesAuthorChanged(_)
                     | Message::ProjectNotesEdited(_)
@@ -2094,6 +2095,11 @@ impl App {
             Message::ProjectSettingsStartMeasureChanged(value) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.start_measure = value;
+                }
+            }
+            Message::ProjectSettingsBpmBasisChanged(basis) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.bpm_basis = basis;
                 }
             }
             Message::ProjectSettingsTabChanged(tab) => {

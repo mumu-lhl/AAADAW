@@ -219,6 +219,10 @@ enum ProjectEvent {
         before: crate::FrameRate,
         after: crate::FrameRate,
     },
+    BpmBasisChanged {
+        before: crate::BpmBasis,
+        after: crate::BpmBasis,
+    },
     ProjectStartMeasureChanged {
         before: i32,
         after: i32,
@@ -429,6 +433,10 @@ impl ProjectEvent {
                 after: before.clone(),
             },
             Self::FrameRateChanged { before, after } => Self::FrameRateChanged {
+                before: *after,
+                after: *before,
+            },
+            Self::BpmBasisChanged { before, after } => Self::BpmBasisChanged {
                 before: *after,
                 after: *before,
             },
@@ -970,7 +978,7 @@ impl Project {
         self.state.tempo_map.tick_at_sample_position(sample)
     }
 
-    /// Returns the tempo active at a PPQ tick position.
+    /// Returns the displayed BPM active at a PPQ tick position in the project's selected basis.
     pub fn tempo_at_tick(&self, tick: u64) -> f64 {
         self.state.tempo_map.tempo_at_tick(tick)
     }
@@ -1601,6 +1609,10 @@ impl Project {
             DawAction::SetFrameRate { rate } => ProjectEvent::FrameRateChanged {
                 before: state.frame_rate,
                 after: rate,
+            },
+            DawAction::SetProjectBpmBasis { basis } => ProjectEvent::BpmBasisChanged {
+                before: state.tempo_map.settings().bpm_basis(),
+                after: basis,
             },
             DawAction::SetProjectStartMeasure { measure } => {
                 ProjectEvent::ProjectStartMeasureChanged {
@@ -2978,6 +2990,18 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.frame_rate = *after;
+            }
+            ProjectEvent::BpmBasisChanged { before, after } => {
+                if state.tempo_map.settings().bpm_basis() != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_bpm_basis(*after)
+                    .map_err(|error| match error {
+                        TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
+                        _ => ActionError::TempoMapOutOfRange,
+                    })?;
             }
             ProjectEvent::ProjectStartMeasureChanged { before, after } => {
                 if state.meter_map.start_measure() != *before {

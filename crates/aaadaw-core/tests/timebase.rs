@@ -1,4 +1,66 @@
-use aaadaw_core::{ActionError, DawAction, Project, TempoCurve};
+use aaadaw_core::{ActionError, BpmBasis, DawAction, Project, TempoCurve};
+
+#[test]
+fn bpm_basis_scales_tempo_time_and_is_undoable_and_persistent() {
+    let mut reference = Project::new();
+    reference
+        .apply(DawAction::SetTempo {
+            start_tick: 1920,
+            bpm: 60.0,
+        })
+        .unwrap();
+    reference
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let reference_sample = reference.sample_at_tick(3840).unwrap();
+
+    for basis in BpmBasis::ALL {
+        assert_eq!(
+            BpmBasis::from_storage_code(basis.storage_code()),
+            Some(basis)
+        );
+        let mut project = Project::new();
+        project
+            .apply(DawAction::SetTempo {
+                start_tick: 1920,
+                bpm: 60.0,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTempoCurve {
+                start_tick: 0,
+                curve: TempoCurve::Linear,
+            })
+            .unwrap();
+
+        if basis != BpmBasis::Quarter {
+            project
+                .apply(DawAction::SetProjectBpmBasis { basis })
+                .unwrap();
+        }
+        let sample = project.sample_at_tick(3840).unwrap();
+        assert!(
+            (sample as f64 * basis.quarter_notes_per_beat() - reference_sample as f64).abs() < 2.0
+        );
+        assert_eq!(project.tick_at_sample(sample).unwrap(), 3840);
+        assert_eq!(project.tempo_at_tick(0), 120.0);
+        assert_eq!(project.settings().bpm_basis(), basis);
+
+        let reopened = Project::from_snapshot(project.snapshot()).unwrap();
+        assert_eq!(reopened.settings().bpm_basis(), basis);
+        assert_eq!(reopened.sample_at_tick(3840).unwrap(), sample);
+        if basis != BpmBasis::Quarter {
+            assert!(project.undo().unwrap());
+            assert_eq!(project.sample_at_tick(3840).unwrap(), reference_sample);
+            assert!(project.redo().unwrap());
+            assert_eq!(project.sample_at_tick(3840).unwrap(), sample);
+        }
+    }
+    assert_eq!(BpmBasis::from_storage_code(6), None);
+}
 
 #[test]
 fn sample_and_ppq_positions_follow_tempo_changes() {

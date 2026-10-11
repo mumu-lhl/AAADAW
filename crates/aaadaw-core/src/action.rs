@@ -15,6 +15,10 @@ pub enum DawAction {
     SetFrameRate {
         rate: crate::FrameRate,
     },
+    /// Change the note value counted as one BPM beat.
+    SetProjectBpmBasis {
+        basis: crate::BpmBasis,
+    },
     /// Change the signed measure number displayed at project tick zero.
     SetProjectStartMeasure {
         measure: i32,

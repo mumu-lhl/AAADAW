@@ -4,7 +4,7 @@ use std::fmt;
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 /// Default musical resolution in ticks per quarter note.
 pub const DEFAULT_PPQ: u32 = 960;
-/// Default project tempo in quarter notes per minute.
+/// Default project tempo in quarter-note beats per minute.
 pub const DEFAULT_TEMPO_BPM: f64 = 120.0;
 // Tempo segment integration uses f64 positions; reject integers beyond its exact range.
 const MAX_EXACT_FLOAT_POSITION: u64 = 1 << 53;
@@ -19,6 +19,80 @@ pub enum PanMode {
     ZeroDbBalance,
 }
 
+/// The note value counted as one BPM beat in project tempo calculations.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum BpmBasis {
+    /// Eighth notes per minute.
+    Eighth = 0,
+    /// Quarter notes per minute, the factory default.
+    #[default]
+    Quarter = 1,
+    /// Half notes per minute.
+    Half = 2,
+    /// Dotted eighth notes per minute.
+    DottedEighth = 3,
+    /// Dotted quarter notes per minute.
+    DottedQuarter = 4,
+    /// Dotted half notes per minute.
+    DottedHalf = 5,
+}
+
+impl BpmBasis {
+    /// BPM bases in the order shown by REAPER 7.82.
+    pub const ALL: [Self; 6] = [
+        Self::Eighth,
+        Self::Quarter,
+        Self::Half,
+        Self::DottedEighth,
+        Self::DottedQuarter,
+        Self::DottedHalf,
+    ];
+
+    /// Returns the number of quarter notes in one displayed BPM beat.
+    pub const fn quarter_notes_per_beat(self) -> f64 {
+        match self {
+            Self::Eighth => 0.5,
+            Self::Quarter => 1.0,
+            Self::Half => 2.0,
+            Self::DottedEighth => 0.75,
+            Self::DottedQuarter => 1.5,
+            Self::DottedHalf => 3.0,
+        }
+    }
+
+    /// Returns the stable project-storage code.
+    pub const fn storage_code(self) -> u32 {
+        self as u32
+    }
+
+    /// Decodes a stable project-storage code.
+    pub const fn from_storage_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(Self::Eighth),
+            1 => Some(Self::Quarter),
+            2 => Some(Self::Half),
+            3 => Some(Self::DottedEighth),
+            4 => Some(Self::DottedQuarter),
+            5 => Some(Self::DottedHalf),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for BpmBasis {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Eighth => "1/8",
+            Self::Quarter => "1/4",
+            Self::Half => "1/2",
+            Self::DottedEighth => "1/8 dotted",
+            Self::DottedQuarter => "1/4 dotted",
+            Self::DottedHalf => "1/2 dotted",
+        })
+    }
+}
+
 /// Immutable construction settings for a project.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectSettings {
@@ -26,6 +100,7 @@ pub struct ProjectSettings {
     ppq: u32,
     initial_tempo_bpm: f64,
     start_measure: i32,
+    bpm_basis: BpmBasis,
     pan_mode: PanMode,
     frame_rate: crate::FrameRate,
 }
@@ -39,7 +114,7 @@ impl ProjectSettings {
         if ppq == 0 {
             return Err(TimebaseError::InvalidPpq);
         }
-        if !is_valid_tempo_for(sample_rate, ppq, initial_tempo_bpm) {
+        if !is_valid_tempo_for(sample_rate, ppq, initial_tempo_bpm, BpmBasis::Quarter) {
             return Err(TimebaseError::InvalidTempo);
         }
         Ok(Self {
@@ -47,6 +122,7 @@ impl ProjectSettings {
             ppq,
             initial_tempo_bpm,
             start_measure: 1,
+            bpm_basis: BpmBasis::default(),
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         })
@@ -85,6 +161,20 @@ impl ProjectSettings {
         self.start_measure
     }
 
+    /// Selects the note value counted as one BPM beat.
+    pub fn with_bpm_basis(mut self, basis: BpmBasis) -> Result<Self, TimebaseError> {
+        if !is_valid_tempo_for(self.sample_rate, self.ppq, self.initial_tempo_bpm, basis) {
+            return Err(TimebaseError::InvalidTempo);
+        }
+        self.bpm_basis = basis;
+        Ok(self)
+    }
+
+    /// Returns the note value counted as one BPM beat.
+    pub fn bpm_basis(self) -> BpmBasis {
+        self.bpm_basis
+    }
+
     /// Returns the project sample rate.
     pub fn sample_rate(self) -> u32 {
         self.sample_rate
@@ -95,7 +185,7 @@ impl ProjectSettings {
         self.ppq
     }
 
-    /// Returns the initial tempo in quarter notes per minute.
+    /// Returns the initial BPM in the selected note-value basis.
     pub fn initial_tempo_bpm(self) -> f64 {
         self.initial_tempo_bpm
     }
@@ -108,6 +198,7 @@ impl Default for ProjectSettings {
             ppq: DEFAULT_PPQ,
             initial_tempo_bpm: DEFAULT_TEMPO_BPM,
             start_measure: 1,
+            bpm_basis: BpmBasis::default(),
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -528,6 +619,7 @@ struct TempoPoint {
 pub(crate) struct TempoMap {
     sample_rate: u32,
     ppq: u32,
+    bpm_basis: BpmBasis,
     points: Vec<TempoPoint>,
 }
 
@@ -536,6 +628,7 @@ impl TempoMap {
         Self {
             sample_rate: settings.sample_rate,
             ppq: settings.ppq,
+            bpm_basis: settings.bpm_basis,
             points: vec![TempoPoint {
                 start_tick: 0,
                 bpm: settings.initial_tempo_bpm,
@@ -551,6 +644,7 @@ impl TempoMap {
             ppq: self.ppq,
             initial_tempo_bpm: self.points[0].bpm,
             start_measure: 1,
+            bpm_basis: self.bpm_basis,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -581,7 +675,9 @@ impl TempoMap {
         start_tick: u64,
         bpm: Option<f64>,
     ) -> Result<(), TimebaseError> {
-        if bpm.is_some_and(|value| !is_valid_tempo_for(self.sample_rate, self.ppq, value)) {
+        if bpm.is_some_and(|value| {
+            !is_valid_tempo_for(self.sample_rate, self.ppq, value, self.bpm_basis)
+        }) {
             return Err(TimebaseError::InvalidTempo);
         }
         if start_tick == 0 && bpm.is_none() {
@@ -608,7 +704,25 @@ impl TempoMap {
             ),
             (Err(_), None) => return Err(TimebaseError::TempoPointNotFound),
         }
-        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq)?;
+        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, self.bpm_basis)?;
+        self.points = points;
+        Ok(())
+    }
+
+    pub(crate) fn set_bpm_basis(&mut self, basis: BpmBasis) -> Result<(), TimebaseError> {
+        if self.bpm_basis == basis {
+            return Ok(());
+        }
+        if self
+            .points
+            .iter()
+            .any(|point| !is_valid_tempo_for(self.sample_rate, self.ppq, point.bpm, basis))
+        {
+            return Err(TimebaseError::InvalidTempo);
+        }
+        let mut points = self.points.clone();
+        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, basis)?;
+        self.bpm_basis = basis;
         self.points = points;
         Ok(())
     }
@@ -623,7 +737,7 @@ impl TempoMap {
             .binary_search_by_key(&start_tick, |point| point.start_tick)
             .map_err(|_| TimebaseError::TempoPointNotFound)?;
         points[index].curve_to_next = curve;
-        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq)?;
+        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, self.bpm_basis)?;
         self.points = points;
         Ok(())
     }
@@ -663,8 +777,7 @@ impl TempoMap {
         let offset = tick - point.start_tick;
         let segment_length = end_tick - point.start_tick;
         let elapsed = segment_sample_offset(
-            self.sample_rate,
-            self.ppq,
+            tempo_integral_sample_scale(self.sample_rate, self.ppq, self.bpm_basis),
             point.bpm,
             end_bpm,
             curve,
@@ -690,9 +803,9 @@ impl TempoMap {
                 point.curve_to_next,
                 length,
                 offset / length as f64,
-            )?
+            )? / self.bpm_basis.quarter_notes_per_beat()
         } else {
-            offset / point.bpm
+            offset / point.bpm / self.bpm_basis.quarter_notes_per_beat()
         };
         let sample = point.start_sample
             + f64::from(self.sample_rate) * 60.0 / f64::from(self.ppq) * integral;
@@ -710,8 +823,7 @@ impl TempoMap {
         let offset = if let Some(next) = self.points.get(index + 1) {
             let length = next.start_tick - point.start_tick;
             ticks_from_sample_offset(
-                self.sample_rate,
-                self.ppq,
+                tempo_integral_sample_scale(self.sample_rate, self.ppq, self.bpm_basis),
                 point.bpm,
                 next.bpm,
                 point.curve_to_next,
@@ -721,8 +833,7 @@ impl TempoMap {
             .min(length as f64)
         } else {
             sample_offset_to_ticks(
-                self.sample_rate,
-                self.ppq,
+                tempo_integral_sample_scale(self.sample_rate, self.ppq, self.bpm_basis),
                 point.bpm,
                 sample - point.start_sample,
             )?
@@ -746,8 +857,7 @@ impl TempoMap {
         let offset = if let Some(next) = next {
             let segment_length = next.start_tick - point.start_tick;
             ticks_from_sample_offset(
-                self.sample_rate,
-                self.ppq,
+                tempo_integral_sample_scale(self.sample_rate, self.ppq, self.bpm_basis),
                 point.bpm,
                 next.bpm,
                 point.curve_to_next,
@@ -757,8 +867,7 @@ impl TempoMap {
             .min(segment_length as f64)
         } else {
             sample_offset_to_ticks(
-                self.sample_rate,
-                self.ppq,
+                tempo_integral_sample_scale(self.sample_rate, self.ppq, self.bpm_basis),
                 point.bpm,
                 sample - point.start_sample,
             )?
@@ -778,8 +887,10 @@ impl TempoMap {
         points: &mut [TempoPoint],
         sample_rate: u32,
         ppq: u32,
+        bpm_basis: BpmBasis,
     ) -> Result<(), TimebaseError> {
         points[0].start_sample = 0.0;
+        let sample_scale = tempo_integral_sample_scale(sample_rate, ppq, bpm_basis);
         for index in 1..points.len() {
             let previous = points[index - 1];
             let next = points[index];
@@ -788,8 +899,7 @@ impl TempoMap {
             }
             let length = next.start_tick - previous.start_tick;
             let duration = segment_sample_offset(
-                sample_rate,
-                ppq,
+                sample_scale,
                 previous.bpm,
                 next.bpm,
                 previous.curve_to_next,
@@ -809,9 +919,12 @@ impl TempoMap {
     }
 }
 
+fn tempo_integral_sample_scale(sample_rate: u32, ppq: u32, basis: BpmBasis) -> f64 {
+    f64::from(sample_rate) * 60.0 / f64::from(ppq) / basis.quarter_notes_per_beat()
+}
+
 fn segment_sample_offset(
-    sample_rate: u32,
-    ppq: u32,
+    sample_scale: f64,
     start_bpm: f64,
     end_bpm: f64,
     curve: TempoCurve,
@@ -821,9 +934,8 @@ fn segment_sample_offset(
     if offset_ticks > segment_length {
         return Err(TimebaseError::PositionOutOfRange);
     }
-    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
-    let samples =
-        scale * segment_integral_ticks(start_bpm, end_bpm, curve, segment_length, offset_ticks)?;
+    let samples = sample_scale
+        * segment_integral_ticks(start_bpm, end_bpm, curve, segment_length, offset_ticks)?;
     if !samples.is_finite() || samples < 0.0 {
         return Err(TimebaseError::PositionOutOfRange);
     }
@@ -831,13 +943,11 @@ fn segment_sample_offset(
 }
 
 fn sample_offset_to_ticks(
-    sample_rate: u32,
-    ppq: u32,
+    sample_scale: f64,
     bpm: f64,
     sample_offset: f64,
 ) -> Result<f64, TimebaseError> {
-    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
-    let ticks = sample_offset * bpm / scale;
+    let ticks = sample_offset * bpm / sample_scale;
     if !ticks.is_finite() || ticks < 0.0 {
         return Err(TimebaseError::PositionOutOfRange);
     }
@@ -845,8 +955,7 @@ fn sample_offset_to_ticks(
 }
 
 fn ticks_from_sample_offset(
-    sample_rate: u32,
-    ppq: u32,
+    sample_scale: f64,
     start_bpm: f64,
     end_bpm: f64,
     curve: TempoCurve,
@@ -854,10 +963,9 @@ fn ticks_from_sample_offset(
     sample_offset: f64,
 ) -> Result<f64, TimebaseError> {
     if curve == TempoCurve::Step || segment_length == 0 || start_bpm == end_bpm {
-        return sample_offset_to_ticks(sample_rate, ppq, start_bpm, sample_offset);
+        return sample_offset_to_ticks(sample_scale, start_bpm, sample_offset);
     }
-    let scale = f64::from(sample_rate) * 60.0 / f64::from(ppq);
-    let target = sample_offset / scale;
+    let target = sample_offset / sample_scale;
     let ticks = match curve {
         TempoCurve::Linear => {
             let slope = (end_bpm - start_bpm) / segment_length as f64;
@@ -1051,11 +1159,11 @@ impl Default for TempoMap {
     }
 }
 
-fn is_valid_tempo_for(sample_rate: u32, ppq: u32, bpm: f64) -> bool {
+fn is_valid_tempo_for(sample_rate: u32, ppq: u32, bpm: f64, basis: BpmBasis) -> bool {
     if !bpm.is_finite() || bpm <= 0.0 {
         return false;
     }
-    let samples_per_tick = f64::from(sample_rate) * 60.0 / (bpm * f64::from(ppq));
+    let samples_per_tick = tempo_integral_sample_scale(sample_rate, ppq, basis) / bpm;
     samples_per_tick.is_finite() && samples_per_tick > 0.0
 }
 

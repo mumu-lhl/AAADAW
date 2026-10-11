@@ -33,9 +33,10 @@
       4,
       4
     ],
+    "bpm_basis": "Six native options in REAPER order: 1/8, 1/4, 1/2, 1/8 dotted, 1/4 dotted, 1/2 dotted; default 1/4. BPM is interpreted as beats of the selected note value.",
     "start_measure": "Signed i32 displayed measure at tick zero; 0 and -2 accepted by native UI and AAADAW",
     "musical_positions": "Signed displayed bars round-trip in Beats properties and anchor timeline ruler labels",
-    "apply": "one atomic transaction: SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure",
+    "apply": "one atomic transaction: SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure + SetProjectBpmBasis",
     "cancel": "keeps snapshot unchanged"
   },
   "read_only_probe": {

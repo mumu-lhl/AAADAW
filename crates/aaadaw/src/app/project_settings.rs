@@ -1,6 +1,6 @@
 mod frame_rate_menu;
 use super::{App, Message};
-use aaadaw_core::{DawAction, FrameRate, ProjectNotes, TimeSignature};
+use aaadaw_core::{BpmBasis, DawAction, FrameRate, ProjectNotes, TimeSignature};
 use iced::widget::{button, checkbox, column, container, row, text, text_editor, text_input};
 use iced::{Element, Length, Task};
 
@@ -21,6 +21,7 @@ pub(super) struct Draft {
     pub meter_numerator: String,
     pub meter_denominator: String,
     pub start_measure: String,
+    pub bpm_basis: BpmBasis,
     generation: u64,
     pub menu_open: bool,
     pub menu_epoch: u64,
@@ -45,6 +46,7 @@ impl Draft {
                 .denominator()
                 .to_string(),
             start_measure: app.project.settings().start_measure().to_string(),
+            bpm_basis: app.project.settings().bpm_basis(),
             generation: app.project_generation,
             menu_open: false,
             menu_epoch: 0,
@@ -143,9 +145,13 @@ impl App {
                 return Task::none();
             }
         };
+        let bpm_basis = draft.bpm_basis;
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
+        if self.project.settings().bpm_basis() != bpm_basis {
+            actions.push(DawAction::SetProjectBpmBasis { basis: bpm_basis });
+        }
         if self.project.tempo_at_tick(0) != tempo_bpm {
             actions.push(DawAction::SetTempo {
                 start_tick: 0,
@@ -185,6 +191,7 @@ impl App {
                 || self.project.tempo_at_tick(0) != tempo_bpm
                 || self.project.time_signature_at_tick(0) != signature
                 || self.project.settings().start_measure() != start_measure
+                || self.project.settings().bpm_basis() != bpm_basis
                 || self.project.project_notes() != &notes
             {
                 return Task::none();
@@ -201,24 +208,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let content: Element<'_, Message> = match draft.tab {
         Tab::General => column![
             row![
-                text("BPM:").size(13).width(Length::Fixed(112.0)),
+                text("BPM:").size(13).width(Length::Fixed(32.0)),
                 text_input("120", &draft.tempo_bpm)
                     .on_input(Message::ProjectSettingsTempoChanged)
                     .size(13)
-                    .width(Length::Fixed(96.0))
-            ]
-            .spacing(6),
-            row![
+                    .width(Length::Fixed(68.0)),
                 text("Time signature:").size(13).width(Length::Fixed(112.0)),
                 text_input("4", &draft.meter_numerator)
                     .on_input(Message::ProjectSettingsMeterNumeratorChanged)
                     .size(13)
-                    .width(Length::Fixed(64.0)),
+                    .width(Length::Fixed(48.0)),
                 text("/").size(13),
                 text_input("4", &draft.meter_denominator)
                     .on_input(Message::ProjectSettingsMeterDenominatorChanged)
                     .size(13)
-                    .width(Length::Fixed(64.0))
+                    .width(Length::Fixed(48.0)),
+                text("BPM basis:").size(13).width(Length::Fixed(66.0)),
+                iced::widget::pick_list(
+                    BpmBasis::ALL,
+                    Some(draft.bpm_basis),
+                    Message::ProjectSettingsBpmBasisChanged,
+                )
+                .text_size(13)
+                .width(Length::Fixed(110.0))
             ]
             .spacing(6),
             row![
@@ -326,6 +338,7 @@ mod tests {
         let _ = app.update(Message::ProjectSettingsMeterNumeratorChanged("3".into()));
         let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
         let _ = app.update(Message::ProjectSettingsStartMeasureChanged("3".into()));
+        let _ = app.update(Message::ProjectSettingsBpmBasisChanged(BpmBasis::Eighth));
         assert_eq!(app.project.snapshot(), before);
         let _ = app.apply_project_settings();
         assert_eq!(app.project.tempo_at_tick(0), 96.0);
@@ -334,6 +347,8 @@ mod tests {
             TimeSignature::new(3, 8).unwrap()
         );
         assert_eq!(app.project.settings().start_measure(), 3);
+        assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Eighth);
+        assert_eq!(app.project.sample_at_tick(960).unwrap(), 60_000);
         assert!(app.project.undo().unwrap());
         assert_eq!(app.project.tempo_at_tick(0), 120.0);
         assert_eq!(
@@ -341,6 +356,7 @@ mod tests {
             TimeSignature::new(4, 4).unwrap()
         );
         assert_eq!(app.project.settings().start_measure(), 1);
+        assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Quarter);
         assert_eq!(app.project.project_notes(), &notes);
     }
 

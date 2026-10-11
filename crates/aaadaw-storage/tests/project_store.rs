@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData, Project,
-    VolumeAutomationPoint,
+    BpmBasis, DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
+    Project, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -107,6 +107,36 @@ fn project_start_measure_schema28_defaults_and_round_trips() {
         .unwrap();
     store.save(&changed).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), changed.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_bpm_basis_schema29_defaults_and_round_trips() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("ALTER TABLE project_meta DROP COLUMN bpm_basis; PRAGMA user_version=29;")
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut migrated = store.load().unwrap();
+    assert_eq!(migrated.settings().bpm_basis(), BpmBasis::Quarter);
+    migrated
+        .apply(DawAction::SetProjectBpmBasis {
+            basis: BpmBasis::DottedEighth,
+        })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
     store.close().unwrap();
     remove_database(&path);
 }
