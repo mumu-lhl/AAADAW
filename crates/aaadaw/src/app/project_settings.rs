@@ -25,6 +25,7 @@ pub(super) struct Draft {
     pub start_measure: String,
     pub project_start_time: String,
     original_project_start_time_offset_seconds: f64,
+    pub allow_fractional_frame_offset: bool,
     pub bpm_basis: BpmBasis,
     pub base_ruler_label_spacing_on_measure: bool,
     generation: u64,
@@ -42,6 +43,14 @@ pub(super) fn apply_start_time_command(
     if draft.generation != app.project_generation {
         return app.close_project_settings();
     }
+    if let start_time_menu::StartTimeCommand::AllowFractionalFrameOffset(allowed) = command {
+        if let Some(draft) = &mut app.project_settings {
+            draft.allow_fractional_frame_offset = !allowed;
+            draft.menu_open = false;
+            draft.menu_epoch = draft.menu_epoch.wrapping_add(1);
+        }
+        return Task::none();
+    }
     let result = match command {
         start_time_menu::StartTimeCommand::SetTimeAtCursor => app
             .project
@@ -57,6 +66,9 @@ pub(super) fn apply_start_time_command(
             start_measure_for_edit_cursor(app).map(|measure| measure.to_string())
         }
         start_time_menu::StartTimeCommand::ResetMeasure => Ok("1".to_owned()),
+        start_time_menu::StartTimeCommand::AllowFractionalFrameOffset(_) => unreachable!(
+            "fractional frame offset command is handled before the start time commands"
+        ),
     };
     if let Some(draft) = &mut app.project_settings {
         match (command, result) {
@@ -70,6 +82,9 @@ pub(super) fn apply_start_time_command(
                 | start_time_menu::StartTimeCommand::ResetMeasure,
                 Ok(value),
             ) => draft.start_measure = value,
+            (start_time_menu::StartTimeCommand::AllowFractionalFrameOffset(_), Ok(_)) => {
+                unreachable!("fractional frame offset command is handled earlier")
+            }
             (_, Err(error)) => app.status = error,
         }
         draft.menu_open = false;
@@ -136,6 +151,10 @@ impl Draft {
                 .project
                 .settings()
                 .project_start_time_offset_seconds(),
+            allow_fractional_frame_offset: app
+                .project
+                .settings()
+                .project_start_time_fractional_frame_offset_allowed(),
             bpm_basis: app.project.settings().bpm_basis(),
             base_ruler_label_spacing_on_measure: app
                 .project
@@ -254,6 +273,7 @@ impl App {
         };
         let bpm_basis = draft.bpm_basis;
         let base_ruler_label_spacing_on_measure = draft.base_ruler_label_spacing_on_measure;
+        let allow_fractional_frame_offset = draft.allow_fractional_frame_offset;
         let rate = draft.rate;
         let notes = draft.notes.clone();
         let mut actions = Vec::new();
@@ -292,6 +312,16 @@ impl App {
                 enabled: base_ruler_label_spacing_on_measure,
             });
         }
+        if self
+            .project
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+            != allow_fractional_frame_offset
+        {
+            actions.push(DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed {
+                allowed: allow_fractional_frame_offset,
+            });
+        }
         if self.project.settings().frame_rate() != rate {
             actions.push(DawAction::SetFrameRate { rate });
         }
@@ -321,6 +351,11 @@ impl App {
                     .settings()
                     .base_ruler_label_spacing_on_measure()
                     != base_ruler_label_spacing_on_measure
+                || self
+                    .project
+                    .settings()
+                    .project_start_time_fractional_frame_offset_allowed()
+                    != allow_fractional_frame_offset
                 || self.project.project_notes() != &notes
             {
                 return Task::none();
@@ -370,8 +405,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .on_input(Message::ProjectSettingsStartTimeChanged)
                     .size(13)
                     .width(Length::Fixed(120.0)),
-                iced::widget::keyed_column![(draft.menu_epoch, start_time_menu::view())]
-                    .width(Length::Shrink),
+                iced::widget::keyed_column![(
+                    draft.menu_epoch,
+                    start_time_menu::view(draft.allow_fractional_frame_offset)
+                )]
+                .width(Length::Shrink),
             ]
             .spacing(6),
             row![
@@ -551,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn start_time_commands_update_the_draft_and_apply_as_one_undo() {
+    fn start_time_commands_and_fractional_frame_flag_apply_as_one_undo() {
         let mut app = App::default();
         let before = app.project.snapshot();
         let _ = app.open_project_settings();
@@ -573,11 +611,21 @@ mod tests {
             &mut app,
             start_time_menu::StartTimeCommand::SetMeasureAtCursor,
         );
+        let _ = apply_start_time_command(
+            &mut app,
+            start_time_menu::StartTimeCommand::AllowFractionalFrameOffset(false),
+        );
         assert_eq!(
             app.project_settings.as_ref().unwrap().project_start_time,
             "-0:00.500"
         );
         assert_eq!(app.project_settings.as_ref().unwrap().start_measure, "0");
+        assert!(
+            app.project_settings
+                .as_ref()
+                .unwrap()
+                .allow_fractional_frame_offset
+        );
         assert_eq!(app.project.snapshot(), before);
 
         let _ = app.apply_project_settings();
@@ -586,6 +634,11 @@ mod tests {
             -0.5
         );
         assert_eq!(app.project.settings().start_measure(), 0);
+        assert!(
+            app.project
+                .settings()
+                .project_start_time_fractional_frame_offset_allowed()
+        );
         assert!(app.project.undo().unwrap());
         assert_eq!(app.project.snapshot(), before);
     }

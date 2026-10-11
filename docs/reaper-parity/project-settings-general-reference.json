@@ -36,10 +36,11 @@
     "bpm_basis": "Six native options in REAPER order: 1/8, 1/4, 1/2, 1/8 dotted, 1/4 dotted, 1/2 dotted; default 1/4. BPM is interpreted as beats of the selected note value.",
     "start_measure": "Signed i32 displayed measure at tick zero; 0 and -2 accepted by native UI and AAADAW",
     "project_start_time": "Signed project clock display offset; shifts ruler/transport and absolute item time displays without moving media samples or changing musical positions",
-    "start_time_measure_menu": "First four native commands implemented: set 0:00 at edit cursor, reset project start time, set measure 1 at nearest measure to edit cursor, and reset project start measure. Up/Down cycle, Enter executes, Escape closes; commands update the General draft until OK.",
+    "start_time_measure_menu": "All five native menu entries modeled: the first four set/reset time and measure values; the fifth toggles whether fractional-frame start offsets are allowed. Up/Down cycle, Enter executes, Escape closes; commands update the General draft until OK.",
+    "fractional_frame_start_offset": "Unchecked by default; persists through schema 33 and is stored in REAPER RPP TIMEMODE's final flag field (0 off, 4 on). Its video/timecode alignment effect still needs verification.",
     "musical_positions": "Signed displayed bars round-trip in Beats properties and anchor timeline ruler labels",
     "base_ruler_label_spacing": "Checked by default; checked uses start_measure as the ruler-label interval phase, unchecked uses measure 1",
-    "apply": "one atomic transaction: changed fields among SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure + SetProjectBpmBasis + SetBaseRulerLabelSpacingOnMeasure + SetProjectStartTimeOffsetSeconds",
+    "apply": "one atomic transaction: changed fields among SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure + SetProjectBpmBasis + SetBaseRulerLabelSpacingOnMeasure + SetProjectStartTimeOffsetSeconds + SetProjectStartTimeFractionalFrameOffsetAllowed",
     "cancel": "keeps snapshot unchanged"
   },
   "read_only_probe": {
@@ -55,7 +56,7 @@
     "project_start_time_offset_seconds": 0
   },
   "limitations": [
-    "The native fractional-frame project-start toggle is unimplemented; display timebase, beat-synced audio item storage, sample rate and resampling settings also remain unimplemented",
+    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Display timebase, beat-synced audio item storage, sample rate and resampling settings also remain unimplemented",
     "Default values came from the owned ReaScript probe; the native dialog was inspected for signed Start measure behavior, but no REAPER screenshot is committed"
   ]
 }

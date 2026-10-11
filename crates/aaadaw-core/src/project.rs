@@ -196,6 +196,7 @@ struct ProjectState {
     frame_rate: crate::FrameRate,
     base_ruler_label_spacing_on_measure: bool,
     project_start_time_offset_seconds: f64,
+    project_start_time_fractional_frame_offset_allowed: bool,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
@@ -212,6 +213,7 @@ impl Default for ProjectState {
             frame_rate: crate::FrameRate::default(),
             base_ruler_label_spacing_on_measure: true,
             project_start_time_offset_seconds: 0.0,
+            project_start_time_fractional_frame_offset_allowed: false,
             tracks: Vec::new(),
             audio_items: Vec::new(),
             midi_items: Vec::new(),
@@ -250,6 +252,10 @@ enum ProjectEvent {
     ProjectStartTimeOffsetChanged {
         before: f64,
         after: f64,
+    },
+    ProjectStartTimeFractionalFrameOffsetAllowedChanged {
+        before: bool,
+        after: bool,
     },
     ProjectStartMeasureChanged {
         before: i32,
@@ -476,6 +482,12 @@ impl ProjectEvent {
             }
             Self::ProjectStartTimeOffsetChanged { before, after } => {
                 Self::ProjectStartTimeOffsetChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectStartTimeFractionalFrameOffsetAllowedChanged { before, after } => {
+                Self::ProjectStartTimeFractionalFrameOffsetAllowedChanged {
                     before: *after,
                     after: *before,
                 }
@@ -917,6 +929,8 @@ impl Project {
                 frame_rate: settings.frame_rate(),
                 base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
                 project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
+                project_start_time_fractional_frame_offset_allowed: settings
+                    .project_start_time_fractional_frame_offset_allowed(),
                 tempo_map: TempoMap::new(settings),
                 meter_map: MeterMap::new(settings.ppq(), settings.start_measure()),
                 ..ProjectState::default()
@@ -1002,6 +1016,10 @@ impl Project {
             )
             .with_project_start_time_offset_seconds(self.state.project_start_time_offset_seconds)
             .expect("project start time offset is validated when actions are applied")
+            .with_project_start_time_fractional_frame_offset_allowed(
+                self.state
+                    .project_start_time_fractional_frame_offset_allowed,
+            )
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -1635,6 +1653,8 @@ impl Project {
                 frame_rate: settings.frame_rate(),
                 base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
                 project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
+                project_start_time_fractional_frame_offset_allowed: settings
+                    .project_start_time_fractional_frame_offset_allowed(),
                 tracks,
                 audio_items,
                 midi_items,
@@ -1704,6 +1724,12 @@ impl Project {
                 ProjectEvent::ProjectStartTimeOffsetChanged {
                     before: state.project_start_time_offset_seconds,
                     after: seconds,
+                }
+            }
+            DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed { allowed } => {
+                ProjectEvent::ProjectStartTimeFractionalFrameOffsetAllowedChanged {
+                    before: state.project_start_time_fractional_frame_offset_allowed,
+                    after: allowed,
                 }
             }
             DawAction::SetProjectStartMeasure { measure } => {
@@ -3109,6 +3135,12 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.project_start_time_offset_seconds = *after;
+            }
+            ProjectEvent::ProjectStartTimeFractionalFrameOffsetAllowedChanged { before, after } => {
+                if state.project_start_time_fractional_frame_offset_allowed != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.project_start_time_fractional_frame_offset_allowed = *after;
             }
             ProjectEvent::ProjectStartMeasureChanged { before, after } => {
                 if state.meter_map.start_measure() != *before {

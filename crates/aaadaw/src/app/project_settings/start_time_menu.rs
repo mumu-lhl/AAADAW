@@ -11,15 +11,21 @@ pub(crate) enum StartTimeCommand {
     ResetTime,
     SetMeasureAtCursor,
     ResetMeasure,
+    AllowFractionalFrameOffset(bool),
 }
 
 impl StartTimeCommand {
-    const ALL: [Self; 4] = [
-        Self::SetTimeAtCursor,
-        Self::ResetTime,
-        Self::SetMeasureAtCursor,
-        Self::ResetMeasure,
-    ];
+    const COUNT: usize = 5;
+
+    fn all(allow_fractional_frame_offset: bool) -> [Self; Self::COUNT] {
+        [
+            Self::SetTimeAtCursor,
+            Self::ResetTime,
+            Self::SetMeasureAtCursor,
+            Self::ResetMeasure,
+            Self::AllowFractionalFrameOffset(allow_fractional_frame_offset),
+        ]
+    }
 }
 
 impl fmt::Display for StartTimeCommand {
@@ -29,20 +35,28 @@ impl fmt::Display for StartTimeCommand {
             Self::ResetTime => "Reset project start time",
             Self::SetMeasureAtCursor => "Set measure 1 to nearest measure to current edit cursor",
             Self::ResetMeasure => "Reset project start measure",
+            Self::AllowFractionalFrameOffset(true) => {
+                "✓ Allow project start to be at a fractional frame offset"
+            }
+            Self::AllowFractionalFrameOffset(false) => {
+                "  Allow project start to be at a fractional frame offset"
+            }
         })
     }
 }
 
-pub(super) fn view() -> Element<'static, Message> {
+pub(super) fn view(allow_fractional_frame_offset: bool) -> Element<'static, Message> {
     Element::new(StartTimeMenu {
         content: iced::widget::button("Change start time/measure...").into(),
         class: <Theme as menu::Catalog>::default(),
+        commands: StartTimeCommand::all(allow_fractional_frame_offset),
     })
 }
 
 struct StartTimeMenu {
     content: Element<'static, Message>,
     class: <Theme as menu::Catalog>::Class<'static>,
+    commands: [StartTimeCommand; StartTimeCommand::COUNT],
 }
 
 struct State {
@@ -52,15 +66,11 @@ struct State {
 }
 
 fn move_selection(selected: Option<usize>, down: bool) -> usize {
-    let selected = selected.unwrap_or(if down {
-        StartTimeCommand::ALL.len() - 1
-    } else {
-        0
-    });
+    let selected = selected.unwrap_or(if down { StartTimeCommand::COUNT - 1 } else { 0 });
     if down {
-        (selected + 1) % StartTimeCommand::ALL.len()
+        (selected + 1) % StartTimeCommand::COUNT
     } else {
-        (selected + StartTimeCommand::ALL.len() - 1) % StartTimeCommand::ALL.len()
+        (selected + StartTimeCommand::COUNT - 1) % StartTimeCommand::COUNT
     }
 }
 
@@ -171,7 +181,7 @@ impl Widget<Message, Theme, iced::Renderer> for StartTimeMenu {
                     Named::Enter => {
                         let selected = state
                             .hovered
-                            .and_then(|index| StartTimeCommand::ALL.get(index))
+                            .and_then(|index| self.commands.get(index))
                             .copied()
                             .or(Some(StartTimeCommand::SetTimeAtCursor));
                         state.open = false;
@@ -240,7 +250,7 @@ impl Widget<Message, Theme, iced::Renderer> for StartTimeMenu {
         Some(
             menu::Menu::new(
                 &mut state.menu,
-                &StartTimeCommand::ALL,
+                &self.commands,
                 &mut state.hovered,
                 |command| {
                     state.open = false;
@@ -264,12 +274,21 @@ mod tests {
     fn start_time_menu_keyboard_moves_and_wraps_in_native_order() {
         assert_eq!(move_selection(None, true), 0);
         assert_eq!(move_selection(Some(0), true), 1);
-        assert_eq!(move_selection(Some(3), true), 0);
-        assert_eq!(move_selection(None, false), 3);
-        assert_eq!(move_selection(Some(0), false), 3);
+        assert_eq!(move_selection(Some(4), true), 0);
+        assert_eq!(move_selection(None, false), 4);
+        assert_eq!(move_selection(Some(0), false), 4);
+        let commands = StartTimeCommand::all(false);
         assert_eq!(
-            StartTimeCommand::ALL[2].to_string(),
+            commands[2].to_string(),
             "Set measure 1 to nearest measure to current edit cursor"
+        );
+        assert_eq!(
+            commands[4].to_string(),
+            "  Allow project start to be at a fractional frame offset"
+        );
+        assert_eq!(
+            StartTimeCommand::all(true)[4].to_string(),
+            "✓ Allow project start to be at a fractional frame offset"
         );
     }
 }

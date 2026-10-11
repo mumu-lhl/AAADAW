@@ -192,6 +192,14 @@ fn project_start_time_offset_schema31_defaults_and_round_trips() {
     let mut store = ProjectStore::open(&path).unwrap();
     let mut migrated = store.load().unwrap();
     assert_eq!(migrated.settings().project_start_time_offset_seconds(), 0.0);
+    assert!(
+        !migrated
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+    migrated
+        .apply(DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed { allowed: true })
+        .unwrap();
     migrated
         .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
         .unwrap();
@@ -202,6 +210,30 @@ fn project_start_time_offset_schema31_defaults_and_round_trips() {
         .unwrap();
     store.save(&migrated).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn fractional_frame_start_offset_flag_rejects_invalid_storage_values() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_meta SET project_start_time_fractional_frame_offset_allowed=2;",
+        )
+        .unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(StorageError::InvalidStoredData(
+            "unsupported fractional frame offset mode"
+        ))
+    ));
     store.close().unwrap();
     remove_database(&path);
 }

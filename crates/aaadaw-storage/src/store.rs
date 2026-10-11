@@ -23,13 +23,14 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 32;
+pub const CURRENT_SCHEMA_VERSION: u32 = 33;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
 const MIGRATION_31: &str = "ALTER TABLE project_meta ADD COLUMN base_ruler_label_spacing_on_measure INTEGER NOT NULL DEFAULT 1 CHECK(base_ruler_label_spacing_on_measure IN (0,1));";
 // SQLite parses these sentinels as infinities, so the check accepts every finite f64.
 const MIGRATION_32: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_offset_seconds REAL NOT NULL DEFAULT 0 CHECK(project_start_time_offset_seconds > -1.0e999 AND project_start_time_offset_seconds < 1.0e999);";
+const MIGRATION_33: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_fractional_frame_offset_allowed INTEGER NOT NULL DEFAULT 0 CHECK(project_start_time_fractional_frame_offset_allowed IN (0,1));";
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
 
@@ -2253,7 +2254,7 @@ impl ProjectStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
@@ -2265,6 +2266,7 @@ impl ProjectStore {
                         row.get::<_, i64>(5)?,
                         row.get::<_, i64>(6)?,
                         row.get::<_, f64>(7)?,
+                        row.get::<_, i64>(8)?,
                     ))
                 },
             )
@@ -2278,6 +2280,7 @@ impl ProjectStore {
             bpm_basis,
             base_ruler_label_spacing_on_measure,
             project_start_time_offset_seconds,
+            project_start_time_fractional_frame_offset_allowed,
         )) = metadata
         else {
             let rows: i64 = self.connection.query_row(
@@ -2317,6 +2320,16 @@ impl ProjectStore {
                 ));
             }
         };
+        let project_start_time_fractional_frame_offset_allowed =
+            match project_start_time_fractional_frame_offset_allowed {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported fractional frame offset mode",
+                    ));
+                }
+            };
 
         let settings = ProjectSettings::new(
             from_sql_u32(sample_rate)?,
@@ -2335,7 +2348,10 @@ impl ProjectStore {
         .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
         .with_base_ruler_label_spacing_on_measure(base_ruler_label_spacing_on_measure)
         .with_project_start_time_offset_seconds(project_start_time_offset_seconds)
-        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?;
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_project_start_time_fractional_frame_offset_allowed(
+            project_start_time_fractional_frame_offset_allowed,
+        );
 
         let tracks = read_tracks(&self.connection)?;
         let audio_items = read_audio_items(&self.connection)?;
@@ -2562,6 +2578,15 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_32)?;
                 }
             }
+            33 => {
+                if !table_has_column(
+                    &transaction,
+                    "project_meta",
+                    "project_start_time_fractional_frame_offset_allowed",
+                )? {
+                    transaction.execute_batch(MIGRATION_33)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2606,8 +2631,8 @@ fn write_snapshot(
         params![i64::from(settings.frame_rate().storage_code())],
     )?;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds) \
-         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed) \
+         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
@@ -2620,6 +2645,7 @@ fn write_snapshot(
             i64::from(settings.bpm_basis().storage_code()),
             settings.base_ruler_label_spacing_on_measure(),
             settings.project_start_time_offset_seconds(),
+            settings.project_start_time_fractional_frame_offset_allowed(),
         ],
     )?;
 

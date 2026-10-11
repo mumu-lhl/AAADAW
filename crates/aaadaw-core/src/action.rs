@@ -27,6 +27,10 @@ pub enum DawAction {
     SetProjectStartTimeOffsetSeconds {
         seconds: f64,
     },
+    /// Allow the project start time to use a fractional video-frame offset.
+    SetProjectStartTimeFractionalFrameOffsetAllowed {
+        allowed: bool,
+    },
     /// Change the signed measure number displayed at project tick zero.
     SetProjectStartMeasure {
         measure: i32,

@@ -103,6 +103,7 @@ pub struct ProjectSettings {
     bpm_basis: BpmBasis,
     base_ruler_label_spacing_on_measure: bool,
     project_start_time_offset_seconds: f64,
+    project_start_time_fractional_frame_offset_allowed: bool,
     pan_mode: PanMode,
     frame_rate: crate::FrameRate,
 }
@@ -127,6 +128,7 @@ impl ProjectSettings {
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
             project_start_time_offset_seconds: 0.0,
+            project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         })
@@ -207,6 +209,20 @@ impl ProjectSettings {
         self.project_start_time_offset_seconds
     }
 
+    /// Selects whether the project may have a fractional video-frame start offset.
+    pub fn with_project_start_time_fractional_frame_offset_allowed(
+        mut self,
+        allowed: bool,
+    ) -> Self {
+        self.project_start_time_fractional_frame_offset_allowed = allowed;
+        self
+    }
+
+    /// Returns whether the project may have a fractional video-frame start offset.
+    pub fn project_start_time_fractional_frame_offset_allowed(self) -> bool {
+        self.project_start_time_fractional_frame_offset_allowed
+    }
+
     /// Returns the project sample rate.
     pub fn sample_rate(self) -> u32 {
         self.sample_rate
@@ -233,6 +249,7 @@ impl Default for ProjectSettings {
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
             project_start_time_offset_seconds: 0.0,
+            project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }
@@ -686,6 +703,7 @@ impl TempoMap {
             bpm_basis: self.bpm_basis,
             base_ruler_label_spacing_on_measure: true,
             project_start_time_offset_seconds: 0.0,
+            project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
             frame_rate: crate::FrameRate::default(),
         }

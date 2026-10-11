@@ -159,6 +159,37 @@ fn project_start_time_offset_restores_inside_a_settings_transaction() {
 }
 
 #[test]
+fn fractional_frame_project_start_flag_is_undoable_and_transactional() {
+    let mut project = Project::new();
+    assert!(
+        !project
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+    project
+        .apply(DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed { allowed: true })
+        .unwrap();
+    assert!(
+        project
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+    assert!(project.undo().unwrap());
+    assert!(
+        !project
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+    assert!(project.redo().unwrap());
+    assert!(
+        project
+            .snapshot()
+            .settings
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+}
+
+#[test]
 fn sample_and_ppq_positions_follow_tempo_changes() {
     let mut project = Project::new();
 
