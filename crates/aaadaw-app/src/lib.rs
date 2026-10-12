@@ -52,8 +52,9 @@ pub use offline_render::{
     render_freeze_track_to_float32_wav, render_graph_to_pcm24_wav, render_graph_to_wav,
     render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
     render_project_file_to_pcm24_wav, render_project_file_to_wav,
-    render_project_file_to_wav_with_settings, render_range_length_samples,
-    render_range_length_samples_with_tail_milliseconds, render_selected_tracks_via_master_to_wavs,
+    render_project_file_to_wav_with_settings, render_project_wav_sources_to_wavs,
+    render_range_length_samples, render_range_length_samples_with_tail_milliseconds,
+    render_selected_tracks_via_master_to_wavs,
 };
 pub use wav_export::{
     Float32WavExport, Float32WavExportError, IntegerPcmWavExportError, Pcm16WavExport,

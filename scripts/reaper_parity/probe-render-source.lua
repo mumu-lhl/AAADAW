@@ -48,14 +48,20 @@ for _, probe in ipairs({
   { name = "master-mix", flags = 0, selection = "one" },
   { name = "selected-via-master-$track", flags = 128, selection = "one" },
   { name = "selected-stems-$track", flags = 128, selection = "both" },
+  { name = "master-plus-stems-$track", flags = 1, selection = "both" },
+  { name = "stems-only-$track", flags = 2, selection = "both" },
+  { name = "master-plus-selected-via-master-$track", flags = 129, selection = "both" },
+  { name = "selected-via-master-only-$track", flags = 130, selection = "both" },
 }) do
-  reaper.SetTrackSelected(selected, true)
+  reaper.SetTrackSelected(selected, probe.selection ~= "none")
   reaper.SetTrackSelected(unselected, probe.selection == "both")
   reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", probe.flags, true)
+  local flags_before_render = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", probe.name, true)
   reaper.Main_OnCommand(42230, 0)
-  log:write(probe.name, "\tflags=",
-    reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false),
+  log:write(probe.name, "\trequested_flags=", probe.flags,
+    "\tflags_before_render=", flags_before_render,
+    "\tflags_after_render=", reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false),
     "\tselected_tracks=", reaper.CountSelectedTracks(0), "\n")
   log:flush()
 end

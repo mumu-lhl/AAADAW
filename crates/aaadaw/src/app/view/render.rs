@@ -18,10 +18,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Some("Create a time selection in Arrange to render that range.")
         } else if !app.has_valid_render_source() {
             Some("Select one or more tracks in Arrange to render them via the master.")
-        } else if cfg!(target_os = "android")
-            && app.render_dialog.source == RenderSource::SelectedTracksViaMaster
-            && app.selected_render_track_count() > 1
-        {
+        } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
             Some("The Android document picker supports one output file at a time.")
         } else if app.render_dialog.normalize_peak
             && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
@@ -53,6 +50,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
+        text(app.render_source_description()).size(11),
         row![
             text("Bounds").size(13),
             iced::widget::Space::new().width(Length::Fill),

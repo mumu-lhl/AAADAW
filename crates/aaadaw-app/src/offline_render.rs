@@ -924,18 +924,51 @@ pub fn render_selected_tracks_via_master_to_wavs(
     destinations: &[(TrackId, PathBuf)],
     settings: ProjectWavRenderSettings,
     cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let outputs = destinations
+        .iter()
+        .map(|(track_id, destination)| {
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(*track_id),
+                destination.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    render_project_wav_sources_to_wavs(
+        project_path,
+        project,
+        &outputs,
+        settings,
+        cancelled,
+        report_progress,
+    )
+}
+
+/// Renders the requested Master/selected-track outputs and publishes the complete WAV set.
+///
+/// Outputs are rendered into a private staging directory on the destination filesystem. Existing
+/// output files are rejected, and staged files are published with no-clobber hard links only after
+/// every source has rendered successfully. Cancellation or a render/publication error removes the
+/// staged files and outputs already linked by this call.
+pub fn render_project_wav_sources_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    outputs: &[(ProjectWavRenderSource, PathBuf)],
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
-    if destinations.is_empty() {
+    if outputs.is_empty() {
         return Err(OfflineRenderError::Media(
-            "at least one track is required for stem rendering".to_owned(),
+            "at least one render output is required".to_owned(),
         ));
     }
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
 
-    let destination_directory = destinations[0]
+    let destination_directory = outputs[0]
         .1
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -947,9 +980,11 @@ pub fn render_selected_tracks_via_master_to_wavs(
         )));
     }
 
-    let mut unique_destinations = HashSet::with_capacity(destinations.len());
-    for (track_id, destination) in destinations {
-        if !project.tracks().iter().any(|track| track.id() == *track_id) {
+    let mut unique_destinations = HashSet::with_capacity(outputs.len());
+    for (source, destination) in outputs {
+        if let ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
+            && !project.tracks().iter().any(|track| track.id() == *track_id)
+        {
             return Err(OfflineRenderError::Media(format!(
                 "selected render track {} no longer exists",
                 track_id.value()
@@ -994,18 +1029,18 @@ pub fn render_selected_tracks_via_master_to_wavs(
         settings.tail_milliseconds,
     )?;
     let total_work = total_frames
-        .checked_mul(destinations.len() as u64)
+        .checked_mul(outputs.len() as u64)
         .ok_or(OfflineRenderError::TimelineRange)?;
     let staging_directory = StemStagingDirectory::create(destination_directory)?;
-    let mut staged = Vec::with_capacity(destinations.len());
+    let mut staged = Vec::with_capacity(outputs.len());
 
-    for (index, (track_id, destination)) in destinations.iter().enumerate() {
+    for (index, (source, destination)) in outputs.iter().enumerate() {
         if cancelled.load(Ordering::Acquire) {
             return Err(OfflineRenderError::Cancelled);
         }
         let staging_path = staging_directory.0.join(format!("stem-{index:04}.wav"));
         let mut track_settings = settings;
-        track_settings.source = ProjectWavRenderSource::SelectedTrackViaMaster(*track_id);
+        track_settings.source = *source;
         let work_offset = total_frames
             .checked_mul(index as u64)
             .ok_or(OfflineRenderError::TimelineRange)?;
@@ -1829,6 +1864,55 @@ mod tests {
         }
         fs::remove_file(&first).expect("first stem should be removed");
         fs::remove_file(&second).expect("second stem should be removed");
+
+        let mix = base.with_file_name(format!("{unique}-mix.wav"));
+        let mixed_first = base.with_file_name(format!("{unique}-mix-first.wav"));
+        let mixed_second = base.with_file_name(format!("{unique}-mix-second.wav"));
+        let mix_and_stems = vec![
+            (ProjectWavRenderSource::MasterMix, mix.clone()),
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[0].id()),
+                mixed_first.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[1].id()),
+                mixed_second.clone(),
+            ),
+        ];
+        render_project_wav_sources_to_wavs(
+            &project_path,
+            &project,
+            &mix_and_stems,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("Master mix and selected stems should publish together");
+        for path in [&mix, &mixed_first, &mixed_second] {
+            let bytes = fs::read(path).expect("Master/stem output should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+        }
+        let mix_bytes = fs::read(&mix).expect("Master mix should be readable");
+        let read_pcm24 = |bytes: &[u8], offset: usize| {
+            let third = bytes[offset + 2];
+            let signed = i32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                third,
+                if third & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            signed as f64 / 8_388_608.0
+        };
+        assert!((read_pcm24(&mix_bytes, 44) - 0.25).abs() < 1.0e-6);
+        assert!((read_pcm24(&mix_bytes, 47) - 0.75).abs() < 1.0e-6);
+        for path in [&mixed_first, &mixed_second] {
+            let bytes = fs::read(path).expect("track stem should be readable");
+            assert!((read_pcm24(&bytes, 44) - 0.125).abs() < 1.0e-6);
+            assert!((read_pcm24(&bytes, 47) - 0.375).abs() < 1.0e-6);
+        }
+        fs::remove_file(&mix).expect("Master mix should be removed");
+        fs::remove_file(&mixed_first).expect("first combined stem should be removed");
+        fs::remove_file(&mixed_second).expect("second combined stem should be removed");
         fs::remove_file(source_path).expect("control source should be removed");
         for suffix in ["", "-wal", "-shm"] {
             let mut path = project_path.as_os_str().to_owned();

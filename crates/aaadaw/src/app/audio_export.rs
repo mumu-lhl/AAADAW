@@ -30,10 +30,15 @@ pub(crate) enum RenderSource {
     #[default]
     MasterMix,
     SelectedTracksViaMaster,
+    MasterMixAndSelectedTracks,
 }
 
 impl RenderSource {
-    pub(crate) const ALL: [Self; 2] = [Self::MasterMix, Self::SelectedTracksViaMaster];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::MasterMix,
+        Self::MasterMixAndSelectedTracks,
+        Self::SelectedTracksViaMaster,
+    ];
 }
 
 impl std::fmt::Display for RenderSource {
@@ -41,6 +46,7 @@ impl std::fmt::Display for RenderSource {
         formatter.write_str(match self {
             Self::MasterMix => "Master mix",
             Self::SelectedTracksViaMaster => "Selected tracks via master",
+            Self::MasterMixAndSelectedTracks => "Master mix + stems",
         })
     }
 }
@@ -138,7 +144,8 @@ fn selected_track_stem_destinations(
     base_path: &Path,
     project: &Project,
     selected_tracks: &[TrackId],
-) -> Result<Vec<(TrackId, PathBuf)>, String> {
+    include_master_mix: bool,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
     let parent = base_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -153,8 +160,16 @@ fn selected_track_stem_destinations(
         .and_then(|extension| extension.to_str())
         .filter(|extension| !extension.is_empty())
         .unwrap_or("wav");
-    let mut used_names = HashSet::with_capacity(selected_tracks.len());
-    let mut outputs = Vec::with_capacity(selected_tracks.len());
+    let mut used_names =
+        HashSet::with_capacity(selected_tracks.len() + usize::from(include_master_mix));
+    let mut outputs = Vec::with_capacity(selected_tracks.len() + usize::from(include_master_mix));
+    if include_master_mix {
+        used_names.insert(format!("{base_name}-master").to_lowercase());
+        outputs.push((
+            aaadaw_app::ProjectWavRenderSource::MasterMix,
+            parent.join(format!("{base_name}-Master.{extension}")),
+        ));
+    }
 
     for (index, track_id) in selected_tracks.iter().enumerate() {
         let track = project
@@ -180,7 +195,10 @@ fn selected_track_stem_destinations(
                 disambiguator += 1;
             }
         }
-        outputs.push((*track_id, parent.join(format!("{candidate}.{extension}"))));
+        outputs.push((
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id),
+            parent.join(format!("{candidate}.{extension}")),
+        ));
     }
     Ok(outputs)
 }
@@ -295,7 +313,7 @@ enum OfflineRenderKind {
         settings: aaadaw_app::ProjectWavRenderSettings,
     },
     ProjectWavStems {
-        outputs: Vec<(TrackId, PathBuf)>,
+        outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
         settings: aaadaw_app::ProjectWavRenderSettings,
     },
     FreezeTrack {
@@ -397,9 +415,10 @@ impl App {
             || destination.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let source = match selected_tracks.as_slice() {
-            [] => aaadaw_app::ProjectWavRenderSource::MasterMix,
-            [track_id] => aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id),
+        let source = match (self.render_dialog.source, selected_tracks.as_slice()) {
+            (RenderSource::SelectedTracksViaMaster, [track_id]) => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
+            }
             _ => aaadaw_app::ProjectWavRenderSource::MasterMix,
         };
         let settings = aaadaw_app::ProjectWavRenderSettings {
@@ -414,10 +433,10 @@ impl App {
             tail_milliseconds,
             normalize_peak: self.render_dialog.normalize_peak,
         };
-        let (kind, label) = if selected_tracks.len() > 1 {
-            #[cfg(target_os = "android")]
-            {
-                self.status = "The Android document picker supports one render file at a time; select one track or use a desktop build for stems".to_owned();
+        let requires_multiple_files = self.render_requires_multiple_files();
+        let (kind, label) = if requires_multiple_files {
+            if cfg!(target_os = "android") {
+                self.status = "The Android document picker supports one render file at a time; use a desktop build for stems".to_owned();
                 return Task::none();
             }
             match std::fs::symlink_metadata(&destination) {
@@ -437,6 +456,7 @@ impl App {
                 &destination,
                 &self.project,
                 &selected_tracks,
+                self.render_dialog.source == RenderSource::MasterMixAndSelectedTracks,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -450,7 +470,14 @@ impl App {
             }
             (
                 OfflineRenderKind::ProjectWavStems { outputs, settings },
-                format!("Render {} selected tracks as stems", selected_tracks.len()),
+                if self.render_dialog.source == RenderSource::MasterMixAndSelectedTracks {
+                    format!(
+                        "Render Master mix and {} selected stems",
+                        selected_tracks.len()
+                    )
+                } else {
+                    format!("Render {} selected tracks as stems", selected_tracks.len())
+                },
             )
         } else {
             (
@@ -499,10 +526,7 @@ impl App {
     }
 
     pub(super) fn can_submit_render(&self) -> bool {
-        if cfg!(target_os = "android")
-            && self.render_dialog.source == RenderSource::SelectedTracksViaMaster
-            && self.selected_render_track_count() > 1
-        {
+        if cfg!(target_os = "android") && self.render_requires_multiple_files() {
             return false;
         }
         self.selected_render_settings().is_ok()
@@ -511,12 +535,34 @@ impl App {
     pub(super) fn has_valid_render_source(&self) -> bool {
         match self.render_dialog.source {
             RenderSource::MasterMix => true,
-            RenderSource::SelectedTracksViaMaster => !self.selected_tracks_for_render().is_empty(),
+            RenderSource::SelectedTracksViaMaster | RenderSource::MasterMixAndSelectedTracks => {
+                !self.selected_tracks_for_render().is_empty()
+            }
+        }
+    }
+
+    pub(super) fn render_requires_multiple_files(&self) -> bool {
+        match self.render_dialog.source {
+            RenderSource::MasterMix => false,
+            RenderSource::SelectedTracksViaMaster => self.selected_render_track_count() > 1,
+            RenderSource::MasterMixAndSelectedTracks => true,
         }
     }
 
     pub(super) fn selected_render_track_count(&self) -> usize {
         self.selected_tracks_for_render().len()
+    }
+
+    pub(super) fn render_source_description(&self) -> &'static str {
+        match self.render_dialog.source {
+            RenderSource::MasterMix => "Renders the project through the Master mix.",
+            RenderSource::SelectedTracksViaMaster => {
+                "Renders each selected track through the Master as its own WAV stem."
+            }
+            RenderSource::MasterMixAndSelectedTracks => {
+                "Renders one Master mix WAV plus one stem for each selected track."
+            }
+        }
     }
 
     pub(super) fn render_output_sample_rate(&self) -> u32 {
@@ -540,7 +586,7 @@ impl App {
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
         let selected_tracks = match self.render_dialog.source {
             RenderSource::MasterMix => Vec::new(),
-            RenderSource::SelectedTracksViaMaster => {
+            RenderSource::SelectedTracksViaMaster | RenderSource::MasterMixAndSelectedTracks => {
                 let selected_tracks = self.selected_tracks_for_render();
                 if selected_tracks.is_empty() {
                     return Err(
@@ -694,7 +740,7 @@ impl App {
                         run_blocking("aaadaw-offline-stems", move || {
                             let project = Project::from_snapshot((*snapshot).clone())
                                 .map_err(|error| error.to_string())?;
-                            aaadaw_app::render_selected_tracks_via_master_to_wavs(
+                            aaadaw_app::render_project_wav_sources_to_wavs(
                                 project_path,
                                 &project,
                                 &outputs,
@@ -1052,6 +1098,26 @@ mod tests {
     }
 
     #[test]
+    fn render_source_menu_keeps_the_native_master_and_stems_order() {
+        assert_eq!(
+            RenderSource::ALL,
+            [
+                RenderSource::MasterMix,
+                RenderSource::MasterMixAndSelectedTracks,
+                RenderSource::SelectedTracksViaMaster,
+            ]
+        );
+        assert_eq!(
+            RenderSource::MasterMixAndSelectedTracks.to_string(),
+            "Master mix + stems"
+        );
+        assert_eq!(
+            RenderSource::SelectedTracksViaMaster.to_string(),
+            "Selected tracks via master"
+        );
+    }
+
+    #[test]
     fn render_bounds_resolve_the_current_time_selection_to_project_samples() {
         let mut app = App::default();
         app.render_dialog.bounds = RenderBounds::TimeSelection;
@@ -1162,7 +1228,7 @@ mod tests {
             .collect::<Vec<_>>();
         let base = std::env::temp_dir().join("aaadaw-stem-prefix.wav");
 
-        let outputs = selected_track_stem_destinations(&base, &project, &ids)
+        let outputs = selected_track_stem_destinations(&base, &project, &ids, false)
             .expect("selected tracks should receive distinct output names");
         assert_eq!(
             outputs[0].1,
@@ -1171,6 +1237,24 @@ mod tests {
         assert_eq!(
             outputs[1].1,
             std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox-2.wav")
+        );
+        assert!(matches!(
+            outputs[0].0,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(_)
+        ));
+        let combined = selected_track_stem_destinations(&base, &project, &ids, true)
+            .expect("Master mix plus stems should receive distinct output names");
+        assert_eq!(
+            combined[0],
+            (
+                aaadaw_app::ProjectWavRenderSource::MasterMix,
+                std::env::temp_dir().join("aaadaw-stem-prefix-Master.wav")
+            )
+        );
+        assert_eq!(combined.len(), 3);
+        assert_eq!(
+            combined[1].1,
+            std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox.wav")
         );
     }
 
@@ -1322,8 +1406,14 @@ mod tests {
                 assert_eq!(
                     outputs,
                     [
-                        (first, std::env::temp_dir().join("selected-stems-Drums.wav")),
-                        (second, std::env::temp_dir().join("selected-stems-Bass.wav")),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(first),
+                            std::env::temp_dir().join("selected-stems-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(second),
+                            std::env::temp_dir().join("selected-stems-Bass.wav")
+                        ),
                     ]
                 );
                 assert_eq!(settings.start_sample, 0);
@@ -1352,6 +1442,42 @@ mod tests {
         assert!(app.status.contains("stem prefix"));
         assert_eq!(std::fs::read(&prefix).unwrap(), b"preserve selected prefix");
         std::fs::remove_file(prefix).expect("existing stem prefix should be removed");
+
+        app.render_dialog.source = RenderSource::MasterMixAndSelectedTracks;
+        let _task = app.start_offline_render(std::env::temp_dir().join("combined-stems.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("Master mix plus stems should enter the render queue");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWavStems { outputs, settings } => {
+                assert_eq!(
+                    outputs,
+                    [
+                        (
+                            aaadaw_app::ProjectWavRenderSource::MasterMix,
+                            std::env::temp_dir().join("combined-stems-Master.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(first),
+                            std::env::temp_dir().join("combined-stems-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(second),
+                            std::env::temp_dir().join("combined-stems-Bass.wav")
+                        ),
+                    ]
+                );
+                assert_eq!(
+                    settings.source,
+                    aaadaw_app::ProjectWavRenderSource::MasterMix
+                );
+            }
+            OfflineRenderKind::ProjectWav { .. } => {
+                panic!("Master mix plus stems should make a grouped output job")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
+        }
     }
 
     #[test]
