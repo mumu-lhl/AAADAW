@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）及所选轨道 via-master 单独 stem 输出；Master+stems、其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks via master 独立 stems 与 Master mix + stems；plain stems、其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak 子项和所选轨道 via-master stems；Master+stems、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak、Selected tracks via master stems 和 Master mix + stems；plain stems、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -313,3 +313,11 @@ REAPER 7.82 / Linux / Default 7 新鲜配置原厂脚本现同时实测单选和
 最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 896/896 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、9 个 JSON reference 和 `git diff --check` 通过。
 
 多轨 Source 仍不完整：Render wildcard 编辑器与 REAPER 文件名规则、Master+stems、pre-fader/plain stems、folder/send/FX 原厂对照、Items、Regions、Razor 和 Render Matrix 未实现。Android 单文件 picker 不支持多文件输出。`RENDER-SOURCE-001`、`UI-028` 和 P10 继续 `in_progress`。
+
+### 2026-10-12 Project Render Master mix + stems
+
+实现提交 `c601974`。Render Source 新增 `Master mix + stems`，并按原厂顺序显示 Master mix、Master mix + stems、Selected tracks via master。组合模式按用户选中的轨道顺序生成一份 `prefix-Master.wav` 与每轨一份 `prefix-Track.wav`，共同使用既有输出格式、采样率转换、Mono/Stereo 和峰值归一化设置。离线 worker 的输出集合允许混合 MasterMix 与单轨 via-master 源；整组先渲染到私有暂存区，通过 no-clobber 链接发布，取消/运行时发布失败会清理已暂存/已链接文件。Android 单文件 Document Picker 禁用多文件模式。
+
+REAPER 7.82 / Linux / Default 7 原厂探针以两条相同居中轨道、双选和 flags=1 产出 Master、Selected、Unselected 三个 WAV；都为 48 kHz PCM24 stereo、48,000 帧。样本分别为 Master `[0.250000030, 0.750000089]`、两个 stem `[0.125000015, 0.375000045]`。旗标为 1 且渲染前后读回保持；flags=2/129/130 的脚本探针渲染后都回到 0 并仅产出组合 Master 文件，故 plain stems 仍列为未实现，尚需通过原厂 UI 继续调查。细节见[Render Source 验证记录](../verification/reaper-parity/render-source.md)。
+
+AAADAW 集成回归确认 grouped Master+stems 输出每份 WAV 帧数/首样本正确；同一 grouped publisher 同时验证已有目标保护、逐轨取消无文件、并发目标冲突回滚。最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 897/897 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、9 个 JSON reference 解析与 `git diff --check` 通过。`RENDER-SOURCE-001`、`UI-028` 和 P10 继续 `in_progress`。
