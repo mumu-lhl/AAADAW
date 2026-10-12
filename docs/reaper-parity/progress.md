@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）及单个所选轨道 via-master 输出；多轨 Source、其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）及所选轨道 via-master 单独 stem 输出；Master+stems、其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak 子项和单轨 via-master，但多轨 Source、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak 子项和所选轨道 via-master stems；Master+stems、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -303,3 +303,13 @@ Linux REAPER 7.82 / Default 7 / fresh isolated config 原生探针把两条相�
 7.82 探针的线性 target=0.5 输出约 `[0.1666665, 0.4999995]`；AAADAW `−6.02 dBFS` 线性换算为约 `0.5000346`，PCM24 回归确认输出对应目标值并保留左右声道比例。回归还覆盖 `0`、`−0.5`、`−6`、`−6.02`、`−60`、精度/范围拒绝，以及排队后修改目标不改变已入队任务。证据更新在[峰值归一化记录](../verification/reaper-parity/render-normalize.md)。
 
 最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 893/893 通过、0 跳过；目标 Clippy `-D warnings`、fmt、CSV 67 个唯一 ID、9 个 JSON reference 和 diff 检查通过。该项仍只实现 Master mix sample-peak 子集；RMS/LUFS/True Peak、limiter、stem normalization、fade/trim/pad 等仍缺。`RENDER-POSTPROCESS-001` 与 `UI-028` 保持 `in_progress`。
+
+### 2026-10-12 Project Render 多选轨道 via-master stems
+
+实现提交 `8d497bd`。`RENDER-SOURCE-001` 的多轨 via-master 子项：Source 允许选择多轨；一个选择仍写入用户指定的单 WAV 路径，多选则按 Arrange 顺序冻结 TrackId 与 `所选文件名-轨道名.wav` 输出路径。轨道名冲突追加序号，路径分隔符和文件系统保留字符先替换为下划线。worker 逐轨复用原有离线 Master 图和 solo 隔离快照，不改保存工程或实时播放。所有 WAV 先写入目标目录同文件系统上的私有暂存目录；目标已存在即拒绝，取消不发布；发布期间发生并发冲突会清理本次已创建的链接并保留并发文件。Android 单文件 Document Picker 禁用多文件提交。
+
+REAPER 7.82 / Linux / Default 7 新鲜配置原厂脚本现同时实测单选和双选 flags=128。双选输出 `selected-stems-Selected.wav` 与 `selected-stems-Unselected.wav`；每个文件均为 48 kHz PCM24 stereo、48,000 帧、288,000 data bytes，首帧约 `[0.125000015, 0.375000045]`，而 Master mix 控制约为 `[0.250000030, 0.750000089]`。对应证据在[Render Source 记录](../verification/reaper-parity/render-source.md)。AAADAW 集成回归使用同一音源置于两轨，确认两 stem 独立样本、准确 WAV 长度；并验证已有文件保护、逐轨中途取消无输出、发布时竞争文件触发回滚、队列选择与命名冻结。
+
+最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 896/896 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、9 个 JSON reference 和 `git diff --check` 通过。
+
+多轨 Source 仍不完整：Render wildcard 编辑器与 REAPER 文件名规则、Master+stems、pre-fader/plain stems、folder/send/FX 原厂对照、Items、Regions、Razor 和 Render Matrix 未实现。Android 单文件 picker 不支持多文件输出。`RENDER-SOURCE-001`、`UI-028` 和 P10 继续 `in_progress`。
