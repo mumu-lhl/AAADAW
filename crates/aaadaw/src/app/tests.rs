@@ -165,6 +165,74 @@ fn project_markers_insert_navigate_and_undo_through_app_actions() {
 }
 
 #[test]
+fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: String::new(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+    let revision_before = app.revision;
+
+    let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
+        marker_id,
+    }));
+    assert_eq!(app.marker_properties.as_ref().unwrap().name, "");
+    assert!(app.marker_properties_window_id.is_some());
+    let _ = app.update(Message::MarkerNameChanged("discarded".to_owned()));
+    let _ = app.update(Message::CloseMarkerProperties);
+    assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.revision, revision_before);
+
+    let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
+        marker_id,
+    }));
+    let _ = app.update(Message::MarkerNameChanged("Verse".to_owned()));
+    let _ = app.update(Message::ApplyMarkerProperties);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    assert_eq!(app.revision, revision_before + 1);
+    assert!(app.marker_properties_window_id.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+}
+
+#[test]
+fn marker_properties_keep_invalid_or_busy_edits_open_without_changing_project() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+    let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
+        marker_id,
+    }));
+    let _ = app.update(Message::MarkerNameChanged("\0".to_owned()));
+    let _ = app.update(Message::ApplyMarkerProperties);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert!(app.marker_properties_window_id.is_some());
+    assert!(app.marker_properties.as_ref().unwrap().error.is_some());
+
+    let _ = app.update(Message::MarkerNameChanged("Chorus".to_owned()));
+    app.io_busy = true;
+    let _ = app.update(Message::ApplyMarkerProperties);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert!(app.marker_properties_window_id.is_some());
+    assert!(app.marker_properties.as_ref().unwrap().error.is_some());
+}
+
+#[test]
 fn deleting_nearby_marker_matches_reaper_radius_and_nearest_selection() {
     let mut app = App::default();
     app.timeline.edit_cursor_tick = 0;

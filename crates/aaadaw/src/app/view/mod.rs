@@ -26,6 +26,7 @@ mod arrangement;
 mod fx_chain;
 mod item_inspector;
 mod item_properties;
+mod marker_properties;
 mod media;
 mod menu;
 mod midi_editor;
@@ -83,6 +84,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         mobile_view(app, size.width, size.height)
     } else if app.item_properties_window_id == Some(window_id) {
         item_properties::view(app)
+    } else if app.marker_properties_window_id == Some(window_id) {
+        marker_properties::view(app)
     } else if app.routing_window_id == Some(window_id) {
         routing::view(app)
     } else if app.action_input_window_id == Some(window_id) {

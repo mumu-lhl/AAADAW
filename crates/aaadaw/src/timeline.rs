@@ -32,6 +32,8 @@ const MIN_PIXELS_PER_TICK: f32 = 0.002;
 const MAX_PIXELS_PER_TICK: f32 = 1.5;
 const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
 const ITEM_TRIM_EDGE_HIT_RADIUS_PX: f64 = 6.0;
+const PROJECT_MARKER_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+const PROJECT_MARKER_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArrangementPane {
@@ -236,6 +238,9 @@ pub(crate) enum TimelineEvent {
     SelectProjectMarker {
         marker_id: MarkerId,
         position_ticks: u64,
+    },
+    EditProjectMarker {
+        marker_id: MarkerId,
     },
     MoveProjectMarker {
         marker_id: MarkerId,
@@ -1704,6 +1709,7 @@ impl TimelineState {
                 self.selected_project_marker = Some(marker_id);
                 self.edit_cursor_tick = position_ticks;
             }
+            TimelineEvent::EditProjectMarker { .. } => {}
             TimelineEvent::MoveProjectMarker { marker_id, .. } => {
                 self.selected_project_marker = Some(marker_id);
             }
@@ -4092,7 +4098,7 @@ struct RulerProgram<'a> {
 }
 
 impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
-    type State = Option<ProjectMarkerDrag>;
+    type State = ProjectMarkerInteraction;
 
     fn update(
         &self,
@@ -4105,22 +4111,40 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 if let Some(marker) = project_marker_hit(self.project, self.state, position) {
+                    let now = Instant::now();
+                    let is_double_click =
+                        state
+                            .last_click
+                            .is_some_and(|(last_marker, last_position, clicked_at)| {
+                                last_marker == marker.id()
+                                    && (position.x - last_position.x).abs()
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_DISTANCE
+                                    && (position.y - last_position.y).abs()
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_DISTANCE
+                                    && now.saturating_duration_since(clicked_at)
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_INTERVAL
+                            });
+                    state.pending_double_click = is_double_click.then_some(marker.id());
+                    state.last_click = None;
                     let pointer_tick = tick_at_x(
                         self.state.origin_tick,
                         self.state.pixels_per_tick,
                         position.x,
                     );
-                    *state = Some(ProjectMarkerDrag {
+                    state.drag = Some(ProjectMarkerDrag {
                         marker_id: marker.id(),
                         original_position_ticks: marker.position_ticks(),
                         pointer_offset_ticks: i128::from(marker.position_ticks())
                             - i128::from(pointer_tick),
-                        start_pointer_x: position.x,
+                        start_pointer: position,
                         preview_position_ticks: marker.position_ticks(),
                         moved: false,
                     });
                     return Some(canvas::Action::capture());
                 }
+                state.last_click = None;
+                state.pending_double_click = None;
+                state.drag = None;
                 let tick = tick_at_x(
                     self.state.origin_tick,
                     self.state.pixels_per_tick,
@@ -4131,12 +4155,14 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 )))
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let drag = state.as_mut()?;
+                let drag = state.drag.as_mut()?;
                 let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
-                if !drag.moved && (position.x - drag.start_pointer_x).abs() < 3.0 {
+                if !drag.moved && (position.x - drag.start_pointer.x).abs() < 3.0 {
                     return Some(canvas::Action::capture());
                 }
                 drag.moved = true;
+                state.last_click = None;
+                state.pending_double_click = None;
                 let pointer_tick = tick_at_x(
                     self.state.origin_tick,
                     self.state.pixels_per_tick,
@@ -4153,7 +4179,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 Some(canvas::Action::request_redraw().and_capture())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                let drag = state.take()?;
+                let drag = state.drag.take()?;
                 if drag.moved {
                     (drag.preview_position_ticks != drag.original_position_ticks)
                         .then(|| {
@@ -4167,6 +4193,19 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                         })
                         .or_else(|| Some(canvas::Action::capture()))
                 } else {
+                    if state.pending_double_click == Some(drag.marker_id) {
+                        state.pending_double_click = None;
+                        return Some(
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::EditProjectMarker {
+                                    marker_id: drag.marker_id,
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    state.pending_double_click = None;
+                    state.last_click = Some((drag.marker_id, drag.start_pointer, Instant::now()));
                     Some(
                         canvas::Action::publish(crate::app::Message::Timeline(
                             TimelineEvent::SelectProjectMarker {
@@ -4260,6 +4299,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
         }
         for (index, marker) in self.project.markers().iter().enumerate() {
             let position_ticks = state
+                .drag
                 .as_ref()
                 .filter(|drag| drag.marker_id == marker.id() && drag.moved)
                 .map_or(marker.position_ticks(), |drag| drag.preview_position_ticks);
@@ -4273,6 +4313,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             }
             let color = if self.state.selected_project_marker == Some(marker.id())
                 || state
+                    .drag
                     .as_ref()
                     .is_some_and(|drag| drag.marker_id == marker.id())
             {
@@ -4319,9 +4360,16 @@ struct ProjectMarkerDrag {
     marker_id: MarkerId,
     original_position_ticks: u64,
     pointer_offset_ticks: i128,
-    start_pointer_x: f32,
+    start_pointer: Point,
     preview_position_ticks: u64,
     moved: bool,
+}
+
+#[derive(Debug, Default)]
+struct ProjectMarkerInteraction {
+    drag: Option<ProjectMarkerDrag>,
+    last_click: Option<(MarkerId, Point, Instant)>,
+    pending_double_click: Option<MarkerId>,
 }
 
 fn project_marker_hit<'a>(
@@ -4730,12 +4778,12 @@ mod tests {
     use super::{
         AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, ItemTrimEdge,
         MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState, MidiNotePreview, PendingAutomationPoint,
-        PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
-        TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineInteractionState,
-        TimelineState, automation_sample_between, fx_automation_band_at_y,
-        fx_automation_lane_resize_target, fx_automation_tick_at, item_trim_edge_at_x,
-        midi_note_preview_geometry, project_marker_x, row_at_y, slowest_tempo_in_viewport,
-        snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+        PendingTimeSelectionDrag, ProjectMarkerInteraction, RulerProgram, SnapGrid,
+        TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
+        TimelineInteractionState, TimelineState, automation_sample_between,
+        fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at,
+        item_trim_edge_at_x, midi_note_preview_geometry, project_marker_x, row_at_y,
+        slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
         DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
@@ -4759,7 +4807,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = None;
+        let mut interaction = ProjectMarkerInteraction::default();
         let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let cursor = mouse::Cursor::Available(Point::new(100.0, 16.0));
@@ -4798,7 +4846,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = None;
+        let mut interaction = ProjectMarkerInteraction::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let press_action = iced::widget::canvas::Program::update(
@@ -4834,6 +4882,232 @@ mod tests {
     }
 
     #[test]
+    fn ruler_marker_double_click_opens_marker_editor_without_second_selection() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("first click should capture the marker");
+        let first_release = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("first click should select the marker");
+        assert!(matches!(
+            first_release.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker { marker_id: selected, .. }
+            )) if selected == marker_id
+        ));
+
+        let second_press = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("second click should open the marker editor");
+        let (message, _, status) = second_press.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(message.is_none());
+
+        let second_release = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("second click release should be consumed");
+        let (message, _, status) = second_release.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::EditProjectMarker { marker_id: edited }
+            )) if edited == marker_id
+        ));
+    }
+
+    #[test]
+    fn second_marker_click_can_become_a_drag_instead_of_opening_the_editor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let first_cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should capture the marker");
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should select the marker");
+
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("second press should remain available for dragging");
+        let moved_cursor = mouse::Cursor::Available(Point::new(611.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(611.0, 6.0),
+            }),
+            bounds,
+            moved_cursor,
+        )
+        .expect("movement should cancel the pending double click and preview a drag");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            moved_cursor,
+        )
+        .expect("drag release should commit the move")
+        .into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectMarker {
+                    marker_id: moved_id,
+                    position_ticks: 1_200,
+                }
+            )) if moved_id == marker_id
+        ));
+    }
+
+    #[test]
+    fn ruler_marker_double_click_requires_pointer_proximity() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let first_cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should capture the marker");
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should select the marker");
+
+        let second_cursor = mouse::Cursor::Available(Point::new(520.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            second_cursor,
+        )
+        .expect("nearby point on the same label should still capture the marker");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            second_cursor,
+        )
+        .expect("spaced click should remain an ordinary selection")
+        .into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker {
+                    marker_id: selected,
+                    position_ticks: 1_000,
+                }
+            )) if selected == marker_id
+        ));
+    }
+
+    #[test]
     fn ruler_marker_drag_preserves_grab_offset_and_publishes_one_move() {
         let mut project = Project::new();
         project
@@ -4852,7 +5126,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = None;
+        let mut interaction = ProjectMarkerInteraction::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let _ = iced::widget::canvas::Program::update(
@@ -4877,7 +5151,7 @@ mod tests {
         .expect("marker drag should update its preview");
         assert_eq!(move_action.into_inner().2, iced::event::Status::Captured);
         assert_eq!(
-            interaction.map(|drag| drag.preview_position_ticks),
+            interaction.drag.map(|drag| drag.preview_position_ticks),
             Some(1_200)
         );
 
@@ -4901,7 +5175,7 @@ mod tests {
                 }
             )) if moved_id == marker_id
         ));
-        assert!(interaction.is_none());
+        assert!(interaction.drag.is_none());
     }
 
     #[test]
@@ -4923,7 +5197,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = None;
+        let mut interaction = ProjectMarkerInteraction::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let _ = iced::widget::canvas::Program::update(
@@ -4946,7 +5220,7 @@ mod tests {
         )
         .expect("marker drag should update its snapped preview");
         assert_eq!(
-            interaction.map(|drag| drag.preview_position_ticks),
+            interaction.drag.map(|drag| drag.preview_position_ticks),
             Some(5_760)
         );
     }

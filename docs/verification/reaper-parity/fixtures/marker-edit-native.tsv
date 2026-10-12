@@ -1,0 +1,12 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	Disposable numbered-markers-probe.rpp
+audio_device	closed (marker editing does not depend on audio)
+dialog	Double-clicking Marker 1 at 4 s opens Edit Marker
+fields	Name is focused by default; ID=1; Lane=2; Position=3.1.00
+dialog_screenshot	marker-edit-dialog-native.png
+
+case	interaction	observed_result	project_file_result	undo_result
+cancel_rename	Type discarded in Name, click Cancel, save project	Dialog closes and the original empty name remains	MARKER 1 4 ""	No project edit
+accept_rename	Double-click Marker 1, type verse in Name, click OK, save project	Dialog closes and the marker label is verse	MARKER 1 4 verse	-
+undo_rename	Ctrl+Z after accepted rename, save project	One Undo restores the original empty name	MARKER 1 4 ""	One Ctrl+Z restores the name

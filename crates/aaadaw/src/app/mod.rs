@@ -60,6 +60,7 @@ mod fader;
 mod fader_data;
 mod item_properties;
 mod keyboard_config;
+mod marker_properties;
 mod media;
 mod messages;
 mod offline_job_queue;
@@ -322,6 +323,8 @@ struct App {
     item_properties_window_id: Option<iced::window::Id>,
     item_properties_generation: u64,
     item_properties_unit: item_properties::TimeUnit,
+    marker_properties: Option<marker_properties::MarkerProperties>,
+    marker_properties_window_id: Option<iced::window::Id>,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
@@ -1363,6 +1366,8 @@ impl App {
     fn window_title(&self, window_id: iced::window::Id) -> String {
         if self.item_properties_window_id == Some(window_id) {
             "Media Item Properties".to_owned()
+        } else if self.marker_properties_window_id == Some(window_id) {
+            "Edit Marker".to_owned()
         } else if self.routing_window_id == Some(window_id) {
             self.routing_track_id
                 .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
@@ -1642,6 +1647,7 @@ impl App {
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
                     || self.item_properties_window_id == Some(*window_id)
+                    || self.marker_properties_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
@@ -1708,6 +1714,9 @@ impl App {
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
+                    | Message::MarkerNameChanged(_)
+                    | Message::ApplyMarkerProperties
+                    | Message::CloseMarkerProperties
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -2226,6 +2235,14 @@ impl App {
                 }
             }
             Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
+            Message::MarkerNameChanged(value) => {
+                if let Some(draft) = &mut self.marker_properties {
+                    draft.name = value;
+                    draft.error = None;
+                }
+            }
+            Message::ApplyMarkerProperties => task = self.apply_marker_properties(),
+            Message::CloseMarkerProperties => task = self.close_marker_properties(),
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
             Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
@@ -2290,6 +2307,9 @@ impl App {
                 } else if self.item_properties_window_id == Some(window_id) {
                     self.item_properties_window_id = None;
                     self.item_properties = None;
+                } else if self.marker_properties_window_id == Some(window_id) {
+                    self.marker_properties_window_id = None;
+                    self.marker_properties = None;
                 } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
@@ -3146,6 +3166,34 @@ impl App {
                     }
                     return Task::none();
                 }
+                if self.marker_properties_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        return self.close_marker_properties();
+                    }
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                                modifiers,
+                                repeat: false,
+                                ..
+                            }) if modifiers.is_empty()
+                        )
+                    {
+                        return self.apply_marker_properties();
+                    }
+                    return Task::none();
+                }
                 if self.routing_window_id == Some(window_id) {
                     if matches!(
                         event,
@@ -3542,6 +3590,9 @@ impl App {
                         );
                     }
                 }
+            }
+            Message::Timeline(timeline::TimelineEvent::EditProjectMarker { marker_id }) => {
+                task = self.open_marker_properties(marker_id);
             }
             Message::Timeline(event) => self.handle_timeline_view_event(event),
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
