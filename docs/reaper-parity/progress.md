@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32 与 Float32/64、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；压缩编码、其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32 与 Float32/64、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；压缩编码、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -337,3 +337,13 @@ REAPER 原厂窗口勾选 `Render stems pre-fader` 后，轨道 `D_VOL=0.5` 的 
 AAADAW Render 面板加入原厂 checkbox，plain stems 和 Master mix and stems 可操作；Master mix 与 via-master 模式禁用该控件。单轨和多轨队列分别捕获 post-fader/pre-fader 源类型，组合渲染只改变每个 stem，Master 输出不变。离线源快照把选中轨道静态音量设为 unity 并清除其音量自动化，Master gain 与最终 safety clamp 按普通 stems 路径绕过；原项目和实时播放保持不变。真实 WAV 回归断言 post-fader 静态/自动化增益输出 `[0.0625, 0.1875]` / `[0.03125, 0.09375]`，pre-fader 两者都输出 `[0.125, 0.375]`；原厂自动化、Folder/Send 路径对比仍未完成。
 
 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 899/899 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、JSON 和本次文档本地链接校验通过。`RENDER-SOURCE-001`、`UI-028` 与 P10 仍 `in_progress`：native volume automation 和路由下的 pre-fader tap 语义尚待采集；Region matrix、Items、Razor、多声道、通道映射、Wildcard 与完整窗口行为继续未覆盖。
+
+### 2026-10-12 Render 线性 WAV 编码格式
+
+Linux REAPER 7.82 Default 7 Render to File 的 WAV 位深菜单列出 PCM 8/16/24/32-bit、IEEE float 32/64-bit，以及 IMA ADPCM、cADPCM、u-Law。对两条相同 48 kHz PCM24 源轨进行 Master mix 实渲染后，PCM8 文件头为 PCM/8-bit/stereo/48 kHz/48,000 帧，首样本无符号字节 `[160, 224]`；PCM32 为 PCM/32-bit、首样本有符号整数 `[536870912, 1610612736]`；Float64 为 IEEE float/64-bit、首样本 `[0.25, 0.75]`。菜单截图和复现脚本见[Render Formats 验证](../verification/reaper-parity/render-formats.md)。
+
+AAADAW 的 Render Format 选择新增全部六种线性 WAV 编码；PCM8 使用 RIFF 要求的 unsigned offset representation，PCM32 使用 4-byte signed PCM，Float64 使用 64-bit IEEE float fmt chunk。Float64 容器提升保存引擎当前的 f32 输出值，不改变 DSP 精度。六种格式都走现有离线图、格式冻结、固定缓冲写入、取消清理和 no-clobber 发布路径。测试已扩展到每种编码的 WAV 头/数据、Mono/Stereo 映射、dither 原子性及同一工程图的离线导出/解码往返。原厂压缩编码和完整格式菜单对照仍未实现，不关闭格式原子项。
+
+矩阵新增 `RENDER-FORMATS-001`；`RENDER-CHANNELS-001` 更新为覆盖六种线性编码。`RENDER-FORMATS-001`、`RENDER-CHANNELS-001`、`UI-028` 与 P10 继续保持 `in_progress`：IMA ADPCM/cADPCM/u-Law、noise shaping、RF64、大文件边界及全量 Render 窗口状态仍待完成。
+
+最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 901/901 通过、0 跳过；媒体/app/UI Clippy `-D warnings`、fmt、68 个唯一 parity ID、reference JSON、本次文档链接及 `git diff --check` 均通过。P10 与三个 Render 原子项继续 `in_progress`，没有将未实现的压缩编码或完整原厂 Render UI 标为完成。

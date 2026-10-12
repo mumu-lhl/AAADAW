@@ -4,32 +4,44 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FLOAT32_BITS_PER_SAMPLE: u16 = 32;
 const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - 36;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static NEXT_DITHER_SEED: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum WavSampleFormat {
+    Pcm8,
     Pcm16,
     #[default]
     Pcm24,
+    Pcm32,
     Float32,
+    Float64,
 }
 
 impl WavSampleFormat {
-    pub const ALL: [Self; 3] = [Self::Pcm16, Self::Pcm24, Self::Float32];
+    pub const ALL: [Self; 6] = [
+        Self::Pcm8,
+        Self::Pcm16,
+        Self::Pcm24,
+        Self::Pcm32,
+        Self::Float32,
+        Self::Float64,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Pcm8 => "PCM 8-bit",
             Self::Pcm16 => "PCM 16-bit",
             Self::Pcm24 => "PCM 24-bit",
+            Self::Pcm32 => "PCM 32-bit",
             Self::Float32 => "Float 32-bit",
+            Self::Float64 => "Float 64-bit",
         }
     }
 
     pub const fn is_integer(self) -> bool {
-        matches!(self, Self::Pcm16 | Self::Pcm24)
+        matches!(self, Self::Pcm8 | Self::Pcm16 | Self::Pcm24 | Self::Pcm32)
     }
 }
 
@@ -99,30 +111,48 @@ pub struct Pcm24WavExport {
     inner: IntegerPcmWavExport,
 }
 
+/// Incremental WAV PCM8 export using the unsigned sample representation required by RIFF/WAVE.
+pub struct Pcm8WavExport {
+    inner: IntegerPcmWavExport,
+}
+
 /// Incremental stereo PCM16 WAV export with optional TPDF dither.
 pub struct Pcm16WavExport {
     inner: IntegerPcmWavExport,
 }
 
+/// Incremental WAV PCM32 export.
+pub struct Pcm32WavExport {
+    inner: IntegerPcmWavExport,
+}
+
 /// User-facing WAV export writer. Float output ignores the integer-only dither setting.
 pub enum WavExport {
+    Pcm8(Pcm8WavExport),
     Pcm16(Pcm16WavExport),
     Pcm24(Pcm24WavExport),
+    Pcm32(Pcm32WavExport),
     Float32(Float32WavExport),
+    Float64(Float64WavExport),
 }
 
 #[derive(Debug)]
 pub enum WavExportError {
+    Pcm8(IntegerPcmWavExportError),
     Pcm16(IntegerPcmWavExportError),
     Pcm24(IntegerPcmWavExportError),
+    Pcm32(IntegerPcmWavExportError),
     Float32(Float32WavExportError),
+    Float64(Float32WavExportError),
 }
 
 impl std::fmt::Display for WavExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Pcm16(error) | Self::Pcm24(error) => error.fmt(formatter),
-            Self::Float32(error) => error.fmt(formatter),
+            Self::Pcm8(error) | Self::Pcm16(error) | Self::Pcm24(error) | Self::Pcm32(error) => {
+                error.fmt(formatter)
+            }
+            Self::Float32(error) | Self::Float64(error) => error.fmt(formatter),
         }
     }
 }
@@ -130,8 +160,10 @@ impl std::fmt::Display for WavExportError {
 impl std::error::Error for WavExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Pcm16(error) | Self::Pcm24(error) => Some(error),
-            Self::Float32(error) => Some(error),
+            Self::Pcm8(error) | Self::Pcm16(error) | Self::Pcm24(error) | Self::Pcm32(error) => {
+                Some(error)
+            }
+            Self::Float32(error) | Self::Float64(error) => Some(error),
         }
     }
 }
@@ -146,6 +178,8 @@ pub enum IntegerPcmWavExportError {
 
 pub type Pcm24WavExportError = IntegerPcmWavExportError;
 pub type Pcm16WavExportError = IntegerPcmWavExportError;
+pub type Pcm8WavExportError = IntegerPcmWavExportError;
+pub type Pcm32WavExportError = IntegerPcmWavExportError;
 
 impl std::fmt::Display for IntegerPcmWavExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -228,6 +262,56 @@ impl Pcm24WavExport {
     }
 }
 
+impl Pcm8WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Ok(Self {
+            inner: IntegerPcmWavExport::create(
+                destination.as_ref(),
+                sample_rate,
+                8,
+                channels,
+                None,
+            )?,
+        })
+    }
+
+    fn create_with_dither_seed_and_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+        seed: u64,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Ok(Self {
+            inner: IntegerPcmWavExport::create(
+                destination.as_ref(),
+                sample_rate,
+                8,
+                channels,
+                Some(seed),
+            )?,
+        })
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), IntegerPcmWavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    pub fn finish(self) -> Result<PathBuf, IntegerPcmWavExportError> {
+        self.inner.finish()
+    }
+}
+
 impl Pcm16WavExport {
     pub fn create(
         destination: impl AsRef<Path>,
@@ -278,6 +362,56 @@ impl Pcm16WavExport {
     }
 }
 
+impl Pcm32WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Ok(Self {
+            inner: IntegerPcmWavExport::create(
+                destination.as_ref(),
+                sample_rate,
+                32,
+                channels,
+                None,
+            )?,
+        })
+    }
+
+    fn create_with_dither_seed_and_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+        seed: u64,
+    ) -> Result<Self, IntegerPcmWavExportError> {
+        Ok(Self {
+            inner: IntegerPcmWavExport::create(
+                destination.as_ref(),
+                sample_rate,
+                32,
+                channels,
+                Some(seed),
+            )?,
+        })
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), IntegerPcmWavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    pub fn finish(self) -> Result<PathBuf, IntegerPcmWavExportError> {
+        self.inner.finish()
+    }
+}
+
 impl WavExport {
     pub fn create(
         destination: impl AsRef<Path>,
@@ -295,6 +429,18 @@ impl WavExport {
     ) -> Result<Self, WavExportError> {
         let seed = options.dither.then(random_dither_seed);
         let export = match options.sample_format {
+            WavSampleFormat::Pcm8 => match seed {
+                Some(seed) => Pcm8WavExport::create_with_dither_seed_and_channels(
+                    destination,
+                    sample_rate,
+                    channels,
+                    seed,
+                )
+                .map(Self::Pcm8),
+                None => Pcm8WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::Pcm8),
+            }
+            .map_err(WavExportError::Pcm8)?,
             WavSampleFormat::Pcm16 => match seed {
                 Some(seed) => Pcm16WavExport::create_with_dither_seed_and_channels(
                     destination,
@@ -319,10 +465,27 @@ impl WavExport {
                     .map(Self::Pcm24),
             }
             .map_err(WavExportError::Pcm24)?,
+            WavSampleFormat::Pcm32 => match seed {
+                Some(seed) => Pcm32WavExport::create_with_dither_seed_and_channels(
+                    destination,
+                    sample_rate,
+                    channels,
+                    seed,
+                )
+                .map(Self::Pcm32),
+                None => Pcm32WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::Pcm32),
+            }
+            .map_err(WavExportError::Pcm32)?,
             WavSampleFormat::Float32 => {
                 Float32WavExport::create_with_channels(destination, sample_rate, channels)
                     .map(Self::Float32)
                     .map_err(WavExportError::Float32)?
+            }
+            WavSampleFormat::Float64 => {
+                Float64WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::Float64)
+                    .map_err(WavExportError::Float64)?
             }
         };
         Ok(export)
@@ -330,17 +493,23 @@ impl WavExport {
 
     pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), WavExportError> {
         match self {
+            Self::Pcm8(export) => export.write_frames(frames).map_err(WavExportError::Pcm8),
             Self::Pcm16(export) => export.write_frames(frames).map_err(WavExportError::Pcm16),
             Self::Pcm24(export) => export.write_frames(frames).map_err(WavExportError::Pcm24),
+            Self::Pcm32(export) => export.write_frames(frames).map_err(WavExportError::Pcm32),
             Self::Float32(export) => export.write_frames(frames).map_err(WavExportError::Float32),
+            Self::Float64(export) => export.write_frames(frames).map_err(WavExportError::Float64),
         }
     }
 
     pub fn finish(self) -> Result<PathBuf, WavExportError> {
         match self {
+            Self::Pcm8(export) => export.finish().map_err(WavExportError::Pcm8),
             Self::Pcm16(export) => export.finish().map_err(WavExportError::Pcm16),
             Self::Pcm24(export) => export.finish().map_err(WavExportError::Pcm24),
+            Self::Pcm32(export) => export.finish().map_err(WavExportError::Pcm32),
             Self::Float32(export) => export.finish().map_err(WavExportError::Float32),
+            Self::Float64(export) => export.finish().map_err(WavExportError::Float64),
         }
     }
 }
@@ -405,8 +574,12 @@ impl IntegerPcmWavExport {
                 let quantized = (sample.clamp(-1.0, 1.0) as f64 * scale + dither)
                     .round()
                     .clamp(min, max) as i32;
-                let bytes = quantized.to_le_bytes();
-                file.write_all(&bytes[..bytes_per_sample as usize])?;
+                if self.bits_per_sample == 8 {
+                    file.write_all(&[(quantized + 128) as u8])?;
+                } else {
+                    let bytes = quantized.to_le_bytes();
+                    file.write_all(&bytes[..bytes_per_sample as usize])?;
+                }
             }
         }
         self.data_bytes = data_bytes;
@@ -446,13 +619,23 @@ impl Drop for IntegerPcmWavExport {
     }
 }
 
-/// Incremental stereo IEEE float32 WAV export for internal renders that must preserve headroom.
+/// Incremental IEEE float32 WAV export for internal renders that must preserve headroom.
 pub struct Float32WavExport {
+    inner: FloatWavExport,
+}
+
+/// Incremental IEEE float64 WAV export.
+pub struct Float64WavExport {
+    inner: FloatWavExport,
+}
+
+struct FloatWavExport {
     destination: PathBuf,
     temporary: PathBuf,
     file: Option<BufWriter<File>>,
     sample_rate: u32,
     channels: WavChannelCount,
+    bits_per_sample: u16,
     data_bytes: u64,
 }
 
@@ -464,6 +647,8 @@ pub enum Float32WavExportError {
     RiffSizeLimit,
     NonFiniteSample,
 }
+
+pub type Float64WavExportError = Float32WavExportError;
 
 impl std::fmt::Display for Float32WavExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -508,10 +693,60 @@ impl Float32WavExport {
         sample_rate: u32,
         channels: WavChannelCount,
     ) -> Result<Self, Float32WavExportError> {
+        Ok(Self {
+            inner: FloatWavExport::create(destination.as_ref(), sample_rate, channels, 32)?,
+        })
+    }
+
+    /// Appends finite interleaved stereo frames without changing their levels.
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Float32WavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    /// Flushes the WAV header and atomically publishes the completed export.
+    pub fn finish(self) -> Result<PathBuf, Float32WavExportError> {
+        self.inner.finish()
+    }
+}
+
+impl Float64WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, Float64WavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    pub fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, Float64WavExportError> {
+        Ok(Self {
+            inner: FloatWavExport::create(destination.as_ref(), sample_rate, channels, 64)?,
+        })
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Float64WavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    pub fn finish(self) -> Result<PathBuf, Float64WavExportError> {
+        self.inner.finish()
+    }
+}
+
+impl FloatWavExport {
+    fn create(
+        destination: &Path,
+        sample_rate: u32,
+        channels: WavChannelCount,
+        bits_per_sample: u16,
+    ) -> Result<Self, Float32WavExportError> {
         if sample_rate == 0 {
             return Err(Float32WavExportError::InvalidSampleRate);
         }
-        let destination = destination.as_ref().to_path_buf();
+        let destination = destination.to_path_buf();
         if destination.exists() {
             return Err(
                 io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists").into(),
@@ -524,24 +759,25 @@ impl Float32WavExport {
             file: None,
             sample_rate,
             channels,
+            bits_per_sample,
             data_bytes: 0,
         };
-        write_float32_header(&mut file, sample_rate, channels, 0)?;
+        write_float_header(&mut file, sample_rate, channels, bits_per_sample, 0)?;
         export.file = Some(BufWriter::new(file));
         Ok(export)
     }
 
-    /// Appends finite interleaved stereo frames without changing their levels.
-    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Float32WavExportError> {
-        let bytes_per_frame =
-            u64::from(self.channels.channels()) * u64::from(FLOAT32_BITS_PER_SAMPLE / 8);
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Float32WavExportError> {
+        let bytes_per_sample = u64::from(self.bits_per_sample / 8);
+        let bytes_per_frame = u64::from(self.channels.channels()) * bytes_per_sample;
+        let max_data_bytes = u64::from(u32::MAX) - if self.bits_per_sample == 64 { 38 } else { 36 };
         let added_bytes = (frames.len() as u64)
             .checked_mul(bytes_per_frame)
             .ok_or(Float32WavExportError::RiffSizeLimit)?;
         let data_bytes = self
             .data_bytes
             .checked_add(added_bytes)
-            .filter(|bytes| *bytes <= MAX_RIFF_DATA_BYTES)
+            .filter(|bytes| *bytes <= max_data_bytes)
             .ok_or(Float32WavExportError::RiffSizeLimit)?;
         if frames.iter().flatten().any(|sample| !sample.is_finite()) {
             return Err(Float32WavExportError::NonFiniteSample);
@@ -553,22 +789,31 @@ impl Float32WavExport {
         for frame in frames {
             for channel in 0..self.channels.channels() as usize {
                 let sample = self.channels.frame_sample(frame, channel);
-                file.write_all(&sample.to_le_bytes())?;
+                if self.bits_per_sample == 32 {
+                    file.write_all(&sample.to_le_bytes())?;
+                } else {
+                    file.write_all(&f64::from(sample).to_le_bytes())?;
+                }
             }
         }
         self.data_bytes = data_bytes;
         Ok(())
     }
 
-    /// Flushes the WAV header and atomically publishes the completed export.
-    pub fn finish(mut self) -> Result<PathBuf, Float32WavExportError> {
+    fn finish(mut self) -> Result<PathBuf, Float32WavExportError> {
         let mut file = self
             .file
             .take()
             .expect("unfinished export retains its file");
         file.flush()?;
         file.seek(SeekFrom::Start(0))?;
-        write_float32_header(&mut file, self.sample_rate, self.channels, self.data_bytes)?;
+        write_float_header(
+            &mut file,
+            self.sample_rate,
+            self.channels,
+            self.bits_per_sample,
+            self.data_bytes,
+        )?;
         file.flush()?;
         drop(file);
         fs::hard_link(&self.temporary, &self.destination)?;
@@ -577,7 +822,7 @@ impl Float32WavExport {
     }
 }
 
-impl Drop for Float32WavExport {
+impl Drop for FloatWavExport {
     fn drop(&mut self) {
         self.file.take();
         let _ = fs::remove_file(&self.temporary);
@@ -672,28 +917,34 @@ fn write_integer_header(
     file.write_all(&data_bytes.to_le_bytes())
 }
 
-fn write_float32_header(
+fn write_float_header(
     file: &mut impl Write,
     sample_rate: u32,
     channels: WavChannelCount,
+    bits_per_sample: u16,
     data_bytes: u64,
 ) -> io::Result<()> {
+    let fmt_chunk_size = if bits_per_sample == 64 { 18_u32 } else { 16 };
+    let riff_overhead = 20 + fmt_chunk_size;
     let data_bytes = u32::try_from(data_bytes)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV data exceeds RIFF limit"))?;
     let channel_count = channels.channels();
     let byte_rate = sample_rate
-        .checked_mul(u32::from(channel_count) * u32::from(FLOAT32_BITS_PER_SAMPLE / 8))
+        .checked_mul(u32::from(channel_count) * u32::from(bits_per_sample / 8))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "WAV byte rate overflow"))?;
     file.write_all(b"RIFF")?;
-    file.write_all(&(36_u32 + data_bytes).to_le_bytes())?;
+    file.write_all(&(riff_overhead + data_bytes).to_le_bytes())?;
     file.write_all(b"WAVEfmt ")?;
-    file.write_all(&16_u32.to_le_bytes())?;
+    file.write_all(&fmt_chunk_size.to_le_bytes())?;
     file.write_all(&3_u16.to_le_bytes())?;
     file.write_all(&channel_count.to_le_bytes())?;
     file.write_all(&sample_rate.to_le_bytes())?;
     file.write_all(&byte_rate.to_le_bytes())?;
-    file.write_all(&(channel_count * (FLOAT32_BITS_PER_SAMPLE / 8)).to_le_bytes())?;
-    file.write_all(&FLOAT32_BITS_PER_SAMPLE.to_le_bytes())?;
+    file.write_all(&(channel_count * (bits_per_sample / 8)).to_le_bytes())?;
+    file.write_all(&bits_per_sample.to_le_bytes())?;
+    if fmt_chunk_size == 18 {
+        file.write_all(&0_u16.to_le_bytes())?;
+    }
     file.write_all(b"data")?;
     file.write_all(&data_bytes.to_le_bytes())
 }
@@ -702,6 +953,21 @@ fn write_float32_header(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    fn find_wav_data_offset(bytes: &[u8]) -> Option<usize> {
+        let mut chunk_offset = 12_usize;
+        while chunk_offset.checked_add(8)? <= bytes.len() {
+            let chunk_size =
+                u32::from_le_bytes(bytes[chunk_offset + 4..chunk_offset + 8].try_into().ok()?)
+                    as usize;
+            let data_offset = chunk_offset.checked_add(8)?;
+            if &bytes[chunk_offset..chunk_offset + 4] == b"data" {
+                return Some(data_offset);
+            }
+            chunk_offset = data_offset.checked_add(chunk_size + (chunk_size & 1))?;
+        }
+        None
+    }
 
     fn temp_destination(name: &str) -> PathBuf {
         let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -795,7 +1061,7 @@ mod tests {
     #[test]
     fn tpdf_dither_is_seeded_bounded_and_zero_mean() {
         let silence = vec![[0.0, 0.0]; 16_384];
-        for bits_per_sample in [16, 24] {
+        for bits_per_sample in [8, 16, 24, 32] {
             let path = temp_destination(&format!("pcm{bits_per_sample}-dither"));
             let mut export = IntegerPcmWavExport::create(
                 &path,
@@ -815,11 +1081,13 @@ mod tests {
             let samples = bytes[44..]
                 .chunks_exact(bytes_per_sample)
                 .map(|sample| match bits_per_sample {
+                    8 => i32::from(sample[0]) - 128,
                     16 => i16::from_le_bytes(sample.try_into().unwrap()) as i32,
                     24 => {
                         let sign = if sample[2] & 0x80 == 0 { 0 } else { 0xff };
                         i32::from_le_bytes([sample[0], sample[1], sample[2], sign])
                     }
+                    32 => i32::from_le_bytes(sample.try_into().unwrap()),
                     _ => unreachable!("test covers supported integer PCM formats"),
                 })
                 .collect::<Vec<_>>();
@@ -874,9 +1142,12 @@ mod tests {
             let mut write_error = WavExport::create(&write_error_path, 48_000, options)
                 .expect("selected writer should open");
             match &mut write_error {
+                WavExport::Pcm8(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Pcm16(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Pcm24(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
-                WavExport::Float32(export) => export.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::Pcm32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::Float32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::Float64(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
             }
             assert!(write_error.write_frames(&[[0.25, -0.25]]).is_err());
             drop(write_error);
@@ -947,13 +1218,17 @@ mod tests {
 
             let bytes = fs::read(&path).expect("mono output should be readable");
             assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+            let bytes_per_sample = match sample_format {
+                WavSampleFormat::Pcm8 => 1,
+                WavSampleFormat::Pcm16 => 2,
+                WavSampleFormat::Pcm24 => 3,
+                WavSampleFormat::Pcm32 | WavSampleFormat::Float32 => 4,
+                WavSampleFormat::Float64 => 8,
+            };
+            let data_offset = find_wav_data_offset(&bytes).expect("mono data chunk should exist");
             assert_eq!(
-                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
-                match sample_format {
-                    WavSampleFormat::Pcm16 => 2,
-                    WavSampleFormat::Pcm24 => 3,
-                    WavSampleFormat::Float32 => 4,
-                }
+                u32::from_le_bytes(bytes[data_offset - 4..data_offset].try_into().unwrap()),
+                bytes_per_sample as u32
             );
             let mut decoder =
                 aaadaw_media::AudioStreamDecoder::open(&path).expect("mono output should decode");
@@ -966,6 +1241,99 @@ mod tests {
             assert!((chunk.samples()[0] - 0.25).abs() < 1.0e-6);
             fs::remove_file(path).expect("test output should be removed");
         }
+    }
+
+    #[test]
+    fn pcm8_is_unsigned_and_pcm32_preserves_full_scale_integer_samples() {
+        let path = temp_destination("pcm8-and-pcm32");
+        for (sample_format, bits_per_sample, expected_samples) in [
+            (WavSampleFormat::Pcm8, 8, vec![160_u8, 224]),
+            (
+                WavSampleFormat::Pcm32,
+                32,
+                [
+                    536_870_912_i32.to_le_bytes(),
+                    1_610_612_736_i32.to_le_bytes(),
+                ]
+                .concat(),
+            ),
+        ] {
+            let mut export = WavExport::create(
+                &path,
+                48_000,
+                WavExportOptions {
+                    sample_format,
+                    dither: false,
+                },
+            )
+            .expect("PCM writer should open");
+            export
+                .write_frames(&[[0.25, 0.75]])
+                .expect("samples should write");
+            export.finish().expect("WAV should publish");
+            let bytes = fs::read(&path).expect("WAV should be readable");
+            assert_eq!(
+                u16::from_le_bytes(bytes[34..36].try_into().unwrap()),
+                bits_per_sample
+            );
+            let data_offset = find_wav_data_offset(&bytes).expect("data chunk should exist");
+            let sample_bytes = usize::from(bits_per_sample / 8) * 2;
+            assert_eq!(
+                &bytes[data_offset..data_offset + sample_bytes],
+                expected_samples
+            );
+            let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+                .expect("AAADAW should decode its PCM output");
+            let chunk = decoder.next_chunk().expect("WAV should decode").unwrap();
+            assert_eq!(chunk.samples().len(), 2);
+            let tolerance = if bits_per_sample == 8 {
+                1.0 / 128.0
+            } else {
+                1.0e-7
+            };
+            assert!((chunk.samples()[0] - 0.25).abs() <= tolerance);
+            assert!((chunk.samples()[1] - 0.75).abs() <= tolerance);
+            fs::remove_file(&path).expect("test output should be removed");
+        }
+    }
+
+    #[test]
+    fn float64_wav_preserves_headroom_and_round_trips_through_media_decoder() {
+        let path = temp_destination("float64-headroom");
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::Float64,
+                dither: true,
+            },
+        )
+        .expect("float64 writer should open");
+        export
+            .write_frames(&[[1.25, -1.5]])
+            .expect("float samples should preserve headroom");
+        export.finish().expect("WAV should publish");
+
+        let bytes = fs::read(&path).expect("WAV should be readable");
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            (bytes.len() - 8) as u32
+        );
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 64);
+        let data_offset = find_wav_data_offset(&bytes).expect("data chunk should exist");
+        assert_eq!(
+            [
+                f64::from_le_bytes(bytes[data_offset..data_offset + 8].try_into().unwrap()),
+                f64::from_le_bytes(bytes[data_offset + 8..data_offset + 16].try_into().unwrap()),
+            ],
+            [1.25, -1.5]
+        );
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("AAADAW should decode IEEE float64 WAV");
+        let chunk = decoder.next_chunk().expect("WAV should decode").unwrap();
+        assert_eq!(chunk.samples(), &[1.25, -1.5]);
+        fs::remove_file(path).expect("test output should be removed");
     }
 
     #[test]

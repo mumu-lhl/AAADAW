@@ -669,84 +669,80 @@ fn offline_render_waits_for_bounded_media_feeders_and_exports_the_mix() {
 }
 
 #[test]
-fn offline_render_routes_selected_pcm_and_float_formats_through_the_same_graph() {
+fn offline_render_routes_native_linear_pcm_and_float_formats_through_the_same_graph() {
     let database_path = unique_path("aaadaw");
-    let pcm16_path = unique_path("pcm16-wav");
-    let float_path = unique_path("float-wav");
     let wav = pcm_wav(&[16_384, -16_384, 8_192, -8_192], 48_000);
     let mut store = ProjectStore::open(&database_path).expect("project should open");
     store
         .import_audio_asset("asset://formats", "formats.wav", Cursor::new(&wav))
         .expect("WAV should embed");
     let project = project_with_audio_item("asset://formats".to_owned(), 4);
-    let prepared = prepare_audio_playback(&project, &store, 1, 4)
-        .expect("embedded source should prepare for PCM16 export");
     store.close().expect("project should close");
-    render_prepared_audio_to_wav(
-        prepared,
-        &project,
-        &pcm16_path,
-        4,
-        WavExportOptions {
-            sample_format: WavSampleFormat::Pcm16,
-            dither: false,
-        },
-        &AtomicBool::new(false),
-        |_, _| {},
-    )
-    .expect("selected PCM16 render should finish");
+    for sample_format in WavSampleFormat::ALL {
+        let path = unique_path("render-format-wav");
+        let store = ProjectStore::open(&database_path).expect("project should reopen");
+        let prepared = prepare_audio_playback(&project, &store, 1, 4)
+            .expect("embedded source should prepare for selected output format");
+        store
+            .close()
+            .expect("project should close before rendering");
+        render_prepared_audio_to_wav(
+            prepared,
+            &project,
+            &path,
+            4,
+            WavExportOptions {
+                sample_format,
+                dither: false,
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap_or_else(|error| panic!("{sample_format} render should finish: {error}"));
 
-    let pcm16_bytes = std::fs::read(&pcm16_path).expect("PCM16 output should exist");
-    assert_eq!(
-        u16::from_le_bytes(pcm16_bytes[34..36].try_into().unwrap()),
-        16
-    );
-    let mut decoder =
-        aaadaw_media::AudioStreamDecoder::open(&pcm16_path).expect("PCM16 output should decode");
-    let chunk = decoder
-        .next_chunk()
-        .expect("PCM16 output should read")
-        .expect("PCM16 output should contain frames");
-    assert_eq!(chunk.channels(), 2);
-    let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
-    assert!((chunk.samples()[0] - expected_centered_mono).abs() < 1.0e-4);
-    assert!((chunk.samples()[1] - expected_centered_mono).abs() < 1.0e-4);
+        let bytes = std::fs::read(&path).expect("rendered WAV should exist");
+        let expected_bits = match sample_format {
+            WavSampleFormat::Pcm8 => 8,
+            WavSampleFormat::Pcm16 => 16,
+            WavSampleFormat::Pcm24 => 24,
+            WavSampleFormat::Pcm32 => 32,
+            WavSampleFormat::Float32 => 32,
+            WavSampleFormat::Float64 => 64,
+        };
+        assert_eq!(
+            u16::from_le_bytes(bytes[34..36].try_into().unwrap()),
+            expected_bits,
+            "{sample_format} WAV bit depth"
+        );
+        if matches!(
+            sample_format,
+            WavSampleFormat::Float32 | WavSampleFormat::Float64
+        ) {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        } else {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
+        }
 
-    let store = ProjectStore::open(&database_path).expect("project should reopen");
-    let prepared = prepare_audio_playback(&project, &store, 1, 4)
-        .expect("embedded source should prepare for float export");
-    store
-        .close()
-        .expect("project should close before float export");
-    render_prepared_audio_to_wav(
-        prepared,
-        &project,
-        &float_path,
-        4,
-        WavExportOptions {
-            sample_format: WavSampleFormat::Float32,
-            dither: true,
-        },
-        &AtomicBool::new(false),
-        |_, _| {},
-    )
-    .expect("selected float render should finish");
-    let float_bytes = std::fs::read(&float_path).expect("float output should exist");
-    assert_eq!(
-        u16::from_le_bytes(float_bytes[20..22].try_into().unwrap()),
-        3
-    );
-    let mut decoder =
-        aaadaw_media::AudioStreamDecoder::open(&float_path).expect("float output should decode");
-    let chunk = decoder
-        .next_chunk()
-        .expect("float output should read")
-        .expect("float output should contain frames");
-    assert_eq!(chunk.channels(), 2);
-    assert!((chunk.samples()[0] - chunk.samples()[1]).abs() < f32::EPSILON);
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .unwrap_or_else(|error| panic!("{sample_format} output should decode: {error}"));
+        let chunk = decoder
+            .next_chunk()
+            .unwrap_or_else(|error| panic!("{sample_format} decoder should read: {error}"))
+            .unwrap_or_else(|| panic!("{sample_format} output should contain frames"));
+        assert_eq!(chunk.channels(), 2);
+        let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+        let tolerance = if sample_format == WavSampleFormat::Pcm8 {
+            1.0 / 128.0
+        } else if sample_format == WavSampleFormat::Pcm16 {
+            1.0e-4
+        } else {
+            1.0e-6
+        };
+        assert!((chunk.samples()[0] - expected_centered_mono).abs() < tolerance);
+        assert!((chunk.samples()[1] - expected_centered_mono).abs() < tolerance);
+        std::fs::remove_file(path).expect("rendered WAV should be removed");
+    }
 
-    std::fs::remove_file(pcm16_path).expect("PCM16 output should be removed");
-    std::fs::remove_file(float_path).expect("float output should be removed");
     remove_database(&database_path);
 }
 

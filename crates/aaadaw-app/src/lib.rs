@@ -57,9 +57,10 @@ pub use offline_render::{
     render_selected_tracks_via_master_to_wavs,
 };
 pub use wav_export::{
-    Float32WavExport, Float32WavExportError, IntegerPcmWavExportError, Pcm16WavExport,
-    Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError, WavChannelCount, WavExport,
-    WavExportError, WavExportOptions, WavSampleFormat,
+    Float32WavExport, Float32WavExportError, Float64WavExport, Float64WavExportError,
+    IntegerPcmWavExportError, Pcm8WavExport, Pcm8WavExportError, Pcm16WavExport,
+    Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError, Pcm32WavExport, Pcm32WavExportError,
+    WavChannelCount, WavExport, WavExportError, WavExportOptions, WavSampleFormat,
 };
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
