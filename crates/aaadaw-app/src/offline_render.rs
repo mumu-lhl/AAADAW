@@ -44,8 +44,10 @@ pub struct ProjectWavRenderSettings {
     pub start_sample: u64,
     pub end_sample: u64,
     pub tail_milliseconds: u32,
-    /// Scale the completed output so its sample peak reaches 0 dBFS.
+    /// Enable sample-peak normalization on the completed output.
     pub normalize_peak: bool,
+    /// Peak-normalization target in hundredths of a dBFS.
+    pub normalize_peak_target_centi_dbfs: i32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -187,6 +189,7 @@ struct PeakNormalizingWriter<'a, W> {
     inner: W,
     channels: WavChannelCount,
     spool: Option<PeakNormalizationSpool>,
+    target_linear: f64,
     cancelled: &'a AtomicBool,
 }
 
@@ -195,12 +198,14 @@ impl<'a, W> PeakNormalizingWriter<'a, W> {
         inner: W,
         channels: WavChannelCount,
         enabled: bool,
+        target_linear: f64,
         cancelled: &'a AtomicBool,
     ) -> Result<Self, OfflineRenderError> {
         Ok(Self {
             inner,
             channels,
             spool: enabled.then(PeakNormalizationSpool::create).transpose()?,
+            target_linear,
             cancelled,
         })
     }
@@ -223,7 +228,7 @@ impl<W: OfflineWavWriter> OfflineWavWriter for PeakNormalizingWriter<'_, W> {
             return self.inner.finish();
         };
         let gain = if spool.peak > 0.0 {
-            1.0 / f64::from(spool.peak)
+            self.target_linear / f64::from(spool.peak)
         } else {
             1.0
         };
@@ -677,6 +682,7 @@ pub fn render_project_file_to_wav(
             end_sample,
             tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
             normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
         },
         cancelled,
         report_progress,
@@ -705,6 +711,7 @@ pub fn render_project_file_to_wav_with_settings(
         end_sample,
         tail_milliseconds,
         normalize_peak,
+        normalize_peak_target_centi_dbfs,
     } = settings;
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
@@ -740,7 +747,14 @@ pub fn render_project_file_to_wav_with_settings(
         })
         .transpose()
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let export = PeakNormalizingWriter::new(export, output_channels, normalize_peak, cancelled)?;
+    let normalization_target = 10_f64.powf(f64::from(normalize_peak_target_centi_dbfs) / 2_000.0);
+    let export = PeakNormalizingWriter::new(
+        export,
+        output_channels,
+        normalize_peak,
+        normalization_target,
+        cancelled,
+    )?;
     let export = SampleRateConvertingWriter {
         inner: export,
         resampler,
@@ -1628,6 +1642,7 @@ mod tests {
                     end_sample: 48_000,
                     tail_milliseconds: 2_000,
                     normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
                 },
                 &cancelled,
                 |_, _| {},
@@ -1653,7 +1668,7 @@ mod tests {
             wrote_once: false,
         };
         let mut export =
-            PeakNormalizingWriter::new(inner, WavChannelCount::Stereo, true, &cancelled)
+            PeakNormalizingWriter::new(inner, WavChannelCount::Stereo, true, 1.0, &cancelled)
                 .expect("normalization spool should be created");
         let spool_path = export
             .spool
@@ -1671,5 +1686,41 @@ mod tests {
         ));
         assert!(!path.exists(), "cancelled output must not be published");
         assert!(!spool_path.exists(), "cancelled spool must be removed");
+    }
+
+    #[test]
+    fn peak_normalization_scales_to_a_custom_linear_target() {
+        let path = destination();
+        let cancelled = AtomicBool::new(false);
+        let wav = WavExport::create(&path, 48_000, WavExportOptions::default())
+            .expect("temporary WAV should be created");
+        let target_linear = 10_f64.powf(-602.0 / 2_000.0);
+        let mut export = PeakNormalizingWriter::new(
+            wav,
+            WavChannelCount::Stereo,
+            true,
+            target_linear,
+            &cancelled,
+        )
+        .expect("normalization spool should be created");
+        export
+            .write_frames(&[[0.125, 0.375]])
+            .expect("reference frame should be spooled");
+        export.finish().expect("normalized WAV should be published");
+
+        let bytes = fs::read(&path).expect("normalized WAV should be readable");
+        let sample = |offset: usize| {
+            let third = bytes[offset + 2];
+            let signed = i32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                third,
+                if third & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            signed as f64 / 8_388_608.0
+        };
+        assert!((sample(44) - target_linear / 3.0).abs() < 1.0e-6);
+        assert!((sample(47) - target_linear).abs() < 1.0e-6);
+        fs::remove_file(path).expect("normalized WAV should be removed");
     }
 }

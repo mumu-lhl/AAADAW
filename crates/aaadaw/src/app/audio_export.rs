@@ -83,6 +83,56 @@ pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'stati
         .ok_or("Render tail is too large")
 }
 
+pub(super) fn parse_render_peak_target_centi_dbfs(value: &str) -> Result<i32, &'static str> {
+    let value = value.trim();
+    let (negative, magnitude) = match value.strip_prefix('-') {
+        Some(magnitude) => (true, magnitude),
+        None => (false, value),
+    };
+    let mut parts = magnitude.split('.');
+    let whole_text = parts.next().unwrap_or_default();
+    let fractional_text = parts.next();
+    if parts.next().is_some() {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    let fractional = fractional_text.unwrap_or_default();
+    if (whole_text.is_empty() && fractional.is_empty())
+        || fractional.len() > 2
+        || !whole_text.bytes().all(|byte| byte.is_ascii_digit())
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    let whole = if whole_text.is_empty() {
+        0
+    } else {
+        whole_text
+            .parse::<i32>()
+            .map_err(|_| "Peak target is too large")?
+    };
+    let fractional_centi = if fractional.is_empty() {
+        0
+    } else {
+        fractional
+            .parse::<i32>()
+            .map_err(|_| "Peak target must be between -60 and 0 dBFS with up to 2 decimals")?
+            * 10_i32.pow((2 - fractional.len()) as u32)
+    };
+    let magnitude_centi = whole
+        .checked_mul(100)
+        .and_then(|whole| whole.checked_add(fractional_centi))
+        .ok_or("Peak target is too large")?;
+    let target = if negative {
+        -magnitude_centi
+    } else {
+        magnitude_centi
+    };
+    if !(-6_000..=0).contains(&target) {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    Ok(target)
+}
+
 impl RenderSampleRate {
     pub(crate) const ALL: [Self; 12] = [
         Self::Project,
@@ -129,6 +179,7 @@ pub(super) struct RenderDialogState {
     pub(super) sample_rate: RenderSampleRate,
     pub(super) channels: WavChannelCount,
     pub(super) normalize_peak: bool,
+    pub(super) normalize_peak_target_text: String,
     pub(super) tail_duration_text: String,
 }
 
@@ -140,6 +191,7 @@ impl Default for RenderDialogState {
             sample_rate: RenderSampleRate::Project,
             channels: WavChannelCount::Stereo,
             normalize_peak: false,
+            normalize_peak_target_text: "0".to_owned(),
             tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
         }
     }
@@ -240,14 +292,20 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
-        let (start_sample, end_sample, tail_milliseconds, output_sample_rate, source) =
-            match self.selected_render_settings() {
-                Ok(settings) => settings,
-                Err(error) => {
-                    self.status = error;
-                    return Task::none();
-                }
-            };
+        let (
+            start_sample,
+            end_sample,
+            tail_milliseconds,
+            output_sample_rate,
+            source,
+            normalize_peak_target_centi_dbfs,
+        ) = match self.selected_render_settings() {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
+        };
 
         let file_name = destination.file_name().map_or_else(
             || destination.display().to_string(),
@@ -262,6 +320,7 @@ impl App {
                     output_sample_rate,
                     output_channels: self.render_dialog.channels,
                     source,
+                    normalize_peak_target_centi_dbfs,
                     start_sample,
                     end_sample,
                     tail_milliseconds,
@@ -323,7 +382,7 @@ impl App {
 
     fn selected_render_settings(
         &self,
-    ) -> Result<(u64, u64, u32, u32, aaadaw_app::ProjectWavRenderSource), String> {
+    ) -> Result<(u64, u64, u32, u32, aaadaw_app::ProjectWavRenderSource, i32), String> {
         let tail_milliseconds =
             parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
                 .map_err(str::to_owned)?;
@@ -344,12 +403,19 @@ impl App {
                 aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(selected_track)
             }
         };
+        let normalize_peak_target_centi_dbfs = if self.render_dialog.normalize_peak {
+            parse_render_peak_target_centi_dbfs(&self.render_dialog.normalize_peak_target_text)
+                .map_err(str::to_owned)?
+        } else {
+            0
+        };
         Ok((
             start_sample,
             end_sample,
             tail_milliseconds,
             self.render_output_sample_rate(),
             source,
+            normalize_peak_target_centi_dbfs,
         ))
     }
 
@@ -751,6 +817,7 @@ mod tests {
                     end_sample: 0,
                     tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
                     normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
                 },
             },
             snapshot: Arc::new(Project::default().snapshot()),
@@ -898,6 +965,26 @@ mod tests {
     }
 
     #[test]
+    fn render_peak_target_parses_exact_dbfs_to_hundredths() {
+        for (input, expected) in [
+            ("0", 0),
+            ("-0.5", -50),
+            ("-6", -600),
+            ("-6.02", -602),
+            ("-60", -6_000),
+            ("-60.00", -6_000),
+        ] {
+            assert_eq!(parse_render_peak_target_centi_dbfs(input), Ok(expected));
+        }
+        for invalid in ["", ".", "-", "1", "-60.01", "-1.001", "--1", "NaN"] {
+            assert!(
+                parse_render_peak_target_centi_dbfs(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn queued_render_keeps_its_original_range_and_tail_after_arrange_changes() {
         let project_path = std::env::temp_dir().join("aaadaw-render-snapshot.aaadaw");
         let mut app = App {
@@ -919,6 +1006,7 @@ mod tests {
         app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
         app.render_dialog.channels = WavChannelCount::Mono;
         app.render_dialog.normalize_peak = true;
+        app.render_dialog.normalize_peak_target_text = " -6.02 ".to_owned();
         app.render_dialog.tail_duration_text = "3.125".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
@@ -936,6 +1024,7 @@ mod tests {
         app.render_dialog.source = RenderSource::MasterMix;
         app.render_dialog.channels = WavChannelCount::Stereo;
         app.render_dialog.normalize_peak = false;
+        app.render_dialog.normalize_peak_target_text = "-12.0".to_owned();
         app.render_dialog.tail_duration_text = "0".to_owned();
 
         let queued = app
@@ -949,6 +1038,7 @@ mod tests {
                 assert_eq!(settings.tail_milliseconds, 3_125);
                 assert_eq!(settings.output_sample_rate, 44_100);
                 assert_eq!(settings.output_channels, WavChannelCount::Mono);
+                assert_eq!(settings.normalize_peak_target_centi_dbfs, -602);
                 assert_eq!(
                     settings.source,
                     aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(selected_track_id)

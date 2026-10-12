@@ -2915,6 +2915,9 @@ impl App {
             Message::SetRenderPeakNormalization(enabled) => {
                 self.render_dialog.normalize_peak = enabled;
             }
+            Message::SetRenderPeakTarget(value) => {
+                self.render_dialog.normalize_peak_target_text = value;
+            }
             Message::SetRenderTailDuration(value) => {
                 self.render_dialog.tail_duration_text = value;
             }

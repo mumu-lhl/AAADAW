@@ -1,5 +1,6 @@
 use super::super::audio_export::{
-    RenderBounds, RenderSampleRate, RenderSource, parse_render_tail_milliseconds,
+    RenderBounds, RenderSampleRate, RenderSource, parse_render_peak_target_centi_dbfs,
+    parse_render_tail_milliseconds,
 };
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
@@ -17,6 +18,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Some("Create a time selection in Arrange to render that range.")
         } else if !app.has_valid_render_source() {
             Some("Select exactly one track in Arrange to render it via the master.")
+        } else if app.render_dialog.normalize_peak
+            && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
+                .is_err()
+        {
+            Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
         } else if !app.can_submit_render() {
             Some("Render range plus tail must contain at least one frame.")
         } else {
@@ -97,8 +103,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
         row![
             column![
-                text("Peak normalize to 0 dBFS").size(13),
-                text("Scales the loudest output sample to full scale.").size(11),
+                text("Peak normalize").size(13),
+                text("Scales the loudest output sample to the selected target.").size(11),
             ]
             .spacing(2),
             iced::widget::Space::new().width(Length::Fill),
@@ -115,6 +121,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_press(Message::SetRenderPeakNormalization(
                 !app.render_dialog.normalize_peak,
             )),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            column![
+                text("Peak target (dBFS)").size(13),
+                text("Range: -60 to 0 dBFS.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            text_input("0", &app.render_dialog.normalize_peak_target_text)
+                .on_input(Message::SetRenderPeakTarget)
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(88.0)),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),

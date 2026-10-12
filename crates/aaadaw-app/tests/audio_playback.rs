@@ -454,6 +454,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
             end_sample: 48_000,
             tail_milliseconds: 1_250,
             normalize_peak: true,
+            normalize_peak_target_centi_dbfs: 0,
         },
         &AtomicBool::new(false),
         |_, _| {},
@@ -570,6 +571,7 @@ fn selected_track_via_master_render_omits_unselected_track_media() {
         end_sample: 48_000,
         tail_milliseconds: 0,
         normalize_peak: false,
+        normalize_peak_target_centi_dbfs: 0,
     };
     render_project_file_to_wav_with_settings(
         &database_path,
