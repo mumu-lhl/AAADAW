@@ -2906,6 +2906,9 @@ impl App {
             Message::SetRenderSampleRate(sample_rate) => {
                 self.render_dialog.sample_rate = sample_rate;
             }
+            Message::SetRenderSource(source) => {
+                self.render_dialog.source = source;
+            }
             Message::SetRenderChannels(channels) => {
                 self.render_dialog.channels = channels;
             }

@@ -1,4 +1,6 @@
-use super::super::audio_export::{RenderBounds, RenderSampleRate, parse_render_tail_milliseconds};
+use super::super::audio_export::{
+    RenderBounds, RenderSampleRate, RenderSource, parse_render_tail_milliseconds,
+};
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::{WavChannelCount, WavSampleFormat};
@@ -13,6 +15,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             Some("Tail must be a non-negative number with up to 3 decimal places.")
         } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
             Some("Create a time selection in Arrange to render that range.")
+        } else if !app.has_valid_render_source() {
+            Some("Select exactly one track in Arrange to render it via the master.")
         } else if !app.can_submit_render() {
             Some("Render range plus tail must contain at least one frame.")
         } else {
@@ -24,6 +28,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         text("Render project to WAV").size(20),
         text("Choose the render range and audio format, then select an output file.").size(12),
         rule::horizontal(1),
+        row![
+            text("Source").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderSource::ALL[..],
+                Some(app.render_dialog.source),
+                Message::SetRenderSource,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
         row![
             text("Bounds").size(13),
             iced::widget::Space::new().width(Length::Fill),

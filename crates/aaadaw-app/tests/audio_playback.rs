@@ -1,6 +1,6 @@
 use aaadaw_app::{
-    PlaybackBuildError, ProjectWavRenderSettings, WavExportOptions, WavSampleFormat,
-    prepare_audio_playback, prepare_audio_playback_at,
+    PlaybackBuildError, ProjectWavRenderSettings, ProjectWavRenderSource, WavExportOptions,
+    WavSampleFormat, prepare_audio_playback, prepare_audio_playback_at,
     prepare_audio_playback_with_resampling_quality, render_prepared_audio_to_pcm24_wav,
     render_prepared_audio_to_wav, render_project_file_to_wav_with_settings,
 };
@@ -449,6 +449,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
             export_options: WavExportOptions::default(),
             output_sample_rate: 44_100,
             output_channels: aaadaw_app::WavChannelCount::Mono,
+            source: ProjectWavRenderSource::MasterMix,
             start_sample: 24_000,
             end_sample: 48_000,
             tail_milliseconds: 1_250,
@@ -520,6 +521,107 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
     );
 
     std::fs::remove_file(output_path).expect("rendered file should be removed");
+    remove_database(&database_path);
+}
+
+#[test]
+fn selected_track_via_master_render_omits_unselected_track_media() {
+    let database_path = unique_path("aaadaw");
+    let selected_path = unique_path("wav");
+    let master_path = unique_path("wav");
+    let source = pcm_wav(&vec![4_096; 48_000], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://selected-render-track",
+            "selected-render-track.wav",
+            Cursor::new(source),
+        )
+        .expect("shared track source should embed");
+    store
+        .close()
+        .expect("project should close before rendering");
+
+    let mut project = project_with_audio_item("asset://selected-render-track".to_owned(), 48_000);
+    let selected_track = project.tracks()[0].id();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Unselected".to_owned(),
+        })
+        .expect("second track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[1].id(),
+            media_ref: "asset://selected-render-track".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("second track should use the same source");
+
+    let settings = |source| ProjectWavRenderSettings {
+        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+        export_options: WavExportOptions::default(),
+        output_sample_rate: 48_000,
+        output_channels: aaadaw_app::WavChannelCount::Stereo,
+        source,
+        start_sample: 0,
+        end_sample: 48_000,
+        tail_milliseconds: 0,
+        normalize_peak: false,
+    };
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &selected_path,
+        settings(ProjectWavRenderSource::SelectedTrackViaMaster(
+            selected_track,
+        )),
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected track should render through the master");
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &master_path,
+        settings(ProjectWavRenderSource::MasterMix),
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("the master mix should render both tracks");
+
+    let selected = std::fs::read(&selected_path).expect("selected-track WAV should exist");
+    let master = std::fs::read(&master_path).expect("master WAV should exist");
+    let stable_left_sample = |bytes: &[u8]| {
+        let offset = 44 + 1_000 * 6;
+        i32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            if bytes[offset + 2] & 0x80 == 0 {
+                0
+            } else {
+                0xff
+            },
+        ])
+    };
+    let selected_level = stable_left_sample(&selected);
+    let master_level = stable_left_sample(&master);
+    assert!(selected_level > 0, "selected source should be audible");
+    let ratio = f64::from(master_level) / f64::from(selected_level);
+    assert!(
+        (ratio - 2.0).abs() < 0.02,
+        "the full mix should contain both identical sources (ratio {ratio})"
+    );
+    assert!(
+        project.tracks().iter().all(|track| !track.is_solo()),
+        "the render source must not mutate the saved project solo state"
+    );
+
+    std::fs::remove_file(selected_path).expect("selected WAV should be removed");
+    std::fs::remove_file(master_path).expect("master WAV should be removed");
     remove_database(&database_path);
 }
 

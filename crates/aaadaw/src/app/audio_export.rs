@@ -24,6 +24,26 @@ pub(crate) enum RenderSampleRate {
     Fixed(u32),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RenderSource {
+    #[default]
+    MasterMix,
+    SelectedTrackViaMaster,
+}
+
+impl RenderSource {
+    pub(crate) const ALL: [Self; 2] = [Self::MasterMix, Self::SelectedTrackViaMaster];
+}
+
+impl std::fmt::Display for RenderSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MasterMix => "Master mix",
+            Self::SelectedTrackViaMaster => "Selected track via master",
+        })
+    }
+}
+
 pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'static str> {
     let value = value.trim();
     if value.is_empty() {
@@ -105,6 +125,7 @@ impl std::fmt::Display for RenderBounds {
 #[derive(Clone, Debug)]
 pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
+    pub(super) source: RenderSource,
     pub(super) sample_rate: RenderSampleRate,
     pub(super) channels: WavChannelCount,
     pub(super) normalize_peak: bool,
@@ -115,6 +136,7 @@ impl Default for RenderDialogState {
     fn default() -> Self {
         Self {
             bounds: RenderBounds::EntireProject,
+            source: RenderSource::MasterMix,
             sample_rate: RenderSampleRate::Project,
             channels: WavChannelCount::Stereo,
             normalize_peak: false,
@@ -218,7 +240,7 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
-        let (start_sample, end_sample, tail_milliseconds, output_sample_rate) =
+        let (start_sample, end_sample, tail_milliseconds, output_sample_rate, source) =
             match self.selected_render_settings() {
                 Ok(settings) => settings,
                 Err(error) => {
@@ -239,6 +261,7 @@ impl App {
                     export_options: self.wav_export_options,
                     output_sample_rate,
                     output_channels: self.render_dialog.channels,
+                    source,
                     start_sample,
                     end_sample,
                     tail_milliseconds,
@@ -284,6 +307,13 @@ impl App {
         self.selected_render_settings().is_ok()
     }
 
+    pub(super) fn has_valid_render_source(&self) -> bool {
+        match self.render_dialog.source {
+            RenderSource::MasterMix => true,
+            RenderSource::SelectedTrackViaMaster => self.selected_track_for_render().is_some(),
+        }
+    }
+
     pub(super) fn render_output_sample_rate(&self) -> u32 {
         match self.render_dialog.sample_rate {
             RenderSampleRate::Project => self.project.settings().sample_rate(),
@@ -291,7 +321,9 @@ impl App {
         }
     }
 
-    fn selected_render_settings(&self) -> Result<(u64, u64, u32, u32), String> {
+    fn selected_render_settings(
+        &self,
+    ) -> Result<(u64, u64, u32, u32, aaadaw_app::ProjectWavRenderSource), String> {
         let tail_milliseconds =
             parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
                 .map_err(str::to_owned)?;
@@ -303,12 +335,35 @@ impl App {
             tail_milliseconds,
         )
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
+        let source = match self.render_dialog.source {
+            RenderSource::MasterMix => aaadaw_app::ProjectWavRenderSource::MasterMix,
+            RenderSource::SelectedTrackViaMaster => {
+                let selected_track = self.selected_track_for_render().ok_or_else(|| {
+                    "Select exactly one track in Arrange to render it via the master".to_owned()
+                })?;
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(selected_track)
+            }
+        };
         Ok((
             start_sample,
             end_sample,
             tail_milliseconds,
             self.render_output_sample_rate(),
+            source,
         ))
+    }
+
+    fn selected_track_for_render(&self) -> Option<aaadaw_core::TrackId> {
+        let selected_track = match self.timeline.selected_tracks.len() {
+            0 => self.timeline.selected_track?,
+            1 => *self.timeline.selected_tracks.iter().next()?,
+            _ => return None,
+        };
+        self.project
+            .tracks()
+            .iter()
+            .any(|track| track.id() == selected_track)
+            .then_some(selected_track)
     }
 
     fn selected_render_bounds(&self) -> Result<(u64, u64), String> {
@@ -691,6 +746,7 @@ mod tests {
                     export_options: aaadaw_app::WavExportOptions::default(),
                     output_sample_rate: Project::default().settings().sample_rate(),
                     output_channels: WavChannelCount::Stereo,
+                    source: aaadaw_app::ProjectWavRenderSource::MasterMix,
                     start_sample: 0,
                     end_sample: 0,
                     tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
@@ -773,6 +829,55 @@ mod tests {
     }
 
     #[test]
+    fn selected_track_render_requires_exactly_one_valid_track_selection() {
+        let mut app = App::default();
+        app.render_dialog.source = RenderSource::SelectedTrackViaMaster;
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 960,
+        });
+        assert!(!app.has_valid_render_source());
+        assert!(
+            app.selected_render_settings()
+                .expect_err("a selected track is required")
+                .contains("Select exactly one track")
+        );
+
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "First".to_owned(),
+            })
+            .expect("first track should be created");
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second".to_owned(),
+            })
+            .expect("second track should be created");
+        let first = app.project.tracks()[0].id();
+        let second = app.project.tracks()[1].id();
+        app.timeline.selected_track = Some(first);
+        app.timeline.selected_tracks.insert(first);
+        assert!(app.has_valid_render_source());
+        assert_eq!(
+            app.selected_render_settings()
+                .expect("one selected track should be renderable")
+                .4,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(first)
+        );
+
+        app.timeline.selected_tracks.insert(second);
+        assert!(!app.has_valid_render_source());
+        assert!(
+            app.selected_render_settings()
+                .expect_err("multiple selected tracks are outside this implemented subset")
+                .contains("Select exactly one track")
+        );
+    }
+
+    #[test]
     fn render_tail_parses_decimal_seconds_to_exact_milliseconds() {
         for (input, expected) in [
             ("2", 2_000),
@@ -800,7 +905,17 @@ mod tests {
             offline_render_busy: true,
             ..App::default()
         };
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Selected render source".to_owned(),
+            })
+            .expect("render source track should be created");
+        let selected_track_id = app.project.tracks()[0].id();
+        app.timeline.selected_track = Some(selected_track_id);
+        app.timeline.selected_tracks.insert(selected_track_id);
         app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.render_dialog.source = RenderSource::SelectedTrackViaMaster;
         app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
         app.render_dialog.channels = WavChannelCount::Mono;
         app.render_dialog.normalize_peak = true;
@@ -818,6 +933,7 @@ mod tests {
             end_tick: 960,
         });
         app.render_dialog.sample_rate = RenderSampleRate::Project;
+        app.render_dialog.source = RenderSource::MasterMix;
         app.render_dialog.channels = WavChannelCount::Stereo;
         app.render_dialog.normalize_peak = false;
         app.render_dialog.tail_duration_text = "0".to_owned();
@@ -833,6 +949,10 @@ mod tests {
                 assert_eq!(settings.tail_milliseconds, 3_125);
                 assert_eq!(settings.output_sample_rate, 44_100);
                 assert_eq!(settings.output_channels, WavChannelCount::Mono);
+                assert_eq!(
+                    settings.source,
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(selected_track_id)
+                );
                 assert!(settings.normalize_peak);
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),

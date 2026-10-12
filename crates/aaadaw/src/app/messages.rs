@@ -1,6 +1,6 @@
 #[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
-use super::audio_export::{RenderBounds, RenderSampleRate};
+use super::audio_export::{RenderBounds, RenderSampleRate, RenderSource};
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
@@ -450,6 +450,7 @@ pub(crate) enum Message {
     SetWavDither(bool),
     SetRenderBounds(RenderBounds),
     SetRenderSampleRate(RenderSampleRate),
+    SetRenderSource(RenderSource),
     SetRenderChannels(WavChannelCount),
     SetRenderPeakNormalization(bool),
     SetRenderTailDuration(String),

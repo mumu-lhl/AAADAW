@@ -6,7 +6,7 @@ use crate::{
     prepare_audio_playback_at_with_resampling_quality,
     prepare_audio_playback_with_resampling_quality,
 };
-use aaadaw_core::{ItemId, Project};
+use aaadaw_core::{DawAction, ItemId, Project, TrackId};
 use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
@@ -40,11 +40,20 @@ pub struct ProjectWavRenderSettings {
     pub export_options: WavExportOptions,
     pub output_sample_rate: u32,
     pub output_channels: WavChannelCount,
+    pub source: ProjectWavRenderSource,
     pub start_sample: u64,
     pub end_sample: u64,
     pub tail_milliseconds: u32,
     /// Scale the completed output so its sample peak reaches 0 dBFS.
     pub normalize_peak: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProjectWavRenderSource {
+    #[default]
+    MasterMix,
+    /// Isolate one track in an in-memory project snapshot and render it through Master.
+    SelectedTrackViaMaster(TrackId),
 }
 
 trait OfflineWavWriter {
@@ -663,6 +672,7 @@ pub fn render_project_file_to_wav(
             export_options: options,
             output_sample_rate: project.settings().sample_rate(),
             output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
             start_sample: 0,
             end_sample,
             tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
@@ -690,6 +700,7 @@ pub fn render_project_file_to_wav_with_settings(
         export_options,
         output_sample_rate,
         output_channels,
+        source,
         start_sample,
         end_sample,
         tail_milliseconds,
@@ -704,6 +715,13 @@ pub fn render_project_file_to_wav_with_settings(
         end_sample,
         tail_milliseconds,
     )?;
+    let isolated_project = match source {
+        ProjectWavRenderSource::MasterMix => None,
+        ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => {
+            Some(selected_track_via_master_project(project, track_id)?)
+        }
+    };
+    let render_project = isolated_project.as_ref().unwrap_or(project);
     let export = WavExport::create_with_channels(
         destination.as_ref(),
         output_sample_rate,
@@ -730,7 +748,7 @@ pub fn render_project_file_to_wav_with_settings(
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     let prepared = prepare_audio_playback_at_with_resampling_quality(
-        project,
+        render_project,
         &store,
         start_sample,
         16_384,
@@ -749,9 +767,9 @@ pub fn render_project_file_to_wav_with_settings(
     let mut instrument_processors = Vec::new();
     let mut effect_owners = Vec::new();
     let mut effect_processors = Vec::new();
-    let sample_rate = project.settings().sample_rate();
+    let sample_rate = render_project.settings().sample_rate();
     let max_block_frames = prepared.graph().max_block_frames();
-    for track in project.tracks() {
+    for track in render_project.tracks() {
         if track.is_frozen() {
             continue;
         }
@@ -842,7 +860,7 @@ pub fn render_project_file_to_wav_with_settings(
     }
     if let Err(error) = prepared
         .graph_mut()
-        .install_instrument_processors(project, &mut instrument_processors)
+        .install_instrument_processors(render_project, &mut instrument_processors)
     {
         cleanup_uninstalled_processors(
             instrument_owners,
@@ -854,7 +872,7 @@ pub fn render_project_file_to_wav_with_settings(
     }
     if let Err(error) = prepared
         .graph_mut()
-        .install_fx_processors(project, &mut effect_processors)
+        .install_fx_processors(render_project, &mut effect_processors)
     {
         let _stop_failures = prepared.graph_mut().stop_processors_after_offline_render();
         let stopped_instruments = prepared.graph_mut().take_stopped_instruments();
@@ -865,7 +883,7 @@ pub fn render_project_file_to_wav_with_settings(
 
     let (mut graph, result) = render_prepared_inner(
         prepared,
-        project,
+        render_project,
         export,
         total_frames,
         start_sample,
@@ -876,6 +894,37 @@ pub fn render_project_file_to_wav_with_settings(
     deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
     deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
     result
+}
+
+fn selected_track_via_master_project(
+    project: &Project,
+    selected_track_id: TrackId,
+) -> Result<Project, OfflineRenderError> {
+    let mut render_project = Project::from_snapshot(project.snapshot())
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    if !render_project
+        .tracks()
+        .iter()
+        .any(|track| track.id() == selected_track_id)
+    {
+        return Err(OfflineRenderError::Media(
+            "selected render track no longer exists".to_owned(),
+        ));
+    }
+    let solo_updates: Vec<_> = render_project
+        .tracks()
+        .iter()
+        .filter_map(|track| {
+            let solo = track.id() == selected_track_id;
+            (track.is_solo() != solo).then_some((track.id(), solo))
+        })
+        .collect();
+    for (track_id, solo) in solo_updates {
+        render_project
+            .apply(DawAction::SetTrackSolo { track_id, solo })
+            .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    }
+    Ok(render_project)
 }
 
 /// Renders one instrument track to float WAV from its first MIDI item through its last item and
@@ -1389,6 +1438,32 @@ mod tests {
     }
 
     #[test]
+    fn selected_track_source_clears_other_solos_only_in_its_render_snapshot() {
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Other".to_owned(),
+            })
+            .expect("second track should be created");
+        let selected = project.tracks()[0].id();
+        let other = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackSolo {
+                track_id: other,
+                solo: true,
+            })
+            .expect("the original solo should be set");
+
+        let render_project = selected_track_via_master_project(&project, selected)
+            .expect("render snapshot should isolate the requested track");
+        assert!(render_project.tracks()[0].is_solo());
+        assert!(!render_project.tracks()[1].is_solo());
+        assert!(!project.tracks()[0].is_solo());
+        assert!(project.tracks()[1].is_solo());
+    }
+
+    #[test]
     fn freeze_tail_uses_the_longer_of_default_allowance_and_serial_plugin_tails() {
         assert_eq!(
             freeze_tail_frames(48_000, &[24_000, 120_000]).unwrap(),
@@ -1548,6 +1623,7 @@ mod tests {
                     export_options: WavExportOptions::default(),
                     output_sample_rate: Project::default().settings().sample_rate(),
                     output_channels: WavChannelCount::Stereo,
+                    source: ProjectWavRenderSource::MasterMix,
                     start_sample: 0,
                     end_sample: 48_000,
                     tail_milliseconds: 2_000,
