@@ -61,7 +61,7 @@
     "project_start_time_offset_seconds": 0
   },
   "limitations": [
-    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Whole-sample mode rounds tempo-map sample anchors; native marker-edit snapping behavior and meter-marker-specific effects still need verification. The project-rate enable/hardware-default behavior, display timebase, beat-synced audio item storage, resampling UI/settings and other quality modes remain unimplemented. AAADAW's background media worker uses 64-tap sinc for playback and 192-tap sinc for WAV export/Freeze, but its coefficients have not been verified against REAPER",
+    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Whole-sample mode rounds tempo-map sample anchors; native marker-edit snapping behavior and meter-marker-specific effects still need verification. The project-rate enable/hardware-default behavior, display timebase, beat-synced audio item storage, General playback-resampling selector/persistence and other quality modes remain unimplemented. The Render window offers Project rate and the eleven General rate presets; its native rate list has not been captured. AAADAW's background media worker uses 64-tap sinc for playback and 192-tap sinc for WAV export/Freeze and output-rate conversion, but its coefficients have not been verified against REAPER",
     "Default values came from the owned ReaScript probe; REAPER 7.82 General screenshots and SAMPLERATE field comparisons are committed alongside the AAADAW evidence"
   ]
 }

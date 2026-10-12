@@ -33,6 +33,41 @@ impl ResamplingQuality {
     }
 }
 
+/// Stateful stereo sample-rate converter for control and offline-render threads.
+///
+/// This type allocates while processing and must not be called from the realtime audio callback.
+pub struct StereoPcmResampler {
+    inner: StreamingResampler<[f32; 2]>,
+}
+
+impl StereoPcmResampler {
+    /// Creates a converter and prepares its filter table before processing begins.
+    pub fn new(
+        input_sample_rate: u32,
+        output_sample_rate: u32,
+        quality: ResamplingQuality,
+    ) -> Result<Self, MediaError> {
+        Ok(Self {
+            inner: StreamingResampler::new_with_quality(
+                input_sample_rate,
+                output_sample_rate,
+                quality,
+            )?,
+        })
+    }
+
+    /// Converts one interleaved stereo frame packet while retaining filter history.
+    pub fn push_frames(&mut self, frames: &[[f32; 2]]) -> Result<Vec<[f32; 2]>, MediaError> {
+        self.inner.push(frames)
+    }
+
+    /// Flushes the converter's remaining frames at end of input.
+    pub fn finish(self) -> Vec<[f32; 2]> {
+        let mut inner = self.inner;
+        inner.finish()
+    }
+}
+
 /// A cancellable decoder/resampler worker feeding one mono engine stream.
 pub struct AudioFeedWorker {
     cancelled: Arc<AtomicBool>,
@@ -1131,6 +1166,40 @@ mod tests {
             assert_eq!(output.len(), 400);
             assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
         }
+    }
+
+    #[test]
+    fn public_stereo_resampler_preserves_rate_duration_and_packet_boundaries() {
+        use super::StereoPcmResampler;
+
+        let input = (0..4_800)
+            .map(|index| {
+                let sample = (index as f32 * 0.031).sin() * 0.25;
+                [sample, -sample]
+            })
+            .collect::<Vec<_>>();
+        let mut whole = StereoPcmResampler::new(48_000, 44_100, ResamplingQuality::Sinc192)
+            .expect("valid stereo rates should create a converter");
+        let mut whole_output = whole
+            .push_frames(&input)
+            .expect("all input frames should convert");
+        whole_output.extend(whole.finish());
+
+        let mut chunked = StereoPcmResampler::new(48_000, 44_100, ResamplingQuality::Sinc192)
+            .expect("valid stereo rates should create a converter");
+        let mut chunked_output = Vec::new();
+        for frames in input.chunks(73) {
+            chunked_output.extend(chunked.push_frames(frames).expect("packet should convert"));
+        }
+        chunked_output.extend(chunked.finish());
+
+        assert_eq!(whole_output.len(), 4_410);
+        assert_eq!(chunked_output, whole_output);
+        assert!(
+            whole_output
+                .iter()
+                .all(|frame| (frame[0] + frame[1]).abs() < 1.0e-6)
+        );
     }
 
     #[test]

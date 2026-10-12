@@ -447,6 +447,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
         ProjectWavRenderSettings {
             master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
             export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
             start_sample: 24_000,
             end_sample: 48_000,
             tail_seconds: 1,
@@ -459,23 +460,28 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
     let bytes = std::fs::read(&output_path).expect("range render should be published");
     assert_eq!(
         u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
-        48_000
+        44_100
     );
     assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
     assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
     let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
-    assert_eq!(data_bytes, 72_000 * 6);
+    assert_eq!(data_bytes, 66_150 * 6);
+    let stable_left_offset = 44 + 1_000 * 6;
     let first_left = i32::from_le_bytes([
-        bytes[44],
-        bytes[45],
-        bytes[46],
-        if bytes[46] & 0x80 == 0 { 0 } else { 0xff },
+        bytes[stable_left_offset],
+        bytes[stable_left_offset + 1],
+        bytes[stable_left_offset + 2],
+        if bytes[stable_left_offset + 2] & 0x80 == 0 {
+            0
+        } else {
+            0xff
+        },
     ]);
     assert!(
         first_left > 2_000_000,
-        "selected render should start at the non-silent 0.5 s boundary, got {first_left}"
+        "resampled output should preserve the selected passband, got {first_left}"
     );
-    let tail_left_offset = 44 + 24_000 * 6;
+    let tail_left_offset = 44 + (22_050 + 1_000) * 6;
     let tail_left = i32::from_le_bytes([
         bytes[tail_left_offset],
         bytes[tail_left_offset + 1],

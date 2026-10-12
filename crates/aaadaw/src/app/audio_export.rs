@@ -17,6 +17,38 @@ pub(crate) enum RenderBounds {
     TimeSelection,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RenderSampleRate {
+    Project,
+    Fixed(u32),
+}
+
+impl RenderSampleRate {
+    pub(crate) const ALL: [Self; 12] = [
+        Self::Project,
+        Self::Fixed(8_000),
+        Self::Fixed(11_025),
+        Self::Fixed(16_000),
+        Self::Fixed(22_050),
+        Self::Fixed(32_000),
+        Self::Fixed(44_100),
+        Self::Fixed(48_000),
+        Self::Fixed(88_200),
+        Self::Fixed(96_000),
+        Self::Fixed(176_400),
+        Self::Fixed(192_000),
+    ];
+}
+
+impl std::fmt::Display for RenderSampleRate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Project => formatter.write_str("Project rate"),
+            Self::Fixed(sample_rate) => write!(formatter, "{sample_rate} Hz"),
+        }
+    }
+}
+
 impl RenderBounds {
     pub(crate) const ALL: [Self; 2] = [Self::EntireProject, Self::TimeSelection];
 }
@@ -33,6 +65,7 @@ impl std::fmt::Display for RenderBounds {
 #[derive(Clone, Debug)]
 pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
+    pub(super) sample_rate: RenderSampleRate,
     pub(super) tail_seconds_text: String,
 }
 
@@ -40,6 +73,7 @@ impl Default for RenderDialogState {
     fn default() -> Self {
         Self {
             bounds: RenderBounds::EntireProject,
+            sample_rate: RenderSampleRate::Project,
             tail_seconds_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
         }
     }
@@ -140,13 +174,14 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
-        let (start_sample, end_sample, tail_seconds) = match self.selected_render_settings() {
-            Ok(settings) => settings,
-            Err(error) => {
-                self.status = error;
-                return Task::none();
-            }
-        };
+        let (start_sample, end_sample, tail_seconds, output_sample_rate) =
+            match self.selected_render_settings() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
 
         let file_name = destination.file_name().map_or_else(
             || destination.display().to_string(),
@@ -158,6 +193,7 @@ impl App {
                 settings: aaadaw_app::ProjectWavRenderSettings {
                     master_ceiling: self.audio_settings.master_output_ceiling,
                     export_options: self.wav_export_options,
+                    output_sample_rate,
                     start_sample,
                     end_sample,
                     tail_seconds,
@@ -202,7 +238,14 @@ impl App {
         self.selected_render_settings().is_ok()
     }
 
-    fn selected_render_settings(&self) -> Result<(u64, u64, u32), String> {
+    pub(super) fn render_output_sample_rate(&self) -> u32 {
+        match self.render_dialog.sample_rate {
+            RenderSampleRate::Project => self.project.settings().sample_rate(),
+            RenderSampleRate::Fixed(sample_rate) => sample_rate,
+        }
+    }
+
+    fn selected_render_settings(&self) -> Result<(u64, u64, u32, u32), String> {
         let tail_seconds = self
             .render_dialog
             .tail_seconds_text
@@ -217,7 +260,12 @@ impl App {
             tail_seconds,
         )
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
-        Ok((start_sample, end_sample, tail_seconds))
+        Ok((
+            start_sample,
+            end_sample,
+            tail_seconds,
+            self.render_output_sample_rate(),
+        ))
     }
 
     fn selected_render_bounds(&self) -> Result<(u64, u64), String> {
@@ -598,6 +646,7 @@ mod tests {
                 settings: aaadaw_app::ProjectWavRenderSettings {
                     master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
                     export_options: aaadaw_app::WavExportOptions::default(),
+                    output_sample_rate: Project::default().settings().sample_rate(),
                     start_sample: 0,
                     end_sample: 0,
                     tail_seconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
@@ -663,6 +712,13 @@ mod tests {
         );
         assert!(app.can_submit_render());
 
+        app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
+        assert_eq!(
+            app.render_output_sample_rate(),
+            44_100,
+            "fixed render rate should be resolved independently of the project rate"
+        );
+
         app.render_dialog.tail_seconds_text = "two".to_owned();
         assert!(!app.can_submit_render());
 
@@ -680,6 +736,7 @@ mod tests {
             ..App::default()
         };
         app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
         app.render_dialog.tail_seconds_text = "3".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
@@ -693,6 +750,7 @@ mod tests {
             start_tick: 0,
             end_tick: 960,
         });
+        app.render_dialog.sample_rate = RenderSampleRate::Project;
         app.render_dialog.tail_seconds_text = "0".to_owned();
 
         let queued = app
@@ -704,6 +762,7 @@ mod tests {
                 assert_eq!(settings.start_sample, 24_000);
                 assert_eq!(settings.end_sample, 72_000);
                 assert_eq!(settings.tail_seconds, 3);
+                assert_eq!(settings.output_sample_rate, 44_100);
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
         }

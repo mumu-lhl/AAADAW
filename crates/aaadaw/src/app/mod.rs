@@ -2903,6 +2903,9 @@ impl App {
             Message::SetRenderBounds(bounds) => {
                 self.render_dialog.bounds = bounds;
             }
+            Message::SetRenderSampleRate(sample_rate) => {
+                self.render_dialog.sample_rate = sample_rate;
+            }
             Message::SetRenderTailSeconds(value) => {
                 self.render_dialog.tail_seconds_text = value;
             }

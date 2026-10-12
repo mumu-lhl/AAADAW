@@ -1,4 +1,4 @@
-use super::super::audio_export::RenderBounds;
+use super::super::audio_export::{RenderBounds, RenderSampleRate};
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::WavSampleFormat;
@@ -54,11 +54,32 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
+        row![
+            text("Sample rate").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderSampleRate::ALL[..],
+                Some(app.render_dialog.sample_rate),
+                Message::SetRenderSampleRate,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            text("Channels").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            text("Stereo").size(12),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
         text(format!(
-            "Sample rate: Project ({} Hz) · Stereo",
-            app.project.settings().sample_rate()
+            "Output rate: {} Hz",
+            app.render_output_sample_rate()
         ))
-        .size(12),
+        .size(11),
         rule::horizontal(1),
         row![
             text("Format").size(13),

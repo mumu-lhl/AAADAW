@@ -11,7 +11,7 @@ use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
 };
-use aaadaw_media::ResamplingQuality;
+use aaadaw_media::{ResamplingQuality, StereoPcmResampler};
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,7 @@ pub struct FrozenTrackRender {
 pub struct ProjectWavRenderSettings {
     pub master_ceiling: MasterOutputCeiling,
     pub export_options: WavExportOptions,
+    pub output_sample_rate: u32,
     pub start_sample: u64,
     pub end_sample: u64,
     pub tail_seconds: u32,
@@ -40,6 +41,33 @@ pub struct ProjectWavRenderSettings {
 trait OfflineWavWriter {
     fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError>;
     fn finish(self) -> Result<PathBuf, OfflineRenderError>;
+}
+
+struct SampleRateConvertingWriter<W> {
+    inner: W,
+    resampler: Option<StereoPcmResampler>,
+}
+
+impl<W: OfflineWavWriter> OfflineWavWriter for SampleRateConvertingWriter<W> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        match &mut self.resampler {
+            Some(resampler) => {
+                let converted = resampler
+                    .push_frames(frames)
+                    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+                self.inner.write_frames(&converted)
+            }
+            None => self.inner.write_frames(frames),
+        }
+    }
+
+    fn finish(mut self) -> Result<PathBuf, OfflineRenderError> {
+        if let Some(resampler) = self.resampler.take() {
+            let tail = resampler.finish();
+            self.inner.write_frames(&tail)?;
+        }
+        self.inner.finish()
+    }
 }
 
 impl OfflineWavWriter for Pcm24WavExport {
@@ -417,6 +445,7 @@ pub fn render_project_file_to_wav(
         ProjectWavRenderSettings {
             master_ceiling,
             export_options: options,
+            output_sample_rate: project.settings().sample_rate(),
             start_sample: 0,
             end_sample,
             tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
@@ -441,6 +470,7 @@ pub fn render_project_file_to_wav_with_settings(
     let ProjectWavRenderSettings {
         master_ceiling,
         export_options,
+        output_sample_rate,
         start_sample,
         end_sample,
         tail_seconds,
@@ -454,12 +484,23 @@ pub fn render_project_file_to_wav_with_settings(
         end_sample,
         tail_seconds,
     )?;
-    let export = WavExport::create(
-        destination.as_ref(),
-        project.settings().sample_rate(),
-        export_options,
-    )
-    .map_err(OfflineRenderError::WavExport)?;
+    let export = WavExport::create(destination.as_ref(), output_sample_rate, export_options)
+        .map_err(OfflineRenderError::WavExport)?;
+    let project_sample_rate = project.settings().sample_rate();
+    let resampler = (output_sample_rate != project_sample_rate)
+        .then(|| {
+            StereoPcmResampler::new(
+                project_sample_rate,
+                output_sample_rate,
+                ResamplingQuality::Sinc192,
+            )
+        })
+        .transpose()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let export = SampleRateConvertingWriter {
+        inner: export,
+        resampler,
+    };
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     let prepared = prepare_audio_playback_at_with_resampling_quality(
@@ -1243,6 +1284,7 @@ mod tests {
                 ProjectWavRenderSettings {
                     master_ceiling: MasterOutputCeiling::default(),
                     export_options: WavExportOptions::default(),
+                    output_sample_rate: Project::default().settings().sample_rate(),
                     start_sample: 0,
                     end_sample: 48_000,
                     tail_seconds: 2,
