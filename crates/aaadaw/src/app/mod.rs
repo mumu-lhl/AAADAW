@@ -1721,6 +1721,7 @@ impl App {
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
+                    | Message::MarkerPositionChanged(_)
                     | Message::ApplyMarkerProperties
                     | Message::CloseMarkerProperties
                     | Message::OpenMarkerManager
@@ -2253,6 +2254,12 @@ impl App {
             Message::MarkerNameChanged(value) => {
                 if let Some(draft) = &mut self.marker_properties {
                     draft.name = value;
+                    draft.error = None;
+                }
+            }
+            Message::MarkerPositionChanged(value) => {
+                if let Some(draft) = &mut self.marker_properties {
+                    draft.position = value;
                     draft.error = None;
                 }
             }

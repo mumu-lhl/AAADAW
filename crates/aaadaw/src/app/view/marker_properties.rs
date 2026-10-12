@@ -11,10 +11,34 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .on_input(Message::MarkerNameChanged)
         .on_submit(Message::ApplyMarkerProperties)
         .width(Length::Fill);
+    let position = text_input("", &draft.position)
+        .id(iced::widget::Id::new(marker_properties::POSITION_INPUT_ID))
+        .on_input(Message::MarkerPositionChanged)
+        .on_submit(Message::ApplyMarkerProperties)
+        .width(Length::Fixed(116.0));
+    let marker_id = draft.marker_id.value().saturating_add(1).to_string();
     let content = column![
-        row![text("Name:").width(64), name]
-            .spacing(8)
-            .align_y(Alignment::Center),
+        row![
+            text("Name:").width(52),
+            name,
+            text("ID:"),
+            text(marker_id).width(24),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            text("Position:").width(72),
+            position,
+            iced::widget::Space::new().width(Length::Fill),
+            button("Manager...").on_press(Message::OpenMarkerManager),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            text("Lane:").width(52),
+            text("Lane editing is not supported yet").size(12),
+        ]
+        .align_y(Alignment::Center),
         text(draft.error.as_deref().unwrap_or(""))
             .size(12)
             .width(Length::Fill),
@@ -25,9 +49,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(8)
     ]
-    .spacing(8);
+    .spacing(4);
     container(content)
-        .padding(10)
+        .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

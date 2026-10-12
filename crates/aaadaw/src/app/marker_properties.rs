@@ -3,12 +3,14 @@ use aaadaw_core::{DawAction, MarkerId};
 use iced::Task;
 
 pub(super) const NAME_INPUT_ID: &str = "project-marker-name";
+pub(super) const POSITION_INPUT_ID: &str = "project-marker-position";
 
 #[derive(Debug, Clone)]
 pub(super) struct MarkerProperties {
     pub(super) marker_id: MarkerId,
     generation: u64,
     pub(super) name: String,
+    pub(super) position: String,
     pub(super) error: Option<String>,
 }
 
@@ -31,11 +33,16 @@ impl App {
             marker_id,
             generation: self.project_generation,
             name: marker.name().to_owned(),
+            position: super::item_properties::format_marker_position(
+                &self.project,
+                marker.position_ticks(),
+            )
+            .unwrap_or_else(|_| format!("{} ticks", marker.position_ticks())),
             error: None,
         });
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(440.0, 126.0),
-            min_size: Some(iced::Size::new(440.0, 126.0)),
+            size: iced::Size::new(440.0, 176.0),
+            min_size: Some(iced::Size::new(440.0, 176.0)),
             ..iced::window::Settings::default()
         });
         self.marker_properties_window_id = Some(window_id);
@@ -68,12 +75,23 @@ impl App {
         }
         let marker_id = draft.marker_id;
         let name = draft.name.clone();
-        let Some(position_ticks) = self
+        let position = draft.position.clone();
+        let position_ticks =
+            match super::item_properties::parse_marker_position(&self.project, &position) {
+                Ok(position_ticks) => position_ticks,
+                Err(error) => {
+                    self.status = error.clone();
+                    if let Some(draft) = &mut self.marker_properties {
+                        draft.error = Some(error);
+                    }
+                    return Task::none();
+                }
+            };
+        let Some(marker) = self
             .project
             .markers()
             .iter()
             .find(|marker| marker.id() == marker_id)
-            .map(|marker| marker.position_ticks())
         else {
             let error = "Project marker no longer exists".to_owned();
             self.status = error.clone();
@@ -82,13 +100,7 @@ impl App {
             }
             return Task::none();
         };
-        let current_name = self
-            .project
-            .markers()
-            .iter()
-            .find(|marker| marker.id() == marker_id)
-            .map(|marker| marker.name());
-        if current_name == Some(name.as_str()) {
+        if marker.name() == name && marker.position_ticks() == position_ticks {
             return self.close_marker_properties();
         }
 
@@ -98,14 +110,13 @@ impl App {
                 position_ticks,
                 name: name.clone(),
             },
-            "Project marker renamed",
+            "Project marker updated",
         );
-        if self
-            .project
-            .markers()
-            .iter()
-            .any(|marker| marker.id() == marker_id && marker.name() == name)
-        {
+        if self.project.markers().iter().any(|marker| {
+            marker.id() == marker_id
+                && marker.name() == name
+                && marker.position_ticks() == position_ticks
+        }) {
             self.close_marker_properties()
         } else {
             let error = self.status.clone();

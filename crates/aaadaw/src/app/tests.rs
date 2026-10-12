@@ -270,6 +270,12 @@ fn marker_manager_keeps_global_undo_shortcut_available() {
 fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
     let mut app = App::default();
     app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 1_920,
+            bpm: 60.0,
+        })
+        .unwrap();
+    app.project
         .apply(DawAction::InsertProjectMarker {
             position_ticks: 960,
             name: String::new(),
@@ -282,29 +288,36 @@ fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
         marker_id,
     }));
     assert_eq!(app.marker_properties.as_ref().unwrap().name, "");
+    assert_eq!(app.marker_properties.as_ref().unwrap().position, "1.2.00");
     assert!(app.marker_properties_window_id.is_some());
     let _ = app.update(Message::MarkerNameChanged("discarded".to_owned()));
+    let _ = app.update(Message::MarkerPositionChanged("1.3.50".to_owned()));
     let _ = app.update(Message::CloseMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
     assert_eq!(app.revision, revision_before);
 
     let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
         marker_id,
     }));
     let _ = app.update(Message::MarkerNameChanged("Verse".to_owned()));
+    let _ = app.update(Message::MarkerPositionChanged("1.3.50".to_owned()));
     let _ = app.update(Message::ApplyMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "Verse");
     assert_eq!(app.project.markers()[0].id(), marker_id);
-    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    assert_eq!(app.project.markers()[0].position_ticks(), 2_400);
+    assert_eq!(app.timeline.edit_cursor_tick, 0);
     assert_eq!(app.revision, revision_before + 1);
     assert!(app.marker_properties_window_id.is_none());
 
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.markers()[0].name(), "");
     assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.markers()[0].name(), "Verse");
     assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 2_400);
 }
 
 #[test]
@@ -327,9 +340,18 @@ fn marker_properties_keep_invalid_or_busy_edits_open_without_changing_project() 
     assert!(app.marker_properties.as_ref().unwrap().error.is_some());
 
     let _ = app.update(Message::MarkerNameChanged("Chorus".to_owned()));
+    let _ = app.update(Message::MarkerPositionChanged("not a position".to_owned()));
+    let _ = app.update(Message::ApplyMarkerProperties);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    assert!(app.marker_properties_window_id.is_some());
+    assert!(app.marker_properties.as_ref().unwrap().error.is_some());
+
+    let _ = app.update(Message::MarkerPositionChanged("1.3.00".to_owned()));
     app.io_busy = true;
     let _ = app.update(Message::ApplyMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
     assert!(app.marker_properties_window_id.is_some());
     assert!(app.marker_properties.as_ref().unwrap().error.is_some());
 }

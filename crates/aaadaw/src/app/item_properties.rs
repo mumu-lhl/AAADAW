@@ -3,9 +3,29 @@ use super::{App, Message};
 use crate::project_time::{
     format_project_time, format_project_timecode, parse_project_time, parse_project_timecode,
 };
-use aaadaw_core::{AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId};
+use aaadaw_core::{
+    AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId, Project,
+};
 use iced::Task;
 use serde::{Deserialize, Serialize};
+
+pub(super) fn format_marker_position(project: &Project, tick: u64) -> Result<String, String> {
+    let sample = project
+        .sample_at_tick_position(tick as f64)
+        .map_err(|error| error.to_string())?;
+    beats::format_position(project, sample)
+}
+
+pub(super) fn parse_marker_position(project: &Project, text: &str) -> Result<u64, String> {
+    let sample = beats::parse_position(project, text)?;
+    let tick = project
+        .tick_at_sample_position(sample)
+        .map_err(|error| error.to_string())?;
+    if !tick.is_finite() || tick < 0.0 || tick >= u64::MAX as f64 {
+        return Err("Marker position is outside the supported project range".to_owned());
+    }
+    Ok(tick.round() as u64)
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

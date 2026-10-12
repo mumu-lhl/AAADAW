@@ -23,6 +23,8 @@
 
 来源：[Linux 7.82 动作目录](linux-7.82/actions.tsv)。前三项基础定位/插入语义、40613 近光标删除与 40656–40665 编号 Marker 动作均已接入。
 
+原厂 `Edit Marker` 对话框也提供 ID、Lane、Position 和 Marker Manager 入口。Default 7 当前小节/拍显示下，Position 使用 `bar.beat.hundredths`；将 Marker 从 `3.1.50` 改到 `3.2.00` 会移动 Marker，编辑光标保持在 `3.1.50`。改成 `3.2.00` 后按 Cancel，Manager 的 Start 仍为 `3.1.50`。字段截图、提交后的时间线、取消结果和逐步观察见[原厂属性窗](fixtures/marker-edit-position-native.png)、[光标与 Marker 分离](fixtures/marker-edit-position-cursor-native.png)、[取消结果](fixtures/marker-edit-position-cancel-native.png)和[Position TSV](fixtures/marker-edit-position-native.tsv)。这轮没有独立证明 Position 修改的原厂 Undo 语义，AAADAW 的位置 Undo 由项目历史测试验证，不据此宣称与原厂撤销粒度完全一致。
+
 原厂实窗交互在同一 Linux 7.82 / Default 7 一次性工程中复核：单击 Marker 旗标/名称会将编辑光标定位到 Marker；拖动旗标会移动 Marker，拖动操作一次 Undo 即恢复；Snap/Grid Settings 默认启用 Snap，Arrange 网格为 `1/4`；“Use the same grid division in arrange view and MIDI editor” 默认未勾选，说明两者使用独立分度，但这次标记探针未打开 MIDI Editor 测量其具体默认值。吸附开启时拖动落到四分音符网格，关闭时可放置在网格线之间。原厂工程位置、界面结果和 undo 观察见[鼠标交互 TSV](fixtures/marker-ruler-native.tsv)；[标记单击实窗](fixtures/marker-ruler-select-native.png)与[Snap/Grid Settings](fixtures/marker-ruler-snap-grid-native.png)截图存档。
 
 Linux REAPER 7.82 Default 7 的 `View: Show region/marker manager window` 是 action `40326`，默认键 `Ctrl+Alt+Shift+R`。原厂窗口标题为 `Region/Marker Manager`，本次无窗口管理器下的客户区为 `674×387`；初始过滤状态是 Regions 勾选、Markers 未勾选。勾选 Markers 后，表格显示 `#`、Name、Start、End、Length、Current、Visible、Ruler Lane 等列。Marker 行单击会选中该行、将编辑光标移到标记并滚动 Arrange 视口；在停止状态下此操作不改工程内容。双击表格单元进入单元格内编辑，撤销可恢复 Marker ID。一次性工程包含空名称 Marker 1（4 秒）和 Marker 10（11 秒）；默认窗口、勾选 Markers 后的列表和第二行选择后光标移动见[原厂 Manager 截图](fixtures/marker-manager-default-native.png)、[Marker 列表](fixtures/marker-manager-markers-native.png)、[选择/定位](fixtures/marker-manager-selection-native.png)，逐步观察见[原厂 Manager TSV](fixtures/marker-manager-native.tsv)。
@@ -33,7 +35,7 @@ Linux REAPER 7.82 Default 7 的 `View: Show region/marker manager window` 是 ac
 - Marker 的插入、更新、删除均属于 `DawAction`，支持事件撤销/重做和快照恢复；SQLite schema 35 保存 Marker，schema 34 工程迁移后为空集合。
 - Insert 菜单和原厂默认 `M` 在编辑光标处添加 Marker；`[` 定位上一个 Marker，找不到时回到项目起点；`]` 定位下一个 Marker，找不到时定位到可推导的 Item 内容末尾。
 - Arrange 标尺显示 Marker 旗帜、贯穿标尺的竖线和名称；Marker 竖线延伸到全部时间线轨道，未命名 Marker 使用序号。标尺坐标差使用有符号整数运算，避免视口位于 Marker 右侧时发生无符号回绕。
-- 双击 Marker 旗标/标签打开 `Edit Marker`；名称输入在打开时获得焦点，Enter 或 OK 会以一次 `UpdateProjectMarker` 历史动作提交改名。Cancel、Escape 和关闭窗口会丢弃草稿；改名保留 Marker 稳定 ID 与位置，Undo/Redo 恢复名称。此窗口目前只实现 Name 字段，不代表原厂 ID、Lane、Position、颜色或 Marker Manager 功能已对齐。
+- 双击 Marker 旗标/标签打开 `Edit Marker`；名称输入在打开时获得焦点。Position 字段格式化/解析 Default 7 的 `bar.beat.hundredths`，Enter 或 OK 会将 Name 与 Position 合并为一次 `UpdateProjectMarker` 历史动作；Cancel、Escape 和关闭窗口会丢弃两项草稿，Undo/Redo 一步恢复两者并保留 Marker 稳定 ID。对话框显示 ID 但不支持改 ID；Lane 明确标出尚不支持，颜色控件未实现。位置字段的负时间、其它原厂时间显示模式、位置舍入边界与原厂 Undo 粒度仍未对齐。
 - View 菜单、默认键 `Ctrl+Alt+Shift+R` 和稳定 action id `view.marker-manager` 可打开独立 `Region/Marker Manager` 窗口。窗口保留原厂初始过滤状态（Regions 开启、Markers 关闭）；开启 Markers 后，表格按 `#`、Name、Start、Current 列出 Marker，筛选名称、显示编号或 `Bar.Beat.hundredths`，单击行移动编辑光标，Edit 使用现有名称编辑窗，Delete 走稳定 ID 的 `DawAction`，支持 Undo/Redo。空名称 Marker 的显示编号来自稳定 ID 加一，与 REAPER 插入编号一致；项目切换时清除行选择。删除控件在工程/播放忙碌时禁用，并且消息处理仍有忙碌守卫。
 
 AAADAW 实窗的默认过滤/空状态、Marker 列表和编辑对话框分别见[默认窗口](fixtures/marker-manager-default-aaadaw.png)、[编辑后列表](fixtures/marker-manager-list-aaadaw.png)和[名称编辑窗](fixtures/marker-manager-edit-dialog-aaadaw.png)。实窗将名称改为 `verse` 后列表即时刷新，再从管理器按 Ctrl+Z 恢复空名称；针对管理器窗口的全局 Undo 路由也有回归测试。对照原厂截图可见当前布局和列仍只是基础实现，不能据此视为视觉或交互等价。
@@ -53,7 +55,7 @@ AAADAW 实窗的默认过滤/空状态、Marker 列表和编辑对话框分别�
 - `numbered_marker_slots_insert_move_by_position_and_undo`：按 Marker 排序序号创建/移动、保留自定义名称/稳定 ID，移动排序与 Undo。
 - `ruler_marker_click_selects_marker_and_moves_edit_cursor`、`ruler_marker_drag_preserves_grab_offset_and_publishes_one_move`、`ruler_marker_drag_uses_enabled_quarter_note_snap_grid`：标尺点击/拖动命中、鼠标抓取偏移、Snap 网格预览与单次提交。
 - `ruler_marker_double_click_opens_marker_editor_without_second_selection`、`second_marker_click_can_become_a_drag_instead_of_opening_the_editor`：双击入口和第二击转为拖动的手势保护。
-- `marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity`、`marker_properties_keep_invalid_or_busy_edits_open_without_changing_project`：Cancel 不写入、改名一次提交、身份保留、Undo/Redo，以及非法输入/忙碌保护。
+- `marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity`、`marker_properties_keep_invalid_or_busy_edits_open_without_changing_project`：Cancel 不写入、Name 与 bar.beat.hundredths Position 一次提交、位置 ticks 映射、身份保留、Undo/Redo，以及非法输入/忙碌保护。Linux 实窗截图见[AAADAW 编辑窗](fixtures/marker-edit-position-aaadaw.png)、[位置已提交](fixtures/marker-edit-position-applied-aaadaw.png)和[位置撤销](fixtures/marker-edit-position-undo-aaadaw.png)。
 - `marker_manager_filters_selects_edits_and_deletes_with_undo`、`marker_manager_searches_name_id_and_reaper_bar_beat_position`：管理器默认过滤状态、筛选数据、选择定位、编辑入口、删除/Undo 与 REAPER bar.beat 格式。
 - `ruler_marker_move_is_one_undoable_edit_and_respects_busy_guard`：移动保留 Marker 身份/名称，单步 Undo/Redo，工程忙碌时拒绝修改。
 - `arrange_and_midi_snap_grids_match_defaults_and_change_independently`、`piano_roll_paste_uses_its_own_grid_division_and_respects_shared_snap_off`：Arrange/MIDI Editor 的网格间隔独立，Snap 开关共用；原厂 MIDI Editor 的初始分度仍待实窗测量。
@@ -62,4 +64,4 @@ AAADAW 实窗的默认过滤/空状态、Marker 列表和编辑对话框分别�
 
 ## 尚未对齐
 
-这只是基础 Marker/Manager 切片，不代表 Marker/Region parity 完成。Manager 仍未实现原厂 End、Length、Visible、Ruler Lane、Render Matrix、Lane Manager、Options 列/功能、列拖动和单元格内编辑；目前 Edit 按钮打开名称对话框，Regions 控件只反映原厂默认状态，工程尚无 Region 数据模型。尚未实现或实测：原厂完整属性窗口中的独立 Marker ID、Lane、Position、颜色控件，同位置 Marker 的独立选择/逐个导航/删除优先级，播放中的 play cursor 编号 Marker 动作，颜色与隐藏状态，区域创建/编辑/循环联动，负时间显示、marker timebase，以及 tempo/meter 变化时原厂位置保持语义。不同鼠标修饰键、同位置重叠旗标和原厂/AAADAW 全主题视觉仍需测量。Snap Grid 目前只有 REAPER 默认 `1/4` 与基础交互已对照，完整网格设置树和各网格边界未封闭。`[`/`]` 的边界行为和时间尺外观还需在原厂及 AAADAW 实窗逐项比较；目前项目末尾按现有 Item 内容推导，不能代表所有 REAPER 工程结束规则。不要把该切片计为 UI-013、P4 或完整复刻已完成。
+这只是基础 Marker/Manager 切片，不代表 Marker/Region parity 完成。Manager 仍未实现原厂 End、Length、Visible、Ruler Lane、Render Matrix、Lane Manager、Options 列/功能、列拖动和单元格内编辑；Regions 控件只反映原厂默认状态，工程尚无 Region 数据模型。Edit Marker 的 Name 与默认 `bar.beat.hundredths` Position 已可编辑；Marker ID 仅显示、Lane/颜色尚未实现，且 Position 的负时间、其它时间显示模式、原厂舍入边界及原厂 Undo 粒度仍待对照。尚未实现或实测：同位置 Marker 的独立选择/逐个导航/删除优先级，播放中的 play cursor 编号 Marker 动作，颜色与隐藏状态，区域创建/编辑/循环联动，marker timebase，以及 tempo/meter 变化时原厂位置保持语义。不同鼠标修饰键、同位置重叠旗标和原厂/AAADAW 全主题视觉仍需测量。Snap Grid 目前只有 REAPER 默认 `1/4` 与基础交互已对照，完整网格设置树和各网格边界未封闭。`[`/`]` 的边界行为和时间尺外观还需在原厂及 AAADAW 实窗逐项比较；目前项目末尾按现有 Item 内容推导，不能代表所有 REAPER 工程结束规则。不要把该切片计为 UI-013、P4 或完整复刻已完成。

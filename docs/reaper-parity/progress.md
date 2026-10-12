@@ -409,3 +409,11 @@ AAADAW 新增独立 Region/Marker Manager 窗口、View 菜单动作与默认快
 本切片没有实现原厂 End、Length、Visible、Ruler Lane、Render Matrix、Lane Manager、Options、列排序/拖动、双击单元格内编辑、完整 Marker 属性或 Region。`PROJECT-MARKERS-001`、UI-013 和 P4 继续 `in_progress`；下一优先项是补齐 Edit Marker 的位置属性并继续调查 ID/Lane 字段与其时间格式语义。
 
 专项测试覆盖默认过滤、名称/编号/位置筛选、行选择定位、编辑入口、删除/Undo、忙碌保护和全局 Undo 快捷键。最终 workspace nextest 930/930 通过、0 跳过；workspace all-target strict Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt、69 个唯一 parity ID、证据路径和 `git diff --check` 通过。GUI 证据是基础功能验收，完整 REAPER 复刻仍未完成。
+
+### 2026-10-12 Edit Marker Position 属性
+
+Linux REAPER 7.82 Default 7 原厂 Edit Marker 显示 Name、ID、Lane、Position 和 Marker Manager 入口。当前默认 Bars/Beats 显示下，Position 接收 `bar.beat.hundredths`；将 `3.1.50` 改为 `3.2.00` 会移动 Marker，编辑光标仍停在原位置；Cancel 丢弃 Position 草稿。字段、Marker/光标分离和 Cancel 结果见[原厂属性窗](../verification/reaper-parity/fixtures/marker-edit-position-native.png)、[时间线](../verification/reaper-parity/fixtures/marker-edit-position-cursor-native.png)和[Cancel](../verification/reaper-parity/fixtures/marker-edit-position-cancel-native.png)。这轮没有独立确认原厂 Position 修改的 Undo 粒度。
+
+AAADAW 在 Edit Marker 增加 ID 只读显示、默认 Bars/Beats Position 编辑、Marker Manager 入口及明确的 Lane 未实现状态。Position 解析/格式化沿用 Item Properties beats/timebase 路径；Name 和 Position 一起通过一条 `UpdateProjectMarker` 提交，保留稳定 ID，Undo/Redo 一步恢复名称与 ticks。Cancel/Escape/关闭丢弃草稿，非法位置保留窗口，播放/工程忙碌时仍拒绝提交。实窗以 120 BPM 验证 `1.2.50` 将标记从 0 秒移动到 0.75 秒，编辑光标保持在 0 秒，Ctrl+Z 恢复起点；截图见[属性窗](../verification/reaper-parity/fixtures/marker-edit-position-aaadaw.png)、[位置提交](../verification/reaper-parity/fixtures/marker-edit-position-applied-aaadaw.png)和[Undo](../verification/reaper-parity/fixtures/marker-edit-position-undo-aaadaw.png)。
+
+Targeted Marker Properties nextest 2/2 通过；最终 workspace nextest 930/930 通过、0 跳过，workspace all-target strict Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt、69 个唯一 parity ID、Project Markers 证据路径/本地链接与 `git diff --check` 均通过。打开 bundled example 的集成测试现在先复制到临时目录，避免 SQLite 初始化改写仓库里的示例工程。原厂 ID 编辑、Lane 数据/选择、位置负时间与其它显示模式、舍入边界和原厂 Undo 粒度仍未完成，颜色属性也尚未实现。`PROJECT-MARKERS-001`、UI-013 和 P4 继续 `in_progress`，下一个 Marker 切片转向可编辑 ID 与 Lane 的模型/持久化前先验证原厂 ID 重排及 Lane 语义。
