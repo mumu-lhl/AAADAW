@@ -1675,6 +1675,7 @@ impl App {
                     | Message::ProjectFrameRateMenuChanged(_)
                     | Message::ProjectSettingsTabChanged(_)
                     | Message::ProjectSettingsSampleRateChanged(_)
+                    | Message::ProjectSettingsForceWholeSamplesChanged(_)
                     | Message::ProjectSettingsTempoChanged(_)
                     | Message::ProjectSettingsMeterNumeratorChanged(_)
                     | Message::ProjectSettingsMeterDenominatorChanged(_)
@@ -2102,6 +2103,11 @@ impl App {
             Message::ProjectSettingsSampleRateChanged(sample_rate) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.sample_rate = sample_rate;
+                }
+            }
+            Message::ProjectSettingsForceWholeSamplesChanged(enabled) => {
+                if let Some(draft) = &mut self.project_settings {
+                    draft.force_tempo_changes_to_whole_samples = enabled;
                 }
             }
             Message::ProjectSettingsMeterNumeratorChanged(value) => {

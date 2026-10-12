@@ -416,6 +416,10 @@ enum ProjectEvent {
         before: ProjectSampleClockSnapshot,
         after: ProjectSampleClockSnapshot,
     },
+    ForceTempoChangesToWholeSamplesChanged {
+        before: bool,
+        after: bool,
+    },
     BpmBasisChanged {
         before: crate::BpmBasis,
         after: crate::BpmBasis,
@@ -649,6 +653,12 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::ForceTempoChangesToWholeSamplesChanged { before, after } => {
+                Self::ForceTempoChangesToWholeSamplesChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
             Self::BpmBasisChanged { before, after } => Self::BpmBasisChanged {
                 before: *after,
                 after: *before,
@@ -1891,6 +1901,15 @@ impl Project {
                 let mut after = before.clone();
                 after.rescale(sample_rate)?;
                 ProjectEvent::ProjectSampleRateChanged { before, after }
+            }
+            DawAction::SetForceTempoChangesToWholeSamples { enabled } => {
+                ProjectEvent::ForceTempoChangesToWholeSamplesChanged {
+                    before: state
+                        .tempo_map
+                        .settings()
+                        .force_tempo_changes_to_whole_samples(),
+                    after: enabled,
+                }
             }
             DawAction::SetProjectBpmBasis { basis } => ProjectEvent::BpmBasisChanged {
                 before: state.tempo_map.settings().bpm_basis(),
@@ -3299,6 +3318,20 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 after.restore(state)?;
+            }
+            ProjectEvent::ForceTempoChangesToWholeSamplesChanged { before, after } => {
+                if state
+                    .tempo_map
+                    .settings()
+                    .force_tempo_changes_to_whole_samples()
+                    != *before
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_force_tempo_changes_to_whole_samples(*after)
+                    .map_err(|_| ActionError::TempoMapOutOfRange)?;
             }
             ProjectEvent::BpmBasisChanged { before, after } => {
                 if state.tempo_map.settings().bpm_basis() != *before {

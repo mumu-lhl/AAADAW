@@ -33,6 +33,7 @@ pub(super) struct Draft {
 
     pub rate: FrameRate,
     pub sample_rate: u32,
+    pub force_tempo_changes_to_whole_samples: bool,
     pub tempo_bpm: String,
     pub meter_numerator: String,
     pub meter_denominator: String,
@@ -147,6 +148,10 @@ impl Draft {
             notes_editor: text_editor::Content::with_text(&app.project.project_notes().text),
             rate: app.project.settings().frame_rate(),
             sample_rate: app.project.settings().sample_rate(),
+            force_tempo_changes_to_whole_samples: app
+                .project
+                .settings()
+                .force_tempo_changes_to_whole_samples(),
             tempo_bpm: app.project.tempo_at_tick(0).to_string(),
             meter_numerator: app
                 .project
@@ -292,6 +297,7 @@ impl App {
             }
         };
         let bpm_basis = draft.bpm_basis;
+        let force_tempo_changes_to_whole_samples = draft.force_tempo_changes_to_whole_samples;
         let base_ruler_label_spacing_on_measure = draft.base_ruler_label_spacing_on_measure;
         let allow_fractional_frame_offset = draft.allow_fractional_frame_offset;
         let rate = draft.rate;
@@ -299,6 +305,16 @@ impl App {
         let mut actions = Vec::new();
         if self.project.settings().sample_rate() != sample_rate {
             actions.push(DawAction::SetProjectSampleRate { sample_rate });
+        }
+        if self
+            .project
+            .settings()
+            .force_tempo_changes_to_whole_samples()
+            != force_tempo_changes_to_whole_samples
+        {
+            actions.push(DawAction::SetForceTempoChangesToWholeSamples {
+                enabled: force_tempo_changes_to_whole_samples,
+            });
         }
         if self.project.settings().bpm_basis() != bpm_basis {
             actions.push(DawAction::SetProjectBpmBasis { basis: bpm_basis });
@@ -365,6 +381,11 @@ impl App {
             self.apply_action(action, "Project settings changed");
             if self.project.settings().frame_rate() != rate
                 || self.project.settings().sample_rate() != sample_rate
+                || self
+                    .project
+                    .settings()
+                    .force_tempo_changes_to_whole_samples()
+                    != force_tempo_changes_to_whole_samples
                 || self.project.tempo_at_tick(0) != tempo_bpm
                 || self.project.time_signature_at_tick(0) != signature
                 || self.project.settings().start_measure() != start_measure
@@ -408,6 +429,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .width(Length::Fixed(120.0))
             ]
             .spacing(6),
+            row![
+                checkbox(draft.force_tempo_changes_to_whole_samples)
+                    .label("Force project tempo/time signature changes to occur on whole samples")
+                    .on_toggle(Message::ProjectSettingsForceWholeSamplesChanged)
+                    .text_size(13)
+            ],
             row![
                 text("BPM:").size(13).width(Length::Fixed(32.0)),
                 text_input("120", &draft.tempo_bpm)
@@ -809,6 +836,30 @@ mod tests {
         assert_eq!(app.project.settings().sample_rate(), 96_000);
         assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
         assert!(project_sample_rate_options(44_100).contains(&44_100));
+    }
+
+    #[test]
+    fn whole_sample_tempo_setting_is_drafted_applied_and_undoable() {
+        let mut app = App::default();
+        let original = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsForceWholeSamplesChanged(true));
+        assert_eq!(app.project.snapshot(), original);
+
+        let _ = app.apply_project_settings();
+        assert!(
+            app.project
+                .settings()
+                .force_tempo_changes_to_whole_samples()
+        );
+        assert!(app.project.undo().unwrap());
+        assert_eq!(app.project.snapshot(), original);
+        assert!(app.project.redo().unwrap());
+        assert!(
+            app.project
+                .settings()
+                .force_tempo_changes_to_whole_samples()
+        );
     }
 
     #[test]

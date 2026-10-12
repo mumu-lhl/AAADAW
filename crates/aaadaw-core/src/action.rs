@@ -19,6 +19,10 @@ pub enum DawAction {
     SetProjectSampleRate {
         sample_rate: u32,
     },
+    /// Align tempo-map change anchors to whole project samples.
+    SetForceTempoChangesToWholeSamples {
+        enabled: bool,
+    },
     /// Change the note value counted as one BPM beat.
     SetProjectBpmBasis {
         basis: crate::BpmBasis,

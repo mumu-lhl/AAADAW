@@ -239,6 +239,60 @@ fn fractional_frame_start_offset_flag_rejects_invalid_storage_values() {
 }
 
 #[test]
+fn whole_sample_tempo_flag_schema34_defaults_and_round_trips() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN force_tempo_changes_to_whole_samples; PRAGMA user_version=33;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut project = store.load().unwrap();
+    assert!(!project.settings().force_tempo_changes_to_whole_samples());
+    project
+        .apply(DawAction::SetForceTempoChangesToWholeSamples { enabled: true })
+        .unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn whole_sample_tempo_flag_rejects_invalid_storage_values() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_meta SET force_tempo_changes_to_whole_samples=2;",
+        )
+        .unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(StorageError::InvalidStoredData(
+            "unsupported whole-sample tempo mode"
+        ))
+    ));
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn failed_notes_save_rolls_back_project_and_invalid_display_flags_fail_closed() {
     let path = project_path();
     let mut project = Project::new();

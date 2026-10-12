@@ -9,6 +9,7 @@
   "general_initial_values": {
     "project_sample_rate_enabled": false,
     "project_sample_rate_hz": 44100,
+    "force_tempo_changes_to_whole_samples": false,
     "bpm": 120,
     "time_signature": [
       4,
@@ -38,14 +39,16 @@
     "project_start_time": "Signed project clock display offset; shifts ruler/transport and absolute item time displays without moving media samples or changing musical positions",
     "start_time_measure_menu": "All five native menu entries modeled: the first four set/reset time and measure values; the fifth toggles whether fractional-frame start offsets are allowed. Up/Down cycle, Enter executes, Escape closes; commands update the General draft until OK.",
     "fractional_frame_start_offset": "Unchecked by default; persists through schema 33 and is stored in REAPER RPP TIMEMODE's final flag field (0 off, 4 on). Its video/timecode alignment effect still needs verification.",
+    "force_tempo_changes_to_whole_samples": "Unchecked and disabled when project sample rate is not enabled. RPP SAMPLERATE's third field is 0 by default, 1 when enabled; AAADAW persists the flag in schema 34 and rounds tempo-map sample anchors when enabled.",
     "musical_positions": "Signed displayed bars round-trip in Beats properties and anchor timeline ruler labels",
     "base_ruler_label_spacing": "Checked by default; checked uses start_measure as the ruler-label interval phase, unchecked uses measure 1",
-    "apply": "one atomic transaction: changed fields among SetTempo@0 + SetTimeSignature@0 + SetProjectStartMeasure + SetProjectBpmBasis + SetBaseRulerLabelSpacingOnMeasure + SetProjectStartTimeOffsetSeconds + SetProjectStartTimeFractionalFrameOffsetAllowed",
+    "apply": "one atomic transaction: changed fields among SetTempo@0 + SetTimeSignature@0 + SetProjectSampleRate + SetForceTempoChangesToWholeSamples + SetProjectStartMeasure + SetProjectBpmBasis + SetBaseRulerLabelSpacingOnMeasure + SetProjectStartTimeOffsetSeconds + SetProjectStartTimeFractionalFrameOffsetAllowed",
     "cancel": "keeps snapshot unchanged"
   },
   "read_only_probe": {
     "project_sample_rate_hz": 44100,
     "project_sample_rate_enabled": false,
+    "force_tempo_changes_to_whole_samples": false,
     "item_timebase_code": 1,
     "timebase_flags": 0,
     "initial_tempo_bpm": 120,
@@ -56,7 +59,7 @@
     "project_start_time_offset_seconds": 0
   },
   "limitations": [
-    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Display timebase, beat-synced audio item storage, sample rate and resampling settings also remain unimplemented",
-    "Default values came from the owned ReaScript probe; the native dialog was inspected for signed Start measure behavior, but no REAPER screenshot is committed"
+    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Whole-sample mode rounds tempo-map sample anchors; native marker-edit snapping behavior and meter-marker-specific effects still need verification. The project-rate enable/hardware-default behavior, exact factory rate list, display timebase, beat-synced audio item storage, and resampling settings remain unimplemented",
+    "Default values came from the owned ReaScript probe; REAPER 7.82 General screenshots and SAMPLERATE field comparisons are committed alongside the AAADAW evidence"
   ]
 }

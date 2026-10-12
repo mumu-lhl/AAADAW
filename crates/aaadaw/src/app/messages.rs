@@ -195,6 +195,7 @@ pub(crate) enum Message {
     ProjectFrameRateMenuChanged(bool),
     ProjectSettingsTabChanged(super::project_settings::Tab),
     ProjectSettingsSampleRateChanged(u32),
+    ProjectSettingsForceWholeSamplesChanged(bool),
     ProjectSettingsTempoChanged(String),
     ProjectSettingsMeterNumeratorChanged(String),
     ProjectSettingsMeterDenominatorChanged(String),

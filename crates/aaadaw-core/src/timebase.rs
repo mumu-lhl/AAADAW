@@ -102,6 +102,7 @@ pub struct ProjectSettings {
     start_measure: i32,
     bpm_basis: BpmBasis,
     base_ruler_label_spacing_on_measure: bool,
+    force_tempo_changes_to_whole_samples: bool,
     project_start_time_offset_seconds: f64,
     project_start_time_fractional_frame_offset_allowed: bool,
     pan_mode: PanMode,
@@ -127,6 +128,7 @@ impl ProjectSettings {
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
+            force_tempo_changes_to_whole_samples: false,
             project_start_time_offset_seconds: 0.0,
             project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
@@ -192,6 +194,17 @@ impl ProjectSettings {
         self.base_ruler_label_spacing_on_measure
     }
 
+    /// Selects whether tempo-map changes are anchored to whole project samples.
+    pub fn with_force_tempo_changes_to_whole_samples(mut self, enabled: bool) -> Self {
+        self.force_tempo_changes_to_whole_samples = enabled;
+        self
+    }
+
+    /// Returns whether tempo-map changes are anchored to whole project samples.
+    pub fn force_tempo_changes_to_whole_samples(self) -> bool {
+        self.force_tempo_changes_to_whole_samples
+    }
+
     /// Selects the signed display-time offset at the start of the project.
     pub fn with_project_start_time_offset_seconds(
         mut self,
@@ -248,6 +261,7 @@ impl Default for ProjectSettings {
             start_measure: 1,
             bpm_basis: BpmBasis::default(),
             base_ruler_label_spacing_on_measure: true,
+            force_tempo_changes_to_whole_samples: false,
             project_start_time_offset_seconds: 0.0,
             project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
@@ -676,6 +690,7 @@ pub(crate) struct TempoMap {
     sample_rate: u32,
     ppq: u32,
     bpm_basis: BpmBasis,
+    force_tempo_changes_to_whole_samples: bool,
     points: Vec<TempoPoint>,
 }
 
@@ -685,6 +700,7 @@ impl TempoMap {
             sample_rate: settings.sample_rate,
             ppq: settings.ppq,
             bpm_basis: settings.bpm_basis,
+            force_tempo_changes_to_whole_samples: settings.force_tempo_changes_to_whole_samples,
             points: vec![TempoPoint {
                 start_tick: 0,
                 bpm: settings.initial_tempo_bpm,
@@ -702,6 +718,7 @@ impl TempoMap {
             start_measure: 1,
             bpm_basis: self.bpm_basis,
             base_ruler_label_spacing_on_measure: true,
+            force_tempo_changes_to_whole_samples: self.force_tempo_changes_to_whole_samples,
             project_start_time_offset_seconds: 0.0,
             project_start_time_fractional_frame_offset_allowed: false,
             pan_mode: PanMode::default(),
@@ -721,7 +738,13 @@ impl TempoMap {
             return Err(TimebaseError::InvalidTempo);
         }
         let mut points = self.points.clone();
-        Self::recalculate_sample_anchors(&mut points, sample_rate, self.ppq, self.bpm_basis)?;
+        Self::recalculate_sample_anchors(
+            &mut points,
+            sample_rate,
+            self.ppq,
+            self.bpm_basis,
+            self.force_tempo_changes_to_whole_samples,
+        )?;
         self.sample_rate = sample_rate;
         self.points = points;
         Ok(())
@@ -781,7 +804,13 @@ impl TempoMap {
             ),
             (Err(_), None) => return Err(TimebaseError::TempoPointNotFound),
         }
-        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, self.bpm_basis)?;
+        Self::recalculate_sample_anchors(
+            &mut points,
+            self.sample_rate,
+            self.ppq,
+            self.bpm_basis,
+            self.force_tempo_changes_to_whole_samples,
+        )?;
         self.points = points;
         Ok(())
     }
@@ -798,7 +827,13 @@ impl TempoMap {
             return Err(TimebaseError::InvalidTempo);
         }
         let mut points = self.points.clone();
-        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, basis)?;
+        Self::recalculate_sample_anchors(
+            &mut points,
+            self.sample_rate,
+            self.ppq,
+            basis,
+            self.force_tempo_changes_to_whole_samples,
+        )?;
         self.bpm_basis = basis;
         self.points = points;
         Ok(())
@@ -814,7 +849,33 @@ impl TempoMap {
             .binary_search_by_key(&start_tick, |point| point.start_tick)
             .map_err(|_| TimebaseError::TempoPointNotFound)?;
         points[index].curve_to_next = curve;
-        Self::recalculate_sample_anchors(&mut points, self.sample_rate, self.ppq, self.bpm_basis)?;
+        Self::recalculate_sample_anchors(
+            &mut points,
+            self.sample_rate,
+            self.ppq,
+            self.bpm_basis,
+            self.force_tempo_changes_to_whole_samples,
+        )?;
+        self.points = points;
+        Ok(())
+    }
+
+    pub(crate) fn set_force_tempo_changes_to_whole_samples(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), TimebaseError> {
+        if self.force_tempo_changes_to_whole_samples == enabled {
+            return Ok(());
+        }
+        let mut points = self.points.clone();
+        Self::recalculate_sample_anchors(
+            &mut points,
+            self.sample_rate,
+            self.ppq,
+            self.bpm_basis,
+            enabled,
+        )?;
+        self.force_tempo_changes_to_whole_samples = enabled;
         self.points = points;
         Ok(())
     }
@@ -965,6 +1026,7 @@ impl TempoMap {
         sample_rate: u32,
         ppq: u32,
         bpm_basis: BpmBasis,
+        force_tempo_changes_to_whole_samples: bool,
     ) -> Result<(), TimebaseError> {
         points[0].start_sample = 0.0;
         let sample_scale = tempo_integral_sample_scale(sample_rate, ppq, bpm_basis);
@@ -983,7 +1045,10 @@ impl TempoMap {
                 length,
                 length,
             )?;
-            let start_sample = previous.start_sample + duration;
+            let mut start_sample = previous.start_sample + duration;
+            if force_tempo_changes_to_whole_samples {
+                start_sample = start_sample.round();
+            }
             if !start_sample.is_finite()
                 || start_sample <= previous.start_sample
                 || start_sample > MAX_EXACT_FLOAT_POSITION as f64
