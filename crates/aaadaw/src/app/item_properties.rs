@@ -27,6 +27,20 @@ pub(super) fn parse_marker_position(project: &Project, text: &str) -> Result<u64
     Ok(tick.round() as u64)
 }
 
+pub(super) fn format_marker_length(
+    project: &Project,
+    start_tick: u64,
+    end_tick: u64,
+) -> Result<String, String> {
+    let start_sample = project
+        .sample_at_tick_position(start_tick as f64)
+        .map_err(|error| error.to_string())?;
+    let end_sample = project
+        .sample_at_tick_position(end_tick as f64)
+        .map_err(|error| error.to_string())?;
+    beats::format_length(project, start_sample, end_sample - start_sample)
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TimeUnit {

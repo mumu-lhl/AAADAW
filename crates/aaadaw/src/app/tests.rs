@@ -223,6 +223,140 @@ fn marker_manager_delete_respects_project_edit_busy_guard() {
 }
 
 #[test]
+fn insert_region_command_uses_a_non_empty_time_selection() {
+    let mut app = App::default();
+    let command = CommandId::InsertRegionFromTimeSelection;
+    assert!(!commands::is_enabled(&app, command));
+
+    let _ = app.update(Message::InsertRegionFromTimeSelection);
+    assert!(app.project.regions().is_empty());
+    assert!(app.status.contains("time selection"));
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 3_840,
+        end_tick: 960,
+    }));
+    assert!(commands::is_enabled(&app, command));
+    let _ = app.update(Message::ExecuteCommand(command));
+
+    assert_eq!(app.project.regions().len(), 1);
+    assert_eq!(app.project.regions()[0].start_ticks(), 960);
+    assert_eq!(app.project.regions()[0].end_ticks(), 3_840);
+    assert_eq!(app.project.regions()[0].number(), 1);
+    assert_eq!(app.revision, 1);
+    assert!(app.timeline.time_selection.is_some());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.regions().is_empty());
+}
+
+#[test]
+fn region_manager_selects_edits_filters_and_deletes_with_undo() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 0,
+            end_ticks: 1_920,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let region_id = app.project.regions()[0].id();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Cue".to_owned(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+
+    let _ = app.update(Message::OpenMarkerManager);
+    assert!(app.marker_manager.as_ref().unwrap().show_regions);
+    assert!(!app.marker_manager.as_ref().unwrap().show_markers);
+    let _ = app.update(Message::MarkerManagerShowMarkersChanged(true));
+    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id));
+    assert_eq!(
+        app.marker_manager.as_ref().unwrap().selected_marker,
+        Some(marker_id)
+    );
+    let _ = app.update(Message::MarkerManagerFilterChanged("r1".to_owned()));
+    let _ = app.update(Message::MarkerManagerSelectRegion(region_id));
+    assert_eq!(
+        app.timeline.time_selection,
+        Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 1_920,
+        })
+    );
+    assert_eq!(app.timeline.edit_cursor_tick, 0);
+    assert_eq!(
+        app.marker_manager.as_ref().unwrap().selected_region,
+        Some(region_id)
+    );
+    assert_eq!(app.marker_manager.as_ref().unwrap().selected_marker, None);
+
+    let _ = app.update(Message::MarkerManagerEditRegion(region_id));
+    assert_eq!(app.region_properties.as_ref().unwrap().number, "1");
+    let _ = app.update(Message::RegionNameChanged("Verse A".to_owned()));
+    let _ = app.update(Message::RegionNumberChanged("4".to_owned()));
+    let _ = app.update(Message::RegionStartChanged("1.2.00".to_owned()));
+    let _ = app.update(Message::RegionEndChanged("2.1.00".to_owned()));
+    let _ = app.update(Message::ApplyRegionProperties);
+    let updated = app
+        .project
+        .regions()
+        .iter()
+        .find(|region| region.id() == region_id)
+        .unwrap();
+    assert_eq!(updated.number(), 4);
+    assert_eq!(updated.name(), "Verse A");
+    assert_eq!(updated.start_ticks(), 960);
+    assert_eq!(updated.end_ticks(), 3_840);
+    assert!(app.region_properties_window_id.is_none());
+
+    let _ = app.update(Message::Undo);
+    let restored = app
+        .project
+        .regions()
+        .iter()
+        .find(|region| region.id() == region_id)
+        .unwrap();
+    assert_eq!(restored.number(), 1);
+    assert_eq!(restored.name(), "Verse");
+    assert_eq!(restored.start_ticks(), 0);
+    assert_eq!(restored.end_ticks(), 1_920);
+
+    let _ = app.update(Message::MarkerManagerDeleteRegion(region_id));
+    assert!(app.project.regions().is_empty());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.regions()[0].id(), region_id);
+}
+
+#[test]
+fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 0,
+            end_ticks: 1_920,
+            name: "Intro".to_owned(),
+        })
+        .unwrap();
+    let region_id = app.project.regions()[0].id();
+    let _ = app.update(Message::MarkerManagerEditRegion(region_id));
+    let _ = app.update(Message::RegionNumberChanged("0".to_owned()));
+    let _ = app.update(Message::ApplyRegionProperties);
+    assert_eq!(app.project.regions()[0].number(), 1);
+    assert!(app.region_properties_window_id.is_some());
+    assert!(app.region_properties.as_ref().unwrap().error.is_some());
+
+    let revision = app.revision;
+    let _ = app.update(Message::RegionNameChanged("Discarded".to_owned()));
+    let _ = app.update(Message::CloseRegionProperties);
+    assert_eq!(app.project.regions()[0].name(), "Intro");
+    assert_eq!(app.revision, revision);
+    assert!(app.region_properties_window_id.is_none());
+}
+
+#[test]
 fn marker_manager_keeps_global_undo_shortcut_available() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

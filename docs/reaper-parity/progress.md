@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；基础 Project Marker 插入/导航/光标前后严格小于 1 秒删除/1–10 号 Marker 动作（停止播放时）/标尺选择定位和拖动/时间尺显示已接入；播放中 play cursor、Marker 管理器、完整 Region、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；播放中 play cursor、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -425,3 +425,11 @@ Targeted Marker Properties nextest 2/2 通过；最终 workspace nextest 930/930
 AAADAW 现在将内部稳定 `MarkerId` 与可编辑可见编号分开，新增显式编号插入和一次性 Name/ID/Position 属性更新；编号动作按可见编号查找，重复编号选最早位置，缺号时创建目标编号，普通插入填最小正编号。管理器、空名称标尺显示和筛选均改读可见编号。SQLite schema 36 保存编号；schema 35 升级按旧版稳定 ID 还原此前显示值，并保留 Marker 身份、名称和位置；同时迁移会检查列是否存在，以兼容通过降版 `user_version` 构造的历史夹具。Lane 的原厂字段是否可写及其保存语义仍待确认，未加入未验证的 Lane 数据模型。
 
 验证：原生编号身份探针通过；core Marker、schema 35 迁移、稀疏/重复编号 SQLite 往返、属性编辑、重复编号动作和无效 ID 测试通过。第一次并行全量回归发现 schema36 迁移未覆盖“新列已存在但版本号被降级”的测试夹具，修复为列检查后，`xvfb-run -a rtk cargo nextest run --workspace --no-fail-fast -j 1` 为 933/933 通过、0 跳过；workspace all-target Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt 和 `git diff --check` 通过。`PROJECT-MARKERS-001`、UI-013、P4 保持 `in_progress`；Region、Manager 其余列/行内编辑、Lane/颜色、负时间与其它 timebase、播放中 play cursor、tempo/meter 行为和完整视觉验收仍未完成。下一步继续填补 Marker Manager 原厂列/功能覆盖。
+
+### 2026-10-12 Project Region 基础模型与 Manager 编辑
+
+依据 Linux REAPER 7.82 默认 Main action list，确认从 Time Selection 插入 Region 的 action `40174` 默认键 `Shift+R`；编辑插入 `40306`、光标附近删除/编辑 `40615`/`40616` 和 Region/Marker Manager `40326` 已列入原厂动作目录。本切片没有把未实测的 Region 编号、自动分配、重叠边界或颜色规则当作原厂事实。
+
+新增稳定 `RegionId`、可见编号/Name/Start/End、DawAction 历史、快照及 SQLite schema 37；非空 Time Selection 可通过 Insert 菜单/Shift+R 创建 Region，Arrange 显示范围和边线，Region/Marker Manager 可筛选、选中并设置 Time Selection/编辑光标、打开属性窗编辑 Name/ID/Start/End，或删除并撤销。无效或忙碌时编辑不写入项目。Region 独立加入 `PROJECT-REGIONS-001`，自动编号、Ruler 点击/拖动、循环联动、Render Matrix、负时间/其它显示单位、原厂工程格式和完整 Default 7 几何仍未验收。
+
+最终代码下，串行 workspace nextest 为 942/942（66 个测试二进制、0 跳过）；workspace all-target Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt、`git diff --check` 通过。`PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 和 P4 均保持 `in_progress`。下一步扩大可操作性：补齐 Region 标尺命中/选择与移动/边界编辑，再逐项探测编号和 loop 语义。

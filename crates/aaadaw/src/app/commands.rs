@@ -30,6 +30,7 @@ pub(crate) enum CommandId {
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
+    InsertRegionFromTimeSelection,
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -96,6 +97,7 @@ enum CommandKind {
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
+    InsertRegionFromTimeSelection,
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -147,6 +149,8 @@ const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifier
 const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
 const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
+const INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT: &[Shortcut] =
+    &[Shortcut::character('r', Modifiers::SHIFT)];
 const PREVIOUS_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('[', Modifiers::NONE)];
 const NEXT_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character(']', Modifiers::NONE)];
 const PROJECT_MARKER_DELETE_RADIUS_SECONDS: f64 = 1.0;
@@ -382,6 +386,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Project marker at edit cursor",
         aliases: &["insert marker", "add marker", "marker at cursor"],
         shortcuts: ADD_PROJECT_MARKER_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::InsertRegionFromTimeSelection,
+        menu: Some(MainMenu::Insert),
+        category: "Regions",
+        label: "Region from time selection",
+        aliases: &["insert region", "create region from selection"],
+        shortcuts: INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -1361,6 +1375,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::AddProjectMarker => "insert.project-marker",
+        CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
@@ -1446,6 +1461,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::AddProjectMarker => Message::AddProjectMarker,
+        CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
@@ -1699,6 +1715,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
+        CommandKind::InsertRegionFromTimeSelection => {
+            !project_edit_busy(app) && app.timeline.time_selection.is_some()
+        }
         CommandKind::PreviousProjectMarker | CommandKind::NextProjectMarker => true,
         CommandKind::DeleteProjectMarkerNearCursor => {
             !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
@@ -1858,6 +1877,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
+        CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
@@ -1988,6 +2008,10 @@ mod project_marker_command_tests {
             Some(CommandId::AddProjectMarker)
         );
         assert_eq!(
+            from_shortcut(&Key::Character("r"), Modifiers::SHIFT, &bindings, &macros),
+            Some(CommandId::InsertRegionFromTimeSelection)
+        );
+        assert_eq!(
             from_shortcut(&Key::Character("["), Modifiers::NONE, &bindings, &macros),
             Some(CommandId::PreviousProjectMarker)
         );
@@ -1998,6 +2022,10 @@ mod project_marker_command_tests {
         assert_eq!(
             command_kind_id(CommandKind::AddProjectMarker),
             "insert.project-marker"
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::InsertRegionFromTimeSelection),
+            "regions.insert-from-time-selection"
         );
         assert_eq!(
             command_kind_id(CommandKind::PreviousProjectMarker),

@@ -1,7 +1,7 @@
 use crate::{
     GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId, TrackInstrument,
-    VolumeAutomationPoint,
+    MidiPitchBendData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
+    TrackInstrument, VolumeAutomationPoint,
 };
 
 /// A command that changes project state.
@@ -74,6 +74,24 @@ pub enum DawAction {
     /// Remove a project marker by stable identity.
     DeleteProjectMarker {
         marker_id: MarkerId,
+    },
+    /// Insert a region, assigning the lowest available positive region number.
+    InsertProjectRegion {
+        start_ticks: u64,
+        end_ticks: u64,
+        name: String,
+    },
+    /// Update the name, visible number, or boundaries of a project region.
+    UpdateProjectRegion {
+        region_id: RegionId,
+        number: u32,
+        start_ticks: u64,
+        end_ticks: u64,
+        name: String,
+    },
+    /// Remove a project region by stable identity.
+    DeleteProjectRegion {
+        region_id: RegionId,
     },
     /// Create a track at `index` in the project's ordered track list.
     CreateTrack {

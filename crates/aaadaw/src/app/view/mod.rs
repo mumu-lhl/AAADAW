@@ -33,6 +33,7 @@ mod menu;
 mod midi_editor;
 mod mixer;
 mod plugin_picker;
+mod region_properties;
 mod render;
 mod routing;
 mod settings;
@@ -87,6 +88,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         item_properties::view(app)
     } else if app.marker_properties_window_id == Some(window_id) {
         marker_properties::view(app)
+    } else if app.region_properties_window_id == Some(window_id) {
+        region_properties::view(app)
     } else if app.marker_manager_window_id == Some(window_id) {
         marker_manager::view(app)
     } else if app.routing_window_id == Some(window_id) {

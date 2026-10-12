@@ -71,6 +71,7 @@ mod project_settings;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
+mod region_properties;
 mod routing;
 mod shortcut;
 #[cfg(test)]
@@ -326,6 +327,8 @@ struct App {
     item_properties_unit: item_properties::TimeUnit,
     marker_properties: Option<marker_properties::MarkerProperties>,
     marker_properties_window_id: Option<iced::window::Id>,
+    region_properties: Option<region_properties::RegionProperties>,
+    region_properties_window_id: Option<iced::window::Id>,
     marker_manager: Option<marker_manager::MarkerManager>,
     marker_manager_window_id: Option<iced::window::Id>,
     active_menu: Option<MainMenu>,
@@ -1371,6 +1374,8 @@ impl App {
             "Media Item Properties".to_owned()
         } else if self.marker_properties_window_id == Some(window_id) {
             "Edit Marker".to_owned()
+        } else if self.region_properties_window_id == Some(window_id) {
+            "Edit Region".to_owned()
         } else if self.marker_manager_window_id == Some(window_id) {
             "Region/Marker Manager".to_owned()
         } else if self.routing_window_id == Some(window_id) {
@@ -1653,6 +1658,7 @@ impl App {
                 if self.main_window_id == Some(*window_id)
                     || self.item_properties_window_id == Some(*window_id)
                     || self.marker_properties_window_id == Some(*window_id)
+                    || self.region_properties_window_id == Some(*window_id)
                     || self.marker_manager_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
@@ -1725,6 +1731,12 @@ impl App {
                     | Message::MarkerPositionChanged(_)
                     | Message::ApplyMarkerProperties
                     | Message::CloseMarkerProperties
+                    | Message::RegionNameChanged(_)
+                    | Message::RegionNumberChanged(_)
+                    | Message::RegionStartChanged(_)
+                    | Message::RegionEndChanged(_)
+                    | Message::ApplyRegionProperties
+                    | Message::CloseRegionProperties
                     | Message::OpenMarkerManager
                     | Message::CloseMarkerManager
                     | Message::MarkerManagerFilterChanged(_)
@@ -1733,6 +1745,11 @@ impl App {
                     | Message::MarkerManagerClearFilter
                     | Message::MarkerManagerSelectMarker(_)
                     | Message::MarkerManagerEditMarker(_)
+                    | Message::MarkerManagerDeleteMarker(_)
+                    | Message::MarkerManagerSelectRegion(_)
+                    | Message::MarkerManagerEditRegion(_)
+                    | Message::MarkerManagerDeleteRegion(_)
+                    | Message::InsertRegionFromTimeSelection
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -2272,6 +2289,32 @@ impl App {
             }
             Message::ApplyMarkerProperties => task = self.apply_marker_properties(),
             Message::CloseMarkerProperties => task = self.close_marker_properties(),
+            Message::RegionNameChanged(value) => {
+                if let Some(draft) = &mut self.region_properties {
+                    draft.name = value;
+                    draft.error = None;
+                }
+            }
+            Message::RegionNumberChanged(value) => {
+                if let Some(draft) = &mut self.region_properties {
+                    draft.number = value;
+                    draft.error = None;
+                }
+            }
+            Message::RegionStartChanged(value) => {
+                if let Some(draft) = &mut self.region_properties {
+                    draft.start = value;
+                    draft.error = None;
+                }
+            }
+            Message::RegionEndChanged(value) => {
+                if let Some(draft) = &mut self.region_properties {
+                    draft.end = value;
+                    draft.error = None;
+                }
+            }
+            Message::ApplyRegionProperties => task = self.apply_region_properties(),
+            Message::CloseRegionProperties => task = self.close_region_properties(),
             Message::OpenMarkerManager => task = self.open_marker_manager(),
             Message::CloseMarkerManager => task = self.close_marker_manager(),
             Message::MarkerManagerFilterChanged(value) => {
@@ -2302,6 +2345,15 @@ impl App {
             }
             Message::MarkerManagerDeleteMarker(marker_id) => {
                 self.delete_marker_from_manager(marker_id)
+            }
+            Message::MarkerManagerSelectRegion(region_id) => {
+                self.select_region_from_manager(region_id)
+            }
+            Message::MarkerManagerEditRegion(region_id) => {
+                task = self.open_region_properties(region_id)
+            }
+            Message::MarkerManagerDeleteRegion(region_id) => {
+                self.delete_region_from_manager(region_id)
             }
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
@@ -2370,6 +2422,9 @@ impl App {
                 } else if self.marker_properties_window_id == Some(window_id) {
                     self.marker_properties_window_id = None;
                     self.marker_properties = None;
+                } else if self.region_properties_window_id == Some(window_id) {
+                    self.region_properties_window_id = None;
+                    self.region_properties = None;
                 } else if self.marker_manager_window_id == Some(window_id) {
                     self.marker_manager_window_id = None;
                     self.marker_manager = None;
@@ -3257,6 +3312,34 @@ impl App {
                     }
                     return Task::none();
                 }
+                if self.region_properties_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        return self.close_region_properties();
+                    }
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                                modifiers,
+                                repeat: false,
+                                ..
+                            }) if modifiers.is_empty()
+                        )
+                    {
+                        return self.apply_region_properties();
+                    }
+                    return Task::none();
+                }
                 if self.marker_manager_window_id == Some(window_id) {
                     if status == iced::event::Status::Ignored
                         && matches!(
@@ -3770,6 +3853,29 @@ impl App {
                         },
                         "Project marker inserted",
                     );
+                }
+            }
+            Message::InsertRegionFromTimeSelection => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before inserting a region"
+                            .to_owned();
+                } else if let Some(selection) = self.timeline.time_selection {
+                    if selection.start_tick < selection.end_tick {
+                        self.apply_action(
+                            DawAction::InsertProjectRegion {
+                                start_ticks: selection.start_tick,
+                                end_ticks: selection.end_tick,
+                                name: String::new(),
+                            },
+                            "Project region inserted",
+                        );
+                    } else {
+                        self.status = "Create a non-empty time selection before inserting a region"
+                            .to_owned();
+                    }
+                } else {
+                    self.status = "Create a time selection before inserting a region".to_owned();
                 }
             }
             Message::PreviousProjectMarker => {
@@ -4457,6 +4563,7 @@ impl App {
                         self.project_generation = self.project_generation.wrapping_add(1);
                         if let Some(manager) = &mut self.marker_manager {
                             manager.selected_marker = None;
+                            manager.selected_region = None;
                         }
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
@@ -4634,6 +4741,7 @@ impl App {
                         self.project_generation = self.project_generation.wrapping_add(1);
                         if let Some(manager) = &mut self.marker_manager {
                             manager.selected_marker = None;
+                            manager.selected_region = None;
                         }
                         self.revision = 1;
                         self.saved_revision = 0;
@@ -5076,6 +5184,7 @@ impl App {
         self.project_generation = self.project_generation.wrapping_add(1);
         if let Some(manager) = &mut self.marker_manager {
             manager.selected_marker = None;
+            manager.selected_region = None;
         }
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;

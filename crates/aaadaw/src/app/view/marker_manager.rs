@@ -1,5 +1,5 @@
 use super::super::{App, Message, commands};
-use aaadaw_core::{Project, ProjectMarker};
+use aaadaw_core::{Project, ProjectMarker, ProjectRegion};
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -8,10 +8,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         return text("No marker manager open").into();
     };
     let header = row![
-        text("#").width(Length::Fixed(50.0)),
+        text("#").width(Length::Fixed(52.0)),
         text("Name").width(Length::Fill),
-        text("Start").width(Length::Fixed(116.0)),
-        text("Current").width(Length::Fixed(64.0)),
+        text("Start").width(Length::Fixed(86.0)),
+        text("End").width(Length::Fixed(86.0)),
+        text("Length").width(Length::Fixed(86.0)),
+        text("Current").width(Length::Fixed(42.0)),
         text("").width(Length::Fixed(104.0)),
     ]
     .spacing(4)
@@ -19,54 +21,111 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     let mut entries = column![].spacing(1);
     let mut visible_count = 0;
+    enum Entry<'a> {
+        Region(&'a ProjectRegion),
+        Marker(&'a ProjectMarker),
+    }
+    let mut visible_entries = Vec::new();
+    if manager.show_regions {
+        visible_entries.extend(
+            app.project
+                .regions()
+                .iter()
+                .filter(|region| matches_region_filter(&app.project, region, &manager.filter))
+                .map(Entry::Region),
+        );
+    }
     if manager.show_markers {
-        for marker in app
-            .project
-            .markers()
-            .iter()
-            .filter(|marker| matches_filter(&app.project, marker, &manager.filter))
-        {
-            visible_count += 1;
-            let marker_id = marker.id();
-            let position = format_position(&app.project, marker.position_ticks());
-            let current = if marker.position_ticks() == app.timeline.edit_cursor_tick {
-                "•"
-            } else {
-                ""
-            };
-            let is_selected = manager.selected_marker == Some(marker_id);
-            let row_button = button(
-                row![
-                    text(marker_manager_id_label(marker)).width(Length::Fixed(96.0)),
-                    text(marker.name()).width(Length::Fill),
-                    text(position).width(Length::Fixed(116.0)),
-                    text(current).width(Length::Fixed(64.0)),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .padding([3, 5])
-            .style(move |theme, status| {
-                if is_selected {
-                    button::primary(theme, status)
+        visible_entries.extend(
+            app.project
+                .markers()
+                .iter()
+                .filter(|marker| matches_filter(&app.project, marker, &manager.filter))
+                .map(Entry::Marker),
+        );
+    }
+    visible_entries.sort_by_key(|entry| match entry {
+        Entry::Region(region) => (region.start_ticks(), 0_u8, region.id().value()),
+        Entry::Marker(marker) => (marker.position_ticks(), 1_u8, marker.id().value()),
+    });
+    for entry in visible_entries {
+        visible_count += 1;
+        let (row_button, edit_button, delete_button, is_selected) = match entry {
+            Entry::Marker(marker) => {
+                let marker_id = marker.id();
+                let position = format_position(&app.project, marker.position_ticks());
+                let current = if marker.position_ticks() == app.timeline.edit_cursor_tick {
+                    "•"
                 } else {
-                    button::secondary(theme, status)
-                }
-            })
-            .on_press(Message::MarkerManagerSelectMarker(marker_id));
-            let row_content = row![
-                row_button,
-                button("Edit").on_press(Message::MarkerManagerEditMarker(marker_id)),
-                button("Delete").on_press_maybe(
-                    (!commands::project_edit_busy(app))
-                        .then_some(Message::MarkerManagerDeleteMarker(marker_id)),
-                ),
-            ]
+                    ""
+                };
+                let is_selected = manager.selected_marker == Some(marker_id);
+                let row_button = manager_row(ManagerRow {
+                    number: marker_manager_id_label(marker),
+                    name: marker.name(),
+                    start: position,
+                    end: "-".to_owned(),
+                    length: "-".to_owned(),
+                    current,
+                    selected: is_selected,
+                    message: Message::MarkerManagerSelectMarker(marker_id),
+                });
+                (
+                    row_button,
+                    button("Edit").on_press(Message::MarkerManagerEditMarker(marker_id)),
+                    button("Delete").on_press_maybe(
+                        (!commands::project_edit_busy(app))
+                            .then_some(Message::MarkerManagerDeleteMarker(marker_id)),
+                    ),
+                    is_selected,
+                )
+            }
+            Entry::Region(region) => {
+                let region_id = region.id();
+                let start = format_position(&app.project, region.start_ticks());
+                let end = format_position(&app.project, region.end_ticks());
+                let length = super::super::item_properties::format_marker_length(
+                    &app.project,
+                    region.start_ticks(),
+                    region.end_ticks(),
+                )
+                .unwrap_or_else(|_| format!("{} ticks", region.end_ticks() - region.start_ticks()));
+                let current = if region.start_ticks() <= app.timeline.edit_cursor_tick
+                    && app.timeline.edit_cursor_tick < region.end_ticks()
+                {
+                    "•"
+                } else {
+                    ""
+                };
+                let is_selected = manager.selected_region == Some(region_id);
+                let row_button = manager_row(ManagerRow {
+                    number: region_manager_id_label(region),
+                    name: region.name(),
+                    start,
+                    end,
+                    length,
+                    current,
+                    selected: is_selected,
+                    message: Message::MarkerManagerSelectRegion(region_id),
+                });
+                (
+                    row_button,
+                    button("Edit").on_press(Message::MarkerManagerEditRegion(region_id)),
+                    button("Delete").on_press_maybe(
+                        (!commands::project_edit_busy(app))
+                            .then_some(Message::MarkerManagerDeleteRegion(region_id)),
+                    ),
+                    is_selected,
+                )
+            }
+        };
+        let row_content = row![row_button, edit_button, delete_button]
             .spacing(4)
             .align_y(Alignment::Center);
-            entries = entries.push(container(row_content).width(Length::Fill).style(
-                move |_theme| {
+        entries = entries.push(
+            container(row_content)
+                .width(Length::Fill)
+                .style(move |_theme| {
                     if is_selected {
                         iced::widget::container::Style {
                             background: Some(iced::Color::from_rgb8(53, 74, 81).into()),
@@ -75,15 +134,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     } else {
                         iced::widget::container::Style::default()
                     }
-                },
-            ));
-        }
+                }),
+        );
     }
     if visible_count == 0 {
-        let empty_message = if manager.show_markers && !manager.filter.trim().is_empty() {
-            "No markers match the filter"
-        } else if manager.show_regions && !manager.show_markers {
-            "Region support is still in progress"
+        let empty_message = if !manager.filter.trim().is_empty() {
+            "No regions or markers match the filter"
+        } else if manager.show_regions && manager.show_markers {
+            "No project regions or markers"
+        } else if manager.show_regions {
+            "No project regions"
         } else if manager.show_markers {
             "No project markers"
         } else {
@@ -144,8 +204,64 @@ fn matches_filter(project: &Project, marker: &ProjectMarker, query: &str) -> boo
             .contains(&query)
 }
 
+fn matches_region_filter(project: &Project, region: &ProjectRegion, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || region.name().to_lowercase().contains(&query)
+        || region_manager_id_label(region)
+            .to_lowercase()
+            .contains(&query)
+        || format_position(project, region.start_ticks())
+            .to_lowercase()
+            .contains(&query)
+        || format_position(project, region.end_ticks())
+            .to_lowercase()
+            .contains(&query)
+}
+
 fn marker_manager_id_label(marker: &ProjectMarker) -> String {
     format!("M{}", marker.number())
+}
+
+fn region_manager_id_label(region: &ProjectRegion) -> String {
+    format!("R{}", region.number())
+}
+
+struct ManagerRow<'a> {
+    number: String,
+    name: &'a str,
+    start: String,
+    end: String,
+    length: String,
+    current: &'a str,
+    selected: bool,
+    message: Message,
+}
+
+fn manager_row<'a>(row: ManagerRow<'a>) -> Element<'a, Message> {
+    button(
+        row![
+            text(row.number).width(Length::Fixed(52.0)),
+            text(row.name).width(Length::Fill),
+            text(row.start).width(Length::Fixed(86.0)),
+            text(row.end).width(Length::Fixed(86.0)),
+            text(row.length).width(Length::Fixed(86.0)),
+            text(row.current).width(Length::Fixed(42.0)),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([3, 5])
+    .style(move |theme, status| {
+        if row.selected {
+            button::primary(theme, status)
+        } else {
+            button::secondary(theme, status)
+        }
+    })
+    .on_press(row.message)
+    .into()
 }
 
 fn format_position(project: &Project, tick: u64) -> String {
@@ -190,5 +306,27 @@ mod tests {
         assert!(matches_filter(&project, marker, "m5"));
         assert!(matches_filter(&project, marker, "1.3.00"));
         assert!(!matches_filter(&project, marker, "verse"));
+    }
+
+    #[test]
+    fn region_manager_searches_name_number_and_both_bar_beat_bounds() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 2_880,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region = &project.regions()[0];
+
+        assert_eq!(region_manager_id_label(region), "R1");
+        assert_eq!(format_position(&project, region.start_ticks()), "1.2.00");
+        assert_eq!(format_position(&project, region.end_ticks()), "1.4.00");
+        assert!(matches_region_filter(&project, region, "verse"));
+        assert!(matches_region_filter(&project, region, "r1"));
+        assert!(matches_region_filter(&project, region, "1.2.00"));
+        assert!(matches_region_filter(&project, region, "1.4.00"));
+        assert!(!matches_region_filter(&project, region, "chorus"));
     }
 }

@@ -3892,6 +3892,28 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 })
                 .map(|marker| marker.position_ticks())
                 .collect(),
+            region_spans: self
+                .project
+                .regions()
+                .iter()
+                .filter(|region| {
+                    let start_x = project_marker_x(
+                        region.start_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    let end_x = project_marker_x(
+                        region.end_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    start_x.is_finite()
+                        && end_x.is_finite()
+                        && end_x > 0.0
+                        && start_x < bounds.width
+                })
+                .map(|region| (region.start_ticks(), region.end_ticks()))
+                .collect(),
         }
     }
 
@@ -4294,6 +4316,39 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                         align_y: iced::alignment::Vertical::Center,
                         shaping: Shaping::Basic,
                     });
+                }
+            }
+        }
+        for region in self.project.regions() {
+            let start_x = project_marker_x(
+                region.start_ticks(),
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            let end_x = project_marker_x(
+                region.end_ticks(),
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            if !start_x.is_finite() || !end_x.is_finite() || end_x < 0.0 || start_x > bounds.width {
+                continue;
+            }
+            let left = start_x.max(0.0);
+            let right = end_x.min(bounds.width);
+            frame.fill_rectangle(
+                Point::new(left, 1.0),
+                Size::new((right - left).max(0.0), bounds.height.min(6.0)),
+                Color::from_rgba8(135, 163, 105, 75.0 / 255.0),
+            );
+            for x in [start_x, end_x] {
+                if (0.0..=bounds.width).contains(&x) {
+                    let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
+                    frame.stroke(
+                        &path,
+                        canvas::Stroke::default()
+                            .with_color(Color::from_rgb8(135, 163, 105))
+                            .with_width(1.0),
+                    );
                 }
             }
         }
@@ -5241,6 +5296,13 @@ mod tests {
                 })
                 .unwrap();
         }
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 1_920,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
         let timeline = TimelineState {
             pixels_per_tick: 0.5,
             ..TimelineState::default()
@@ -5253,6 +5315,7 @@ mod tests {
             Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
         );
         assert_eq!(primitive.marker_ticks, vec![720]);
+        assert_eq!(primitive.region_spans, vec![(960, 1_920)]);
     }
 
     #[test]

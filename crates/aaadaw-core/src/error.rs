@@ -56,6 +56,14 @@ pub enum ActionError {
     InvalidProjectMarker,
     /// Every REAPER-compatible positive marker number is already in use.
     ProjectMarkerNumberExhausted,
+    /// A region is empty, out of range, or has an invalid name or number.
+    InvalidProjectRegion,
+    /// The requested project region does not exist.
+    ProjectRegionNotFound {
+        region_id: crate::RegionId,
+    },
+    /// Every REAPER-compatible positive region number is already in use.
+    ProjectRegionNumberExhausted,
     /// The requested project marker does not exist.
     ProjectMarkerNotFound {
         marker_id: MarkerId,
@@ -135,6 +143,8 @@ pub enum ActionError {
     TrackIdExhausted,
     /// The project has exhausted its available marker identifiers.
     MarkerIdExhausted,
+    /// The project has exhausted its available region identifiers.
+    RegionIdExhausted,
     /// The internal event history could not be applied consistently.
     HistoryInvariantViolation,
 }
@@ -208,6 +218,15 @@ impl fmt::Display for ActionError {
             }
             Self::ProjectMarkerNumberExhausted => {
                 formatter.write_str("project marker numbers are exhausted")
+            }
+            Self::InvalidProjectRegion => {
+                formatter.write_str("project region boundaries, number, or name are invalid")
+            }
+            Self::ProjectRegionNotFound { region_id } => {
+                write!(formatter, "project region {} does not exist", region_id.value())
+            }
+            Self::ProjectRegionNumberExhausted => {
+                formatter.write_str("project region numbers are exhausted")
             }
             Self::ProjectMarkerNotFound { marker_id } => {
                 write!(formatter, "project marker {} does not exist", marker_id.value())
@@ -291,6 +310,7 @@ impl fmt::Display for ActionError {
             Self::InvalidPan => formatter.write_str("track pan must be finite and in -1..=1"),
             Self::TrackIdExhausted => formatter.write_str("track identifiers are exhausted"),
             Self::MarkerIdExhausted => formatter.write_str("project marker identifiers are exhausted"),
+            Self::RegionIdExhausted => formatter.write_str("project region identifiers are exhausted"),
             Self::HistoryInvariantViolation => {
                 formatter.write_str("project event history is inconsistent with its state")
             }

@@ -13,6 +13,7 @@ mod master;
 mod midi;
 mod project;
 mod project_notes;
+mod regions;
 mod routing;
 mod snapshot;
 mod timebase;
@@ -30,11 +31,13 @@ pub use midi::{
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
+pub use regions::{MAX_PROJECT_REGION_NUMBER, ProjectRegion, RegionId};
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot,
-    ProjectMarkerSnapshot, ProjectSnapshot, SnapshotError, TempoPointSnapshot,
-    TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
-    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
+    ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSnapshot, SnapshotError,
+    TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    TrackInstrumentSnapshot, TrackSnapshot,
 };
 pub use timebase::{
     BpmBasis, DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,

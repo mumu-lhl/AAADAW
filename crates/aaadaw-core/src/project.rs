@@ -9,8 +9,8 @@ use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
     MidiNote, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker, ProjectMarkerSnapshot,
-    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
-    TrackInstrument,
+    ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RegionId, TempoCurve, TimeSignature,
+    TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -54,6 +54,31 @@ fn lowest_available_marker_number(markers: &[ProjectMarker]) -> Option<u32> {
     while used.contains(&candidate) {
         candidate = candidate.checked_add(1)?;
         if candidate > crate::MAX_PROJECT_MARKER_NUMBER {
+            return None;
+        }
+    }
+    Some(candidate)
+}
+
+fn valid_project_regions(regions: &[ProjectRegion]) -> bool {
+    let mut ids = HashSet::with_capacity(regions.len());
+    regions.iter().all(|region| {
+        region.start_ticks < region.end_ticks
+            && region.end_ticks <= crate::timebase::MAX_EXACT_FLOAT_POSITION
+            && (1..=crate::MAX_PROJECT_REGION_NUMBER).contains(&region.number)
+            && crate::markers::valid_marker_name(&region.name)
+            && ids.insert(region.id)
+    }) && regions.windows(2).all(|pair| {
+        (pair[0].start_ticks, pair[0].id.value()) <= (pair[1].start_ticks, pair[1].id.value())
+    })
+}
+
+fn lowest_available_region_number(regions: &[ProjectRegion]) -> Option<u32> {
+    let used: HashSet<_> = regions.iter().map(ProjectRegion::number).collect();
+    let mut candidate = 1;
+    while used.contains(&candidate) {
+        candidate = candidate.checked_add(1)?;
+        if candidate > crate::MAX_PROJECT_REGION_NUMBER {
             return None;
         }
     }
@@ -397,6 +422,7 @@ struct ProjectState {
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
     markers: Vec<ProjectMarker>,
+    regions: Vec<ProjectRegion>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
 }
@@ -415,6 +441,7 @@ impl Default for ProjectState {
             audio_items: Vec::new(),
             midi_items: Vec::new(),
             markers: Vec::new(),
+            regions: Vec::new(),
             tempo_map: TempoMap::default(),
             meter_map: MeterMap::default(),
         }
@@ -428,6 +455,7 @@ struct IdAllocator {
     next_item_id: u64,
     next_note_id: u64,
     next_marker_id: u64,
+    next_region_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -471,6 +499,10 @@ enum ProjectEvent {
     ProjectMarkersChanged {
         before: Vec<ProjectMarker>,
         after: Vec<ProjectMarker>,
+    },
+    ProjectRegionsChanged {
+        before: Vec<ProjectRegion>,
+        after: Vec<ProjectRegion>,
     },
     MasterMixChanged {
         before: crate::MasterMix,
@@ -720,6 +752,10 @@ impl ProjectEvent {
                 }
             }
             Self::ProjectMarkersChanged { before, after } => Self::ProjectMarkersChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::ProjectRegionsChanged { before, after } => Self::ProjectRegionsChanged {
                 before: after.clone(),
                 after: before.clone(),
             },
@@ -1418,6 +1454,9 @@ impl Project {
         ) || matches!(
             &event,
             ProjectEvent::ProjectMarkersChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectRegionsChanged { before, after } if before == after
         ) {
             return Ok(());
         }
@@ -1488,6 +1527,11 @@ impl Project {
     /// Returns the project's markers ordered by timeline position and stable identity.
     pub fn markers(&self) -> &[ProjectMarker] {
         &self.state.markers
+    }
+
+    /// Returns the project's regions ordered by timeline start and stable identity.
+    pub fn regions(&self) -> &[ProjectRegion] {
+        &self.state.regions
     }
 
     /// Project documentation, independent of media undo/redo history.
@@ -1614,6 +1658,12 @@ impl Project {
                 .iter()
                 .map(ProjectMarkerSnapshot::from)
                 .collect(),
+            regions: self
+                .state
+                .regions
+                .iter()
+                .map(ProjectRegionSnapshot::from)
+                .collect(),
             tempo_points: self
                 .state
                 .tempo_map
@@ -1711,6 +1761,27 @@ impl Project {
             );
         }
         markers.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+
+        let mut region_ids = HashSet::with_capacity(snapshot.regions.len());
+        let mut max_region_id = None;
+        let mut regions = Vec::with_capacity(snapshot.regions.len());
+        for region in snapshot.regions {
+            if !region_ids.insert(region.id) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_region_id = Some(max_region_id.map_or(region.id, |max: u64| max.max(region.id)));
+            regions.push(
+                ProjectRegion::new(
+                    RegionId::from_raw(region.id),
+                    region.number,
+                    region.start_ticks,
+                    region.end_ticks,
+                    region.name,
+                )
+                .ok_or(SnapshotError::InvalidProjectData)?,
+            );
+        }
+        regions.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
 
         let mut track_ids = HashSet::with_capacity(snapshot.tracks.len());
         let mut tracks = Vec::with_capacity(snapshot.tracks.len());
@@ -1932,6 +2003,7 @@ impl Project {
                 audio_items,
                 midi_items,
                 markers,
+                regions,
                 tempo_map,
                 meter_map,
             },
@@ -1941,6 +2013,7 @@ impl Project {
                 next_item_id: next_id(max_item_id)?,
                 next_note_id: next_id(max_note_id)?,
                 next_marker_id: next_id(max_marker_id)?,
+                next_region_id: next_id(max_region_id)?,
             },
             history: Vec::new(),
             history_cursor: 0,
@@ -2123,6 +2196,62 @@ impl Project {
                     .cloned()
                     .collect();
                 ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::InsertProjectRegion {
+                start_ticks,
+                end_ticks,
+                name,
+            } => {
+                let next_region_id = ids
+                    .next_region_id
+                    .checked_add(1)
+                    .ok_or(ActionError::RegionIdExhausted)?;
+                let number = lowest_available_region_number(&state.regions)
+                    .ok_or(ActionError::ProjectRegionNumberExhausted)?;
+                let region = ProjectRegion::new(
+                    RegionId::from_raw(ids.next_region_id),
+                    number,
+                    start_ticks,
+                    end_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectRegion)?;
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                after.push(region);
+                after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
+                ids.next_region_id = next_region_id;
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::UpdateProjectRegion {
+                region_id,
+                number,
+                start_ticks,
+                end_ticks,
+                name,
+            } => {
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                *region = ProjectRegion::new(region_id, number, start_ticks, end_ticks, name)
+                    .ok_or(ActionError::InvalidProjectRegion)?;
+                after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::DeleteProjectRegion { region_id } => {
+                let before = state.regions.clone();
+                if !before.iter().any(|region| region.id == region_id) {
+                    return Err(ActionError::ProjectRegionNotFound { region_id });
+                }
+                let after = before
+                    .iter()
+                    .filter(|region| region.id != region_id)
+                    .cloned()
+                    .collect();
+                ProjectEvent::ProjectRegionsChanged { before, after }
             }
             DawAction::CreateTrack { index, name } => {
                 if index > state.tracks.len() {
@@ -3558,6 +3687,12 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.markers = after.clone();
+            }
+            ProjectEvent::ProjectRegionsChanged { before, after } => {
+                if state.regions != *before || !valid_project_regions(after) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.regions = after.clone();
             }
             ProjectEvent::MasterMixChanged { before, after } => {
                 if state.master_mix != *before {
