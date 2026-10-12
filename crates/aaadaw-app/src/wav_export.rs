@@ -6,8 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - 36;
 const IMA_ADPCM_SAMPLES_PER_BLOCK: usize = 2041;
+const CADPCM_SAMPLES_PER_BLOCK: usize = 4081;
 const IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK: usize = 1024;
-const IMA_ADPCM_RIFF_OVERHEAD: u64 = 52;
+const ADPCM_RIFF_OVERHEAD: u64 = 52;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static NEXT_DITHER_SEED: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
@@ -21,11 +22,12 @@ pub enum WavSampleFormat {
     Float32,
     Float64,
     ImaAdpcm4,
+    Cadpcm2,
     MuLaw8,
 }
 
 impl WavSampleFormat {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Pcm8,
         Self::Pcm16,
         Self::Pcm24,
@@ -33,6 +35,7 @@ impl WavSampleFormat {
         Self::Float32,
         Self::Float64,
         Self::ImaAdpcm4,
+        Self::Cadpcm2,
         Self::MuLaw8,
     ];
 
@@ -46,6 +49,7 @@ impl WavSampleFormat {
             Self::Float64 => "Float 64-bit",
             Self::MuLaw8 => "8-bit u-Law",
             Self::ImaAdpcm4 => "4-bit IMA ADPCM",
+            Self::Cadpcm2 => "2-bit cADPCM",
         }
     }
 
@@ -147,15 +151,54 @@ pub struct MuLaw8WavExport {
 
 /// Incremental block-based 4-bit IMA ADPCM WAV export.
 pub struct ImaAdpcm4WavExport {
+    inner: AdpcmWavExport,
+}
+
+/// Incremental block-based 2-bit cADPCM WAV export.
+pub struct Cadpcm2WavExport {
+    inner: AdpcmWavExport,
+}
+
+struct AdpcmWavExport {
     destination: PathBuf,
     temporary: PathBuf,
     file: Option<BufWriter<File>>,
     sample_rate: u32,
     channels: WavChannelCount,
+    codec: AdpcmCodec,
     total_frames: u64,
     data_bytes: u64,
     pending_frames: Vec<[i16; 2]>,
     encoded_block: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+enum AdpcmCodec {
+    Ima4,
+    Cadpcm2,
+}
+
+impl AdpcmCodec {
+    const fn samples_per_block(self) -> usize {
+        match self {
+            Self::Ima4 => IMA_ADPCM_SAMPLES_PER_BLOCK,
+            Self::Cadpcm2 => CADPCM_SAMPLES_PER_BLOCK,
+        }
+    }
+
+    const fn bits_per_sample(self) -> u16 {
+        match self {
+            Self::Ima4 => 4,
+            Self::Cadpcm2 => 2,
+        }
+    }
+
+    const fn format_tag(self) -> u16 {
+        match self {
+            Self::Ima4 => 17,
+            Self::Cadpcm2 => 0xAC0C,
+        }
+    }
 }
 
 /// User-facing WAV export writer. Float output ignores the integer-only dither setting.
@@ -168,6 +211,7 @@ pub enum WavExport {
     Float64(Float64WavExport),
     MuLaw8(MuLaw8WavExport),
     ImaAdpcm4(ImaAdpcm4WavExport),
+    Cadpcm2(Cadpcm2WavExport),
 }
 
 #[derive(Debug)]
@@ -180,6 +224,7 @@ pub enum WavExportError {
     Float64(Float32WavExportError),
     MuLaw8(MuLaw8WavExportError),
     ImaAdpcm4(ImaAdpcmWavExportError),
+    Cadpcm2(Cadpcm2WavExportError),
 }
 
 impl std::fmt::Display for WavExportError {
@@ -190,7 +235,7 @@ impl std::fmt::Display for WavExportError {
             }
             Self::Float32(error) | Self::Float64(error) => error.fmt(formatter),
             Self::MuLaw8(error) => error.fmt(formatter),
-            Self::ImaAdpcm4(error) => error.fmt(formatter),
+            Self::ImaAdpcm4(error) | Self::Cadpcm2(error) => error.fmt(formatter),
         }
     }
 }
@@ -203,7 +248,7 @@ impl std::error::Error for WavExportError {
             }
             Self::Float32(error) | Self::Float64(error) => Some(error),
             Self::MuLaw8(error) => Some(error),
-            Self::ImaAdpcm4(error) => Some(error),
+            Self::ImaAdpcm4(error) | Self::Cadpcm2(error) => Some(error),
         }
     }
 }
@@ -584,29 +629,30 @@ impl Drop for MuLaw8WavExport {
     }
 }
 
-/// Errors returned while creating or writing an IMA ADPCM WAV export.
+/// Errors returned while creating or writing an ADPCM WAV export.
 #[derive(Debug)]
-pub enum ImaAdpcmWavExportError {
+pub enum AdpcmWavExportError {
     Io(io::Error),
     InvalidSampleRate,
     RiffSizeLimit,
     NonFiniteSample,
 }
 
-impl std::fmt::Display for ImaAdpcmWavExportError {
+pub type ImaAdpcmWavExportError = AdpcmWavExportError;
+pub type Cadpcm2WavExportError = AdpcmWavExportError;
+
+impl std::fmt::Display for AdpcmWavExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(error) => write!(formatter, "IMA ADPCM WAV export failed: {error}"),
+            Self::Io(error) => write!(formatter, "ADPCM WAV export failed: {error}"),
             Self::InvalidSampleRate => formatter.write_str("WAV sample rate must be positive"),
             Self::RiffSizeLimit => formatter.write_str("WAV export exceeds the RIFF size limit"),
-            Self::NonFiniteSample => {
-                formatter.write_str("IMA ADPCM WAV contains a non-finite sample")
-            }
+            Self::NonFiniteSample => formatter.write_str("ADPCM WAV contains a non-finite sample"),
         }
     }
 }
 
-impl std::error::Error for ImaAdpcmWavExportError {
+impl std::error::Error for AdpcmWavExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
@@ -615,7 +661,7 @@ impl std::error::Error for ImaAdpcmWavExportError {
     }
 }
 
-impl From<io::Error> for ImaAdpcmWavExportError {
+impl From<io::Error> for AdpcmWavExportError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
@@ -634,8 +680,56 @@ impl ImaAdpcm4WavExport {
         sample_rate: u32,
         channels: WavChannelCount,
     ) -> Result<Self, ImaAdpcmWavExportError> {
+        Ok(Self {
+            inner: AdpcmWavExport::create(destination, sample_rate, channels, AdpcmCodec::Ima4)?,
+        })
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), ImaAdpcmWavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    pub fn finish(self) -> Result<PathBuf, ImaAdpcmWavExportError> {
+        self.inner.finish()
+    }
+}
+
+impl Cadpcm2WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, Cadpcm2WavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, Cadpcm2WavExportError> {
+        Ok(Self {
+            inner: AdpcmWavExport::create(destination, sample_rate, channels, AdpcmCodec::Cadpcm2)?,
+        })
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), Cadpcm2WavExportError> {
+        self.inner.write_frames(frames)
+    }
+
+    pub fn finish(self) -> Result<PathBuf, Cadpcm2WavExportError> {
+        self.inner.finish()
+    }
+}
+
+impl AdpcmWavExport {
+    fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+        codec: AdpcmCodec,
+    ) -> Result<Self, AdpcmWavExportError> {
         if sample_rate == 0 {
-            return Err(ImaAdpcmWavExportError::InvalidSampleRate);
+            return Err(AdpcmWavExportError::InvalidSampleRate);
         }
         let destination = destination.as_ref().to_path_buf();
         if destination.exists() {
@@ -650,34 +744,35 @@ impl ImaAdpcm4WavExport {
             file: None,
             sample_rate,
             channels,
+            codec,
             total_frames: 0,
             data_bytes: 0,
-            pending_frames: Vec::with_capacity(IMA_ADPCM_SAMPLES_PER_BLOCK),
-            encoded_block: vec![0; ima_adpcm_block_align(channels)],
+            pending_frames: Vec::with_capacity(codec.samples_per_block()),
+            encoded_block: vec![0; adpcm_block_align(channels)],
         };
-        write_ima_adpcm_header(&mut file, sample_rate, channels, 0, 0)?;
+        write_adpcm_header(&mut file, sample_rate, channels, codec, 0, 0)?;
         export.file = Some(BufWriter::new(file));
         Ok(export)
     }
 
-    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), ImaAdpcmWavExportError> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), AdpcmWavExportError> {
         if frames.iter().flatten().any(|sample| !sample.is_finite()) {
-            return Err(ImaAdpcmWavExportError::NonFiniteSample);
+            return Err(AdpcmWavExportError::NonFiniteSample);
         }
         let added_frames =
-            u64::try_from(frames.len()).map_err(|_| ImaAdpcmWavExportError::RiffSizeLimit)?;
+            u64::try_from(frames.len()).map_err(|_| AdpcmWavExportError::RiffSizeLimit)?;
         let total_frames = self
             .total_frames
             .checked_add(added_frames)
             .filter(|frames| *frames <= u64::from(u32::MAX))
-            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
-        ima_adpcm_data_bytes(total_frames, self.channels)
+            .ok_or(AdpcmWavExportError::RiffSizeLimit)?;
+        adpcm_data_bytes(total_frames, self.channels, self.codec)
             .filter(|bytes| {
                 bytes
-                    .checked_add(IMA_ADPCM_RIFF_OVERHEAD)
+                    .checked_add(ADPCM_RIFF_OVERHEAD)
                     .is_some_and(|size| size <= u64::from(u32::MAX))
             })
-            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
+            .ok_or(AdpcmWavExportError::RiffSizeLimit)?;
 
         for frame in frames {
             let left = i16_from_float(self.channels.frame_sample(frame, 0));
@@ -687,7 +782,7 @@ impl ImaAdpcm4WavExport {
                 left
             };
             self.pending_frames.push([left, right]);
-            if self.pending_frames.len() == IMA_ADPCM_SAMPLES_PER_BLOCK {
+            if self.pending_frames.len() == self.codec.samples_per_block() {
                 self.write_pending_block()?;
             }
         }
@@ -695,9 +790,14 @@ impl ImaAdpcm4WavExport {
         Ok(())
     }
 
-    fn write_pending_block(&mut self) -> Result<(), ImaAdpcmWavExportError> {
-        debug_assert_eq!(self.pending_frames.len(), IMA_ADPCM_SAMPLES_PER_BLOCK);
-        encode_ima_adpcm_block(&self.pending_frames, self.channels, &mut self.encoded_block);
+    fn write_pending_block(&mut self) -> Result<(), AdpcmWavExportError> {
+        debug_assert_eq!(self.pending_frames.len(), self.codec.samples_per_block());
+        encode_adpcm_block(
+            &self.pending_frames,
+            self.channels,
+            self.codec,
+            &mut self.encoded_block,
+        );
         self.file
             .as_mut()
             .expect("unfinished export retains its file")
@@ -705,15 +805,15 @@ impl ImaAdpcm4WavExport {
         self.data_bytes = self
             .data_bytes
             .checked_add(self.encoded_block.len() as u64)
-            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
+            .ok_or(AdpcmWavExportError::RiffSizeLimit)?;
         self.pending_frames.clear();
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<PathBuf, ImaAdpcmWavExportError> {
+    fn finish(mut self) -> Result<PathBuf, AdpcmWavExportError> {
         if !self.pending_frames.is_empty() {
             self.pending_frames
-                .resize(IMA_ADPCM_SAMPLES_PER_BLOCK, [0, 0]);
+                .resize(self.codec.samples_per_block(), [0, 0]);
             self.write_pending_block()?;
         }
         let mut file = self
@@ -722,10 +822,11 @@ impl ImaAdpcm4WavExport {
             .expect("unfinished export retains its file");
         file.flush()?;
         file.seek(SeekFrom::Start(0))?;
-        write_ima_adpcm_header(
+        write_adpcm_header(
             &mut file,
             self.sample_rate,
             self.channels,
+            self.codec,
             self.data_bytes,
             self.total_frames,
         )?;
@@ -737,7 +838,7 @@ impl ImaAdpcm4WavExport {
     }
 }
 
-impl Drop for ImaAdpcm4WavExport {
+impl Drop for AdpcmWavExport {
     fn drop(&mut self) {
         self.file.take();
         let _ = fs::remove_file(&self.temporary);
@@ -829,6 +930,11 @@ impl WavExport {
                     .map(Self::ImaAdpcm4)
                     .map_err(WavExportError::ImaAdpcm4)?
             }
+            WavSampleFormat::Cadpcm2 => {
+                Cadpcm2WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::Cadpcm2)
+                    .map_err(WavExportError::Cadpcm2)?
+            }
         };
         Ok(export)
     }
@@ -845,6 +951,7 @@ impl WavExport {
             Self::ImaAdpcm4(export) => export
                 .write_frames(frames)
                 .map_err(WavExportError::ImaAdpcm4),
+            Self::Cadpcm2(export) => export.write_frames(frames).map_err(WavExportError::Cadpcm2),
         }
     }
 
@@ -858,6 +965,7 @@ impl WavExport {
             Self::Float64(export) => export.finish().map_err(WavExportError::Float64),
             Self::MuLaw8(export) => export.finish().map_err(WavExportError::MuLaw8),
             Self::ImaAdpcm4(export) => export.finish().map_err(WavExportError::ImaAdpcm4),
+            Self::Cadpcm2(export) => export.finish().map_err(WavExportError::Cadpcm2),
         }
     }
 }
@@ -1328,10 +1436,11 @@ fn write_mulaw_header(
     file.write_all(&data_bytes.to_le_bytes())
 }
 
-fn write_ima_adpcm_header(
+fn write_adpcm_header(
     file: &mut impl Write,
     sample_rate: u32,
     channels: WavChannelCount,
+    codec: AdpcmCodec,
     data_bytes: u64,
     frame_count: u64,
 ) -> io::Result<()> {
@@ -1341,27 +1450,28 @@ fn write_ima_adpcm_header(
         io::Error::new(io::ErrorKind::InvalidInput, "WAV frame count exceeds limit")
     })?;
     let channel_count = channels.channels();
-    let block_align = u16::try_from(ima_adpcm_block_align(channels))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IMA block size overflow"))?;
-    let byte_rate = match channels {
-        WavChannelCount::Mono => sample_rate / 2,
-        WavChannelCount::Stereo => sample_rate,
-    };
-    let riff_size = u32::try_from(IMA_ADPCM_RIFF_OVERHEAD + u64::from(data_bytes))
+    let block_align = u16::try_from(adpcm_block_align(channels))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "ADPCM block size overflow"))?;
+    let byte_rate = sample_rate
+        .checked_mul(u32::from(channel_count))
+        .and_then(|rate| rate.checked_mul(u32::from(codec.bits_per_sample())))
+        .map(|rate| rate / 8)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "WAV byte rate overflow"))?;
+    let riff_size = u32::try_from(ADPCM_RIFF_OVERHEAD + u64::from(data_bytes))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV RIFF size overflow"))?;
 
     file.write_all(b"RIFF")?;
     file.write_all(&riff_size.to_le_bytes())?;
     file.write_all(b"WAVEfmt ")?;
     file.write_all(&20_u32.to_le_bytes())?;
-    file.write_all(&17_u16.to_le_bytes())?;
+    file.write_all(&codec.format_tag().to_le_bytes())?;
     file.write_all(&channel_count.to_le_bytes())?;
     file.write_all(&sample_rate.to_le_bytes())?;
     file.write_all(&byte_rate.to_le_bytes())?;
     file.write_all(&block_align.to_le_bytes())?;
-    file.write_all(&4_u16.to_le_bytes())?;
+    file.write_all(&codec.bits_per_sample().to_le_bytes())?;
     file.write_all(&2_u16.to_le_bytes())?;
-    file.write_all(&(IMA_ADPCM_SAMPLES_PER_BLOCK as u16).to_le_bytes())?;
+    file.write_all(&(codec.samples_per_block() as u16).to_le_bytes())?;
     file.write_all(b"fact")?;
     file.write_all(&4_u32.to_le_bytes())?;
     file.write_all(&frame_count.to_le_bytes())?;
@@ -1369,14 +1479,14 @@ fn write_ima_adpcm_header(
     file.write_all(&data_bytes.to_le_bytes())
 }
 
-fn ima_adpcm_block_align(channels: WavChannelCount) -> usize {
+fn adpcm_block_align(channels: WavChannelCount) -> usize {
     IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK * channels.channels() as usize
 }
 
-fn ima_adpcm_data_bytes(frame_count: u64, channels: WavChannelCount) -> Option<u64> {
-    let frames_per_block = IMA_ADPCM_SAMPLES_PER_BLOCK as u64;
+fn adpcm_data_bytes(frame_count: u64, channels: WavChannelCount, codec: AdpcmCodec) -> Option<u64> {
+    let frames_per_block = codec.samples_per_block() as u64;
     let block_count = frame_count.checked_add(frames_per_block - 1)? / frames_per_block;
-    block_count.checked_mul(ima_adpcm_block_align(channels) as u64)
+    block_count.checked_mul(adpcm_block_align(channels) as u64)
 }
 
 fn i16_from_float(sample: f32) -> i16 {
@@ -1402,7 +1512,7 @@ const IMA_ADPCM_INDEX_TABLE: [i32; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 
 fn encode_ima_adpcm_block(frames: &[[i16; 2]], channels: WavChannelCount, output: &mut [u8]) {
     debug_assert_eq!(frames.len(), IMA_ADPCM_SAMPLES_PER_BLOCK);
-    debug_assert_eq!(output.len(), ima_adpcm_block_align(channels));
+    debug_assert_eq!(output.len(), adpcm_block_align(channels));
     output.fill(0);
     let channel_count = channels.channels() as usize;
     let mut states = [ImaAdpcmState {
@@ -1468,6 +1578,81 @@ fn encode_ima_adpcm_sample(sample: i16, state: &mut ImaAdpcmState) -> u8 {
     let next_index = state.step_index as i32 + IMA_ADPCM_INDEX_TABLE[usize::from(nibble & 7)];
     state.step_index = next_index.clamp(0, IMA_ADPCM_STEP_TABLE.len() as i32 - 1) as usize;
     nibble
+}
+
+fn encode_cadpcm2_block(frames: &[[i16; 2]], channels: WavChannelCount, output: &mut [u8]) {
+    debug_assert_eq!(frames.len(), CADPCM_SAMPLES_PER_BLOCK);
+    debug_assert_eq!(output.len(), adpcm_block_align(channels));
+    output.fill(0);
+    let channel_count = channels.channels() as usize;
+    let mut states = [ImaAdpcmState {
+        predictor: 0,
+        step_index: 0,
+    }; 2];
+    for channel in 0..channel_count {
+        let predictor = i32::from(frames[0][channel]);
+        states[channel].predictor = predictor;
+        let header_offset = channel * 4;
+        output[header_offset..header_offset + 2].copy_from_slice(&(predictor as i16).to_le_bytes());
+        output[header_offset + 2] = 0;
+        output[header_offset + 3] = 0;
+    }
+
+    let header_bytes = channel_count * 4;
+    for group in 0..((CADPCM_SAMPLES_PER_BLOCK - 1) / 16) {
+        for channel in 0..channel_count {
+            let channel_group_offset = header_bytes + group * channel_count * 4 + channel * 4;
+            for sample_in_group in 0..16 {
+                let frame_index = 1 + group * 16 + sample_in_group;
+                let code =
+                    encode_cadpcm2_sample(frames[frame_index][channel], &mut states[channel]);
+                let byte_offset = channel_group_offset + sample_in_group / 4;
+                output[byte_offset] |= code << ((sample_in_group & 3) * 2);
+            }
+        }
+    }
+}
+
+fn encode_cadpcm2_sample(sample: i16, state: &mut ImaAdpcmState) -> u8 {
+    let step = IMA_ADPCM_STEP_TABLE[state.step_index];
+    let mut difference = i32::from(sample) - state.predictor;
+    let mut code = 0_u8;
+    if difference < 0 {
+        code = 2;
+        difference = -difference;
+    }
+    if difference > step {
+        code |= 1;
+    }
+
+    let mut reconstructed_difference = step >> 3;
+    if code & 1 != 0 {
+        reconstructed_difference += step;
+    }
+    if code & 2 != 0 {
+        state.predictor -= reconstructed_difference;
+    } else {
+        state.predictor += reconstructed_difference;
+    }
+    state.predictor = state
+        .predictor
+        .clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+    let index_delta = IMA_ADPCM_INDEX_TABLE[usize::from((code << 2) & 7)];
+    let next_index = state.step_index as i32 + index_delta;
+    state.step_index = next_index.clamp(0, IMA_ADPCM_STEP_TABLE.len() as i32 - 1) as usize;
+    code
+}
+
+fn encode_adpcm_block(
+    frames: &[[i16; 2]],
+    channels: WavChannelCount,
+    codec: AdpcmCodec,
+    output: &mut [u8],
+) {
+    match codec {
+        AdpcmCodec::Ima4 => encode_ima_adpcm_block(frames, channels, output),
+        AdpcmCodec::Cadpcm2 => encode_cadpcm2_block(frames, channels, output),
+    }
 }
 
 fn encode_mulaw_sample(sample: f32) -> u8 {
@@ -1690,7 +1875,8 @@ mod tests {
                 WavExport::Float32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Float64(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::MuLaw8(export) => export.data_bytes = u64::MAX,
-                WavExport::ImaAdpcm4(export) => export.total_frames = u64::MAX,
+                WavExport::ImaAdpcm4(export) => export.inner.total_frames = u64::MAX,
+                WavExport::Cadpcm2(export) => export.inner.total_frames = u64::MAX,
             }
             assert!(write_error.write_frames(&[[0.25, -0.25]]).is_err());
             drop(write_error);
@@ -1769,10 +1955,12 @@ mod tests {
                 WavSampleFormat::Float64 => 8,
                 WavSampleFormat::MuLaw8 => 1,
                 WavSampleFormat::ImaAdpcm4 => 1,
+                WavSampleFormat::Cadpcm2 => 1,
             };
             let expected_format_tag = match sample_format {
                 WavSampleFormat::MuLaw8 => 7,
                 WavSampleFormat::ImaAdpcm4 => 17,
+                WavSampleFormat::Cadpcm2 => 0xAC0C,
                 WavSampleFormat::Float32 | WavSampleFormat::Float64 => 3,
                 _ => 1,
             };
@@ -1783,7 +1971,10 @@ mod tests {
             let data_offset = find_wav_data_offset(&bytes).expect("mono data chunk should exist");
             assert_eq!(
                 u32::from_le_bytes(bytes[data_offset - 4..data_offset].try_into().unwrap()),
-                if sample_format == WavSampleFormat::ImaAdpcm4 {
+                if matches!(
+                    sample_format,
+                    WavSampleFormat::ImaAdpcm4 | WavSampleFormat::Cadpcm2
+                ) {
                     IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK as u32
                 } else {
                     bytes_per_sample as u32
@@ -1799,7 +1990,7 @@ mod tests {
             assert_eq!(chunk.samples().len(), 1);
             let tolerance = if matches!(
                 sample_format,
-                WavSampleFormat::MuLaw8 | WavSampleFormat::ImaAdpcm4
+                WavSampleFormat::MuLaw8 | WavSampleFormat::ImaAdpcm4 | WavSampleFormat::Cadpcm2
             ) {
                 0.02
             } else {
@@ -2027,6 +2218,243 @@ mod tests {
                 (decoded_left[frame] - expected).abs() < 0.001,
                 "IMA decoded sample at level {level_index} was {}",
                 decoded_left[frame]
+            );
+        }
+        fs::remove_file(path).expect("test WAV should be removed");
+    }
+
+    #[test]
+    fn cadpcm2_wav_matches_native_block_layout_and_round_trips() {
+        let path = temp_destination("cadpcm2-native-block");
+        let frames = vec![[0.25, 0.75]; CADPCM_SAMPLES_PER_BLOCK];
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::Cadpcm2,
+                dither: false,
+            },
+        )
+        .expect("cADPCM writer should open");
+        for chunk in frames.chunks(1_117) {
+            export
+                .write_frames(chunk)
+                .expect("cADPCM frames should write");
+        }
+        export.finish().expect("cADPCM WAV should publish");
+
+        let bytes = fs::read(&path).expect("cADPCM WAV should be readable");
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            52 + 2048
+        );
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 20);
+        assert_eq!(
+            u16::from_le_bytes(bytes[20..22].try_into().unwrap()),
+            0xac0c
+        );
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[28..32].try_into().unwrap()),
+            24_000
+        );
+        assert_eq!(u16::from_le_bytes(bytes[32..34].try_into().unwrap()), 2048);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(bytes[36..38].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(bytes[38..40].try_into().unwrap()), 4081);
+        assert_eq!(&bytes[40..44], b"fact");
+        assert_eq!(u32::from_le_bytes(bytes[48..52].try_into().unwrap()), 4081);
+        assert_eq!(&bytes[52..56], b"data");
+        assert_eq!(u32::from_le_bytes(bytes[56..60].try_into().unwrap()), 2048);
+        assert_eq!(&bytes[60..68], &[0, 0x20, 0, 0, 0, 0x60, 0, 0]);
+        assert!(bytes[68..].iter().all(|byte| *byte == 0));
+
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("media decoder should recognize native cADPCM WAVE");
+        assert_eq!(decoder.metadata().codec, "cADPCM");
+        assert_eq!(decoder.metadata().sample_rate, Some(48_000));
+        assert_eq!(decoder.metadata().channel_count, Some(2));
+        assert_eq!(decoder.metadata().bits_per_sample, Some(2));
+        assert_eq!(decoder.metadata().frame_count, Some(4081));
+        let chunk = decoder
+            .next_chunk()
+            .expect("cADPCM block should decode")
+            .expect("cADPCM block should contain frames");
+        assert_eq!(chunk.frame_count(), CADPCM_SAMPLES_PER_BLOCK);
+        assert!(
+            chunk
+                .samples()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| (frame[0] - 0.25).abs() < 1.0e-6 && (frame[1] - 0.75).abs() < 1.0e-6)
+        );
+        assert!(
+            decoder
+                .next_chunk()
+                .expect("decoder should honor the fact frame count")
+                .is_none()
+        );
+        fs::remove_file(path).expect("test WAV should be removed");
+    }
+
+    #[test]
+    fn cadpcm2_vectors_match_native_block_predictors_and_decoded_levels() {
+        const NATIVE_REFERENCE: &[u8] = include_bytes!(
+            "../../../docs/verification/reaper-parity/fixtures/render-cadpcm2-native-vectors.wav"
+        );
+        let path = temp_destination("cadpcm2-native-render-vectors");
+        let levels = [
+            -0.999_f32, -0.75, -0.5, -0.25, -0.125, -0.1, -0.05, -0.01, 0.0, 0.01, 0.05, 0.1,
+            0.125, 0.25, 0.5, 0.75,
+        ];
+        let mut frames = Vec::with_capacity(48_000);
+        for level in levels {
+            let source_sample = ((level * 0.5) * 8_388_608.0).round() as i32;
+            let master_sample = (source_sample as f32 / 8_388_608.0) * 2.0;
+            frames.extend(std::iter::repeat_n([master_sample, master_sample], 3_000));
+        }
+
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::Cadpcm2,
+                dither: false,
+            },
+        )
+        .expect("cADPCM writer should open");
+        for chunk in frames.chunks(1_237) {
+            export
+                .write_frames(chunk)
+                .expect("native level source should encode");
+        }
+        export.finish().expect("cADPCM WAV should publish");
+
+        let bytes = fs::read(&path).expect("cADPCM WAV should be readable");
+        let data_offset = find_wav_data_offset(&bytes).expect("cADPCM data should exist");
+        let native_data_offset =
+            find_wav_data_offset(NATIVE_REFERENCE).expect("native cADPCM data should exist");
+        let native_data_bytes = u32::from_le_bytes(
+            NATIVE_REFERENCE[native_data_offset - 4..native_data_offset]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let native_data =
+            &NATIVE_REFERENCE[native_data_offset..native_data_offset + native_data_bytes];
+        let encoded_data = &bytes[data_offset..data_offset + native_data_bytes];
+        let matching_bytes = encoded_data
+            .iter()
+            .zip(native_data)
+            .filter(|(encoded, native)| encoded == native)
+            .count();
+        assert!(
+            matching_bytes * 100 >= native_data.len() * 99,
+            "only {matching_bytes}/{} cADPCM bytes match the native REAPER render",
+            native_data.len()
+        );
+        let native_predictors = [
+            -32_735_i16,
+            -24_576,
+            -16_384,
+            -4_096,
+            -3_277,
+            -1_638,
+            0,
+            328,
+            1_638,
+            4_096,
+            8_192,
+            16_384,
+        ];
+        for (block, expected_predictor) in native_predictors.into_iter().enumerate() {
+            let offset = data_offset + block * 2048;
+            assert_eq!(
+                i16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+                expected_predictor,
+                "left predictor for native cADPCM block {block}"
+            );
+            assert_eq!(
+                i16::from_le_bytes(bytes[offset + 4..offset + 6].try_into().unwrap()),
+                expected_predictor,
+                "right predictor for native cADPCM block {block}"
+            );
+        }
+
+        let native_levels = [
+            -0.998_992_9_f32,
+            -0.75,
+            -0.5,
+            -0.25,
+            -0.125,
+            -0.100_006_1,
+            -0.049_987_8,
+            -0.009_765_6,
+            0.0,
+            0.010_009_8,
+            0.049_987_8,
+            0.100_036_6,
+            0.125,
+            0.25,
+            0.5,
+            0.75,
+        ];
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("media decoder should read encoded cADPCM WAVE");
+        assert_eq!(decoder.metadata().frame_count, Some(48_000));
+        let mut decoded_left = Vec::new();
+        while let Some(chunk) = decoder.next_chunk().expect("cADPCM vector should decode") {
+            decoded_left.extend(
+                chunk
+                    .samples()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|frame| frame[0]),
+            );
+        }
+        assert_eq!(decoded_left.len(), 48_000);
+        for (level_index, expected) in native_levels.into_iter().enumerate() {
+            let frame = level_index * 3_000 + 1_500;
+            assert!(
+                (decoded_left[frame] - expected).abs() < 0.001,
+                "cADPCM decoded sample at level {level_index} was {}",
+                decoded_left[frame]
+            );
+        }
+
+        let mut native_decoder = aaadaw_media::AudioStreamDecoder::from_reader(
+            std::io::Cursor::new(NATIVE_REFERENCE),
+            Some(NATIVE_REFERENCE.len() as u64),
+            Some("wav"),
+        )
+        .expect("media decoder should read REAPER's BWF cADPCM file");
+        assert_eq!(native_decoder.metadata().frame_count, Some(48_000));
+        let mut native_decoded_left = Vec::new();
+        while let Some(chunk) = native_decoder
+            .next_chunk()
+            .expect("native cADPCM block should decode")
+        {
+            native_decoded_left.extend(
+                chunk
+                    .samples()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|frame| frame[0]),
+            );
+        }
+        assert_eq!(native_decoded_left.len(), 48_000);
+        for (level_index, expected) in native_levels.into_iter().enumerate() {
+            let frame = level_index * 3_000 + 1_500;
+            assert!(
+                (native_decoded_left[frame] - expected).abs() < 0.001,
+                "native cADPCM decoded sample at level {level_index} was {}",
+                native_decoded_left[frame]
             );
         }
         fs::remove_file(path).expect("test WAV should be removed");

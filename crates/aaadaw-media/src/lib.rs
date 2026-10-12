@@ -142,11 +142,26 @@ pub struct AudioMetadata {
 
 /// A packet-by-packet decoder for the first decodable audio track in a file.
 pub struct AudioStreamDecoder {
-    format: Box<dyn FormatReader>,
-    decoder: Box<dyn AudioDecoder>,
+    format: Option<Box<dyn FormatReader>>,
+    decoder: Option<Box<dyn AudioDecoder>>,
     track_id: u32,
     metadata: AudioMetadata,
     fact_frames_remaining: Option<u64>,
+    cadpcm_wave: Option<CadpcmWaveReader>,
+}
+
+trait ReadSeek: Read + Seek + Send + Sync {}
+
+impl<T> ReadSeek for T where T: Read + Seek + Send + Sync {}
+
+struct CadpcmWaveReader {
+    reader: Box<dyn ReadSeek>,
+    data_bytes_remaining: u64,
+    frames_remaining: u64,
+    sample_rate: u32,
+    channels: usize,
+    block_align: usize,
+    samples_per_block: usize,
 }
 
 /// Errors encountered while opening or decoding an audio file.
@@ -273,6 +288,41 @@ impl AudioStreamDecoder {
     where
         R: Read + Seek + Send + Sync + 'static,
     {
+        if let Some(info) = read_cadpcm_wave_info(&mut reader, byte_len).map_err(MediaError::Io)? {
+            reader
+                .seek(SeekFrom::Start(info.data_offset))
+                .map_err(MediaError::Io)?;
+            let frame_count = Some(info.frame_count);
+            let duration_nanos = u64::try_from(
+                u128::from(info.frame_count) * 1_000_000_000 / u128::from(info.sample_rate),
+            )
+            .ok();
+            return Ok(Self {
+                format: None,
+                decoder: None,
+                track_id: 0,
+                metadata: AudioMetadata {
+                    container: "WAVE".to_owned(),
+                    codec: "cADPCM".to_owned(),
+                    sample_rate: Some(info.sample_rate),
+                    channel_count: Some(info.channels as u32),
+                    bits_per_sample: Some(2),
+                    frame_count,
+                    duration_nanos,
+                    byte_len,
+                },
+                fact_frames_remaining: None,
+                cadpcm_wave: Some(CadpcmWaveReader {
+                    reader: Box::new(reader),
+                    data_bytes_remaining: info.data_bytes,
+                    frames_remaining: info.frame_count,
+                    sample_rate: info.sample_rate,
+                    channels: info.channels,
+                    block_align: info.block_align,
+                    samples_per_block: info.samples_per_block,
+                }),
+            });
+        }
         let fact_frame_count =
             read_wave_fact_frame_count(&mut reader, byte_len).map_err(MediaError::Io)?;
         let source = SeekableMediaSource { reader, byte_len };
@@ -342,11 +392,12 @@ impl AudioStreamDecoder {
         };
 
         Ok(Self {
-            format,
-            decoder,
+            format: Some(format),
+            decoder: Some(decoder),
             track_id,
             metadata,
             fact_frames_remaining: fact_frame_count,
+            cadpcm_wave: None,
         })
     }
 
@@ -359,18 +410,30 @@ impl AudioStreamDecoder {
     /// Each returned chunk owns its PCM samples, so decode and consume it on a
     /// background worker rather than on the realtime audio thread.
     pub fn next_chunk(&mut self) -> Result<Option<DecodedAudioChunk>, MediaError> {
+        if let Some(cadpcm_wave) = &mut self.cadpcm_wave {
+            return cadpcm_wave.next_chunk();
+        }
         loop {
             if self.fact_frames_remaining == Some(0) {
                 return Ok(None);
             }
-            let Some(packet) = self.format.next_packet()? else {
+            let Some(packet) = self
+                .format
+                .as_mut()
+                .expect("Symphonia decoder retains a format reader")
+                .next_packet()?
+            else {
                 return Ok(None);
             };
             if packet.track_id != self.track_id {
                 continue;
             }
 
-            let decoded = self.decoder.decode(&packet)?;
+            let decoded = self
+                .decoder
+                .as_mut()
+                .expect("Symphonia decoder retains a codec decoder")
+                .decode(&packet)?;
             let spec = decoded.spec();
             let channels = spec.channels().count();
             if spec.rate() == 0 || channels == 0 {
@@ -457,6 +520,241 @@ where
         samples,
     }))
 }
+
+struct CadpcmWaveInfo {
+    data_offset: u64,
+    data_bytes: u64,
+    frame_count: u64,
+    sample_rate: u32,
+    channels: usize,
+    block_align: usize,
+    samples_per_block: usize,
+}
+
+fn read_cadpcm_wave_info<R: Read + Seek>(
+    reader: &mut R,
+    byte_len: Option<u64>,
+) -> io::Result<Option<CadpcmWaveInfo>> {
+    let original_position = reader.stream_position()?;
+    let info = (|| {
+        let mut header = [0_u8; 12];
+        if reader.seek(SeekFrom::Start(0)).is_err() || reader.read_exact(&mut header).is_err() {
+            return Ok(None);
+        }
+        if &header[..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+            return Ok(None);
+        }
+        let file_end = match byte_len {
+            Some(length) => length,
+            None => match reader.seek(SeekFrom::End(0)) {
+                Ok(length) => length,
+                Err(_) => return Ok(None),
+            },
+        };
+        let riff_end = 8_u64 + u64::from(u32::from_le_bytes(header[4..8].try_into().unwrap()));
+        let limit = file_end.min(riff_end);
+        let mut offset = 12_u64;
+        let mut format = None;
+        let mut fact_frames = None;
+        let mut data = None;
+
+        for _ in 0..256 {
+            if offset.checked_add(8).is_none_or(|end| end > limit) {
+                break;
+            }
+            reader.seek(SeekFrom::Start(offset))?;
+            let mut chunk_header = [0_u8; 8];
+            reader.read_exact(&mut chunk_header)?;
+            let size = u64::from(u32::from_le_bytes(chunk_header[4..8].try_into().unwrap()));
+            let chunk_data = offset + 8;
+            let chunk_end = chunk_data.checked_add(size).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "WAVE chunk offset overflow")
+            })?;
+            if chunk_end > limit {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WAVE chunk exceeds RIFF bounds",
+                ));
+            }
+
+            match &chunk_header[..4] {
+                b"fmt " if format.is_none() => {
+                    if size < 2 {
+                        return Ok(None);
+                    }
+                    reader.seek(SeekFrom::Start(chunk_data))?;
+                    let mut format_tag = [0_u8; 2];
+                    reader.read_exact(&mut format_tag)?;
+                    if u16::from_le_bytes(format_tag) == 0xAC0C {
+                        if size < 20 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "cADPCM fmt chunk is too short",
+                            ));
+                        }
+                        reader.seek(SeekFrom::Start(chunk_data))?;
+                        let mut fmt = [0_u8; 20];
+                        reader.read_exact(&mut fmt)?;
+                        let channels = usize::from(u16::from_le_bytes([fmt[2], fmt[3]]));
+                        let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
+                        let block_align = usize::from(u16::from_le_bytes([fmt[12], fmt[13]]));
+                        let bits_per_sample = u16::from_le_bytes([fmt[14], fmt[15]]);
+                        let extra_size = u16::from_le_bytes([fmt[16], fmt[17]]);
+                        let samples_per_block = usize::from(u16::from_le_bytes([fmt[18], fmt[19]]));
+                        format = Some((
+                            channels,
+                            sample_rate,
+                            block_align,
+                            bits_per_sample,
+                            extra_size,
+                            samples_per_block,
+                        ));
+                    }
+                }
+                b"fact" if size >= 4 => {
+                    reader.seek(SeekFrom::Start(chunk_data))?;
+                    let mut frames = [0_u8; 4];
+                    reader.read_exact(&mut frames)?;
+                    fact_frames = Some(u64::from(u32::from_le_bytes(frames)));
+                }
+                b"data" if data.is_none() => data = Some((chunk_data, size)),
+                _ => {}
+            }
+            offset = chunk_end.checked_add(size & 1).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "WAVE chunk offset overflow")
+            })?;
+        }
+
+        let Some((channels, sample_rate, block_align, bits, extra_size, samples_per_block)) =
+            format
+        else {
+            return Ok(None);
+        };
+        if channels == 0 || channels > 2 || sample_rate == 0 || bits != 2 || extra_size < 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported cADPCM WAVE parameters",
+            ));
+        }
+        let expected_block_align = 1024_usize.checked_mul(channels).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "cADPCM block size overflow")
+        })?;
+        let expected_samples_per_block = 1 + (expected_block_align / channels - 4) * 4;
+        if block_align != expected_block_align || samples_per_block != expected_samples_per_block {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported cADPCM block layout",
+            ));
+        }
+        let Some((data_offset, data_bytes)) = data else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cADPCM WAVE has no data chunk",
+            ));
+        };
+        if data_bytes % block_align as u64 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cADPCM data is not block aligned",
+            ));
+        }
+        let block_count = data_bytes / block_align as u64;
+        let capacity = block_count
+            .checked_mul(samples_per_block as u64)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "cADPCM frame count overflow")
+            })?;
+        let frame_count = fact_frames.unwrap_or(capacity);
+        if frame_count > capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cADPCM fact count exceeds encoded data",
+            ));
+        }
+        Ok(Some(CadpcmWaveInfo {
+            data_offset,
+            data_bytes,
+            frame_count,
+            sample_rate,
+            channels,
+            block_align,
+            samples_per_block,
+        }))
+    })();
+    reader.seek(SeekFrom::Start(original_position))?;
+    info
+}
+
+impl CadpcmWaveReader {
+    fn next_chunk(&mut self) -> Result<Option<DecodedAudioChunk>, MediaError> {
+        if self.frames_remaining == 0 {
+            return Ok(None);
+        }
+        if self.data_bytes_remaining < self.block_align as u64 {
+            return Err(MediaError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "cADPCM data ended before the fact frame count",
+            )));
+        }
+        let mut block = vec![0_u8; self.block_align];
+        self.reader.read_exact(&mut block).map_err(MediaError::Io)?;
+        self.data_bytes_remaining -= self.block_align as u64;
+        let frames = self.frames_remaining.min(self.samples_per_block as u64) as usize;
+        let mut samples = vec![0.0_f32; frames * self.channels];
+        let mut predictors = [0_i32; 2];
+        let mut indices = [0_usize; 2];
+        for channel in 0..self.channels {
+            let header = channel * 4;
+            predictors[channel] = i32::from(i16::from_le_bytes([block[header], block[header + 1]]));
+            indices[channel] = usize::from(block[header + 2]).min(88);
+            samples[channel] = predictors[channel] as f32 / 32_768.0;
+        }
+
+        for group in 0..((self.samples_per_block - 1) / 16) {
+            for channel in 0..self.channels {
+                let channel_offset = self.channels * 4 + group * self.channels * 4 + channel * 4;
+                for sample_in_group in 0..16 {
+                    let frame = 1 + group * 16 + sample_in_group;
+                    if frame >= frames {
+                        break;
+                    }
+                    let byte = block[channel_offset + sample_in_group / 4];
+                    let code = (byte >> ((sample_in_group & 3) * 2)) & 3;
+                    let step = CADPCM_STEP_TABLE[indices[channel]];
+                    let mut difference = step >> 3;
+                    if code & 1 != 0 {
+                        difference += step;
+                    }
+                    if code & 2 != 0 {
+                        predictors[channel] -= difference;
+                    } else {
+                        predictors[channel] += difference;
+                    }
+                    predictors[channel] =
+                        predictors[channel].clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+                    let adjustment = if code & 1 != 0 { 2 } else { -1 };
+                    indices[channel] = (indices[channel] as i32 + adjustment).clamp(0, 88) as usize;
+                    samples[frame * self.channels + channel] =
+                        predictors[channel] as f32 / 32_768.0;
+                }
+            }
+        }
+        self.frames_remaining -= frames as u64;
+        Ok(Some(DecodedAudioChunk {
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            samples,
+        }))
+    }
+}
+
+const CADPCM_STEP_TABLE: [i32; 89] = [
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449,
+    494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272,
+    2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493,
+    10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767,
+];
 
 fn read_wave_fact_frame_count<R: Read + Seek>(
     reader: &mut R,

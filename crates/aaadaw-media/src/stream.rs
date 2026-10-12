@@ -620,7 +620,7 @@ enum DecoderInput {
 }
 
 enum WorkerDecoder {
-    Streaming(AudioStreamDecoder),
+    Streaming(Box<AudioStreamDecoder>),
     Cached {
         source: Arc<DecodedAudioSource>,
         cursor_frames: usize,
@@ -634,7 +634,7 @@ impl WorkerDecoder {
                 let decoder = AudioStreamDecoder::open(path)?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
                 let sample_rate = decoder.metadata().sample_rate;
-                Ok((Self::Streaming(decoder), channels, sample_rate))
+                Ok((Self::Streaming(Box::new(decoder)), channels, sample_rate))
             }
             DecoderInput::Reader {
                 reader,
@@ -645,7 +645,7 @@ impl WorkerDecoder {
                     AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
                 let sample_rate = decoder.metadata().sample_rate;
-                Ok((Self::Streaming(decoder), channels, sample_rate))
+                Ok((Self::Streaming(Box::new(decoder)), channels, sample_rate))
             }
             DecoderInput::Cached(source) => {
                 let channels = source.channels();
