@@ -2906,8 +2906,8 @@ impl App {
             Message::SetRenderSampleRate(sample_rate) => {
                 self.render_dialog.sample_rate = sample_rate;
             }
-            Message::SetRenderTailSeconds(value) => {
-                self.render_dialog.tail_seconds_text = value;
+            Message::SetRenderTailDuration(value) => {
+                self.render_dialog.tail_duration_text = value;
             }
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);

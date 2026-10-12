@@ -35,7 +35,7 @@ pub struct ProjectWavRenderSettings {
     pub output_sample_rate: u32,
     pub start_sample: u64,
     pub end_sample: u64,
-    pub tail_seconds: u32,
+    pub tail_milliseconds: u32,
 }
 
 trait OfflineWavWriter {
@@ -225,6 +225,29 @@ pub fn render_range_length_samples(
         .ok_or(OfflineRenderError::TimelineRange)?;
     let tail_frames = u64::from(sample_rate)
         .checked_mul(u64::from(tail_seconds))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    range_frames
+        .checked_add(tail_frames)
+        .filter(|frames| *frames > 0)
+        .ok_or(OfflineRenderError::TimelineRange)
+}
+
+/// Computes frames for a project-sample range followed by a millisecond-precision tail.
+pub fn render_range_length_samples_with_tail_milliseconds(
+    sample_rate: u32,
+    start_sample: u64,
+    end_sample: u64,
+    tail_milliseconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    let scaled_tail_frames = u64::from(sample_rate)
+        .checked_mul(u64::from(tail_milliseconds))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let tail_frames = scaled_tail_frames
+        .checked_add(500)
+        .ok_or(OfflineRenderError::TimelineRange)?
+        / 1_000;
+    let range_frames = end_sample
+        .checked_sub(start_sample)
         .ok_or(OfflineRenderError::TimelineRange)?;
     range_frames
         .checked_add(tail_frames)
@@ -448,7 +471,7 @@ pub fn render_project_file_to_wav(
             output_sample_rate: project.settings().sample_rate(),
             start_sample: 0,
             end_sample,
-            tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+            tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
         },
         cancelled,
         report_progress,
@@ -458,7 +481,7 @@ pub fn render_project_file_to_wav(
 /// Renders an inclusive/exclusive project-sample range followed by a fixed effect tail.
 ///
 /// The output begins at `start_sample` and contains `end_sample - start_sample` timeline frames,
-/// followed by `tail_seconds`. The saved project and live playback state are not modified.
+/// followed by `tail_milliseconds` of tail. The saved project and live playback state are not modified.
 pub fn render_project_file_to_wav_with_settings(
     project_path: impl AsRef<Path>,
     project: &Project,
@@ -473,16 +496,16 @@ pub fn render_project_file_to_wav_with_settings(
         output_sample_rate,
         start_sample,
         end_sample,
-        tail_seconds,
+        tail_milliseconds,
     } = settings;
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
-    let total_frames = render_range_length_samples(
+    let total_frames = render_range_length_samples_with_tail_milliseconds(
         project.settings().sample_rate(),
         start_sample,
         end_sample,
-        tail_seconds,
+        tail_milliseconds,
     )?;
     let export = WavExport::create(destination.as_ref(), output_sample_rate, export_options)
         .map_err(OfflineRenderError::WavExport)?;
@@ -1261,6 +1284,16 @@ mod tests {
                 .expect("valid range should have a render length"),
             144_000
         );
+        assert_eq!(
+            render_range_length_samples_with_tail_milliseconds(48_000, 24_000, 72_000, 1_250)
+                .expect("fractional tail should have a render length"),
+            108_000
+        );
+        assert_eq!(
+            render_range_length_samples_with_tail_milliseconds(44_100, 0, 0, 1)
+                .expect("one millisecond should round to the nearest sample"),
+            44
+        );
         assert!(matches!(
             render_range_length_samples(48_000, 72_000, 24_000, 2),
             Err(OfflineRenderError::TimelineRange)
@@ -1287,7 +1320,7 @@ mod tests {
                     output_sample_rate: Project::default().settings().sample_rate(),
                     start_sample: 0,
                     end_sample: 48_000,
-                    tail_seconds: 2,
+                    tail_milliseconds: 2_000,
                 },
                 &cancelled,
                 |_, _| {},

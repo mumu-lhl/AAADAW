@@ -1,4 +1,4 @@
-use super::super::audio_export::{RenderBounds, RenderSampleRate};
+use super::super::audio_export::{RenderBounds, RenderSampleRate, parse_render_tail_milliseconds};
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::WavSampleFormat;
@@ -8,21 +8,16 @@ use iced::{Alignment, Element, Length};
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     let bounds = app.render_dialog.bounds;
-    let form_hint = if app
-        .render_dialog
-        .tail_seconds_text
-        .trim()
-        .parse::<u32>()
-        .is_err()
-    {
-        Some("Tail must be a whole number of seconds.")
-    } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
-        Some("Create a time selection in Arrange to render that range.")
-    } else if !app.can_submit_render() {
-        Some("Render range plus tail must contain at least one frame.")
-    } else {
-        None
-    };
+    let form_hint =
+        if parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err() {
+            Some("Tail must be a non-negative number with up to 3 decimal places.")
+        } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
+            Some("Create a time selection in Arrange to render that range.")
+        } else if !app.can_submit_render() {
+            Some("Render range plus tail must contain at least one frame.")
+        } else {
+            None
+        };
     let form_hint: Option<Element<'_, Message>> =
         form_hint.map(|message| text(message).size(11).into());
     let mut contents = column![
@@ -46,8 +41,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         row![
             text("Tail (seconds)").size(13),
             iced::widget::Space::new().width(Length::Fill),
-            text_input("2", &app.render_dialog.tail_seconds_text)
-                .on_input(Message::SetRenderTailSeconds)
+            text_input("2", &app.render_dialog.tail_duration_text)
+                .on_input(Message::SetRenderTailDuration)
                 .size(13)
                 .padding([4, 8])
                 .width(Length::Fixed(88.0)),

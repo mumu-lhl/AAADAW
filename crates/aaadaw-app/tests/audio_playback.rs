@@ -450,7 +450,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
             output_sample_rate: 44_100,
             start_sample: 24_000,
             end_sample: 48_000,
-            tail_seconds: 1,
+            tail_milliseconds: 1_250,
         },
         &AtomicBool::new(false),
         |_, _| {},
@@ -465,7 +465,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
     assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
     assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
     let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
-    assert_eq!(data_bytes, 66_150 * 6);
+    assert_eq!(data_bytes, 77_175 * 6);
     let stable_left_offset = 44 + 1_000 * 6;
     let first_left = i32::from_le_bytes([
         bytes[stable_left_offset],

@@ -23,6 +23,45 @@ pub(crate) enum RenderSampleRate {
     Fixed(u32),
 }
 
+pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Render tail must be a non-negative number with up to 3 decimal places");
+    }
+    let mut parts = value.split('.');
+    let whole_text = parts.next().unwrap_or_default();
+    let fractional_text = parts.next();
+    if parts.next().is_some() {
+        return Err("Render tail must be a non-negative number with up to 3 decimal places");
+    }
+    let whole_seconds = if whole_text.is_empty() {
+        0
+    } else {
+        whole_text
+            .parse::<u32>()
+            .map_err(|_| "Render tail must be a non-negative number with up to 3 decimal places")?
+    };
+    let fractional = fractional_text.unwrap_or_default();
+    if (whole_text.is_empty() && fractional.is_empty())
+        || fractional.len() > 3
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("Render tail must be a non-negative number with up to 3 decimal places");
+    }
+    let fractional_milliseconds = if fractional.is_empty() {
+        0
+    } else {
+        fractional
+            .parse::<u32>()
+            .map_err(|_| "Render tail must be a non-negative number with up to 3 decimal places")?
+            * 10_u32.pow((3 - fractional.len()) as u32)
+    };
+    whole_seconds
+        .checked_mul(1_000)
+        .and_then(|whole_milliseconds| whole_milliseconds.checked_add(fractional_milliseconds))
+        .ok_or("Render tail is too large")
+}
+
 impl RenderSampleRate {
     pub(crate) const ALL: [Self; 12] = [
         Self::Project,
@@ -66,7 +105,7 @@ impl std::fmt::Display for RenderBounds {
 pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
     pub(super) sample_rate: RenderSampleRate,
-    pub(super) tail_seconds_text: String,
+    pub(super) tail_duration_text: String,
 }
 
 impl Default for RenderDialogState {
@@ -74,7 +113,7 @@ impl Default for RenderDialogState {
         Self {
             bounds: RenderBounds::EntireProject,
             sample_rate: RenderSampleRate::Project,
-            tail_seconds_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
+            tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
         }
     }
 }
@@ -174,7 +213,7 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
-        let (start_sample, end_sample, tail_seconds, output_sample_rate) =
+        let (start_sample, end_sample, tail_milliseconds, output_sample_rate) =
             match self.selected_render_settings() {
                 Ok(settings) => settings,
                 Err(error) => {
@@ -196,7 +235,7 @@ impl App {
                     output_sample_rate,
                     start_sample,
                     end_sample,
-                    tail_seconds,
+                    tail_milliseconds,
                 },
             },
             snapshot: Arc::new(self.project.snapshot()),
@@ -246,24 +285,21 @@ impl App {
     }
 
     fn selected_render_settings(&self) -> Result<(u64, u64, u32, u32), String> {
-        let tail_seconds = self
-            .render_dialog
-            .tail_seconds_text
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| "Render tail must be a whole number of seconds".to_owned())?;
+        let tail_milliseconds =
+            parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
+                .map_err(str::to_owned)?;
         let (start_sample, end_sample) = self.selected_render_bounds()?;
-        aaadaw_app::render_range_length_samples(
+        aaadaw_app::render_range_length_samples_with_tail_milliseconds(
             self.project.settings().sample_rate(),
             start_sample,
             end_sample,
-            tail_seconds,
+            tail_milliseconds,
         )
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
         Ok((
             start_sample,
             end_sample,
-            tail_seconds,
+            tail_milliseconds,
             self.render_output_sample_rate(),
         ))
     }
@@ -649,7 +685,7 @@ mod tests {
                     output_sample_rate: Project::default().settings().sample_rate(),
                     start_sample: 0,
                     end_sample: 0,
-                    tail_seconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
+                    tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
                 },
             },
             snapshot: Arc::new(Project::default().snapshot()),
@@ -719,12 +755,32 @@ mod tests {
             "fixed render rate should be resolved independently of the project rate"
         );
 
-        app.render_dialog.tail_seconds_text = "two".to_owned();
+        app.render_dialog.tail_duration_text = "two".to_owned();
         assert!(!app.can_submit_render());
 
         app.render_dialog.bounds = RenderBounds::EntireProject;
-        app.render_dialog.tail_seconds_text = "0".to_owned();
+        app.render_dialog.tail_duration_text = "0".to_owned();
         assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn render_tail_parses_decimal_seconds_to_exact_milliseconds() {
+        for (input, expected) in [
+            ("2", 2_000),
+            ("1.2", 1_200),
+            ("0.125", 125),
+            (".5", 500),
+            ("1.", 1_000),
+            (" 3.125 ", 3_125),
+        ] {
+            assert_eq!(parse_render_tail_milliseconds(input), Ok(expected));
+        }
+        for invalid in ["", ".", "-1", "1.0001", "1..2", "1,5", "4294967.296"] {
+            assert!(
+                parse_render_tail_milliseconds(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -737,7 +793,7 @@ mod tests {
         };
         app.render_dialog.bounds = RenderBounds::TimeSelection;
         app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
-        app.render_dialog.tail_seconds_text = "3".to_owned();
+        app.render_dialog.tail_duration_text = "3.125".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
             end_tick: 2_880,
@@ -751,7 +807,7 @@ mod tests {
             end_tick: 960,
         });
         app.render_dialog.sample_rate = RenderSampleRate::Project;
-        app.render_dialog.tail_seconds_text = "0".to_owned();
+        app.render_dialog.tail_duration_text = "0".to_owned();
 
         let queued = app
             .offline_job_queue
@@ -761,7 +817,7 @@ mod tests {
             OfflineRenderKind::ProjectWav { settings, .. } => {
                 assert_eq!(settings.start_sample, 24_000);
                 assert_eq!(settings.end_sample, 72_000);
-                assert_eq!(settings.tail_seconds, 3);
+                assert_eq!(settings.tail_milliseconds, 3_125);
                 assert_eq!(settings.output_sample_rate, 44_100);
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
