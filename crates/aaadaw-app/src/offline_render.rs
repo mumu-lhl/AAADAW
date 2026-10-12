@@ -1,7 +1,10 @@
-use crate::prepare_audio_playback_with_resampling_quality;
 use crate::{
     Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
     PreparedAudioPlayback, WavExport, WavExportError, WavExportOptions,
+};
+use crate::{
+    prepare_audio_playback_at_with_resampling_quality,
+    prepare_audio_playback_with_resampling_quality,
 };
 use aaadaw_core::{ItemId, Project};
 use aaadaw_engine::{
@@ -23,6 +26,15 @@ pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
 pub struct FrozenTrackRender {
     pub start_sample: u64,
     pub length_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectWavRenderSettings {
+    pub master_ceiling: MasterOutputCeiling,
+    pub export_options: WavExportOptions,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub tail_seconds: u32,
 }
 
 trait OfflineWavWriter {
@@ -141,6 +153,17 @@ pub fn project_render_length_samples(
     project: &Project,
     tail_seconds: u32,
 ) -> Result<u64, OfflineRenderError> {
+    let content_end = project_content_end_sample(project)?;
+    render_range_length_samples(
+        project.settings().sample_rate(),
+        0,
+        content_end,
+        tail_seconds,
+    )
+}
+
+/// Returns the end sample of the furthest placed audio or MIDI item.
+pub fn project_content_end_sample(project: &Project) -> Result<u64, OfflineRenderError> {
     let mut content_end = 0_u64;
     for item in project.audio_items() {
         let end = item
@@ -159,11 +182,25 @@ pub fn project_render_length_samples(
             .map_err(|_| OfflineRenderError::TimelineRange)?;
         content_end = content_end.max(end_sample);
     }
-    let tail_frames = u64::from(project.settings().sample_rate())
+    Ok(content_end)
+}
+
+/// Computes frames for a start-inclusive, end-exclusive range followed by a fixed tail.
+pub fn render_range_length_samples(
+    sample_rate: u32,
+    start_sample: u64,
+    end_sample: u64,
+    tail_seconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    let range_frames = end_sample
+        .checked_sub(start_sample)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let tail_frames = u64::from(sample_rate)
         .checked_mul(u64::from(tail_seconds))
         .ok_or(OfflineRenderError::TimelineRange)?;
-    content_end
+    range_frames
         .checked_add(tail_frames)
+        .filter(|frames| *frames > 0)
         .ok_or(OfflineRenderError::TimelineRange)
 }
 
@@ -257,6 +294,7 @@ pub fn render_prepared_audio_to_wav(
         project,
         export,
         total_frames,
+        0,
         cancelled,
         &mut report_progress,
     );
@@ -268,6 +306,7 @@ fn render_prepared_inner(
     project: &Project,
     export: impl OfflineWavWriter,
     total_frames: u64,
+    start_sample: u64,
     cancelled: &AtomicBool,
     report_progress: &mut impl FnMut(u64, u64),
 ) -> (AudioRenderGraph, Result<(), OfflineRenderError>) {
@@ -278,7 +317,7 @@ fn render_prepared_inner(
         &mut graph,
         RenderRequest {
             total_frames,
-            start_sample: 0,
+            start_sample,
             cancelled,
         },
         export,
@@ -365,23 +404,68 @@ pub fn render_project_file_to_wav(
     master_ceiling: MasterOutputCeiling,
     options: WavExportOptions,
     cancelled: &AtomicBool,
-    mut report_progress: impl FnMut(u64, u64),
+    report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
-    let total_frames = project_render_length_samples(project, DEFAULT_EFFECT_TAIL_SECONDS)?;
+    let end_sample = project_content_end_sample(project)?;
+    render_project_file_to_wav_with_settings(
+        project_path,
+        project,
+        destination,
+        ProjectWavRenderSettings {
+            master_ceiling,
+            export_options: options,
+            start_sample: 0,
+            end_sample,
+            tail_seconds: DEFAULT_EFFECT_TAIL_SECONDS,
+        },
+        cancelled,
+        report_progress,
+    )
+}
+
+/// Renders an inclusive/exclusive project-sample range followed by a fixed effect tail.
+///
+/// The output begins at `start_sample` and contains `end_sample - start_sample` timeline frames,
+/// followed by `tail_seconds`. The saved project and live playback state are not modified.
+pub fn render_project_file_to_wav_with_settings(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destination: impl AsRef<Path>,
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let ProjectWavRenderSettings {
+        master_ceiling,
+        export_options,
+        start_sample,
+        end_sample,
+        tail_seconds,
+    } = settings;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+    let total_frames = render_range_length_samples(
+        project.settings().sample_rate(),
+        start_sample,
+        end_sample,
+        tail_seconds,
+    )?;
     let export = WavExport::create(
         destination.as_ref(),
         project.settings().sample_rate(),
-        options,
+        export_options,
     )
     .map_err(OfflineRenderError::WavExport)?;
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let prepared = prepare_audio_playback_with_resampling_quality(
+    let prepared = prepare_audio_playback_at_with_resampling_quality(
         project,
         &store,
+        start_sample,
         16_384,
         2_048,
         ResamplingQuality::Sinc192,
@@ -517,6 +601,7 @@ pub fn render_project_file_to_wav(
         project,
         export,
         total_frames,
+        start_sample,
         cancelled,
         &mut report_progress,
     );
@@ -1126,5 +1211,51 @@ mod tests {
             Err(OfflineRenderError::Cancelled)
         ));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn range_render_length_adds_tail_at_the_output_sample_rate_and_checks_bounds() {
+        assert_eq!(
+            render_range_length_samples(48_000, 24_000, 72_000, 2)
+                .expect("valid range should have a render length"),
+            144_000
+        );
+        assert!(matches!(
+            render_range_length_samples(48_000, 72_000, 24_000, 2),
+            Err(OfflineRenderError::TimelineRange)
+        ));
+        assert!(matches!(
+            render_range_length_samples(48_000, 24_000, 24_000, 0),
+            Err(OfflineRenderError::TimelineRange)
+        ));
+    }
+
+    #[test]
+    fn cancelled_range_render_keeps_an_existing_destination_unchanged() {
+        let path = destination();
+        fs::write(&path, b"keep existing render").expect("sentinel destination should exist");
+        let cancelled = AtomicBool::new(true);
+        assert!(matches!(
+            render_project_file_to_wav_with_settings(
+                "unused-project.aaadaw",
+                &Project::default(),
+                &path,
+                ProjectWavRenderSettings {
+                    master_ceiling: MasterOutputCeiling::default(),
+                    export_options: WavExportOptions::default(),
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    tail_seconds: 2,
+                },
+                &cancelled,
+                |_, _| {},
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert_eq!(
+            fs::read(&path).expect("existing file should survive"),
+            b"keep existing render"
+        );
+        fs::remove_file(path).expect("sentinel destination should be removed");
     }
 }

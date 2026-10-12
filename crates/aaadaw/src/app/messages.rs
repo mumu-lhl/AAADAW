@@ -1,5 +1,6 @@
 #[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
+use super::audio_export::RenderBounds;
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
@@ -445,6 +446,8 @@ pub(crate) enum Message {
     OfflineRenderFinished(Result<PathBuf, String>),
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),
+    SetRenderBounds(RenderBounds),
+    SetRenderTailSeconds(String),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),

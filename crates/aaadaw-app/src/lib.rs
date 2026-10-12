@@ -47,10 +47,11 @@ pub use midi_editing::{
     move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
 };
 pub use offline_render::{
-    DEFAULT_EFFECT_TAIL_SECONDS, FrozenTrackRender, OfflineRenderError,
-    project_render_length_samples, render_freeze_track_to_float32_wav, render_graph_to_pcm24_wav,
-    render_graph_to_wav, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
-    render_project_file_to_pcm24_wav, render_project_file_to_wav,
+    DEFAULT_EFFECT_TAIL_SECONDS, FrozenTrackRender, OfflineRenderError, ProjectWavRenderSettings,
+    project_content_end_sample, project_render_length_samples, render_freeze_track_to_float32_wav,
+    render_graph_to_pcm24_wav, render_graph_to_wav, render_prepared_audio_to_pcm24_wav,
+    render_prepared_audio_to_wav, render_project_file_to_pcm24_wav, render_project_file_to_wav,
+    render_project_file_to_wav_with_settings, render_range_length_samples,
 };
 pub use wav_export::{
     Float32WavExport, Float32WavExportError, IntegerPcmWavExportError, Pcm16WavExport,

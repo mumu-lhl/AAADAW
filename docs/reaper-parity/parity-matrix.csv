@@ -26,7 +26,7 @@ UI-024,category,,linux,7.82,FX 包装与位置,Track/Input/Take/Master/Monitor�
 UI-025,category,,linux,7.82,原厂处理与特殊 FX,内置 DSP、JSFX、空间声像、外部 Insert、网络 FX、插件故障/缺失,P9/P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-026,category,,linux,7.82,Media Explorer,目录/数据库、搜索、元数据、波形、试听、Tempo/Rate、选区、拖入,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-027,category,,linux,7.82,工程管理,Project Bay、Track Manager、Undo History、Notes、目录清理、Consolidate、冻结,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
-UI-028,category,,linux,7.82,Render 设置,Source/Bounds、Rate/Channels、格式/Tail、Wildcards、Presets、Metadata、Normalize/Limit,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
+UI-028,category,,linux,7.82,Render 设置,Source/Bounds、Rate/Channels、格式/Tail、Wildcards、Presets、Metadata、Normalize/Limit,P10,in_progress,false,,,展开全部适用原子条目并完成双向入口复查,docs/verification/reaper-parity/project-render-range.md,范围/尾音基础已接入；原厂Render对照及其余设置仍待验收；分类索引不参与覆盖率
 UI-029,category,,linux,7.82,Render 管理,Queue、Region Matrix、Stems、Online/Offline、Dry Run、统计、Batch Converter,P10,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
 UI-030,category,,linux,7.82,Action List,Sections、搜索/运行、绑定、Custom Action、ReaScript、导入导出与管理,P1/P11,in_progress,false,,LNX-782-ACTIONS-001 / LNX-782-ACTIONLIST-002; docs/verification/reaper-parity/action-list-and-input.md,展开全部适用原子条目并完成双向入口复查,AAADAW-INPUT-002; 727 workspace tests passed; GUI Add/Find/Delete,动作列表基础已实现；Section/原厂录入确认/重复绑定规则等仍待对齐
 UI-031,category,,linux,7.82,Preferences,所有适用叶子页、类别导航、搜索、Apply/OK/Cancel、默认值与配置恢复,P11,uninvestigated,false,,,展开全部适用原子条目并完成双向入口复查,,分类索引；不参与覆盖率
@@ -50,7 +50,7 @@ TRANSPORT-LOOP-001,atomic,UI-007,linux,7.82,Repeat,块内循环边界,P6,uninves
 MIDI-NOTATION-001,atomic,UI-020,linux,7.82,Notation,乐谱与 MIDI 事件一致,P7,uninvestigated,false,crates/aaadaw/src/app/view/midi_editor.rs,,同一事件在谱面和 Piano Roll 可互编辑及持久化,,当前仅 Piano Roll 基础
 AUTO-MODE-001,atomic,UI-021,linux,7.82,Automation,完整模式下的参数写入,P8,uninvestigated,false,crates/aaadaw-core/src/track.rs,,逐模式手势写入/停止/回放与固定参照一致,,当前 Volume Read 和 FX Lane 基础
 FX-LOCATIONS-001,atomic,UI-024,linux,7.82,FX,Input/Take/Master/Monitor 挂载点,P9,uninvestigated,false,crates/aaadaw-core/src/track.rs,,处理顺序正确；Monitor 不进入最终导出；状态重开正确,,当前 Track Instrument/Chain 为主要模型
-RENDER-BOUNDS-001,atomic,UI-028,linux,7.82,Render,Source/Bounds/Rate/Tail 设置,P10,uninvestigated,false,crates/aaadaw/src/app/view/render.rs,,选择范围输出帧数/采样率/尾音正确；取消不替换目标,,当前 WAV 格式和 Dither 简化界面
+RENDER-BOUNDS-001,atomic,UI-028,linux,7.82,Render,Source/Bounds/Rate/Tail 设置,P10,in_progress,false,crates/aaadaw/src/app/view/render.rs; crates/aaadaw/src/app/audio_export.rs; crates/aaadaw-app/src/offline_render.rs,,选择范围输出帧数/采样率/尾音正确；取消不替换目标,docs/verification/reaper-parity/project-render-range.md,Entire project/Time selection 与整数秒 Tail 已贯通离线 worker；现固定项目采样率/立体声。原厂对照、Source/其他Bounds/可选采样率通道及小数尾音仍缺
 PREF-TREE-001,atomic,UI-031,linux,7.82,Preferences,完整适用类别树,P11,uninvestigated,false,crates/aaadaw/src/app/view/settings.rs,,每个适用叶子页真实配置可恢复；没有空类别,,当前四个 SettingsCategory
 DATA-MIGRATE-001,atomic,UI-037,linux,7.82,Storage,v17 工程迁移保留原语义,P12,uninvestigated,false,crates/aaadaw-storage/src/store.rs,,旧工程迁移后音频/路由/FX/冻结源一致；失败可恢复,,尚无本计划新增模型的迁移
 TRANSPORT-PLAY-001,atomic,UI-007,linux,7.82,Play-Stop-Pause,默认传输动作与状态轨迹,P6,in_progress,false,crates/aaadaw/src/app/commands.rs,,同一组合触发等价动作且状态位置和停止录音轨迹一致,,工厂组合与独立按钮已实现；全部状态偏好和实际设备输出待验收

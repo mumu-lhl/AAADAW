@@ -1,7 +1,8 @@
 use aaadaw_app::{
-    PlaybackBuildError, WavExportOptions, WavSampleFormat, prepare_audio_playback,
-    prepare_audio_playback_at, prepare_audio_playback_with_resampling_quality,
-    render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    PlaybackBuildError, ProjectWavRenderSettings, WavExportOptions, WavSampleFormat,
+    prepare_audio_playback, prepare_audio_playback_at,
+    prepare_audio_playback_with_resampling_quality, render_prepared_audio_to_pcm24_wav,
+    render_prepared_audio_to_wav, render_project_file_to_wav_with_settings,
 };
 use aaadaw_core::{DawAction, Project};
 use aaadaw_media::ResamplingQuality;
@@ -416,6 +417,81 @@ fn render_quality_uses_a_sharper_sinc_filter_than_playback_quality() {
     );
 
     store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tail() {
+    let database_path = unique_path("aaadaw");
+    let output_path = unique_path("wav");
+    let mut source = vec![0_i16; 96_000];
+    source[24_000..48_000].fill(16_384);
+    source[48_000..].fill(8_192);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://render-range",
+            "range.wav",
+            Cursor::new(pcm_wav(&source, 48_000)),
+        )
+        .expect("source WAV should embed");
+    store
+        .close()
+        .expect("project should close before rendering");
+    let project = project_with_audio_item("asset://render-range".to_owned(), 96_000);
+
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &output_path,
+        ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            start_sample: 24_000,
+            end_sample: 48_000,
+            tail_seconds: 1,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected range should render with its requested tail");
+
+    let bytes = std::fs::read(&output_path).expect("range render should be published");
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        48_000
+    );
+    assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+    assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
+    let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
+    assert_eq!(data_bytes, 72_000 * 6);
+    let first_left = i32::from_le_bytes([
+        bytes[44],
+        bytes[45],
+        bytes[46],
+        if bytes[46] & 0x80 == 0 { 0 } else { 0xff },
+    ]);
+    assert!(
+        first_left > 2_000_000,
+        "selected render should start at the non-silent 0.5 s boundary, got {first_left}"
+    );
+    let tail_left_offset = 44 + 24_000 * 6;
+    let tail_left = i32::from_le_bytes([
+        bytes[tail_left_offset],
+        bytes[tail_left_offset + 1],
+        bytes[tail_left_offset + 2],
+        if bytes[tail_left_offset + 2] & 0x80 == 0 {
+            0
+        } else {
+            0xff
+        },
+    ]);
+    assert!(
+        tail_left > 900_000,
+        "the appended timeline tail should contain the following project audio, got {tail_left}"
+    );
+
+    std::fs::remove_file(output_path).expect("rendered file should be removed");
     remove_database(&database_path);
 }
 

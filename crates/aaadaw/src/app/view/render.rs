@@ -1,14 +1,64 @@
+use super::super::audio_export::RenderBounds;
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::WavSampleFormat;
-use iced::widget::{button, column, container, pick_list, row, rule, text};
+use iced::widget::{button, column, container, pick_list, row, rule, text, text_input};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
+    let bounds = app.render_dialog.bounds;
+    let form_hint = if app
+        .render_dialog
+        .tail_seconds_text
+        .trim()
+        .parse::<u32>()
+        .is_err()
+    {
+        Some("Tail must be a whole number of seconds.")
+    } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
+        Some("Create a time selection in Arrange to render that range.")
+    } else if !app.can_submit_render() {
+        Some("Render range plus tail must contain at least one frame.")
+    } else {
+        None
+    };
+    let form_hint: Option<Element<'_, Message>> =
+        form_hint.map(|message| text(message).size(11).into());
     let mut contents = column![
         text("Render project to WAV").size(20),
-        text("Choose the audio format, then select where to save the rendered file.").size(12),
+        text("Choose the render range and audio format, then select an output file.").size(12),
+        rule::horizontal(1),
+        row![
+            text("Bounds").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderBounds::ALL[..],
+                Some(bounds),
+                Message::SetRenderBounds,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            text("Tail (seconds)").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            text_input("2", &app.render_dialog.tail_seconds_text)
+                .on_input(Message::SetRenderTailSeconds)
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(88.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text(format!(
+            "Sample rate: Project ({} Hz) · Stereo",
+            app.project.settings().sample_rate()
+        ))
+        .size(12),
         rule::horizontal(1),
         row![
             text("Format").size(13),
@@ -51,6 +101,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .spacing(tokens::SPACING_MD)
     .padding(tokens::SPACING_LG)
     .width(Length::Fill);
+
+    if let Some(form_hint) = form_hint {
+        contents = contents.push(form_hint);
+    }
 
     if let Some(active) = &app.active_offline_job {
         contents = contents.push(text(format!("Active job: {}", active.job.label())).size(12));
@@ -101,6 +155,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .style(button::primary)
         .on_press_maybe(
             (!app.path_picker_busy
+                && app.can_submit_render()
                 && (!app.offline_render_busy
                     || app.offline_job_queue.len()
                         < super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS))

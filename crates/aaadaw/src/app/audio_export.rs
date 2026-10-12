@@ -10,6 +10,41 @@ use std::sync::{Arc, Mutex};
 
 const JOB_HISTORY_CAPACITY: usize = 4;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RenderBounds {
+    #[default]
+    EntireProject,
+    TimeSelection,
+}
+
+impl RenderBounds {
+    pub(crate) const ALL: [Self; 2] = [Self::EntireProject, Self::TimeSelection];
+}
+
+impl std::fmt::Display for RenderBounds {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::EntireProject => "Entire project",
+            Self::TimeSelection => "Time selection",
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct RenderDialogState {
+    pub(super) bounds: RenderBounds,
+    pub(super) tail_seconds_text: String,
+}
+
+impl Default for RenderDialogState {
+    fn default() -> Self {
+        Self {
+            bounds: RenderBounds::EntireProject,
+            tail_seconds_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct OfflineRenderJob {
     kind: OfflineRenderKind,
@@ -23,8 +58,7 @@ pub(super) struct OfflineRenderJob {
 enum OfflineRenderKind {
     ProjectWav {
         destination: PathBuf,
-        master_ceiling: aaadaw_engine::MasterOutputCeiling,
-        options: aaadaw_app::WavExportOptions,
+        settings: aaadaw_app::ProjectWavRenderSettings,
     },
     FreezeTrack {
         track_id: TrackId,
@@ -106,6 +140,13 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
+        let (start_sample, end_sample, tail_seconds) = match self.selected_render_settings() {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
+        };
 
         let file_name = destination.file_name().map_or_else(
             || destination.display().to_string(),
@@ -114,8 +155,13 @@ impl App {
         let job = OfflineRenderJob {
             kind: OfflineRenderKind::ProjectWav {
                 destination,
-                master_ceiling: self.audio_settings.master_output_ceiling,
-                options: self.wav_export_options,
+                settings: aaadaw_app::ProjectWavRenderSettings {
+                    master_ceiling: self.audio_settings.master_output_ceiling,
+                    export_options: self.wav_export_options,
+                    start_sample,
+                    end_sample,
+                    tail_seconds,
+                },
             },
             snapshot: Arc::new(self.project.snapshot()),
             project_path,
@@ -148,6 +194,53 @@ impl App {
             Err(EnqueueError::IdExhausted) => {
                 self.status = "No more offline render queue IDs are available".to_owned();
                 Task::none()
+            }
+        }
+    }
+
+    pub(super) fn can_submit_render(&self) -> bool {
+        self.selected_render_settings().is_ok()
+    }
+
+    fn selected_render_settings(&self) -> Result<(u64, u64, u32), String> {
+        let tail_seconds = self
+            .render_dialog
+            .tail_seconds_text
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| "Render tail must be a whole number of seconds".to_owned())?;
+        let (start_sample, end_sample) = self.selected_render_bounds()?;
+        aaadaw_app::render_range_length_samples(
+            self.project.settings().sample_rate(),
+            start_sample,
+            end_sample,
+            tail_seconds,
+        )
+        .map_err(|error| format!("Render range is empty or too large: {error}"))?;
+        Ok((start_sample, end_sample, tail_seconds))
+    }
+
+    fn selected_render_bounds(&self) -> Result<(u64, u64), String> {
+        match self.render_dialog.bounds {
+            RenderBounds::EntireProject => aaadaw_app::project_content_end_sample(&self.project)
+                .map(|end_sample| (0, end_sample))
+                .map_err(|error| format!("Could not determine render bounds: {error}")),
+            RenderBounds::TimeSelection => {
+                let Some(selection) = self.timeline.time_selection else {
+                    return Err("Create a time selection in Arrange before rendering it".to_owned());
+                };
+                let start_sample = self
+                    .project
+                    .sample_at_tick(selection.start_tick)
+                    .map_err(|error| format!("Could not convert render start: {error}"))?;
+                let end_sample = self
+                    .project
+                    .sample_at_tick(selection.end_tick)
+                    .map_err(|error| format!("Could not convert render end: {error}"))?;
+                if end_sample <= start_sample {
+                    return Err("Time selection must span at least one project sample".to_owned());
+                }
+                Ok((start_sample, end_sample))
             }
         }
     }
@@ -185,23 +278,20 @@ impl App {
             let task = match &job.kind {
                 OfflineRenderKind::ProjectWav {
                     destination,
-                    master_ceiling,
-                    options,
+                    settings,
                 } => {
                     let destination = destination.clone();
                     let result_path = destination.clone();
-                    let master_ceiling = *master_ceiling;
-                    let options = *options;
+                    let settings = *settings;
                     Task::perform(
                         run_blocking("aaadaw-offline-render", move || {
                             let project = Project::from_snapshot((*snapshot).clone())
                                 .map_err(|error| error.to_string())?;
-                            aaadaw_app::render_project_file_to_wav(
+                            aaadaw_app::render_project_file_to_wav_with_settings(
                                 project_path,
                                 &project,
                                 &destination,
-                                master_ceiling,
-                                options,
+                                settings,
                                 &worker_cancel,
                                 |done, total| {
                                     *worker_progress
@@ -505,8 +595,13 @@ mod tests {
         OfflineRenderJob {
             kind: OfflineRenderKind::ProjectWav {
                 destination: PathBuf::from(destination),
-                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
-                options: aaadaw_app::WavExportOptions::default(),
+                settings: aaadaw_app::ProjectWavRenderSettings {
+                    master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                    export_options: aaadaw_app::WavExportOptions::default(),
+                    start_sample: 0,
+                    end_sample: 0,
+                    tail_seconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS,
+                },
             },
             snapshot: Arc::new(Project::default().snapshot()),
             project_path: PathBuf::from("session.aaadaw"),
@@ -544,6 +639,74 @@ mod tests {
     fn queue_state_is_empty_by_default() {
         let queue: OfflineJobQueue<&str> = OfflineJobQueue::default();
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn render_bounds_resolve_the_current_time_selection_to_project_samples() {
+        let mut app = App::default();
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        assert!(!app.can_submit_render());
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("a selection is required")
+                .contains("Create a time selection")
+        );
+
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+        assert_eq!(
+            app.selected_render_bounds()
+                .expect("selection should convert on the project sample clock"),
+            (24_000, 72_000)
+        );
+        assert!(app.can_submit_render());
+
+        app.render_dialog.tail_seconds_text = "two".to_owned();
+        assert!(!app.can_submit_render());
+
+        app.render_dialog.bounds = RenderBounds::EntireProject;
+        app.render_dialog.tail_seconds_text = "0".to_owned();
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn queued_render_keeps_its_original_range_and_tail_after_arrange_changes() {
+        let project_path = std::env::temp_dir().join("aaadaw-render-snapshot.aaadaw");
+        let mut app = App {
+            project_path: Some(project_path.clone()),
+            offline_render_busy: true,
+            ..App::default()
+        };
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.render_dialog.tail_seconds_text = "3".to_owned();
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+
+        let destination = std::env::temp_dir().join("aaadaw-render-snapshot.wav");
+        let _task = app.start_offline_render(destination);
+        assert_eq!(app.offline_job_queue.len(), 1);
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 960,
+        });
+        app.render_dialog.tail_seconds_text = "0".to_owned();
+
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("queued job should remain available while another render runs");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWav { settings, .. } => {
+                assert_eq!(settings.start_sample, 24_000);
+                assert_eq!(settings.end_sample, 72_000);
+                assert_eq!(settings.tail_seconds, 3);
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
+        }
     }
 
     #[test]

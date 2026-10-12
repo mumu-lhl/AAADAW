@@ -448,6 +448,7 @@ struct App {
     offline_jobs_panel_open: bool,
     transport_details_open: bool,
     wav_export_options: WavExportOptions,
+    render_dialog: audio_export::RenderDialogState,
     offline_render_cancel: Option<Arc<AtomicBool>>,
     offline_render_progress: Option<Arc<Mutex<(u64, u64)>>>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
@@ -2898,6 +2899,12 @@ impl App {
             Message::SetWavDither(enabled) => {
                 self.wav_export_options.dither =
                     enabled && self.wav_export_options.sample_format.is_integer();
+            }
+            Message::SetRenderBounds(bounds) => {
+                self.render_dialog.bounds = bounds;
+            }
+            Message::SetRenderTailSeconds(value) => {
+                self.render_dialog.tail_seconds_text = value;
             }
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);
