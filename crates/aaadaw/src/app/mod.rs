@@ -3704,6 +3704,40 @@ impl App {
                         "No project marker less than 1 second from the edit cursor".to_owned();
                 }
             }
+            Message::MoveProjectMarkerSlot(slot) => {
+                if !(1..=10).contains(&slot) {
+                    self.status = "Numbered marker slot must be between 1 and 10".to_owned();
+                } else if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before moving a marker"
+                            .to_owned();
+                } else {
+                    let position_ticks = self.timeline.edit_cursor_tick;
+                    let existing = self
+                        .project
+                        .markers()
+                        .get(usize::from(slot - 1))
+                        .map(|marker| (marker.id(), marker.name().to_owned()));
+                    if let Some((marker_id, name)) = existing {
+                        self.apply_action(
+                            DawAction::UpdateProjectMarker {
+                                marker_id,
+                                position_ticks,
+                                name,
+                            },
+                            "Project marker moved to edit cursor",
+                        );
+                    } else {
+                        self.apply_action(
+                            DawAction::InsertProjectMarker {
+                                position_ticks,
+                                name: String::new(),
+                            },
+                            "Project marker added at edit cursor",
+                        );
+                    }
+                }
+            }
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
                 self.apply_edit(action, "C4 MIDI note added");

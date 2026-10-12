@@ -32,6 +32,7 @@ pub(crate) enum CommandId {
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
+    MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -96,6 +97,7 @@ enum CommandKind {
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
+    MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -146,6 +148,26 @@ const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modi
 const PREVIOUS_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('[', Modifiers::NONE)];
 const NEXT_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character(']', Modifiers::NONE)];
 const PROJECT_MARKER_DELETE_RADIUS_SECONDS: f64 = 1.0;
+const PROJECT_MARKER_SLOT_1_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('1', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_2_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('2', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_3_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('3', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_4_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('4', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_5_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('5', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_6_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('6', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_7_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('7', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_8_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('8', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_9_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('9', Modifiers::CTRL)];
+const PROJECT_MARKER_SLOT_10_SHORTCUT: &[Shortcut] =
+    &[Shortcut::standard_character('0', Modifiers::CTRL)];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[
     Shortcut::named(Named::Enter, Modifiers::NONE),
@@ -369,6 +391,110 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["delete marker near cursor", "delete nearby marker"],
         shortcuts: &[],
         destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(1),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 1 to play/edit cursor",
+        aliases: &["add marker 1", "move marker 1 to cursor", "marker slot 1"],
+        shortcuts: PROJECT_MARKER_SLOT_1_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(2),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 2 to play/edit cursor",
+        aliases: &["add marker 2", "move marker 2 to cursor", "marker slot 2"],
+        shortcuts: PROJECT_MARKER_SLOT_2_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(3),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 3 to play/edit cursor",
+        aliases: &["add marker 3", "move marker 3 to cursor", "marker slot 3"],
+        shortcuts: PROJECT_MARKER_SLOT_3_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(4),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 4 to play/edit cursor",
+        aliases: &["add marker 4", "move marker 4 to cursor", "marker slot 4"],
+        shortcuts: PROJECT_MARKER_SLOT_4_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(5),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 5 to play/edit cursor",
+        aliases: &["add marker 5", "move marker 5 to cursor", "marker slot 5"],
+        shortcuts: PROJECT_MARKER_SLOT_5_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(6),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 6 to play/edit cursor",
+        aliases: &["add marker 6", "move marker 6 to cursor", "marker slot 6"],
+        shortcuts: PROJECT_MARKER_SLOT_6_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(7),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 7 to play/edit cursor",
+        aliases: &["add marker 7", "move marker 7 to cursor", "marker slot 7"],
+        shortcuts: PROJECT_MARKER_SLOT_7_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(8),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 8 to play/edit cursor",
+        aliases: &["add marker 8", "move marker 8 to cursor", "marker slot 8"],
+        shortcuts: PROJECT_MARKER_SLOT_8_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(9),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 9 to play/edit cursor",
+        aliases: &["add marker 9", "move marker 9 to cursor", "marker slot 9"],
+        shortcuts: PROJECT_MARKER_SLOT_9_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveProjectMarkerSlot(10),
+        menu: None,
+        category: "Markers",
+        label: "Add/move marker 10 to play/edit cursor",
+        aliases: &[
+            "add marker 10",
+            "move marker 10 to cursor",
+            "marker slot 10",
+        ],
+        shortcuts: PROJECT_MARKER_SLOT_10_SHORTCUT,
+        destructive: false,
         separator_before: false,
     },
     CommandDefinition {
@@ -1215,6 +1341,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
+        CommandKind::MoveProjectMarkerSlot(slot) => numbered_project_marker_action_id(slot),
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
@@ -1298,6 +1425,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
+        CommandId::MoveProjectMarkerSlot(slot) => Message::MoveProjectMarkerSlot(slot),
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
@@ -1550,6 +1678,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteProjectMarkerNearCursor => {
             !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
         }
+        CommandKind::MoveProjectMarkerSlot(_) => !project_edit_busy(app),
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
         CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
             .timeline
@@ -1667,6 +1796,22 @@ fn track_state(app: &App, track_id: TrackId) -> Option<TrackState> {
         })
 }
 
+fn numbered_project_marker_action_id(slot: u8) -> &'static str {
+    match slot {
+        1 => "markers.add-or-move.01",
+        2 => "markers.add-or-move.02",
+        3 => "markers.add-or-move.03",
+        4 => "markers.add-or-move.04",
+        5 => "markers.add-or-move.05",
+        6 => "markers.add-or-move.06",
+        7 => "markers.add-or-move.07",
+        8 => "markers.add-or-move.08",
+        9 => "markers.add-or-move.09",
+        10 => "markers.add-or-move.10",
+        _ => "markers.add-or-move.invalid",
+    }
+}
+
 fn command_id(kind: CommandKind) -> CommandId {
     match kind {
         CommandKind::NewProject => CommandId::NewProject,
@@ -1690,6 +1835,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
+        CommandKind::MoveProjectMarkerSlot(slot) => CommandId::MoveProjectMarkerSlot(slot),
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
@@ -1835,6 +1981,37 @@ mod project_marker_command_tests {
             command_kind_id(CommandKind::NextProjectMarker),
             "navigation.next-project-marker"
         );
+    }
+
+    #[test]
+    fn numbered_marker_actions_use_reaper_slots_and_default_shortcuts() {
+        let bindings = ShortcutBindings::new();
+        let macros = [];
+        let app = App::default();
+        let slots = [
+            (1, Key::Character("1"), "markers.add-or-move.01"),
+            (2, Key::Character("2"), "markers.add-or-move.02"),
+            (3, Key::Character("3"), "markers.add-or-move.03"),
+            (4, Key::Character("4"), "markers.add-or-move.04"),
+            (5, Key::Character("5"), "markers.add-or-move.05"),
+            (6, Key::Character("6"), "markers.add-or-move.06"),
+            (7, Key::Character("7"), "markers.add-or-move.07"),
+            (8, Key::Character("8"), "markers.add-or-move.08"),
+            (9, Key::Character("9"), "markers.add-or-move.09"),
+            (10, Key::Character("0"), "markers.add-or-move.10"),
+        ];
+        for (slot, key, action_id) in slots {
+            let command = CommandId::MoveProjectMarkerSlot(slot);
+            assert_eq!(
+                from_shortcut(&key, Modifiers::CTRL, &bindings, &macros),
+                Some(command)
+            );
+            assert_eq!(
+                command_kind_id(CommandKind::MoveProjectMarkerSlot(slot)),
+                action_id
+            );
+            assert_eq!(find(&app, &format!("add marker {slot}")), Some(command));
+        }
     }
 }
 

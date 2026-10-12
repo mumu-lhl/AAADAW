@@ -271,6 +271,55 @@ fn deleting_nearby_marker_matches_reaper_radius_and_nearest_selection() {
 }
 
 #[test]
+fn numbered_marker_slots_insert_move_by_position_and_undo() {
+    let mut app = App::default();
+    app.timeline.edit_cursor_tick = 1_920;
+    let _ = app.update(Message::MoveProjectMarkerSlot(1));
+    assert_eq!(app.project.markers().len(), 1);
+    let first_id = app.project.markers()[0].id();
+    assert_eq!(app.project.markers()[0].position_ticks(), 1_920);
+    assert_eq!(app.project.markers()[0].name(), "");
+
+    let _ = app.update(Message::Undo);
+    assert!(app.project.markers().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+
+    app.timeline.edit_cursor_tick = 0;
+    let _ = app.update(Message::MoveProjectMarkerSlot(2));
+    assert_eq!(app.project.markers().len(), 2);
+    let second_id = app.project.markers()[0].id();
+    assert_ne!(second_id, first_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 0);
+    assert_eq!(app.project.markers()[1].id(), first_id);
+
+    app.apply_action(
+        DawAction::UpdateProjectMarker {
+            marker_id: first_id,
+            position_ticks: 1_920,
+            name: "Verse".to_owned(),
+        },
+        "Marker renamed",
+    );
+    app.timeline.edit_cursor_tick = 3_840;
+    let _ = app.update(Message::MoveProjectMarkerSlot(1));
+    assert_eq!(app.project.markers()[0].id(), first_id);
+    assert_eq!(app.project.markers()[1].id(), second_id);
+    assert_eq!(app.project.markers()[1].position_ticks(), 3_840);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[0].id(), second_id);
+    assert_eq!(app.project.markers()[1].id(), first_id);
+
+    app.timeline.edit_cursor_tick = 960;
+    let _ = app.update(Message::MoveProjectMarkerSlot(2));
+    assert_eq!(app.project.markers()[1].id(), first_id);
+    assert_eq!(app.project.markers()[1].position_ticks(), 960);
+    assert_eq!(app.project.markers()[1].name(), "Verse");
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[1].position_ticks(), 1_920);
+}
+
+#[test]
 fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     let mut app = App::default();
     for _ in 0..3 {
@@ -7584,6 +7633,7 @@ fn main_keyboard_preserves_keypad_identity_through_project_actions() {
     *app.shortcut_bindings.write().unwrap() = commands::validate_bindings(&HashMap::from([
         ("track.add".into(), "Ctrl+Standard7".into()),
         ("edit.undo".into(), "Ctrl+NumPad7".into()),
+        ("markers.add-or-move.07".into(), String::new()),
     ]))
     .unwrap();
     let mut input = test_shortcut_input(Key::Character("7".into()), Modifiers::CTRL);

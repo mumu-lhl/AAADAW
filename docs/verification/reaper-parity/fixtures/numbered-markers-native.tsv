@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	/tmp/aaadaw-numbered-marker-config2/ColorThemes/Default_7.0.ReaperThemeZip
+case	action_id	requested_cursor	actual_cursor	markers_before	markers_after
+slot_1_insert	40657	5.000000000	5.000000000	-	marker:@5.000000
+slot_1_move	40657	7.250000000	7.250000000	marker:@5.000000	marker:@7.250000
+slot_2_insert	40658	3.500000000	3.500000000	marker:@7.250000	marker:@3.500000;marker:@7.250000
+region_with_numbered_name	40657	9.000000000	9.000000000	region:1@2.000000	region:1@2.000000;marker:@9.000000
+duplicate_slot_names	40657	10.000000000	10.000000000	marker:1@2.000000;marker:1@7.000000	marker:1@7.000000;marker:1@10.000000
+slot_1_with_crossed_names	40657	10.000000000	10.000000000	marker:2@2.000000;marker:1@7.000000	marker:1@7.000000;marker:2@10.000000
+slot_1_with_arbitrary_names	40657	10.000000000	10.000000000	marker:alpha@2.000000;marker:beta@7.000000	marker:beta@7.000000;marker:alpha@10.000000
+slot_10_insert	40656	11.000000000	11.000000000	-	marker:@11.000000

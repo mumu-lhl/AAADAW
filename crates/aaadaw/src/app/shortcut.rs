@@ -166,6 +166,13 @@ impl Shortcut {
         }
     }
 
+    pub(super) const fn standard_character(key: char, modifiers: Modifiers) -> Self {
+        Self {
+            key: ShortcutKey::StandardCharacter(key),
+            modifiers,
+        }
+    }
+
     pub(super) const fn named(key: Named, modifiers: Modifiers) -> Self {
         Self {
             key: ShortcutKey::Named(key),
