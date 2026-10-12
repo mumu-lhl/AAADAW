@@ -17,7 +17,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
             Some("Create a time selection in Arrange to render that range.")
         } else if !app.has_valid_render_source() {
-            Some("Select exactly one track in Arrange to render it via the master.")
+            Some("Select one or more tracks in Arrange to render them via the master.")
+        } else if cfg!(target_os = "android")
+            && app.render_dialog.source == RenderSource::SelectedTracksViaMaster
+            && app.selected_render_track_count() > 1
+        {
+            Some("The Android document picker supports one output file at a time.")
         } else if app.render_dialog.normalize_peak
             && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
                 .is_err()

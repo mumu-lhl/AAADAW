@@ -45,15 +45,18 @@ log:write("version\t", reaper.GetAppVersion(), "\n")
 log:write("theme\t", reaper.GetLastColorThemeFile(), "\n")
 log:write("source\t48 kHz PCM24 stereo, two identical tracks, constant L=0.125 R=0.375\n")
 for _, probe in ipairs({
-  { name = "master-mix", flags = 0 },
-  { name = "selected-via-master-$track", flags = 128 },
+  { name = "master-mix", flags = 0, selection = "one" },
+  { name = "selected-via-master-$track", flags = 128, selection = "one" },
+  { name = "selected-stems-$track", flags = 128, selection = "both" },
 }) do
+  reaper.SetTrackSelected(selected, true)
+  reaper.SetTrackSelected(unselected, probe.selection == "both")
   reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", probe.flags, true)
   reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", probe.name, true)
   reaper.Main_OnCommand(42230, 0)
   log:write(probe.name, "\tflags=",
     reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false),
-    "\tselected_track=", reaper.IsTrackSelected(selected) and "true" or "false", "\n")
+    "\tselected_tracks=", reaper.CountSelectedTracks(0), "\n")
   log:flush()
 end
 log:close()

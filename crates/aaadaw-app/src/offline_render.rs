@@ -14,6 +14,7 @@ use aaadaw_engine::{
 use aaadaw_media::{ResamplingQuality, StereoPcmResampler};
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 #[cfg(unix)]
@@ -24,6 +25,7 @@ use std::thread;
 use std::time::Duration;
 
 static NEXT_NORMALIZATION_SPOOL_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_STEM_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Export decay allowance and minimum fallback when frozen CLAP plugins do not report longer tails.
 pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
@@ -910,6 +912,196 @@ pub fn render_project_file_to_wav_with_settings(
     result
 }
 
+/// Renders each selected track through Master and publishes the complete WAV stem set.
+///
+/// Stems are rendered into a private staging directory on the destination filesystem. Existing
+/// output files are rejected, and the staged set is published with no-clobber hard links only
+/// after every track has rendered successfully. Cancellation or a render/publication error
+/// removes the staged files and any outputs already linked by this call.
+pub fn render_selected_tracks_via_master_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destinations: &[(TrackId, PathBuf)],
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    if destinations.is_empty() {
+        return Err(OfflineRenderError::Media(
+            "at least one track is required for stem rendering".to_owned(),
+        ));
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+
+    let destination_directory = destinations[0]
+        .1
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !destination_directory.is_dir() {
+        return Err(OfflineRenderError::Media(format!(
+            "stem output directory does not exist: {}",
+            destination_directory.display()
+        )));
+    }
+
+    let mut unique_destinations = HashSet::with_capacity(destinations.len());
+    for (track_id, destination) in destinations {
+        if !project.tracks().iter().any(|track| track.id() == *track_id) {
+            return Err(OfflineRenderError::Media(format!(
+                "selected render track {} no longer exists",
+                track_id.value()
+            )));
+        }
+        let parent = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        if parent != destination_directory {
+            return Err(OfflineRenderError::Media(
+                "all stem outputs must use the same directory".to_owned(),
+            ));
+        }
+        if !unique_destinations.insert(destination.clone()) {
+            return Err(OfflineRenderError::Media(format!(
+                "stem outputs resolve to the same file: {}",
+                destination.display()
+            )));
+        }
+        match fs::symlink_metadata(destination) {
+            Ok(_) => {
+                return Err(OfflineRenderError::Media(format!(
+                    "stem output already exists: {}",
+                    destination.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(OfflineRenderError::Media(format!(
+                    "could not inspect stem output {}: {error}",
+                    destination.display()
+                )));
+            }
+        }
+    }
+
+    let total_frames = render_range_length_samples_with_tail_milliseconds(
+        project.settings().sample_rate(),
+        settings.start_sample,
+        settings.end_sample,
+        settings.tail_milliseconds,
+    )?;
+    let total_work = total_frames
+        .checked_mul(destinations.len() as u64)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let staging_directory = StemStagingDirectory::create(destination_directory)?;
+    let mut staged = Vec::with_capacity(destinations.len());
+
+    for (index, (track_id, destination)) in destinations.iter().enumerate() {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
+        }
+        let staging_path = staging_directory.0.join(format!("stem-{index:04}.wav"));
+        let mut track_settings = settings;
+        track_settings.source = ProjectWavRenderSource::SelectedTrackViaMaster(*track_id);
+        let work_offset = total_frames
+            .checked_mul(index as u64)
+            .ok_or(OfflineRenderError::TimelineRange)?;
+        render_project_file_to_wav_with_settings(
+            project_path.as_ref(),
+            project,
+            &staging_path,
+            track_settings,
+            cancelled,
+            |done, _| {
+                report_progress(
+                    work_offset.saturating_add(done.min(total_frames)),
+                    total_work,
+                )
+            },
+        )?;
+        staged.push((staging_path, destination));
+    }
+
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+
+    let mut published = Vec::with_capacity(staged.len());
+    for (staging_path, destination) in staged {
+        if let Err(error) = fs::hard_link(&staging_path, destination) {
+            let rollback_error = rollback_stem_publication(&published);
+            let detail = rollback_error.map_or_else(String::new, |error| {
+                format!("; could not roll back a partial stem set: {error}")
+            });
+            return Err(OfflineRenderError::Media(format!(
+                "could not publish stem {}: {error}{detail}",
+                destination.display()
+            )));
+        }
+        published.push(destination.clone());
+    }
+    report_progress(total_work, total_work);
+    Ok(())
+}
+
+struct StemStagingDirectory(PathBuf);
+
+impl StemStagingDirectory {
+    fn create(parent: &Path) -> Result<Self, OfflineRenderError> {
+        for _ in 0..16 {
+            let id = NEXT_STEM_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(".aaadaw-render-stems-{}-{id}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if let Err(error) =
+                            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                        {
+                            let _ = fs::remove_dir(&path);
+                            return Err(OfflineRenderError::Media(format!(
+                                "could not secure stem staging directory: {error}"
+                            )));
+                        }
+                    }
+                    return Ok(Self(path));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(OfflineRenderError::Media(format!(
+                        "could not create stem staging directory: {error}"
+                    )));
+                }
+            }
+        }
+        Err(OfflineRenderError::Media(
+            "could not reserve a stem staging directory".to_owned(),
+        ))
+    }
+}
+
+impl Drop for StemStagingDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn rollback_stem_publication(paths: &[PathBuf]) -> Option<std::io::Error> {
+    let mut first_error = None;
+    for path in paths.iter().rev() {
+        if let Err(error) = fs::remove_file(path)
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    first_error
+}
+
 fn selected_track_via_master_project(
     project: &Project,
     selected_track_id: TrackId,
@@ -1475,6 +1667,174 @@ mod tests {
         assert!(!render_project.tracks()[1].is_solo());
         assert!(!project.tracks()[0].is_solo());
         assert!(project.tracks()[1].is_solo());
+    }
+
+    #[test]
+    fn selected_track_stems_stage_as_a_set_and_publish_only_after_all_tracks_finish() {
+        let source_path = destination();
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("control source should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 48_000])
+            .expect("control source should be written");
+        source_export
+            .finish()
+            .expect("control source should be published");
+
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second".to_owned(),
+            })
+            .expect("second track should be created");
+        let base = destination();
+        let unique = base
+            .file_stem()
+            .expect("test destination should have a basename")
+            .to_string_lossy();
+        let project_path = base.with_extension("aaadaw");
+        let mut store =
+            ProjectStore::open(&project_path).expect("test project store should be created");
+        let media_ref = store
+            .import_audio_file(&source_path)
+            .expect("control audio should be imported");
+        store.close().expect("test project store should close");
+        for index in 0..project.tracks().len() {
+            let track_id = project.tracks()[index].id();
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: media_ref.clone(),
+                    start_sample: 0,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("control audio should be placed on both tracks");
+        }
+        let first = base.with_file_name(format!("{unique}-first.wav"));
+        let second = base.with_file_name(format!("{unique}-second.wav"));
+        let outputs = vec![
+            (project.tracks()[0].id(), first.clone()),
+            (project.tracks()[1].id(), second.clone()),
+        ];
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        fs::write(&first, b"preserve existing output")
+            .expect("collision sentinel should be written");
+        let cancelled = AtomicBool::new(false);
+        assert!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |_, _| {},
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&first).unwrap(), b"preserve existing output");
+        assert!(!second.exists(), "a collision must not publish other stems");
+        fs::remove_file(&first).expect("collision sentinel should be removed");
+
+        let cancelled = AtomicBool::new(false);
+        let cancelled_after_first_stem = &cancelled;
+        assert!(matches!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |done, _| {
+                    if done == 48_000 {
+                        cancelled_after_first_stem.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!first.exists() && !second.exists());
+        cancelled.store(false, Ordering::Release);
+
+        let mut created_late_collision = false;
+        assert!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |done, total| {
+                    if done == total && !created_late_collision {
+                        fs::write(&second, b"preserve concurrent output")
+                            .expect("late collision should be written");
+                        created_late_collision = true;
+                    }
+                },
+            )
+            .is_err()
+        );
+        assert!(created_late_collision);
+        assert!(
+            !first.exists(),
+            "a later publish failure rolls back earlier stems"
+        );
+        assert_eq!(fs::read(&second).unwrap(), b"preserve concurrent output");
+        fs::remove_file(&second).expect("late collision sentinel should be removed");
+
+        let mut progress = Vec::new();
+        render_selected_tracks_via_master_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            settings,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("all selected tracks should publish as stems");
+        assert_eq!(progress.last(), Some(&(96_000, 96_000)));
+        for path in [&first, &second] {
+            let bytes = fs::read(path).expect("published stem should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                48_000 * 6
+            );
+            let sample = |offset: usize| {
+                let third = bytes[offset + 2];
+                let signed = i32::from_le_bytes([
+                    bytes[offset],
+                    bytes[offset + 1],
+                    third,
+                    if third & 0x80 == 0 { 0 } else { 0xff },
+                ]);
+                signed as f64 / 8_388_608.0
+            };
+            assert!((sample(44) - 0.125).abs() < 1.0e-6);
+            assert!((sample(47) - 0.375).abs() < 1.0e-6);
+        }
+        fs::remove_file(&first).expect("first stem should be removed");
+        fs::remove_file(&second).expect("second stem should be removed");
+        fs::remove_file(source_path).expect("control source should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
     }
 
     #[test]
