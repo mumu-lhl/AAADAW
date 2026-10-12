@@ -28,6 +28,9 @@ pub(crate) enum CommandId {
     ShowMixer,
     ToggleMixerPanel,
     AddMidiItem,
+    AddProjectMarker,
+    PreviousProjectMarker,
+    NextProjectMarker,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -88,6 +91,9 @@ enum CommandKind {
     ShowMixer,
     ToggleMixerPanel,
     AddMidiItem,
+    AddProjectMarker,
+    PreviousProjectMarker,
+    NextProjectMarker,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -134,6 +140,9 @@ const REDO_SHORTCUT: &[Shortcut] = &[
 const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifiers::COMMAND)];
 const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
+const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
+const PREVIOUS_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('[', Modifiers::NONE)];
+const NEXT_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character(']', Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[
     Shortcut::named(Named::Enter, Modifiers::NONE),
@@ -316,6 +325,36 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "MIDI item",
         aliases: &["insert midi item", "add midi item"],
         shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::AddProjectMarker,
+        menu: Some(MainMenu::Insert),
+        category: "Insert",
+        label: "Project marker at edit cursor",
+        aliases: &["insert marker", "add marker", "marker at cursor"],
+        shortcuts: ADD_PROJECT_MARKER_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::PreviousProjectMarker,
+        menu: None,
+        category: "Navigation",
+        label: "Previous project marker",
+        aliases: &["previous marker", "go to previous marker"],
+        shortcuts: PREVIOUS_PROJECT_MARKER_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::NextProjectMarker,
+        menu: None,
+        category: "Navigation",
+        label: "Next project marker",
+        aliases: &["next marker", "go to next marker"],
+        shortcuts: NEXT_PROJECT_MARKER_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -1159,6 +1198,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
+        CommandKind::AddProjectMarker => "insert.project-marker",
+        CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
+        CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
@@ -1238,6 +1280,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
+        CommandId::AddProjectMarker => Message::AddProjectMarker,
+        CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
+        CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
@@ -1485,6 +1530,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.id() == selected_track && !track.is_bus())
                 })
         }
+        CommandKind::AddProjectMarker => !project_edit_busy(app),
+        CommandKind::PreviousProjectMarker | CommandKind::NextProjectMarker => true,
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
         CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
             .timeline
@@ -1621,6 +1668,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
+        CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
+        CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
+        CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
@@ -1645,7 +1695,7 @@ fn command_id(kind: CommandKind) -> CommandId {
     }
 }
 
-fn project_edit_busy(app: &App) -> bool {
+pub(super) fn project_edit_busy(app: &App) -> bool {
     app.io_busy
         || app.path_picker_busy
         || app.import_busy
@@ -1703,6 +1753,41 @@ mod shortcut_label_tests {
         assert_eq!(
             capture_binding("Space", Modifiers::SHIFT).unwrap(),
             "Shift+Space"
+        );
+    }
+}
+
+#[cfg(test)]
+mod project_marker_command_tests {
+    use super::*;
+
+    #[test]
+    fn marker_actions_use_reaper_default_keys_and_stable_action_ids() {
+        let bindings = ShortcutBindings::new();
+        let macros = [];
+        assert_eq!(
+            from_shortcut(&Key::Character("m"), Modifiers::NONE, &bindings, &macros),
+            Some(CommandId::AddProjectMarker)
+        );
+        assert_eq!(
+            from_shortcut(&Key::Character("["), Modifiers::NONE, &bindings, &macros),
+            Some(CommandId::PreviousProjectMarker)
+        );
+        assert_eq!(
+            from_shortcut(&Key::Character("]"), Modifiers::NONE, &bindings, &macros),
+            Some(CommandId::NextProjectMarker)
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::AddProjectMarker),
+            "insert.project-marker"
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::PreviousProjectMarker),
+            "navigation.previous-project-marker"
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::NextProjectMarker),
+            "navigation.next-project-marker"
         );
     }
 }

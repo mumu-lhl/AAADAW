@@ -1,6 +1,6 @@
 use crate::{
-    GridFraction, ItemId, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId, TrackInstrument,
+    GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiNoteData,
+    MidiPitchBendData, NoteId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId, TrackInstrument,
     VolumeAutomationPoint,
 };
 
@@ -46,6 +46,21 @@ pub enum DawAction {
     /// Change the Master output gain and stereo balance as one undoable edit.
     SetMasterMix {
         mix: crate::MasterMix,
+    },
+    /// Insert a named marker at an absolute project tick.
+    InsertProjectMarker {
+        position_ticks: u64,
+        name: String,
+    },
+    /// Rename or reposition a project marker while preserving its identity.
+    UpdateProjectMarker {
+        marker_id: MarkerId,
+        position_ticks: u64,
+        name: String,
+    },
+    /// Remove a project marker by stable identity.
+    DeleteProjectMarker {
+        marker_id: MarkerId,
     },
     /// Create a track at `index` in the project's ordered track list.
     CreateTrack {

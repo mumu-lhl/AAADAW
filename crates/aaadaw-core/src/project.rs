@@ -7,9 +7,10 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
-    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MidiControllerData, MidiItem, MidiNote,
-    MidiPitchBendData, MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature,
-    TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
+    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
+    MidiNote, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker, ProjectMarkerSnapshot,
+    ProjectSettings, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,6 +34,17 @@ fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool 
         && points
             .windows(2)
             .all(|pair| pair[0].sample() < pair[1].sample())
+}
+
+fn valid_project_markers(markers: &[ProjectMarker]) -> bool {
+    let mut ids = HashSet::with_capacity(markers.len());
+    markers.iter().all(|marker| {
+        marker.position_ticks <= crate::timebase::MAX_EXACT_FLOAT_POSITION
+            && crate::markers::valid_marker_name(&marker.name)
+            && ids.insert(marker.id)
+    }) && markers.windows(2).all(|pair| {
+        (pair[0].position_ticks, pair[0].id.value()) <= (pair[1].position_ticks, pair[1].id.value())
+    })
 }
 
 type TrackStructure = Vec<(TrackId, Option<TrackId>, bool)>;
@@ -371,6 +383,7 @@ struct ProjectState {
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
+    markers: Vec<ProjectMarker>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
 }
@@ -388,6 +401,7 @@ impl Default for ProjectState {
             tracks: Vec::new(),
             audio_items: Vec::new(),
             midi_items: Vec::new(),
+            markers: Vec::new(),
             tempo_map: TempoMap::default(),
             meter_map: MeterMap::default(),
         }
@@ -400,6 +414,7 @@ struct IdAllocator {
     next_send_id: u64,
     next_item_id: u64,
     next_note_id: u64,
+    next_marker_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -439,6 +454,10 @@ enum ProjectEvent {
     ProjectStartMeasureChanged {
         before: i32,
         after: i32,
+    },
+    ProjectMarkersChanged {
+        before: Vec<ProjectMarker>,
+        after: Vec<ProjectMarker>,
     },
     MasterMixChanged {
         before: crate::MasterMix,
@@ -687,6 +706,10 @@ impl ProjectEvent {
                     after: *before,
                 }
             }
+            Self::ProjectMarkersChanged { before, after } => Self::ProjectMarkersChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::MasterMixChanged { before, after } => Self::MasterMixChanged {
                 before: *after,
                 after: *before,
@@ -1379,6 +1402,9 @@ impl Project {
         if matches!(
             &event,
             ProjectEvent::MidiNotesQuantized { changes, .. } if changes.is_empty()
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectMarkersChanged { before, after } if before == after
         ) {
             return Ok(());
         }
@@ -1444,6 +1470,11 @@ impl Project {
     /// Returns all MIDI items in project insertion order.
     pub fn midi_items(&self) -> &[MidiItem] {
         &self.state.midi_items
+    }
+
+    /// Returns the project's markers ordered by timeline position and stable identity.
+    pub fn markers(&self) -> &[ProjectMarker] {
+        &self.state.markers
     }
 
     /// Project documentation, independent of media undo/redo history.
@@ -1564,6 +1595,12 @@ impl Project {
                     pitch_bends: item.pitch_bends.as_ref().clone(),
                 })
                 .collect(),
+            markers: self
+                .state
+                .markers
+                .iter()
+                .map(ProjectMarkerSnapshot::from)
+                .collect(),
             tempo_points: self
                 .state
                 .tempo_map
@@ -1641,6 +1678,25 @@ impl Project {
                 .map_err(SnapshotError::InvalidTimebase)?;
             previous_tick = point.start_tick;
         }
+
+        let mut marker_ids = HashSet::with_capacity(snapshot.markers.len());
+        let mut max_marker_id = None;
+        let mut markers = Vec::with_capacity(snapshot.markers.len());
+        for marker in snapshot.markers {
+            if !marker_ids.insert(marker.id) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_marker_id = Some(max_marker_id.map_or(marker.id, |max: u64| max.max(marker.id)));
+            markers.push(
+                ProjectMarker::new(
+                    MarkerId::from_raw(marker.id),
+                    marker.position_ticks,
+                    marker.name,
+                )
+                .ok_or(SnapshotError::InvalidProjectData)?,
+            );
+        }
+        markers.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
 
         let mut track_ids = HashSet::with_capacity(snapshot.tracks.len());
         let mut tracks = Vec::with_capacity(snapshot.tracks.len());
@@ -1861,6 +1917,7 @@ impl Project {
                 tracks,
                 audio_items,
                 midi_items,
+                markers,
                 tempo_map,
                 meter_map,
             },
@@ -1869,6 +1926,7 @@ impl Project {
                 next_send_id: next_id(max_send_id)?,
                 next_item_id: next_id(max_item_id)?,
                 next_note_id: next_id(max_note_id)?,
+                next_marker_id: next_id(max_marker_id)?,
             },
             history: Vec::new(),
             history_cursor: 0,
@@ -1960,6 +2018,55 @@ impl Project {
                 before: state.master_mix,
                 after: mix,
             },
+            DawAction::InsertProjectMarker {
+                position_ticks,
+                name,
+            } => {
+                let next_marker_id = ids
+                    .next_marker_id
+                    .checked_add(1)
+                    .ok_or(ActionError::MarkerIdExhausted)?;
+                let marker = ProjectMarker::new(
+                    MarkerId::from_raw(ids.next_marker_id),
+                    position_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectMarker)?;
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                after.push(marker);
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ids.next_marker_id = next_marker_id;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::UpdateProjectMarker {
+                marker_id,
+                position_ticks,
+                name,
+            } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                *marker = ProjectMarker::new(marker_id, position_ticks, name)
+                    .ok_or(ActionError::InvalidProjectMarker)?;
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::DeleteProjectMarker { marker_id } => {
+                let before = state.markers.clone();
+                if !before.iter().any(|marker| marker.id == marker_id) {
+                    return Err(ActionError::ProjectMarkerNotFound { marker_id });
+                }
+                let after = before
+                    .iter()
+                    .filter(|marker| marker.id != marker_id)
+                    .cloned()
+                    .collect();
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
             DawAction::CreateTrack { index, name } => {
                 if index > state.tracks.len() {
                     return Err(ActionError::TrackIndexOutOfBounds {
@@ -3388,6 +3495,12 @@ impl Project {
                     .meter_map
                     .set_start_measure(*after)
                     .map_err(|_| ActionError::MeterMapOutOfRange)?;
+            }
+            ProjectEvent::ProjectMarkersChanged { before, after } => {
+                if state.markers != *before || !valid_project_markers(after) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.markers = after.clone();
             }
             ProjectEvent::MasterMixChanged { before, after } => {
                 if state.master_mix != *before {

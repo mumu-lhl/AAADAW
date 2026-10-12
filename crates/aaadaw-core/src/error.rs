@@ -1,4 +1,4 @@
-use crate::{ItemId, NoteId, TrackId};
+use crate::{ItemId, MarkerId, NoteId, TrackId};
 use std::fmt;
 
 /// An action could not be applied to the project.
@@ -52,6 +52,12 @@ pub enum ActionError {
     InvalidTempoBpm,
     /// A project start time offset must be finite.
     InvalidProjectTimeOffset,
+    /// A project marker position or name is outside its supported range.
+    InvalidProjectMarker,
+    /// The requested project marker does not exist.
+    ProjectMarkerNotFound {
+        marker_id: MarkerId,
+    },
     /// A project sample rate must be greater than zero.
     InvalidProjectSampleRate,
     /// A lower project sample rate cannot represent distinct automation points.
@@ -125,6 +131,8 @@ pub enum ActionError {
     InvalidPan,
     /// The project has exhausted its available track identifiers.
     TrackIdExhausted,
+    /// The project has exhausted its available marker identifiers.
+    MarkerIdExhausted,
     /// The internal event history could not be applied consistently.
     HistoryInvariantViolation,
 }
@@ -192,6 +200,12 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidProjectTimeOffset => {
                 formatter.write_str("project start time offset must be finite")
+            }
+            Self::InvalidProjectMarker => {
+                formatter.write_str("project marker position or name is invalid")
+            }
+            Self::ProjectMarkerNotFound { marker_id } => {
+                write!(formatter, "project marker {} does not exist", marker_id.value())
             }
             Self::InvalidProjectSampleRate => {
                 formatter.write_str("project sample rate must be greater than zero")
@@ -271,6 +285,7 @@ impl fmt::Display for ActionError {
             Self::NoteIdExhausted => formatter.write_str("MIDI note identifiers are exhausted"),
             Self::InvalidPan => formatter.write_str("track pan must be finite and in -1..=1"),
             Self::TrackIdExhausted => formatter.write_str("track identifiers are exhausted"),
+            Self::MarkerIdExhausted => formatter.write_str("project marker identifiers are exhausted"),
             Self::HistoryInvariantViolation => {
                 formatter.write_str("project event history is inconsistent with its state")
             }

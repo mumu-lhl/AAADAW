@@ -1,8 +1,8 @@
 use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot,
-    MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectSettings,
-    ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
+    MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectMarkerSnapshot,
+    ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve, TempoPointSnapshot,
     TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
     TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
     VolumeAutomationPoint,
@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 34;
+pub const CURRENT_SCHEMA_VERSION: u32 = 35;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -32,6 +32,14 @@ const MIGRATION_31: &str = "ALTER TABLE project_meta ADD COLUMN base_ruler_label
 const MIGRATION_32: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_offset_seconds REAL NOT NULL DEFAULT 0 CHECK(project_start_time_offset_seconds > -1.0e999 AND project_start_time_offset_seconds < 1.0e999);";
 const MIGRATION_33: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_fractional_frame_offset_allowed INTEGER NOT NULL DEFAULT 0 CHECK(project_start_time_fractional_frame_offset_allowed IN (0,1));";
 const MIGRATION_34: &str = "ALTER TABLE project_meta ADD COLUMN force_tempo_changes_to_whole_samples INTEGER NOT NULL DEFAULT 0 CHECK(force_tempo_changes_to_whole_samples IN (0,1));";
+const MIGRATION_35: &str = r#"
+CREATE TABLE IF NOT EXISTS project_markers (
+    id INTEGER PRIMARY KEY CHECK (id >= 0),
+    position_ticks INTEGER NOT NULL CHECK (position_ticks >= 0),
+    name TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_markers_by_position ON project_markers(position_ticks, id);
+"#;
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
 
@@ -569,6 +577,52 @@ mod arrangement_view_state_tests {
         ));
         assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
         store.close().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod project_marker_storage_tests {
+    use super::ProjectStore;
+    use aaadaw_core::{DawAction, Project};
+    use rusqlite::Connection;
+
+    #[test]
+    fn project_markers_round_trip_and_schema_34_migrates_without_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_920,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 960,
+                name: "Intro".to_owned(),
+            })
+            .unwrap();
+        let expected = project.markers().to_vec();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().markers(), expected);
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP INDEX project_markers_by_position; DROP TABLE project_markers; PRAGMA user_version = 34;")
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().markers().len(), 0);
+        let schema_version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(schema_version, 35);
     }
 }
 
@@ -2376,6 +2430,7 @@ impl ProjectStore {
         }
         let tempo_points = read_tempo_points(&self.connection)?;
         let meter_points = read_meter_points(&self.connection)?;
+        let markers = read_project_markers(&self.connection)?;
 
         Project::from_snapshot(ProjectSnapshot {
             notes,
@@ -2384,6 +2439,7 @@ impl ProjectStore {
             tracks,
             audio_items,
             midi_items,
+            markers,
             tempo_points,
             meter_points,
         })
@@ -2609,6 +2665,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_34)?;
                 }
             }
+            35 => transaction.execute_batch(MIGRATION_35)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2637,6 +2694,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
     transaction.execute("DELETE FROM meter_points", [])?;
+    transaction.execute("DELETE FROM project_markers", [])?;
     transaction.execute("DELETE FROM project_meta", [])?;
     transaction.execute("DELETE FROM project_master_mix", [])?;
     transaction.execute(
@@ -2872,6 +2930,16 @@ fn write_snapshot(
                 to_sql_integer(point.start_tick)?,
                 i64::from(point.numerator),
                 i64::from(point.denominator)
+            ],
+        )?;
+    }
+    for marker in &snapshot.markers {
+        transaction.execute(
+            "INSERT INTO project_markers(id, position_ticks, name) VALUES(?1, ?2, ?3)",
+            params![
+                to_sql_integer(marker.id)?,
+                to_sql_integer(marker.position_ticks)?,
+                marker.name
             ],
         )?;
     }
@@ -3509,6 +3577,32 @@ fn read_meter_points(connection: &Connection) -> Result<Vec<MeterPointSnapshot>,
                 start_tick: from_sql_u64(start_tick)?,
                 numerator: from_sql_u32(numerator)?,
                 denominator: from_sql_u32(denominator)?,
+            })
+        })
+        .collect()
+}
+
+fn read_project_markers(
+    connection: &Connection,
+) -> Result<Vec<ProjectMarkerSnapshot>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, position_ticks, name FROM project_markers ORDER BY position_ticks, id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(id, position_ticks, name)| {
+            Ok(ProjectMarkerSnapshot {
+                id: from_sql_u64(id)?,
+                position_ticks: from_sql_u64(position_ticks)?,
+                name,
             })
         })
         .collect()

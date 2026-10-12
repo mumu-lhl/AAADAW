@@ -3825,6 +3825,20 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             .into_iter()
             .map(|line| (line.tick, line.is_measure))
             .collect(),
+            marker_ticks: self
+                .project
+                .markers()
+                .iter()
+                .filter(|marker| {
+                    let x = project_marker_x(
+                        marker.position_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    x.is_finite() && (-8.0..=bounds.width).contains(&x)
+                })
+                .map(|marker| marker.position_ticks())
+                .collect(),
         }
     }
 
@@ -4130,8 +4144,53 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 }
             }
         }
+        for (index, marker) in self.project.markers().iter().enumerate() {
+            let x = project_marker_x(
+                marker.position_ticks(),
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            if !x.is_finite() || x < -8.0 || x > bounds.width {
+                continue;
+            }
+            let color = Color::from_rgb8(224, 91, 76);
+            let stem = canvas::Path::line(Point::new(x, 8.0), Point::new(x, bounds.height));
+            frame.stroke(
+                &stem,
+                canvas::Stroke::default().with_color(color).with_width(1.5),
+            );
+            let flag = canvas::Path::new(|path| {
+                path.move_to(Point::new(x, 0.0));
+                path.line_to(Point::new(x + 8.0, 4.0));
+                path.line_to(Point::new(x, 9.0));
+                path.close();
+            });
+            frame.fill(&flag, color);
+            let label = if marker.name().is_empty() {
+                (index + 1).to_string()
+            } else {
+                marker.name().to_owned()
+            };
+            frame.fill_text(Text {
+                content: label,
+                position: Point::new(x + 9.0, 3.0),
+                max_width: (bounds.width - x - 9.0).clamp(0.0, 140.0),
+                color,
+                size: Pixels(10.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
+        }
         vec![frame.into_geometry()]
     }
+}
+
+fn project_marker_x(position_tick: u64, origin_tick: u64, pixels_per_tick: f32) -> f32 {
+    ((i128::from(position_tick) - i128::from(origin_tick)) as f64 * f64::from(pixels_per_tick))
+        as f32
 }
 
 struct ItemLabelsProgram<'a> {
@@ -4508,8 +4567,8 @@ mod tests {
         TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineInteractionState,
         TimelineState, automation_sample_between, fx_automation_band_at_y,
         fx_automation_lane_resize_target, fx_automation_tick_at, item_trim_edge_at_x,
-        midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport, snap_tick_to_grid,
-        tick_at_x, time_selection_edge_at_tick,
+        midi_note_preview_geometry, project_marker_x, row_at_y, slowest_tempo_in_viewport,
+        snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
         DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
@@ -4552,6 +4611,37 @@ mod tests {
                 440
             )))
         ));
+    }
+
+    #[test]
+    fn marker_ruler_positions_use_signed_tick_distance() {
+        assert_eq!(project_marker_x(240, 200, 0.5), 20.0);
+        assert_eq!(project_marker_x(160, 200, 0.5), -20.0);
+    }
+
+    #[test]
+    fn timeline_shader_receives_project_markers_for_full_height_lines() {
+        let mut project = Project::new();
+        for (position_ticks, name) in [(720, "Bridge"), (2_000, "Outro")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert_eq!(primitive.marker_ticks, vec![720]);
     }
 
     #[test]

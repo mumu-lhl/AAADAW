@@ -8,6 +8,7 @@ mod action;
 mod audio;
 mod error;
 mod fades;
+mod markers;
 mod master;
 mod midi;
 mod project;
@@ -22,6 +23,7 @@ pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
 pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
+pub use markers::{MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
@@ -29,10 +31,10 @@ pub use midi::{
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
 pub use snapshot::{
-    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
-    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
-    TrackInstrumentSnapshot, TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot,
+    ProjectMarkerSnapshot, ProjectSnapshot, SnapshotError, TempoPointSnapshot,
+    TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
+    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
 };
 pub use timebase::{
     BpmBasis, DEFAULT_PPQ, DEFAULT_SAMPLE_RATE, DEFAULT_TEMPO_BPM, GridFraction, MusicalPosition,

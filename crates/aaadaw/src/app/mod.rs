@@ -3618,6 +3618,77 @@ impl App {
             Message::AddMidiItem => {
                 self.add_midi_item();
             }
+            Message::AddProjectMarker => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before inserting a marker"
+                            .to_owned();
+                } else {
+                    self.apply_action(
+                        DawAction::InsertProjectMarker {
+                            position_ticks: self.timeline.edit_cursor_tick,
+                            name: String::new(),
+                        },
+                        "Project marker inserted",
+                    );
+                }
+            }
+            Message::PreviousProjectMarker => {
+                let cursor = self.timeline.edit_cursor_tick;
+                let target = self
+                    .project
+                    .markers()
+                    .iter()
+                    .rev()
+                    .find(|marker| marker.position_ticks() < cursor)
+                    .map(|marker| marker.position_ticks())
+                    .unwrap_or(0);
+                if target == cursor {
+                    self.status = "No previous project marker".to_owned();
+                } else {
+                    self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(target));
+                    self.status = "Moved to previous project marker".to_owned();
+                }
+            }
+            Message::NextProjectMarker => {
+                let cursor = self.timeline.edit_cursor_tick;
+                let next_marker = self
+                    .project
+                    .markers()
+                    .iter()
+                    .find(|marker| marker.position_ticks() > cursor)
+                    .map(|marker| marker.position_ticks());
+                let project_end = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .filter_map(|item| self.project.tick_at_sample(item.end_sample()).ok())
+                    .chain(
+                        self.project
+                            .midi_items()
+                            .iter()
+                            .map(|item| item.start_tick().saturating_add(item.length_ticks())),
+                    )
+                    .chain(
+                        self.project
+                            .markers()
+                            .iter()
+                            .map(|marker| marker.position_ticks()),
+                    )
+                    .max()
+                    .unwrap_or(0);
+                let target = next_marker.unwrap_or(project_end);
+                if target <= cursor {
+                    self.status = "No next project marker or project end".to_owned();
+                } else {
+                    self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(target));
+                    self.status = if next_marker.is_some() {
+                        "Moved to next project marker".to_owned()
+                    } else {
+                        "Moved to project end".to_owned()
+                    };
+                }
+            }
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
                 self.apply_edit(action, "C4 MIDI note added");

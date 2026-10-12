@@ -133,6 +133,38 @@ fn midi_item_name_draft_commits_as_one_undoable_project_action() {
 }
 
 #[test]
+fn project_markers_insert_navigate_and_undo_through_app_actions() {
+    let mut app = App::default();
+    app.timeline.edit_cursor_tick = 960;
+    let _ = app.update(Message::AddProjectMarker);
+    assert_eq!(app.project.markers().len(), 1);
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    let later_id = app.project.markers()[0].id();
+
+    app.timeline.edit_cursor_tick = 240;
+    let _ = app.update(Message::AddProjectMarker);
+    assert_eq!(app.project.markers().len(), 2);
+    assert_eq!(app.project.markers()[0].position_ticks(), 240);
+    assert_eq!(app.project.markers()[1].id(), later_id);
+
+    app.timeline.edit_cursor_tick = 0;
+    let _ = app.update(Message::NextProjectMarker);
+    assert_eq!(app.timeline.edit_cursor_tick, 240);
+    let _ = app.update(Message::NextProjectMarker);
+    assert_eq!(app.timeline.edit_cursor_tick, 960);
+    let _ = app.update(Message::PreviousProjectMarker);
+    assert_eq!(app.timeline.edit_cursor_tick, 240);
+    let _ = app.update(Message::PreviousProjectMarker);
+    assert_eq!(app.timeline.edit_cursor_tick, 0);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers().len(), 1);
+    assert_eq!(app.project.markers()[0].id(), later_id);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.markers().len(), 2);
+}
+
+#[test]
 fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     let mut app = App::default();
     for _ in 0..3 {

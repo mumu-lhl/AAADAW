@@ -82,6 +82,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) width: f32,
     pub(super) height: f32,
     pub(super) grid_lines: Vec<(u64, bool)>,
+    pub(super) marker_ticks: Vec<u64>,
     pub(super) automation_lanes: Vec<AutomationLane>,
     pub(super) automation_point_preview: Option<AutomationPointPreview>,
     pub(super) item_selection_preview: Option<ItemSelectionPreview>,
@@ -593,6 +594,7 @@ impl Primitive for TimelinePrimitive {
 
         let mut dynamic = Vec::with_capacity(
             self.grid_lines.len()
+                + self.marker_ticks.len()
                 + 3
                 + self.selected_items.len()
                 + usize::from(self.item_trim_preview.is_some())
@@ -724,6 +726,18 @@ impl Primitive for TimelinePrimitive {
                 item_id: 0,
                 track_index: u32::MAX,
                 kind: if *is_measure { BAR_LINE } else { BEAT_LINE },
+            }));
+        }
+        for tick in &self.marker_ticks {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *tick,
+                end_tick: *tick,
+                y: 0.0,
+                height: self.height,
+                color: [224, 91, 76, 205],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: BAR_LINE,
             }));
         }
         if let Some(preview) = self.automation_point_preview

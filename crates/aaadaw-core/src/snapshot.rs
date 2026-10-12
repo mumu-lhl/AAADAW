@@ -1,6 +1,7 @@
 use crate::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, ProjectSettings, TempoCurve, TimebaseError, VolumeAutomationPoint,
+    MidiPitchBendData, ProjectMarker, ProjectSettings, TempoCurve, TimebaseError,
+    VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -13,8 +14,26 @@ pub struct ProjectSnapshot {
     pub tracks: Vec<TrackSnapshot>,
     pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,
+    pub markers: Vec<ProjectMarkerSnapshot>,
     pub tempo_points: Vec<TempoPointSnapshot>,
     pub meter_points: Vec<MeterPointSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectMarkerSnapshot {
+    pub id: u64,
+    pub position_ticks: u64,
+    pub name: String,
+}
+
+impl From<&ProjectMarker> for ProjectMarkerSnapshot {
+    fn from(marker: &ProjectMarker) -> Self {
+        Self {
+            id: marker.id().value(),
+            position_ticks: marker.position_ticks(),
+            name: marker.name().to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
