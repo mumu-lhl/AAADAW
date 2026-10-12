@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换及 Mono/Stereo WAV 导出；多声道、其他 Source 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV 导出及可选 0 dBFS sample-peak 后处理；多声道、其他 Source 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换及 Mono/Stereo WAV，但多声道、Source 模式、其他范围与完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV 与可选固定 0 dBFS sample-peak，但多声道、Source 模式、其他范围、归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -279,3 +279,11 @@ Render channels 对齐提交 `4f87ce3cace6321cd4d11e745c7901321c498a00`：窗口
 在 Linux REAPER 7.82 / Default 7 / fresh isolated config 下运行[通道探针](../verification/reaper-parity/render-channels.md)：一秒、48 kHz PCM24 stereo 常量素材 L=0.125/R=0.375，经中心 Master mix 输出 Stereo 首帧仍为 `[0.125, 0.375]`，Mono 为 `0.25`，文件各 48,000 帧。探针脚本与输出事实已提交，不保留 REAPER 工程或媒体。AAADAW 回归覆盖三种编码的 Mono header/平均值、范围+尾音单声道 WAV 和队列声道快照。`xvfb-run -a cargo xtest --no-fail-fast` 全量 887/887 通过、零跳过；目标 Clippy `-D warnings`、fmt、66 行矩阵唯一 ID/结构、reference JSON 和 diff 检查通过。
 
 这只闭合 Mono/Stereo 受测子集：多声道输出、非中心声像 downmix、stem/source modes、Track/Item/Region/Razor 以及完整 Render 对话框仍未完成。矩阵新增 `RENDER-CHANNELS-001` 与 `RENDER-SOURCE-001` 并保持 `in_progress`；`RENDER-BOUNDS-001` 也继续开放。
+
+### 2026-10-12 Project Render Peak normalization
+
+`RENDER-POSTPROCESS-001` 子项提交 `17338f8`：Render 窗口加入默认关闭的 `Peak normalize to 0 dBFS`。队列冻结设置；worker 先完成输出采样率转换，再依照 Mono/Stereo 最终输出映射测量 sample peak，用私有临时 spool 和固定大小缓冲区进行第二遍增益处理。正常化仍只发生在离线 worker；取消检查覆盖第二遍及 WAV 发布前，取消/失败会删除 spool 和未完成 WAV，原子目标文件流程不变。
+
+Linux REAPER `7.82/linux-x86_64` / Default 7 fresh config 探针记录：控制源为 48 kHz PCM24 stereo，一秒常量 L=0.125/R=0.375；`RENDER_NORMALIZE=0` 保持原样，启用 sample-peak（flags=5）并设线性 target=0.5 后输出约 `[0.1666665, 0.5]`。官方 ReaScript 说明 `RENDER_NORMALIZE_TARGET` 使用线性目标；原厂 7.81 User Guide §21.3 列有 Peak normalization。证据、受测限制和复现脚本见[峰值归一化记录](../verification/reaper-parity/render-normalize.md)。AAADAW 端到端回归检查经 44.1 kHz SRC 的 Mono PCM24 输出到达满刻度；取消发生在第二遍第一块写入后，验证临时文件清理；队列测试验证已排队 normalization 值保持不变。
+
+最终验证 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast`：888/888 通过、0 跳过；目标 Clippy `-D warnings`、fmt、CSV 67 个唯一 ID、9 个 reference JSON 解析和 `git diff --check` 通过。矩阵新增 `RENDER-POSTPROCESS-001`，与 `RENDER-BOUNDS-001`、`RENDER-CHANNELS-001`、`RENDER-SOURCE-001`、`UI-028` 均保持 `in_progress`。RMS/LUFS/True Peak、可调目标、limiter、其它 postprocess 和完整 Render 对照未完成；下一步扩展其他高频 Render 输出能力，不关闭此原子项。
