@@ -451,6 +451,7 @@ pub(crate) enum Message {
     SetRenderBounds(RenderBounds),
     SetRenderSampleRate(RenderSampleRate),
     SetRenderChannels(WavChannelCount),
+    SetRenderPeakNormalization(bool),
     SetRenderTailDuration(String),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),

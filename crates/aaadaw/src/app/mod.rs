@@ -2909,6 +2909,9 @@ impl App {
             Message::SetRenderChannels(channels) => {
                 self.render_dialog.channels = channels;
             }
+            Message::SetRenderPeakNormalization(enabled) => {
+                self.render_dialog.normalize_peak = enabled;
+            }
             Message::SetRenderTailDuration(value) => {
                 self.render_dialog.tail_duration_text = value;
             }

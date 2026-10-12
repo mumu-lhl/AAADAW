@@ -77,6 +77,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
+        row![
+            column![
+                text("Peak normalize to 0 dBFS").size(13),
+                text("Scales the loudest output sample to full scale.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            button(if app.render_dialog.normalize_peak {
+                "On"
+            } else {
+                "Off"
+            })
+            .style(if app.render_dialog.normalize_peak {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SetRenderPeakNormalization(
+                !app.render_dialog.normalize_peak,
+            )),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
         text(format!(
             "Output rate: {} Hz",
             app.render_output_sample_rate()

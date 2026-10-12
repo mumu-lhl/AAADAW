@@ -1,0 +1,11 @@
+# Linux REAPER 7.82 Render peak normalization
+
+Reference: Linux REAPER `7.82/linux-x86_64`, Default 7 theme, fresh isolated configuration, empty unsaved project. The probe uses the Master mix, a custom 0–1 second range, 48 kHz stereo output, and a one-second 48 kHz PCM24 stereo source with constant L=0.125 and R=0.375.
+
+The [probe script](../../../scripts/reaper_parity/probe-render-normalize.lua) renders the source with normalization disabled and with `RENDER_NORMALIZE=5` (enable plus peak mode), both at `RENDER_NORMALIZE_TARGET=0.5`. The ReaScript API documents the bit fields and linear target (`0.5` is approximately −6.02 dB) in the official [GetSetProjectInfo reference](https://www.reaper.fm/sdk/reascript/reascripthelp.html#GetSetProjectInfo). The official [REAPER 7.81 User Guide, section 21.3](https://www.reaper.fm/userguide/ReaperUserGuide781c.pdf) describes peak normalization among Render postprocess options.
+
+On the reference 7.82 build, the disabled render retains `[0.125, 0.375]`; the enabled peak render is approximately `[0.1666665, 0.5]`. This verifies sample-peak normalization and the linear target for this controlled Master mix. A fresh REAPER configuration reads normalization flags and target as zero while normalization is disabled.
+
+AAADAW implements the tested Master-mix sample-peak mode with a fixed 0 dBFS target, disabled by default. The render worker first completes SRC to the selected output rate, measures the selected Mono/Stereo channel projection, and then streams the gain-adjusted samples to the WAV writer. It spools f32 frames to a temporary file rather than buffering a full render in memory; cancellation and failure remove the spool and do not publish or replace the destination. PCM conversion and optional TPDF dither remain in the existing final writer. An end-to-end regression checks a non-default-rate mono PCM24 render reaches full scale, and a cancellation regression checks cleanup during the second pass.
+
+This covers only fixed-target sample-peak normalization for the Master mix. User-selectable target levels, RMS/LUFS/true-peak modes, brickwall limiting, stem normalization policies, fades, silence trimming, padding, and the complete native postprocess dialog remain open. `RENDER-POSTPROCESS-001`, `RENDER-BOUNDS-001`, and `UI-028` stay `in_progress`.

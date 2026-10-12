@@ -452,6 +452,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
             start_sample: 24_000,
             end_sample: 48_000,
             tail_milliseconds: 1_250,
+            normalize_peak: true,
         },
         &AtomicBool::new(false),
         |_, _| {},
@@ -467,6 +468,26 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
     assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
     let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
     assert_eq!(data_bytes, 77_175 * 3);
+    assert_eq!(bytes.len(), 44 + data_bytes as usize);
+    let (samples, remainder) = bytes[44..].as_chunks::<3>();
+    assert!(remainder.is_empty());
+    let peak = samples
+        .iter()
+        .map(|sample| {
+            let value = i32::from_le_bytes([
+                sample[0],
+                sample[1],
+                sample[2],
+                if sample[2] & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            value.unsigned_abs()
+        })
+        .max()
+        .expect("rendered samples should be present");
+    assert!(
+        peak >= 8_380_000,
+        "peak-normalized PCM24 output should reach 0 dBFS, got {peak}"
+    );
     let stable_left_offset = 44 + 1_000 * 3;
     let first_left = i32::from_le_bytes([
         bytes[stable_left_offset],

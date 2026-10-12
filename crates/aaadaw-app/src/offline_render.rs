@@ -14,10 +14,16 @@ use aaadaw_engine::{
 use aaadaw_media::{ResamplingQuality, StereoPcmResampler};
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufReader, BufWriter, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
+
+static NEXT_NORMALIZATION_SPOOL_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Export decay allowance and minimum fallback when frozen CLAP plugins do not report longer tails.
 pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
@@ -37,6 +43,8 @@ pub struct ProjectWavRenderSettings {
     pub start_sample: u64,
     pub end_sample: u64,
     pub tail_milliseconds: u32,
+    /// Scale the completed output so its sample peak reaches 0 dBFS.
+    pub normalize_peak: bool,
 }
 
 trait OfflineWavWriter {
@@ -66,6 +74,190 @@ impl<W: OfflineWavWriter> OfflineWavWriter for SampleRateConvertingWriter<W> {
         if let Some(resampler) = self.resampler.take() {
             let tail = resampler.finish();
             self.inner.write_frames(&tail)?;
+        }
+        self.inner.finish()
+    }
+}
+
+struct PeakNormalizationSpool {
+    path: PathBuf,
+    writer: Option<BufWriter<File>>,
+    peak: f32,
+    frame_count: u64,
+}
+
+impl PeakNormalizationSpool {
+    fn create() -> Result<Self, OfflineRenderError> {
+        for _ in 0..16 {
+            let id = NEXT_NORMALIZATION_SPOOL_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "aaadaw-render-normalize-{}-{id}.f32",
+                std::process::id()
+            ));
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
+                Ok(file) => {
+                    return Ok(Self {
+                        path,
+                        writer: Some(BufWriter::new(file)),
+                        peak: 0.0,
+                        frame_count: 0,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(OfflineRenderError::Media(format!(
+                        "could not create peak-normalization spool: {error}"
+                    )));
+                }
+            }
+        }
+        Err(OfflineRenderError::Media(
+            "could not reserve a peak-normalization spool file".to_owned(),
+        ))
+    }
+
+    fn write_frames(
+        &mut self,
+        frames: &[[f32; 2]],
+        channels: WavChannelCount,
+    ) -> Result<(), OfflineRenderError> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            OfflineRenderError::Media("peak-normalization spool is already closed".to_owned())
+        })?;
+        let mut bytes = Vec::with_capacity(frames.len().saturating_mul(8));
+        for frame in frames {
+            if !frame[0].is_finite() || !frame[1].is_finite() {
+                return Err(OfflineRenderError::Media(
+                    "render produced a non-finite sample during peak normalization".to_owned(),
+                ));
+            }
+            let peak_sample = match channels {
+                WavChannelCount::Mono => frame[0] * 0.5 + frame[1] * 0.5,
+                WavChannelCount::Stereo => frame[0].abs().max(frame[1].abs()),
+            };
+            self.peak = self.peak.max(peak_sample.abs());
+            bytes.extend_from_slice(&frame[0].to_le_bytes());
+            bytes.extend_from_slice(&frame[1].to_le_bytes());
+        }
+        writer.write_all(&bytes).map_err(|error| {
+            OfflineRenderError::Media(format!("could not write peak-normalization spool: {error}"))
+        })?;
+        self.frame_count = self
+            .frame_count
+            .checked_add(frames.len() as u64)
+            .ok_or(OfflineRenderError::TimelineRange)?;
+        Ok(())
+    }
+
+    fn reader(&mut self) -> Result<BufReader<File>, OfflineRenderError> {
+        if let Some(mut writer) = self.writer.take() {
+            writer.flush().map_err(|error| {
+                OfflineRenderError::Media(format!(
+                    "could not flush peak-normalization spool: {error}"
+                ))
+            })?;
+        }
+        File::open(&self.path).map(BufReader::new).map_err(|error| {
+            OfflineRenderError::Media(format!("could not read peak-normalization spool: {error}"))
+        })
+    }
+}
+
+impl Drop for PeakNormalizationSpool {
+    fn drop(&mut self) {
+        self.writer.take();
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+struct PeakNormalizingWriter<'a, W> {
+    inner: W,
+    channels: WavChannelCount,
+    spool: Option<PeakNormalizationSpool>,
+    cancelled: &'a AtomicBool,
+}
+
+impl<'a, W> PeakNormalizingWriter<'a, W> {
+    fn new(
+        inner: W,
+        channels: WavChannelCount,
+        enabled: bool,
+        cancelled: &'a AtomicBool,
+    ) -> Result<Self, OfflineRenderError> {
+        Ok(Self {
+            inner,
+            channels,
+            spool: enabled.then(PeakNormalizationSpool::create).transpose()?,
+            cancelled,
+        })
+    }
+}
+
+impl<W: OfflineWavWriter> OfflineWavWriter for PeakNormalizingWriter<'_, W> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        if let Some(spool) = &mut self.spool {
+            spool.write_frames(frames, self.channels)
+        } else {
+            self.inner.write_frames(frames)
+        }
+    }
+
+    fn finish(mut self) -> Result<PathBuf, OfflineRenderError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
+        }
+        let Some(mut spool) = self.spool.take() else {
+            return self.inner.finish();
+        };
+        let gain = if spool.peak > 0.0 {
+            1.0 / f64::from(spool.peak)
+        } else {
+            1.0
+        };
+        let mut reader = spool.reader()?;
+        const FRAMES_PER_PASS: usize = 4_096;
+        let mut bytes = [0_u8; FRAMES_PER_PASS * 8];
+        let mut frames = [[0.0_f32; 2]; FRAMES_PER_PASS];
+        let mut rendered = 0_u64;
+        while rendered < spool.frame_count {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(OfflineRenderError::Cancelled);
+            }
+            let count = usize::try_from((spool.frame_count - rendered).min(FRAMES_PER_PASS as u64))
+                .expect("normalization batch is bounded by a fixed buffer");
+            reader
+                .read_exact(&mut bytes[..count * 8])
+                .map_err(|error| {
+                    OfflineRenderError::Media(format!(
+                        "could not read peak-normalization spool: {error}"
+                    ))
+                })?;
+            for (index, frame) in frames[..count].iter_mut().enumerate() {
+                let offset = index * 8;
+                let left = f32::from_le_bytes(
+                    bytes[offset..offset + 4]
+                        .try_into()
+                        .expect("four-byte sample"),
+                );
+                let right = f32::from_le_bytes(
+                    bytes[offset + 4..offset + 8]
+                        .try_into()
+                        .expect("four-byte sample"),
+                );
+                *frame = [
+                    (f64::from(left) * gain) as f32,
+                    (f64::from(right) * gain) as f32,
+                ];
+            }
+            self.inner.write_frames(&frames[..count])?;
+            rendered += count as u64;
+        }
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
         }
         self.inner.finish()
     }
@@ -474,6 +666,7 @@ pub fn render_project_file_to_wav(
             start_sample: 0,
             end_sample,
             tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
+            normalize_peak: false,
         },
         cancelled,
         report_progress,
@@ -500,6 +693,7 @@ pub fn render_project_file_to_wav_with_settings(
         start_sample,
         end_sample,
         tail_milliseconds,
+        normalize_peak,
     } = settings;
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
@@ -528,6 +722,7 @@ pub fn render_project_file_to_wav_with_settings(
         })
         .transpose()
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let export = PeakNormalizingWriter::new(export, output_channels, normalize_peak, cancelled)?;
     let export = SampleRateConvertingWriter {
         inner: export,
         resampler,
@@ -1113,6 +1308,9 @@ fn render_graph_with_waiter<W: OfflineWavWriter>(
     }
 
     before_finish()?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
     export.finish()?;
     Ok(())
 }
@@ -1134,6 +1332,29 @@ mod tests {
             std::process::id(),
             NEXT_PATH.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    struct CancelAfterFirstWrite<'a> {
+        inner: WavExport,
+        cancelled: &'a AtomicBool,
+        wrote_once: bool,
+    }
+
+    impl OfflineWavWriter for CancelAfterFirstWrite<'_> {
+        fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+            self.inner
+                .write_frames(frames)
+                .map_err(OfflineRenderError::WavExport)?;
+            if !self.wrote_once {
+                self.cancelled.store(true, Ordering::Release);
+                self.wrote_once = true;
+            }
+            Ok(())
+        }
+
+        fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+            self.inner.finish().map_err(OfflineRenderError::WavExport)
+        }
     }
 
     fn project_with_one_track() -> Project {
@@ -1330,6 +1551,7 @@ mod tests {
                     start_sample: 0,
                     end_sample: 48_000,
                     tail_milliseconds: 2_000,
+                    normalize_peak: false,
                 },
                 &cancelled,
                 |_, _| {},
@@ -1341,5 +1563,37 @@ mod tests {
             b"keep existing render"
         );
         fs::remove_file(path).expect("sentinel destination should be removed");
+    }
+
+    #[test]
+    fn cancelling_peak_normalization_drops_spool_and_does_not_publish_output() {
+        let path = destination();
+        let cancelled = AtomicBool::new(false);
+        let wav = WavExport::create(&path, 48_000, WavExportOptions::default())
+            .expect("temporary WAV should be created");
+        let inner = CancelAfterFirstWrite {
+            inner: wav,
+            cancelled: &cancelled,
+            wrote_once: false,
+        };
+        let mut export =
+            PeakNormalizingWriter::new(inner, WavChannelCount::Stereo, true, &cancelled)
+                .expect("normalization spool should be created");
+        let spool_path = export
+            .spool
+            .as_ref()
+            .expect("normalization should spool")
+            .path
+            .clone();
+        export
+            .write_frames(&vec![[0.25, -0.5]; 8_192])
+            .expect("frames should be spooled");
+
+        assert!(matches!(
+            export.finish(),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!path.exists(), "cancelled output must not be published");
+        assert!(!spool_path.exists(), "cancelled spool must be removed");
     }
 }

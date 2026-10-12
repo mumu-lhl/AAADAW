@@ -107,6 +107,7 @@ pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
     pub(super) sample_rate: RenderSampleRate,
     pub(super) channels: WavChannelCount,
+    pub(super) normalize_peak: bool,
     pub(super) tail_duration_text: String,
 }
 
@@ -116,6 +117,7 @@ impl Default for RenderDialogState {
             bounds: RenderBounds::EntireProject,
             sample_rate: RenderSampleRate::Project,
             channels: WavChannelCount::Stereo,
+            normalize_peak: false,
             tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
         }
     }
@@ -240,6 +242,7 @@ impl App {
                     start_sample,
                     end_sample,
                     tail_milliseconds,
+                    normalize_peak: self.render_dialog.normalize_peak,
                 },
             },
             snapshot: Arc::new(self.project.snapshot()),
@@ -691,6 +694,7 @@ mod tests {
                     start_sample: 0,
                     end_sample: 0,
                     tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
+                    normalize_peak: false,
                 },
             },
             snapshot: Arc::new(Project::default().snapshot()),
@@ -799,6 +803,7 @@ mod tests {
         app.render_dialog.bounds = RenderBounds::TimeSelection;
         app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
         app.render_dialog.channels = WavChannelCount::Mono;
+        app.render_dialog.normalize_peak = true;
         app.render_dialog.tail_duration_text = "3.125".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
@@ -814,6 +819,7 @@ mod tests {
         });
         app.render_dialog.sample_rate = RenderSampleRate::Project;
         app.render_dialog.channels = WavChannelCount::Stereo;
+        app.render_dialog.normalize_peak = false;
         app.render_dialog.tail_duration_text = "0".to_owned();
 
         let queued = app
@@ -827,6 +833,7 @@ mod tests {
                 assert_eq!(settings.tail_milliseconds, 3_125);
                 assert_eq!(settings.output_sample_rate, 44_100);
                 assert_eq!(settings.output_channels, WavChannelCount::Mono);
+                assert!(settings.normalize_peak);
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
         }
