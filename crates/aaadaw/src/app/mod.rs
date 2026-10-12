@@ -3689,6 +3689,21 @@ impl App {
                     };
                 }
             }
+            Message::DeleteProjectMarkerNearCursor => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before deleting a marker"
+                            .to_owned();
+                } else if let Some(marker_id) = commands::nearest_project_marker_to_delete(self) {
+                    self.apply_action(
+                        DawAction::DeleteProjectMarker { marker_id },
+                        "Project marker deleted",
+                    );
+                } else {
+                    self.status =
+                        "No project marker less than 1 second from the edit cursor".to_owned();
+                }
+            }
             Message::AddMidiNote(item_id) => {
                 let action = add_quarter_note(&self.project, item_id);
                 self.apply_edit(action, "C4 MIDI note added");

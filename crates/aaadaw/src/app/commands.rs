@@ -31,6 +31,7 @@ pub(crate) enum CommandId {
     AddProjectMarker,
     PreviousProjectMarker,
     NextProjectMarker,
+    DeleteProjectMarkerNearCursor,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -94,6 +95,7 @@ enum CommandKind {
     AddProjectMarker,
     PreviousProjectMarker,
     NextProjectMarker,
+    DeleteProjectMarkerNearCursor,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -143,6 +145,7 @@ const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::
 const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
 const PREVIOUS_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('[', Modifiers::NONE)];
 const NEXT_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character(']', Modifiers::NONE)];
+const PROJECT_MARKER_DELETE_RADIUS_SECONDS: f64 = 1.0;
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[
     Shortcut::named(Named::Enter, Modifiers::NONE),
@@ -356,6 +359,16 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["next marker", "go to next marker"],
         shortcuts: NEXT_PROJECT_MARKER_SHORTCUT,
         destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DeleteProjectMarkerNearCursor,
+        menu: None,
+        category: "Markers",
+        label: "Delete project marker near cursor",
+        aliases: &["delete marker near cursor", "delete nearby marker"],
+        shortcuts: &[],
+        destructive: true,
         separator_before: false,
     },
     CommandDefinition {
@@ -1201,6 +1214,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
+        CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
@@ -1283,6 +1297,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
+        CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
@@ -1532,6 +1547,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::PreviousProjectMarker | CommandKind::NextProjectMarker => true,
+        CommandKind::DeleteProjectMarkerNearCursor => {
+            !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
+        }
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
         CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
             .timeline
@@ -1671,6 +1689,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
+        CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
@@ -1702,6 +1721,33 @@ pub(super) fn project_edit_busy(app: &App) -> bool {
         || app.audio_asset_management_busy
         || app.playback_busy()
         || app.playback_active()
+}
+
+pub(super) fn nearest_project_marker_to_delete(app: &App) -> Option<aaadaw_core::MarkerId> {
+    let cursor_samples = app
+        .project
+        .sample_at_tick_position(app.timeline.edit_cursor_tick as f64)
+        .ok()?;
+    let radius_samples =
+        f64::from(app.project.settings().sample_rate()) * PROJECT_MARKER_DELETE_RADIUS_SECONDS;
+    app.project
+        .markers()
+        .iter()
+        .filter_map(|marker| {
+            let marker_samples = app
+                .project
+                .sample_at_tick_position(marker.position_ticks() as f64)
+                .ok()?;
+            let distance = (marker_samples - cursor_samples).abs();
+            (distance < radius_samples).then_some((distance, marker.position_ticks(), marker.id()))
+        })
+        .min_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.value().cmp(&right.2.value()))
+        })
+        .map(|(_, _, marker_id)| marker_id)
 }
 
 fn project_file_busy(app: &App) -> bool {

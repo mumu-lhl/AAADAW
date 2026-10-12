@@ -342,6 +342,7 @@ pub(crate) enum Message {
     AddProjectMarker,
     PreviousProjectMarker,
     NextProjectMarker,
+    DeleteProjectMarkerNearCursor,
     AddMidiNote(ItemId),
     DeleteMidiItem(ItemId),
     MidiItemNameChanged(ItemId, String),

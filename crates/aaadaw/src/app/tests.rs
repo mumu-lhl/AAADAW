@@ -165,6 +165,112 @@ fn project_markers_insert_navigate_and_undo_through_app_actions() {
 }
 
 #[test]
+fn deleting_nearby_marker_matches_reaper_radius_and_nearest_selection() {
+    let mut app = App::default();
+    app.timeline.edit_cursor_tick = 0;
+    let _ = app.update(Message::AddProjectMarker);
+    let first_id = app.project.markers()[0].id();
+
+    app.timeline.edit_cursor_tick = 1_920;
+    let _ = app.update(Message::AddProjectMarker);
+    let second_id = app.project.markers()[1].id();
+
+    app.timeline.edit_cursor_tick = 3_840;
+    let _ = app.update(Message::AddProjectMarker);
+    let third_id = app.project.markers()[2].id();
+
+    // The closest marker wins, including a marker behind the cursor.
+    app.timeline.edit_cursor_tick = 190;
+    let command = CommandId::DeleteProjectMarkerNearCursor;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "delete marker near cursor"),
+        Some(command)
+    );
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(first_id)
+    );
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers().len(), 2);
+    assert_eq!(app.project.markers()[0].id(), second_id);
+    assert_eq!(app.project.markers()[1].id(), third_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers().len(), 3);
+
+    // REAPER resolves equal-distance markers in favor of the earlier one.
+    app.timeline.edit_cursor_tick = 960;
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(first_id)
+    );
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers()[0].id(), second_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+
+    // A marker exactly at the cursor qualifies at distance zero.
+    app.timeline.edit_cursor_tick = 1_920;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(second_id)
+    );
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers().len(), 2);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+    assert_eq!(app.project.markers()[1].id(), third_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers().len(), 3);
+
+    // When both sides are in range, compare their absolute time distances.
+    app.timeline.edit_cursor_tick = 1_440;
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(second_id)
+    );
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers().len(), 2);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+    assert_eq!(app.project.markers()[1].id(), third_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers().len(), 3);
+
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers().len(), 2);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+    assert_eq!(app.project.markers()[1].id(), third_id);
+
+    // Both remaining markers are exactly one second from the cursor and fall
+    // outside the strict 1-second radius.
+    app.timeline.edit_cursor_tick = 1_920;
+    assert!(!commands::is_enabled(&app, command));
+    assert_eq!(commands::find(&app, "delete marker near cursor"), None);
+
+    // A one-tick move brings the later marker inside the radius.
+    app.timeline.edit_cursor_tick = 1_921;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(third_id)
+    );
+    let _ = app.update(Message::DeleteProjectMarkerNearCursor);
+    assert_eq!(app.project.markers().len(), 1);
+    assert_eq!(app.project.markers()[0].id(), first_id);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[1].id(), third_id);
+
+    // The past side of the radius is symmetric, with the same strict bound.
+    app.timeline.edit_cursor_tick = 5_759;
+    assert_eq!(
+        commands::nearest_project_marker_to_delete(&app),
+        Some(third_id)
+    );
+    app.timeline.edit_cursor_tick = 5_760;
+    assert!(!commands::is_enabled(&app, command));
+}
+
+#[test]
 fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     let mut app = App::default();
     for _ in 0..3 {
