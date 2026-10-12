@@ -17,16 +17,18 @@ pub enum WavSampleFormat {
     Pcm32,
     Float32,
     Float64,
+    MuLaw8,
 }
 
 impl WavSampleFormat {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Pcm8,
         Self::Pcm16,
         Self::Pcm24,
         Self::Pcm32,
         Self::Float32,
         Self::Float64,
+        Self::MuLaw8,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -37,6 +39,7 @@ impl WavSampleFormat {
             Self::Pcm32 => "PCM 32-bit",
             Self::Float32 => "Float 32-bit",
             Self::Float64 => "Float 64-bit",
+            Self::MuLaw8 => "8-bit u-Law",
         }
     }
 
@@ -126,6 +129,16 @@ pub struct Pcm32WavExport {
     inner: IntegerPcmWavExport,
 }
 
+/// Incremental G.711 μ-law WAV export.
+pub struct MuLaw8WavExport {
+    destination: PathBuf,
+    temporary: PathBuf,
+    file: Option<BufWriter<File>>,
+    sample_rate: u32,
+    channels: WavChannelCount,
+    data_bytes: u64,
+}
+
 /// User-facing WAV export writer. Float output ignores the integer-only dither setting.
 pub enum WavExport {
     Pcm8(Pcm8WavExport),
@@ -134,6 +147,7 @@ pub enum WavExport {
     Pcm32(Pcm32WavExport),
     Float32(Float32WavExport),
     Float64(Float64WavExport),
+    MuLaw8(MuLaw8WavExport),
 }
 
 #[derive(Debug)]
@@ -144,6 +158,7 @@ pub enum WavExportError {
     Pcm32(IntegerPcmWavExportError),
     Float32(Float32WavExportError),
     Float64(Float32WavExportError),
+    MuLaw8(MuLaw8WavExportError),
 }
 
 impl std::fmt::Display for WavExportError {
@@ -153,6 +168,7 @@ impl std::fmt::Display for WavExportError {
                 error.fmt(formatter)
             }
             Self::Float32(error) | Self::Float64(error) => error.fmt(formatter),
+            Self::MuLaw8(error) => error.fmt(formatter),
         }
     }
 }
@@ -164,6 +180,7 @@ impl std::error::Error for WavExportError {
                 Some(error)
             }
             Self::Float32(error) | Self::Float64(error) => Some(error),
+            Self::MuLaw8(error) => Some(error),
         }
     }
 }
@@ -412,6 +429,138 @@ impl Pcm32WavExport {
     }
 }
 
+/// Errors returned while creating or writing a G.711 μ-law WAV export.
+#[derive(Debug)]
+pub enum MuLaw8WavExportError {
+    Io(io::Error),
+    InvalidSampleRate,
+    RiffSizeLimit,
+    NonFiniteSample,
+}
+
+impl std::fmt::Display for MuLaw8WavExportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "u-Law WAV export failed: {error}"),
+            Self::InvalidSampleRate => formatter.write_str("WAV sample rate must be positive"),
+            Self::RiffSizeLimit => formatter.write_str("WAV export exceeds the RIFF size limit"),
+            Self::NonFiniteSample => formatter.write_str("u-Law WAV contains a non-finite sample"),
+        }
+    }
+}
+
+impl std::error::Error for MuLaw8WavExportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::InvalidSampleRate | Self::RiffSizeLimit | Self::NonFiniteSample => None,
+        }
+    }
+}
+
+impl From<io::Error> for MuLaw8WavExportError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl MuLaw8WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, MuLaw8WavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, MuLaw8WavExportError> {
+        if sample_rate == 0 {
+            return Err(MuLaw8WavExportError::InvalidSampleRate);
+        }
+        let destination = destination.as_ref().to_path_buf();
+        if destination.exists() {
+            return Err(
+                io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists").into(),
+            );
+        }
+        let (temporary, mut file) = create_temporary_sibling(&destination)?;
+        let mut export = Self {
+            destination,
+            temporary,
+            file: None,
+            sample_rate,
+            channels,
+            data_bytes: 0,
+        };
+        write_mulaw_header(&mut file, sample_rate, channels, 0)?;
+        export.file = Some(BufWriter::new(file));
+        Ok(export)
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), MuLaw8WavExportError> {
+        let channel_count = self.channels.channels();
+        let bytes_per_frame = u64::from(channel_count);
+        let added_bytes = (frames.len() as u64)
+            .checked_mul(bytes_per_frame)
+            .ok_or(MuLaw8WavExportError::RiffSizeLimit)?;
+        let data_bytes = self
+            .data_bytes
+            .checked_add(added_bytes)
+            .filter(|bytes| {
+                bytes
+                    .checked_add(38)
+                    .and_then(|size| size.checked_add(bytes % 2))
+                    .is_some_and(|riff_size| riff_size <= u64::from(u32::MAX))
+            })
+            .ok_or(MuLaw8WavExportError::RiffSizeLimit)?;
+        if frames.iter().flatten().any(|sample| !sample.is_finite()) {
+            return Err(MuLaw8WavExportError::NonFiniteSample);
+        }
+        let file = self
+            .file
+            .as_mut()
+            .expect("unfinished export retains its file");
+        for frame in frames {
+            for channel in 0..channel_count as usize {
+                file.write_all(&[encode_mulaw_sample(
+                    self.channels.frame_sample(frame, channel),
+                )])?;
+            }
+        }
+        self.data_bytes = data_bytes;
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<PathBuf, MuLaw8WavExportError> {
+        let mut file = self
+            .file
+            .take()
+            .expect("unfinished export retains its file");
+        file.flush()?;
+        if self.data_bytes & 1 != 0 {
+            file.seek(SeekFrom::End(0))?;
+            file.write_all(&[0])?;
+        }
+        file.seek(SeekFrom::Start(0))?;
+        write_mulaw_header(&mut file, self.sample_rate, self.channels, self.data_bytes)?;
+        file.flush()?;
+        drop(file);
+        fs::hard_link(&self.temporary, &self.destination)?;
+        let _ = fs::remove_file(&self.temporary);
+        Ok(self.destination.clone())
+    }
+}
+
+impl Drop for MuLaw8WavExport {
+    fn drop(&mut self) {
+        self.file.take();
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
 impl WavExport {
     pub fn create(
         destination: impl AsRef<Path>,
@@ -487,6 +636,11 @@ impl WavExport {
                     .map(Self::Float64)
                     .map_err(WavExportError::Float64)?
             }
+            WavSampleFormat::MuLaw8 => {
+                MuLaw8WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::MuLaw8)
+                    .map_err(WavExportError::MuLaw8)?
+            }
         };
         Ok(export)
     }
@@ -499,6 +653,7 @@ impl WavExport {
             Self::Pcm32(export) => export.write_frames(frames).map_err(WavExportError::Pcm32),
             Self::Float32(export) => export.write_frames(frames).map_err(WavExportError::Float32),
             Self::Float64(export) => export.write_frames(frames).map_err(WavExportError::Float64),
+            Self::MuLaw8(export) => export.write_frames(frames).map_err(WavExportError::MuLaw8),
         }
     }
 
@@ -510,6 +665,7 @@ impl WavExport {
             Self::Pcm32(export) => export.finish().map_err(WavExportError::Pcm32),
             Self::Float32(export) => export.finish().map_err(WavExportError::Float32),
             Self::Float64(export) => export.finish().map_err(WavExportError::Float64),
+            Self::MuLaw8(export) => export.finish().map_err(WavExportError::MuLaw8),
         }
     }
 }
@@ -949,6 +1105,57 @@ fn write_float_header(
     file.write_all(&data_bytes.to_le_bytes())
 }
 
+fn write_mulaw_header(
+    file: &mut impl Write,
+    sample_rate: u32,
+    channels: WavChannelCount,
+    data_bytes: u64,
+) -> io::Result<()> {
+    let data_bytes = u32::try_from(data_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV data exceeds RIFF limit"))?;
+    let channel_count = channels.channels();
+    let byte_rate = sample_rate
+        .checked_mul(u32::from(channel_count))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "WAV byte rate overflow"))?;
+    file.write_all(b"RIFF")?;
+    let riff_size = 38_u32
+        .checked_add(data_bytes)
+        .and_then(|size| size.checked_add(data_bytes % 2))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "WAV RIFF size overflow"))?;
+    file.write_all(&riff_size.to_le_bytes())?;
+    file.write_all(b"WAVEfmt ")?;
+    file.write_all(&18_u32.to_le_bytes())?;
+    file.write_all(&7_u16.to_le_bytes())?;
+    file.write_all(&channel_count.to_le_bytes())?;
+    file.write_all(&sample_rate.to_le_bytes())?;
+    file.write_all(&byte_rate.to_le_bytes())?;
+    file.write_all(&channel_count.to_le_bytes())?;
+    file.write_all(&8_u16.to_le_bytes())?;
+    file.write_all(&0_u16.to_le_bytes())?;
+    file.write_all(b"data")?;
+    file.write_all(&data_bytes.to_le_bytes())
+}
+
+fn encode_mulaw_sample(sample: f32) -> u8 {
+    const SEGMENT_ENDS: [i32; 8] = [0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff];
+    let pcm = (sample.clamp(-1.0, 1.0) * 32_768.0).round() as i32;
+    let pcm = pcm >> 2;
+    let (mask, magnitude) = if pcm < 0 {
+        (0x7f_u8, -pcm)
+    } else {
+        (0xff_u8, pcm)
+    };
+    let magnitude = (magnitude + 33).min(0x1fff);
+    let segment = SEGMENT_ENDS
+        .iter()
+        .position(|segment_end| magnitude <= *segment_end)
+        .unwrap_or(8);
+    if segment >= 8 {
+        return 0x7f ^ mask;
+    }
+    (((segment as i32) << 4) | ((magnitude >> (segment + 1)) & 0x0f)) as u8 ^ mask
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1148,6 +1355,7 @@ mod tests {
                 WavExport::Pcm32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Float32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Float64(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
+                WavExport::MuLaw8(export) => export.data_bytes = u64::MAX,
             }
             assert!(write_error.write_frames(&[[0.25, -0.25]]).is_err());
             drop(write_error);
@@ -1224,7 +1432,17 @@ mod tests {
                 WavSampleFormat::Pcm24 => 3,
                 WavSampleFormat::Pcm32 | WavSampleFormat::Float32 => 4,
                 WavSampleFormat::Float64 => 8,
+                WavSampleFormat::MuLaw8 => 1,
             };
+            let expected_format_tag = match sample_format {
+                WavSampleFormat::MuLaw8 => 7,
+                WavSampleFormat::Float32 | WavSampleFormat::Float64 => 3,
+                _ => 1,
+            };
+            assert_eq!(
+                u16::from_le_bytes(bytes[20..22].try_into().unwrap()),
+                expected_format_tag
+            );
             let data_offset = find_wav_data_offset(&bytes).expect("mono data chunk should exist");
             assert_eq!(
                 u32::from_le_bytes(bytes[data_offset - 4..data_offset].try_into().unwrap()),
@@ -1238,9 +1456,85 @@ mod tests {
                 .expect("mono output should contain a frame");
             assert_eq!(chunk.channels(), 1);
             assert_eq!(chunk.samples().len(), 1);
-            assert!((chunk.samples()[0] - 0.25).abs() < 1.0e-6);
+            let tolerance = if sample_format == WavSampleFormat::MuLaw8 {
+                0.02
+            } else {
+                1.0e-6
+            };
+            assert!(
+                (chunk.samples()[0] - 0.25).abs() < tolerance,
+                "{sample_format} mono output decoded to {}",
+                chunk.samples()[0]
+            );
+            if sample_format == WavSampleFormat::MuLaw8 {
+                assert_eq!(bytes.len() & 1, 0, "odd u-Law data should be RIFF padded");
+                assert_eq!(bytes.last(), Some(&0), "u-Law RIFF pad byte should be zero");
+                assert_eq!(
+                    u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize,
+                    bytes.len() - 8
+                );
+            }
             fs::remove_file(path).expect("test output should be removed");
         }
+    }
+
+    #[test]
+    fn mulaw_wav_matches_native_g711_codes_and_decodes() {
+        let path = temp_destination("mulaw-native-vectors");
+        let frames = [
+            [-0.999, -0.75],
+            [-0.5, -0.25],
+            [-0.125, -0.1],
+            [-0.05, -0.01],
+            [0.0, 0.01],
+            [0.05, 0.1],
+            [0.125, 0.25],
+            [0.5, 0.75],
+        ];
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::MuLaw8,
+                dither: false,
+            },
+        )
+        .expect("u-Law writer should open");
+        export
+            .write_frames(&frames)
+            .expect("finite u-Law samples should write");
+        export.finish().expect("u-Law WAV should publish");
+
+        let bytes = fs::read(&path).expect("u-Law WAV should be readable");
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 7);
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[28..32].try_into().unwrap()),
+            96_000
+        );
+        assert_eq!(u16::from_le_bytes(bytes[32..34].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 8);
+        assert_eq!(u16::from_le_bytes(bytes[36..38].try_into().unwrap()), 0);
+        let data_offset = find_wav_data_offset(&bytes).expect("u-Law data chunk should exist");
+        assert_eq!(
+            &bytes[data_offset..data_offset + 16],
+            &[
+                0, 7, 15, 31, 47, 53, 68, 99, 255, 227, 196, 181, 175, 159, 143, 135
+            ]
+        );
+
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("AAADAW should decode G.711 μ-law WAV");
+        let chunk = decoder
+            .next_chunk()
+            .expect("u-Law WAV should decode")
+            .unwrap();
+        assert_eq!(chunk.channels(), 2);
+        assert_eq!(chunk.samples().len(), frames.len() * 2);
+        for (actual, expected) in chunk.samples().iter().zip(frames.into_iter().flatten()) {
+            assert!((*actual - expected).abs() < 0.04);
+        }
+        fs::remove_file(path).expect("test WAV should be removed");
     }
 
     #[test]

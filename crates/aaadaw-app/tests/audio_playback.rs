@@ -669,7 +669,7 @@ fn offline_render_waits_for_bounded_media_feeders_and_exports_the_mix() {
 }
 
 #[test]
-fn offline_render_routes_native_linear_pcm_and_float_formats_through_the_same_graph() {
+fn offline_render_routes_native_pcm_float_and_mulaw_formats_through_the_same_graph() {
     let database_path = unique_path("aaadaw");
     let wav = pcm_wav(&[16_384, -16_384, 8_192, -8_192], 48_000);
     let mut store = ProjectStore::open(&database_path).expect("project should open");
@@ -708,6 +708,7 @@ fn offline_render_routes_native_linear_pcm_and_float_formats_through_the_same_gr
             WavSampleFormat::Pcm32 => 32,
             WavSampleFormat::Float32 => 32,
             WavSampleFormat::Float64 => 64,
+            WavSampleFormat::MuLaw8 => 8,
         };
         assert_eq!(
             u16::from_le_bytes(bytes[34..36].try_into().unwrap()),
@@ -719,6 +720,8 @@ fn offline_render_routes_native_linear_pcm_and_float_formats_through_the_same_gr
             WavSampleFormat::Float32 | WavSampleFormat::Float64
         ) {
             assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        } else if sample_format == WavSampleFormat::MuLaw8 {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 7);
         } else {
             assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
         }
@@ -731,7 +734,9 @@ fn offline_render_routes_native_linear_pcm_and_float_formats_through_the_same_gr
             .unwrap_or_else(|| panic!("{sample_format} output should contain frames"));
         assert_eq!(chunk.channels(), 2);
         let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
-        let tolerance = if sample_format == WavSampleFormat::Pcm8 {
+        let tolerance = if sample_format == WavSampleFormat::MuLaw8 {
+            0.02
+        } else if sample_format == WavSampleFormat::Pcm8 {
             1.0 / 128.0
         } else if sample_format == WavSampleFormat::Pcm16 {
             1.0e-4

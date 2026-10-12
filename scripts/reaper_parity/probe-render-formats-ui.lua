@@ -1,7 +1,9 @@
 -- Run in Linux REAPER 7.82 with an isolated Default 7 configuration and an empty project.
--- source.wav must be 48 kHz, stereo PCM24 with one second of constant L=0.125/R=0.375.
--- Open the native WAV bit-depth menu, render the supported linear formats, and inspect each WAV.
+-- source.wav must be one second of 48 kHz stereo PCM24. For the standard format check use
+-- constant L=0.125/R=0.375; probe-render-ulaw-vectors.py creates a segmented μ-law test fixture.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
+local source_description = os.getenv("AAADAW_REAPER_PROBE_SOURCE_DESCRIPTION")
+  or "48 kHz PCM24 stereo; 48,000 frames; L=0.125/R=0.375"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
 assert(reaper.CountTracks(0) == 0)
@@ -39,7 +41,7 @@ reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", "evaw", true)
 local log = assert(io.open(root .. "render-formats.tsv", "w"))
 log:write("version\t", reaper.GetAppVersion(), "\n")
 log:write("theme\t", reaper.GetLastColorThemeFile(), "\n")
-log:write("source\t48 kHz PCM24 stereo; 48,000 frames; L=0.125/R=0.375\n")
+log:write("source\t", source_description, "\n")
 log:write("render_source\tMaster mix\noutput_channels\t2\noutput_rate\t48000\n")
 log:close()
 
