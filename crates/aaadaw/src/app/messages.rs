@@ -4,7 +4,9 @@ use super::audio_export::{RenderBounds, RenderSampleRate};
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
-use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult, WavSampleFormat};
+use aaadaw_app::{
+    AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
+};
 use aaadaw_core::{
     DawAction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, Project,
     TrackId,
@@ -448,6 +450,7 @@ pub(crate) enum Message {
     SetWavDither(bool),
     SetRenderBounds(RenderBounds),
     SetRenderSampleRate(RenderSampleRate),
+    SetRenderChannels(WavChannelCount),
     SetRenderTailDuration(String),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),

@@ -56,8 +56,8 @@ pub use offline_render::{
 };
 pub use wav_export::{
     Float32WavExport, Float32WavExportError, IntegerPcmWavExportError, Pcm16WavExport,
-    Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError, WavExport, WavExportError,
-    WavExportOptions, WavSampleFormat,
+    Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError, WavChannelCount, WavExport,
+    WavExportError, WavExportOptions, WavSampleFormat,
 };
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 

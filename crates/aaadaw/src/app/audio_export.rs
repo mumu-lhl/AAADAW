@@ -1,6 +1,7 @@
 use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
+use aaadaw_app::WavChannelCount;
 use aaadaw_core::{DawAction, Project, ProjectSnapshot, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -105,6 +106,7 @@ impl std::fmt::Display for RenderBounds {
 pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
     pub(super) sample_rate: RenderSampleRate,
+    pub(super) channels: WavChannelCount,
     pub(super) tail_duration_text: String,
 }
 
@@ -113,6 +115,7 @@ impl Default for RenderDialogState {
         Self {
             bounds: RenderBounds::EntireProject,
             sample_rate: RenderSampleRate::Project,
+            channels: WavChannelCount::Stereo,
             tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
         }
     }
@@ -233,6 +236,7 @@ impl App {
                     master_ceiling: self.audio_settings.master_output_ceiling,
                     export_options: self.wav_export_options,
                     output_sample_rate,
+                    output_channels: self.render_dialog.channels,
                     start_sample,
                     end_sample,
                     tail_milliseconds,
@@ -683,6 +687,7 @@ mod tests {
                     master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
                     export_options: aaadaw_app::WavExportOptions::default(),
                     output_sample_rate: Project::default().settings().sample_rate(),
+                    output_channels: WavChannelCount::Stereo,
                     start_sample: 0,
                     end_sample: 0,
                     tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
@@ -793,6 +798,7 @@ mod tests {
         };
         app.render_dialog.bounds = RenderBounds::TimeSelection;
         app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
+        app.render_dialog.channels = WavChannelCount::Mono;
         app.render_dialog.tail_duration_text = "3.125".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
@@ -807,6 +813,7 @@ mod tests {
             end_tick: 960,
         });
         app.render_dialog.sample_rate = RenderSampleRate::Project;
+        app.render_dialog.channels = WavChannelCount::Stereo;
         app.render_dialog.tail_duration_text = "0".to_owned();
 
         let queued = app
@@ -819,6 +826,7 @@ mod tests {
                 assert_eq!(settings.end_sample, 72_000);
                 assert_eq!(settings.tail_milliseconds, 3_125);
                 assert_eq!(settings.output_sample_rate, 44_100);
+                assert_eq!(settings.output_channels, WavChannelCount::Mono);
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
         }

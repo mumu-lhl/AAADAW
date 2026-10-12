@@ -1,6 +1,6 @@
 use crate::{
     Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
-    PreparedAudioPlayback, WavExport, WavExportError, WavExportOptions,
+    PreparedAudioPlayback, WavChannelCount, WavExport, WavExportError, WavExportOptions,
 };
 use crate::{
     prepare_audio_playback_at_with_resampling_quality,
@@ -33,6 +33,7 @@ pub struct ProjectWavRenderSettings {
     pub master_ceiling: MasterOutputCeiling,
     pub export_options: WavExportOptions,
     pub output_sample_rate: u32,
+    pub output_channels: WavChannelCount,
     pub start_sample: u64,
     pub end_sample: u64,
     pub tail_milliseconds: u32,
@@ -469,6 +470,7 @@ pub fn render_project_file_to_wav(
             master_ceiling,
             export_options: options,
             output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
             start_sample: 0,
             end_sample,
             tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
@@ -494,6 +496,7 @@ pub fn render_project_file_to_wav_with_settings(
         master_ceiling,
         export_options,
         output_sample_rate,
+        output_channels,
         start_sample,
         end_sample,
         tail_milliseconds,
@@ -507,8 +510,13 @@ pub fn render_project_file_to_wav_with_settings(
         end_sample,
         tail_milliseconds,
     )?;
-    let export = WavExport::create(destination.as_ref(), output_sample_rate, export_options)
-        .map_err(OfflineRenderError::WavExport)?;
+    let export = WavExport::create_with_channels(
+        destination.as_ref(),
+        output_sample_rate,
+        export_options,
+        output_channels,
+    )
+    .map_err(OfflineRenderError::WavExport)?;
     let project_sample_rate = project.settings().sample_rate();
     let resampler = (output_sample_rate != project_sample_rate)
         .then(|| {
@@ -1318,6 +1326,7 @@ mod tests {
                     master_ceiling: MasterOutputCeiling::default(),
                     export_options: WavExportOptions::default(),
                     output_sample_rate: Project::default().settings().sample_rate(),
+                    output_channels: WavChannelCount::Stereo,
                     start_sample: 0,
                     end_sample: 48_000,
                     tail_milliseconds: 2_000,

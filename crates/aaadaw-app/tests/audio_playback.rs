@@ -448,6 +448,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
             master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
             export_options: WavExportOptions::default(),
             output_sample_rate: 44_100,
+            output_channels: aaadaw_app::WavChannelCount::Mono,
             start_sample: 24_000,
             end_sample: 48_000,
             tail_milliseconds: 1_250,
@@ -462,11 +463,11 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
         u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
         44_100
     );
-    assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+    assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
     assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
     let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
-    assert_eq!(data_bytes, 77_175 * 6);
-    let stable_left_offset = 44 + 1_000 * 6;
+    assert_eq!(data_bytes, 77_175 * 3);
+    let stable_left_offset = 44 + 1_000 * 3;
     let first_left = i32::from_le_bytes([
         bytes[stable_left_offset],
         bytes[stable_left_offset + 1],
@@ -481,7 +482,7 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
         first_left > 2_000_000,
         "resampled output should preserve the selected passband, got {first_left}"
     );
-    let tail_left_offset = 44 + (22_050 + 1_000) * 6;
+    let tail_left_offset = 44 + (22_050 + 1_000) * 3;
     let tail_left = i32::from_le_bytes([
         bytes[tail_left_offset],
         bytes[tail_left_offset + 1],

@@ -1,7 +1,7 @@
 use super::super::audio_export::{RenderBounds, RenderSampleRate, parse_render_tail_milliseconds};
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
-use aaadaw_app::WavSampleFormat;
+use aaadaw_app::{WavChannelCount, WavSampleFormat};
 use iced::widget::{button, column, container, pick_list, row, rule, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -66,7 +66,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         row![
             text("Channels").size(13),
             iced::widget::Space::new().width(Length::Fill),
-            text("Stereo").size(12),
+            pick_list(
+                &WavChannelCount::ALL[..],
+                Some(app.render_dialog.channels),
+                Message::SetRenderChannels,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),

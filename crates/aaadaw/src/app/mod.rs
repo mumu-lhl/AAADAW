@@ -2906,6 +2906,9 @@ impl App {
             Message::SetRenderSampleRate(sample_rate) => {
                 self.render_dialog.sample_rate = sample_rate;
             }
+            Message::SetRenderChannels(channels) => {
+                self.render_dialog.channels = channels;
+            }
             Message::SetRenderTailDuration(value) => {
                 self.render_dialog.tail_duration_text = value;
             }
