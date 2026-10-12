@@ -399,3 +399,13 @@ REAPER 7.82 Default 7 原厂探针确认：双击 Marker 打开 Edit Marker，Na
 AAADAW 现从标尺双击进入 Edit Marker 窗口并聚焦名称输入；键入后按 Enter 或点 OK，通过 `DawAction::UpdateProjectMarker` 提交一次可撤销名称修改；Cancel、Escape 或关闭窗口会丢弃草稿。第二次点击若开始拖动仍按拖动处理，不误开编辑窗。原厂 ID、Lane、Position、颜色和 Marker Manager 尚未实现；AAADAW 窗口暂只编辑名称，不能视为完整属性或管理器对齐。
 
 聚焦 nextest 中 Marker editor Undo/Redo/取消/非法输入与忙碌守卫、双击命中/位置容差及“第二击转拖动”共 9 项全部通过。Linux 图形会话实窗验证双击打开、名称输入自动获得焦点、直接键入并 Enter 保存、点击 Cancel 不保存。原厂和 AAADAW 窗口截图见[原厂窗口](../verification/reaper-parity/fixtures/marker-edit-dialog-native.png)与[AAADAW 窗口](../verification/reaper-parity/fixtures/marker-edit-dialog-aaadaw.png)，取消后的工程画面见[AAADAW 取消结果](../verification/reaper-parity/fixtures/marker-edit-cancel-aaadaw.png)。`PROJECT-MARKERS-001`、P4 和 UI-013 仍保持 `in_progress`；后续优先扩展原厂 Marker Manager 与属性字段，并完成同位置、Region 和时间基准行为。
+
+### 2026-10-12 Region/Marker Manager 基础列表
+
+Linux REAPER 7.82 Default 7 的 action 40326 和默认 `Ctrl+Alt+Shift+R` 已核对。原厂管理器初始启用 Regions、关闭 Markers；Markers 开启后可见 `#`、Name、Start、End、Length、Current、Visible、Ruler Lane 等列。单击行选择并定位编辑光标，双击单元格可编辑；完整原厂窗口和行为见[Manager 证据记录](../verification/reaper-parity/project-markers.md)。
+
+AAADAW 新增独立 Region/Marker Manager 窗口、View 菜单动作与默认快捷键。它沿用原厂初始过滤状态；Marker 列支持按名称、显示编号和 bar.beat.hundredths 搜索，行选择移动编辑光标，Edit 调用现有名称窗，Delete 使用稳定 Marker ID 历史动作。管理器仍显示明确的 Region 未实现状态，未把 Region checkbox 当成已具备 Region 数据能力。实窗验证改名后列表即时刷新，并在管理器保持焦点时用 Ctrl+Z 撤销；截图见[默认状态](../verification/reaper-parity/fixtures/marker-manager-default-aaadaw.png)、[Marker 列表](../verification/reaper-parity/fixtures/marker-manager-list-aaadaw.png)和[编辑窗](../verification/reaper-parity/fixtures/marker-manager-edit-dialog-aaadaw.png)。
+
+本切片没有实现原厂 End、Length、Visible、Ruler Lane、Render Matrix、Lane Manager、Options、列排序/拖动、双击单元格内编辑、完整 Marker 属性或 Region。`PROJECT-MARKERS-001`、UI-013 和 P4 继续 `in_progress`；下一优先项是补齐 Edit Marker 的位置属性并继续调查 ID/Lane 字段与其时间格式语义。
+
+专项测试覆盖默认过滤、名称/编号/位置筛选、行选择定位、编辑入口、删除/Undo、忙碌保护和全局 Undo 快捷键。最终 workspace nextest 930/930 通过、0 跳过；workspace all-target strict Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt、69 个唯一 parity ID、证据路径和 `git diff --check` 通过。GUI 证据是基础功能验收，完整 REAPER 复刻仍未完成。

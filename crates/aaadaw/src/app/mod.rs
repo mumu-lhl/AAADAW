@@ -60,6 +60,7 @@ mod fader;
 mod fader_data;
 mod item_properties;
 mod keyboard_config;
+mod marker_manager;
 mod marker_properties;
 mod media;
 mod messages;
@@ -325,6 +326,8 @@ struct App {
     item_properties_unit: item_properties::TimeUnit,
     marker_properties: Option<marker_properties::MarkerProperties>,
     marker_properties_window_id: Option<iced::window::Id>,
+    marker_manager: Option<marker_manager::MarkerManager>,
+    marker_manager_window_id: Option<iced::window::Id>,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
@@ -1368,6 +1371,8 @@ impl App {
             "Media Item Properties".to_owned()
         } else if self.marker_properties_window_id == Some(window_id) {
             "Edit Marker".to_owned()
+        } else if self.marker_manager_window_id == Some(window_id) {
+            "Region/Marker Manager".to_owned()
         } else if self.routing_window_id == Some(window_id) {
             self.routing_track_id
                 .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
@@ -1648,6 +1653,7 @@ impl App {
                 if self.main_window_id == Some(*window_id)
                     || self.item_properties_window_id == Some(*window_id)
                     || self.marker_properties_window_id == Some(*window_id)
+                    || self.marker_manager_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
@@ -1717,6 +1723,14 @@ impl App {
                     | Message::MarkerNameChanged(_)
                     | Message::ApplyMarkerProperties
                     | Message::CloseMarkerProperties
+                    | Message::OpenMarkerManager
+                    | Message::CloseMarkerManager
+                    | Message::MarkerManagerFilterChanged(_)
+                    | Message::MarkerManagerShowRegionsChanged(_)
+                    | Message::MarkerManagerShowMarkersChanged(_)
+                    | Message::MarkerManagerClearFilter
+                    | Message::MarkerManagerSelectMarker(_)
+                    | Message::MarkerManagerEditMarker(_)
                     | Message::OpenTempoMap
                     | Message::OpenMeterMap
                     | Message::SelectTimeMapTab(_)
@@ -1747,6 +1761,7 @@ impl App {
                     | Message::ExecuteCommand(commands::CommandId::OpenSettings)
                     | Message::ExecuteCommand(commands::CommandId::OpenProjectSettings)
                     | Message::ExecuteCommand(commands::CommandId::OpenActionList)
+                    | Message::ExecuteCommand(commands::CommandId::OpenMarkerManager)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
@@ -2243,6 +2258,37 @@ impl App {
             }
             Message::ApplyMarkerProperties => task = self.apply_marker_properties(),
             Message::CloseMarkerProperties => task = self.close_marker_properties(),
+            Message::OpenMarkerManager => task = self.open_marker_manager(),
+            Message::CloseMarkerManager => task = self.close_marker_manager(),
+            Message::MarkerManagerFilterChanged(value) => {
+                if let Some(manager) = &mut self.marker_manager {
+                    manager.filter = value;
+                }
+            }
+            Message::MarkerManagerShowRegionsChanged(enabled) => {
+                if let Some(manager) = &mut self.marker_manager {
+                    manager.show_regions = enabled;
+                }
+            }
+            Message::MarkerManagerShowMarkersChanged(enabled) => {
+                if let Some(manager) = &mut self.marker_manager {
+                    manager.show_markers = enabled;
+                }
+            }
+            Message::MarkerManagerClearFilter => {
+                if let Some(manager) = &mut self.marker_manager {
+                    manager.filter.clear();
+                }
+            }
+            Message::MarkerManagerSelectMarker(marker_id) => {
+                self.select_marker_from_manager(marker_id)
+            }
+            Message::MarkerManagerEditMarker(marker_id) => {
+                task = self.open_marker_properties(marker_id)
+            }
+            Message::MarkerManagerDeleteMarker(marker_id) => {
+                self.delete_marker_from_manager(marker_id)
+            }
             Message::OpenTempoMap => task = self.open_tempo_map(TimeMapTab::Tempo),
             Message::OpenMeterMap => task = self.open_tempo_map(TimeMapTab::Meter),
             Message::SelectTimeMapTab(tab) => self.time_map_tab = tab,
@@ -2310,6 +2356,9 @@ impl App {
                 } else if self.marker_properties_window_id == Some(window_id) {
                     self.marker_properties_window_id = None;
                     self.marker_properties = None;
+                } else if self.marker_manager_window_id == Some(window_id) {
+                    self.marker_manager_window_id = None;
+                    self.marker_manager = None;
                 } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
@@ -3191,6 +3240,31 @@ impl App {
                         )
                     {
                         return self.apply_marker_properties();
+                    }
+                    return Task::none();
+                }
+                if self.marker_manager_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        return self.close_marker_manager();
+                    }
+                    if let Some(message) = keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        Some(window_id),
+                        None,
+                        None,
+                    ) {
+                        return self.update(message);
                     }
                     return Task::none();
                 }
@@ -4365,6 +4439,9 @@ impl App {
                         self.unsaved_session_snapshot_revision = 0;
                         self.recording_recovery_candidates.clear();
                         self.project_generation = self.project_generation.wrapping_add(1);
+                        if let Some(manager) = &mut self.marker_manager {
+                            manager.selected_marker = None;
+                        }
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
@@ -4539,6 +4616,9 @@ impl App {
                         self.project_path_query.clear();
                         self.project_lock = None;
                         self.project_generation = self.project_generation.wrapping_add(1);
+                        if let Some(manager) = &mut self.marker_manager {
+                            manager.selected_marker = None;
+                        }
                         self.revision = 1;
                         self.saved_revision = 0;
                         self.unsaved_session_snapshot_revision = self.revision;
@@ -4978,6 +5058,9 @@ impl App {
         self.tempo_map_feedback.clear();
         self.meter_map_feedback.clear();
         self.project_generation = self.project_generation.wrapping_add(1);
+        if let Some(manager) = &mut self.marker_manager {
+            manager.selected_marker = None;
+        }
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;
         self.midi_note_clipboard.last_paste = None;

@@ -1,0 +1,16 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40326	View: Show region/marker manager window	Ctrl+Alt+Shift+R
+project	Disposable numbered-markers-probe.rpp
+audio_device	closed (manager selection is project navigation)
+window	Region/Marker Manager	674x387
+default_filters	Regions=on; Markers=off
+visible_columns	#; Name; Start; End; Length; Current; Visible; Ruler Lane; Render Matrix
+fixture_markers	Marker 1 at 4 s with empty name; Marker 10 at 11 s with empty name
+
+case	interaction	observed_result	project_file_result	undo_result
+default_open	Open action 40326	Regions is checked and Markers is unchecked; the marker list is empty	No project edit	-
+show_markers	Enable Markers	Rows show #, Name, Start, End, Length, Current, Visible, Ruler Lane and additional columns	No project edit	-
+select_marker	Click Marker 10 row at 11 s	The row is selected, edit cursor reads 0:11.000, and Arrange scrolls to that marker	No project edit	No history event
+cell_edit	Double-click the # cell, type a nonnumeric value, then Ctrl+Z	The cell enters in-place editing; the edit changes the displayed marker ID, and one Undo restores M1	Marker ID restored	One Ctrl+Z restores the original ID
+cancel_fixture	Close disposable project without saving	The temporary ID probe is discarded	Original fixture remains unchanged	-

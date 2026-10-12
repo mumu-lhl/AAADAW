@@ -8,8 +8,8 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
 };
 use aaadaw_core::{
-    DawAction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, Project,
-    TrackId,
+    DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId,
+    Project, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -218,6 +218,15 @@ pub(crate) enum Message {
     MarkerNameChanged(String),
     ApplyMarkerProperties,
     CloseMarkerProperties,
+    OpenMarkerManager,
+    CloseMarkerManager,
+    MarkerManagerFilterChanged(String),
+    MarkerManagerShowRegionsChanged(bool),
+    MarkerManagerShowMarkersChanged(bool),
+    MarkerManagerClearFilter,
+    MarkerManagerSelectMarker(MarkerId),
+    MarkerManagerEditMarker(MarkerId),
+    MarkerManagerDeleteMarker(MarkerId),
     OpenTempoMap,
     OpenMeterMap,
     SelectTimeMapTab(TimeMapTab),

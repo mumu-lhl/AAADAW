@@ -4297,7 +4297,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 }
             }
         }
-        for (index, marker) in self.project.markers().iter().enumerate() {
+        for marker in self.project.markers() {
             let position_ticks = state
                 .drag
                 .as_ref()
@@ -4334,7 +4334,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             });
             frame.fill(&flag, color);
             let label = if marker.name().is_empty() {
-                (index + 1).to_string()
+                marker.id().value().saturating_add(1).to_string()
             } else {
                 marker.name().to_owned()
             };
@@ -4383,15 +4383,14 @@ fn project_marker_hit<'a>(
     project
         .markers()
         .iter()
-        .enumerate()
-        .filter_map(|(index, marker)| {
+        .filter_map(|marker| {
             let x = project_marker_x(
                 marker.position_ticks(),
                 state.origin_tick,
                 state.pixels_per_tick,
             );
             let label = if marker.name().is_empty() {
-                (index + 1).to_string()
+                marker.id().value().saturating_add(1).to_string()
             } else {
                 marker.name().to_owned()
             };

@@ -26,6 +26,7 @@ pub(crate) enum CommandId {
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    OpenMarkerManager,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -91,6 +92,7 @@ enum CommandKind {
     ToggleOfflineJobsPanel,
     ShowArrangement,
     ShowMixer,
+    OpenMarkerManager,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -168,6 +170,12 @@ const PROJECT_MARKER_SLOT_9_SHORTCUT: &[Shortcut] =
     &[Shortcut::standard_character('9', Modifiers::CTRL)];
 const PROJECT_MARKER_SLOT_10_SHORTCUT: &[Shortcut] =
     &[Shortcut::standard_character('0', Modifiers::CTRL)];
+const MARKER_MANAGER_SHORTCUT: &[Shortcut] = &[Shortcut::character(
+    'r',
+    Modifiers::CTRL
+        .union(Modifiers::ALT)
+        .union(Modifiers::SHIFT),
+)];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[
     Shortcut::named(Named::Enter, Modifiers::NONE),
@@ -342,6 +350,20 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenMarkerManager,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Region/Marker Manager",
+        aliases: &[
+            "marker manager",
+            "region marker manager",
+            "show marker manager",
+        ],
+        shortcuts: MARKER_MANAGER_SHORTCUT,
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::AddMidiItem,
@@ -1335,6 +1357,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
+        CommandKind::OpenMarkerManager => "view.marker-manager",
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::AddProjectMarker => "insert.project-marker",
@@ -1419,6 +1442,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
+        CommandId::OpenMarkerManager => Message::OpenMarkerManager,
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::AddProjectMarker => Message::AddProjectMarker,
@@ -1634,7 +1658,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings
         | CommandKind::OpenProjectSettings
-        | CommandKind::OpenActionList => true,
+        | CommandKind::OpenActionList
+        | CommandKind::OpenMarkerManager => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::ExportWav => {
             app.media_store_path().is_some()
@@ -1829,6 +1854,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleOfflineJobsPanel => CommandId::ToggleOfflineJobsPanel,
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
+        CommandKind::OpenMarkerManager => CommandId::OpenMarkerManager,
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
@@ -1981,6 +2007,18 @@ mod project_marker_command_tests {
             command_kind_id(CommandKind::NextProjectMarker),
             "navigation.next-project-marker"
         );
+        let manager_shortcut = Modifiers::CTRL
+            .union(Modifiers::ALT)
+            .union(Modifiers::SHIFT);
+        assert_eq!(
+            from_shortcut(&Key::Character("r"), manager_shortcut, &bindings, &macros),
+            Some(CommandId::OpenMarkerManager)
+        );
+        assert_eq!(
+            stable_id(CommandId::OpenMarkerManager).as_deref(),
+            Some("view.marker-manager")
+        );
+        assert!(find(&App::default(), "region/marker manager").is_some());
     }
 
     #[test]

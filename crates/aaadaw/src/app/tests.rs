@@ -165,6 +165,108 @@ fn project_markers_insert_navigate_and_undo_through_app_actions() {
 }
 
 #[test]
+fn marker_manager_filters_selects_edits_and_deletes_with_undo() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 1920,
+            name: "Bridge".to_owned(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+
+    let _ = app.update(Message::OpenMarkerManager);
+    assert!(app.marker_manager_window_id.is_some());
+    let manager = app.marker_manager.as_ref().unwrap();
+    assert!(manager.show_regions);
+    assert!(!manager.show_markers);
+
+    let _ = app.update(Message::MarkerManagerShowMarkersChanged(true));
+    let _ = app.update(Message::MarkerManagerFilterChanged("bridge".to_owned()));
+    assert_eq!(app.marker_manager.as_ref().unwrap().filter, "bridge");
+    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id));
+    assert_eq!(app.timeline.edit_cursor_tick, 1920);
+    assert_eq!(
+        app.marker_manager.as_ref().unwrap().selected_marker,
+        Some(marker_id)
+    );
+
+    let _ = app.update(Message::MarkerManagerEditMarker(marker_id));
+    assert_eq!(app.marker_properties.as_ref().unwrap().name, "Bridge");
+    let _ = app.update(Message::CloseMarkerProperties);
+
+    let _ = app.update(Message::MarkerManagerDeleteMarker(marker_id));
+    assert!(app.project.markers().is_empty());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].name(), "Bridge");
+}
+
+#[test]
+fn marker_manager_delete_respects_project_edit_busy_guard() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+    let revision = app.revision;
+    app.io_busy = true;
+
+    app.delete_marker_from_manager(marker_id);
+
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.revision, revision);
+    assert!(app.status.contains("finish the current project operation"));
+}
+
+#[test]
+fn marker_manager_keeps_global_undo_shortcut_available() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        marker_manager: Some(super::marker_manager::MarkerManager::default()),
+        marker_manager_window_id: Some(window_id),
+        ..App::default()
+    };
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: String::new(),
+        })
+        .unwrap();
+    let (marker_id, position_ticks) = {
+        let marker = &app.project.markers()[0];
+        (marker.id(), marker.position_ticks())
+    };
+    app.project
+        .apply(DawAction::UpdateProjectMarker {
+            marker_id,
+            position_ticks,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("z".into()),
+            modified_key: Key::Character("z".into()),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyZ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: None,
+            repeat: false,
+        }),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+
+    assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.marker_manager_window_id, Some(window_id));
+}
+
+#[test]
 fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
     let mut app = App::default();
     app.project
