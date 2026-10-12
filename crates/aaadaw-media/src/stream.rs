@@ -10,6 +10,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const MAX_UPSAMPLE_RATIO: f64 = 64.0;
+const SINC_TAPS: usize = 64;
+const SINC_LEFT_TAPS: i32 = 31;
+const SINC_RIGHT_TAPS: i32 = (SINC_TAPS as i32) - SINC_LEFT_TAPS - 1;
+const SINC_PHASES: usize = 1024;
 type WorkerStartupResult = Result<(), (Option<io::ErrorKind>, String)>;
 
 /// A cancellable decoder/resampler worker feeding one mono engine stream.
@@ -507,7 +511,8 @@ struct WorkerConfig {
 
 trait FeedFrame: Copy + Send + 'static {
     fn copy_from_chunk(chunk: &DecodedAudioChunk, output: &mut Vec<Self>);
-    fn interpolate(left: Self, right: Self, fraction: f32) -> Self;
+    fn zero() -> Self;
+    fn add_scaled(&mut self, frame: Self, scale: f32);
 }
 
 impl FeedFrame for f32 {
@@ -515,8 +520,12 @@ impl FeedFrame for f32 {
         chunk.copy_mono_downmix(output);
     }
 
-    fn interpolate(left: Self, right: Self, fraction: f32) -> Self {
-        left + (right - left) * fraction
+    fn zero() -> Self {
+        0.0
+    }
+
+    fn add_scaled(&mut self, frame: Self, scale: f32) {
+        *self += frame * scale;
     }
 }
 
@@ -525,11 +534,13 @@ impl FeedFrame for [f32; 2] {
         chunk.copy_stereo(output);
     }
 
-    fn interpolate(left: Self, right: Self, fraction: f32) -> Self {
-        [
-            left[0] + (right[0] - left[0]) * fraction,
-            left[1] + (right[1] - left[1]) * fraction,
-        ]
+    fn zero() -> Self {
+        [0.0, 0.0]
+    }
+
+    fn add_scaled(&mut self, frame: Self, scale: f32) {
+        self[0] += frame[0] * scale;
+        self[1] += frame[1] * scale;
     }
 }
 
@@ -710,6 +721,7 @@ fn push_with_backpressure<P: FeedProducer>(
 struct StreamingResampler<F> {
     input_sample_rate: u32,
     output_sample_rate: u32,
+    coefficients: Vec<[f32; SINC_TAPS]>,
     next_position_numerator: u128,
     input_frames: u64,
     pending_start_frame: u64,
@@ -730,9 +742,15 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 output: output_sample_rate,
             });
         }
+        let coefficients = if input_sample_rate == output_sample_rate {
+            Vec::new()
+        } else {
+            build_sinc_coefficients(input_sample_rate, output_sample_rate)
+        };
         Ok(Self {
             input_sample_rate,
             output_sample_rate,
+            coefficients,
             next_position_numerator: 0,
             input_frames: 0,
             pending_start_frame: 0,
@@ -759,30 +777,60 @@ impl<F: FeedFrame> StreamingResampler<F> {
 
     fn drain(&mut self, at_eof: bool) -> Vec<F> {
         let mut output = Vec::new();
+        if self.input_frames == 0 {
+            return output;
+        }
         let denominator = self.output_sample_rate as u128;
         let input_end = self.input_frames as u128 * denominator;
 
         while self.next_position_numerator < input_end {
-            let left_frame = (self.next_position_numerator / denominator) as u64;
-            let right_frame = left_frame + 1;
-            if !at_eof && right_frame >= self.input_frames {
+            let center_frame = (self.next_position_numerator / denominator) as u64;
+            if self.input_sample_rate == self.output_sample_rate {
+                let sample =
+                    self.pending_frames[(center_frame - self.pending_start_frame) as usize];
+                output.push(sample);
+                self.next_position_numerator += self.input_sample_rate as u128;
+                continue;
+            }
+            let last_required_frame = center_frame.saturating_add(SINC_RIGHT_TAPS as u64);
+            if !at_eof && last_required_frame >= self.input_frames {
                 break;
             }
 
-            let left_index = (left_frame - self.pending_start_frame) as usize;
-            let left = self.pending_frames[left_index];
-            let right = if right_frame < self.input_frames {
-                self.pending_frames[(right_frame - self.pending_start_frame) as usize]
-            } else {
-                left
-            };
-            let fraction = (self.next_position_numerator % denominator) as f32 / denominator as f32;
-            output.push(F::interpolate(left, right, fraction));
+            let phase_numerator = (self.next_position_numerator % denominator) as u64;
+            let phase_position = phase_numerator * SINC_PHASES as u64;
+            let phase = (phase_position / self.output_sample_rate as u64) as usize;
+            let phase_remainder = phase_position % self.output_sample_rate as u64;
+            let phase_fraction = phase_remainder as f32 / self.output_sample_rate as f32;
+            let first_coefficients = &self.coefficients[phase];
+            let second_coefficients = &self.coefficients[phase + 1];
+            let mut frame = F::zero();
+            for tap in 0..SINC_TAPS {
+                let offset = tap as i32 - SINC_LEFT_TAPS;
+                let source_frame = if offset < 0 {
+                    center_frame.saturating_sub((-offset) as u64)
+                } else {
+                    center_frame.saturating_add(offset as u64)
+                }
+                .min(self.input_frames - 1);
+                let sample =
+                    self.pending_frames[(source_frame - self.pending_start_frame) as usize];
+                let coefficient = first_coefficients[tap]
+                    + (second_coefficients[tap] - first_coefficients[tap]) * phase_fraction;
+                frame.add_scaled(sample, coefficient);
+            }
+            output.push(frame);
             self.next_position_numerator += self.input_sample_rate as u128;
         }
 
-        let discard_until =
-            ((self.next_position_numerator / denominator) as u64).min(self.input_frames);
+        let next_center = (self.next_position_numerator / denominator) as u64;
+        let discard_until = if self.input_sample_rate == self.output_sample_rate {
+            next_center.min(self.input_frames)
+        } else {
+            next_center
+                .saturating_sub(SINC_LEFT_TAPS as u64)
+                .min(self.input_frames)
+        };
         let discard_count = (discard_until - self.pending_start_frame) as usize;
         if discard_count > 0 {
             self.pending_frames.drain(..discard_count);
@@ -790,6 +838,45 @@ impl<F: FeedFrame> StreamingResampler<F> {
         }
         output
     }
+}
+
+fn build_sinc_coefficients(
+    input_sample_rate: u32,
+    output_sample_rate: u32,
+) -> Vec<[f32; SINC_TAPS]> {
+    let cutoff = (output_sample_rate as f64 / input_sample_rate as f64).min(1.0);
+    (0..=SINC_PHASES)
+        .map(|phase| {
+            let fraction = phase as f64 / SINC_PHASES as f64;
+            let mut coefficients = [0.0; SINC_TAPS];
+            let mut sum = 0.0;
+            for (tap, coefficient) in coefficients.iter_mut().enumerate() {
+                let distance = tap as f64 - SINC_LEFT_TAPS as f64 - fraction;
+                let normalized_distance = distance / (SINC_TAPS as f64 / 2.0);
+                if normalized_distance.abs() >= 1.0 {
+                    continue;
+                }
+                let window = 0.42
+                    + 0.5 * (std::f64::consts::PI * normalized_distance).cos()
+                    + 0.08 * (2.0 * std::f64::consts::PI * normalized_distance).cos();
+                let argument = std::f64::consts::PI * cutoff * distance;
+                let sinc = if argument.abs() < f64::EPSILON {
+                    1.0
+                } else {
+                    argument.sin() / argument
+                };
+                let value = cutoff * sinc * window;
+                *coefficient = value as f32;
+                sum += value;
+            }
+            if sum != 0.0 {
+                for coefficient in &mut coefficients {
+                    *coefficient = (*coefficient as f64 / sum) as f32;
+                }
+            }
+            coefficients
+        })
+        .collect()
 }
 
 impl DecodedAudioChunk {
@@ -829,51 +916,104 @@ mod tests {
     use super::StreamingResampler;
 
     #[test]
-    fn streaming_resampler_preserves_interpolation_across_chunk_boundaries() {
+    fn streaming_resampler_preserves_constant_level_and_output_duration() {
         let mut resampler = StreamingResampler::<f32>::new(24_000, 48_000)
             .expect("valid sample rates should create a resampler");
-        let first = resampler.push(&[0.0]).expect("first packet should process");
-        let second = resampler
-            .push(&[1.0])
-            .expect("second packet should process");
-        let final_samples = resampler.finish();
+        let mut output = resampler.push(&[0.25; 200]).expect("input should process");
+        output.extend(resampler.finish());
 
-        assert!(first.is_empty());
-        assert_eq!(second, [0.0, 0.5]);
-        assert_eq!(final_samples, [1.0, 1.0]);
+        assert_eq!(output.len(), 400);
+        assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
     }
 
     #[test]
-    fn streaming_resampler_downsamples_without_packet_local_phase_reset() {
-        let mut resampler = StreamingResampler::<f32>::new(48_000, 24_000)
+    fn streaming_resampler_is_independent_of_packet_boundaries() {
+        let input = (0..1021)
+            .map(|index| (index as f32 * 0.037).sin())
+            .collect::<Vec<_>>();
+        let mut whole = StreamingResampler::<f32>::new(48_000, 44_100)
             .expect("valid sample rates should create a resampler");
-        let first = resampler
-            .push(&[0.0, 0.25])
-            .expect("first packet should process");
-        let second = resampler
-            .push(&[0.5, 0.75])
-            .expect("second packet should process");
-        let final_samples = resampler.finish();
+        let mut whole_output = whole.push(&input).expect("input should process");
+        whole_output.extend(whole.finish());
 
-        assert_eq!(first, [0.0]);
-        assert_eq!(second, [0.5]);
-        assert_eq!(final_samples, []);
+        let mut chunked = StreamingResampler::<f32>::new(48_000, 44_100)
+            .expect("valid sample rates should create a resampler");
+        let mut chunked_output = Vec::new();
+        for chunk in input.chunks(37) {
+            chunked_output.extend(chunked.push(chunk).expect("packet should process"));
+        }
+        chunked_output.extend(chunked.finish());
+
+        assert_eq!(chunked_output.len(), whole_output.len());
+        assert!(
+            chunked_output
+                .iter()
+                .zip(&whole_output)
+                .all(|(chunked, whole)| (chunked - whole).abs() < 1e-6)
+        );
+    }
+
+    #[test]
+    fn sinc_resampler_suppresses_aliasing_when_downsampling() {
+        fn resample_tone(frequency: f32) -> Vec<f32> {
+            let input_rate = 48_000.0;
+            let input = (0..48_000)
+                .map(|index| {
+                    (2.0 * std::f32::consts::PI * frequency * index as f32 / input_rate).sin()
+                })
+                .collect::<Vec<_>>();
+            let mut resampler = StreamingResampler::<f32>::new(48_000, 24_000)
+                .expect("valid sample rates should create a resampler");
+            let mut output = resampler.push(&input).expect("input should process");
+            output.extend(resampler.finish());
+            output
+        }
+
+        fn measured_amplitude(samples: &[f32], frequency: f32, sample_rate: f32) -> f32 {
+            let margin = 128;
+            let stable = &samples[margin..samples.len() - margin];
+            let projection = stable
+                .iter()
+                .enumerate()
+                .map(|(index, sample)| {
+                    let absolute_index = index + margin;
+                    sample
+                        * (2.0 * std::f32::consts::PI * frequency * absolute_index as f32
+                            / sample_rate)
+                            .sin()
+                })
+                .sum::<f32>();
+            2.0 * projection.abs() / stable.len() as f32
+        }
+
+        let passband = measured_amplitude(&resample_tone(3_000.0), 3_000.0, 24_000.0);
+        let aliased = measured_amplitude(&resample_tone(18_000.0), 6_000.0, 24_000.0);
+
+        assert!(passband > 0.97, "passband amplitude was {passband}");
+        assert!(aliased < 0.01, "aliased amplitude was {aliased}");
     }
 
     #[test]
     fn stereo_resampler_preserves_channels_across_packet_boundaries() {
+        let input = (0..129)
+            .map(|index| {
+                let sample = (index as f32 * 0.091).sin();
+                [sample, -sample]
+            })
+            .collect::<Vec<_>>();
         let mut resampler = StreamingResampler::<[f32; 2]>::new(24_000, 48_000)
             .expect("valid rates should create a stereo resampler");
-        let first = resampler
-            .push(&[[0.0, 1.0]])
-            .expect("first frame should process");
-        let second = resampler
-            .push(&[[1.0, 0.0]])
-            .expect("second frame should process");
-        let final_frames = resampler.finish();
+        let mut output = Vec::new();
+        for chunk in input.chunks(13) {
+            output.extend(resampler.push(chunk).expect("packet should process"));
+        }
+        output.extend(resampler.finish());
 
-        assert!(first.is_empty());
-        assert_eq!(second, [[0.0, 1.0], [0.5, 0.5]]);
-        assert_eq!(final_frames, [[1.0, 0.0], [1.0, 0.0]]);
+        assert_eq!(output.len(), input.len() * 2);
+        assert!(
+            output
+                .iter()
+                .all(|frame| (frame[0] + frame[1]).abs() < 1e-6)
+        );
     }
 }

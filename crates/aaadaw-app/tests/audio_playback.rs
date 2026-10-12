@@ -305,7 +305,8 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert!((output[1][1] + 0.375).abs() < 1.0e-5);
     assert!((output[2][0] - 0.25).abs() < 1.0e-5);
     assert!((output[2][1] + 0.5).abs() < 1.0e-5);
-    assert_eq!(output[2], output[3]);
+    assert!((output[3][0] - output[2][0]).abs() < 0.05);
+    assert!((output[3][1] - output[2][1]).abs() < 0.05);
 
     let prepared = prepare_audio_playback_at(&project, &store, 2, 8, 4)
         .expect("stereo seek refill should prepare");
@@ -321,7 +322,8 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert_eq!(seek_stats.underrun_samples, 0);
     assert!((seek_output[0][0] - 0.25).abs() < 1.0e-5);
     assert!((seek_output[0][1] + 0.5).abs() < 1.0e-5);
-    assert_eq!(seek_output[0], seek_output[1]);
+    assert!((seek_output[1][0] - 0.25).abs() < 0.05);
+    assert!((seek_output[1][1] + 0.5).abs() < 0.05);
 
     let prepared = prepare_audio_playback(&project, &store, 1, 4)
         .expect("stereo source should prepare for offline export");

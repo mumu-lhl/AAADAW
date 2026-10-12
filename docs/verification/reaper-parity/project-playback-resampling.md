@@ -1,0 +1,9 @@
+# Project playback resampling
+
+Reference: Linux REAPER 7.82, Default 7 theme, fresh factory configuration. The General page's factory playback mode is `Sinc Interpolation: 64pt (medium quality)`; render mode is `Sinc Interpolation: 192pt`. The [native dropdown capture](project-settings-ui/reaper-native-playback-resampling-options.png) records all eleven playback choices and their order. The machine-readable factory values are in [project-settings-general-reference.json](../../reaper-parity/project-settings-general-reference.json).
+
+AAADAW's media worker now uses a 64-tap, Blackman-windowed sinc interpolator with a normalized phase table when source and project rates differ. Its anti-alias cutoff follows the output/input rate ratio; equal-rate streams copy PCM directly. Decoding and filtering remain on the cancellable worker thread, which feeds the existing bounded PCM queue with backpressure. The audio callback does not allocate or calculate resampling coefficients.
+
+Focused checks cover constant-level preservation, output duration, chunk-boundary invariance, stereo channel separation, and 48 kHz to 24 kHz spectral rejection: a 3 kHz passband tone remains above 0.97 amplitude and the 18 kHz tone's 6 kHz alias remains below 0.01. The file-backed audio-item integration also verifies trim, resampling, and sample-clock placement. Full workspace validation ran under Xvfb.
+
+This implements the factory playback quality family, not REAPER's verified coefficient-for-coefficient kernel. The General selector and project persistence are still absent; point, linear/IIR, other sinc lengths, and r8brain modes are not implemented. Offline export and freeze still share the playback media-worker path, so REAPER's separate 192pt render mode remains a known mismatch. Pitch shifting and stretch-marker settings are separate unimplemented behavior. The Project Settings matrix therefore remains `in_progress`.

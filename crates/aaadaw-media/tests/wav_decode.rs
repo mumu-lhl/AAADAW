@@ -314,7 +314,7 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
     assert_eq!(stats.underrun_samples, 0);
     assert_eq!(output[..2], [[0.0, 0.0]; 2]);
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
-    let expected = [0.0, 0.25, 0.5, 49_151.0 / 65_536.0];
+    let expected = [0.0, 0.182_009_3, 0.5, 0.817_979_4];
     for (frame, expected_sample) in output[2..].iter().zip(expected) {
         assert!(
             (frame[0] - expected_sample * center_gain).abs() < 1.0e-5,
