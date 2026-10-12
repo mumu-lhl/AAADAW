@@ -9,6 +9,7 @@
   "general_initial_values": {
     "project_sample_rate_enabled": false,
     "project_sample_rate_hz": 44100,
+    "project_sample_rate_options_hz": [8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000],
     "force_tempo_changes_to_whole_samples": false,
     "bpm": 120,
     "time_signature": [
@@ -59,7 +60,7 @@
     "project_start_time_offset_seconds": 0
   },
   "limitations": [
-    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Whole-sample mode rounds tempo-map sample anchors; native marker-edit snapping behavior and meter-marker-specific effects still need verification. The project-rate enable/hardware-default behavior, exact factory rate list, display timebase, beat-synced audio item storage, and resampling settings remain unimplemented",
+    "The fractional-frame flag is stored and editable; its video/timecode alignment behavior remains unverified. Whole-sample mode rounds tempo-map sample anchors; native marker-edit snapping behavior and meter-marker-specific effects still need verification. The project-rate enable/hardware-default behavior, display timebase, beat-synced audio item storage, and resampling settings remain unimplemented",
     "Default values came from the owned ReaScript probe; REAPER 7.82 General screenshots and SAMPLERATE field comparisons are committed alongside the AAADAW evidence"
   ]
 }

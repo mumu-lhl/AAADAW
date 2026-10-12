@@ -13,8 +13,8 @@ pub(crate) enum Tab {
     Notes,
 }
 
-const COMMON_PROJECT_SAMPLE_RATES: [u32; 8] = [
-    22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+const COMMON_PROJECT_SAMPLE_RATES: [u32; 11] = [
+    8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
 ];
 
 fn project_sample_rate_options(current: u32) -> Vec<u32> {
@@ -835,7 +835,13 @@ mod tests {
         app.redo();
         assert_eq!(app.project.settings().sample_rate(), 96_000);
         assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
-        assert!(project_sample_rate_options(44_100).contains(&44_100));
+        assert_eq!(
+            project_sample_rate_options(44_100),
+            vec![
+                8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
+                192_000,
+            ]
+        );
     }
 
     #[test]
