@@ -19,11 +19,15 @@ pub use decoded_cache::{
     DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
 };
 pub use stream::{
-    AudioFeedWorker, spawn_audio_item_stream, spawn_audio_item_stream_at,
+    AudioFeedWorker, ResamplingQuality, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at,
-    spawn_cached_stereo_audio_item_stream, spawn_mono_stream, spawn_stereo_audio_item_stream,
-    spawn_stereo_audio_item_stream_at, spawn_stereo_audio_item_stream_from_reader,
+    spawn_cached_stereo_audio_item_stream, spawn_cached_stereo_audio_item_stream_with_quality,
+    spawn_mono_stream, spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
+    spawn_stereo_audio_item_stream_at_with_quality, spawn_stereo_audio_item_stream_from_reader,
     spawn_stereo_audio_item_stream_from_reader_at,
+    spawn_stereo_audio_item_stream_from_reader_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_with_quality,
+    spawn_stereo_audio_item_stream_with_quality,
 };
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;

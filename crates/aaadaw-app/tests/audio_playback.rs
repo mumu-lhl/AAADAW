@@ -1,8 +1,10 @@
 use aaadaw_app::{
     PlaybackBuildError, WavExportOptions, WavSampleFormat, prepare_audio_playback,
-    prepare_audio_playback_at, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    prepare_audio_playback_at, prepare_audio_playback_with_resampling_quality,
+    render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
 };
 use aaadaw_core::{DawAction, Project};
+use aaadaw_media::ResamplingQuality;
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -350,6 +352,70 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert!(exported[4] > 0.24 && exported[5] < -0.49);
 
     std::fs::remove_file(export_path).expect("export should be removed");
+    remove_database(&database_path);
+}
+
+#[test]
+fn render_quality_uses_a_sharper_sinc_filter_than_playback_quality() {
+    let database_path = unique_path("aaadaw");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let source_rate = 96_000.0;
+    let source = (0..96_000)
+        .map(|index| {
+            (2.0 * std::f32::consts::PI * 26_000.0 * index as f32 / source_rate).sin() * 0.8
+        })
+        .map(|sample| (sample * i16::MAX as f32) as i16)
+        .collect::<Vec<_>>();
+    store
+        .import_audio_asset(
+            "asset://resampling",
+            "resampling.wav",
+            Cursor::new(pcm_wav(&source, 96_000)),
+        )
+        .expect("high-rate WAV should embed");
+    let project = project_with_audio_item("asset://resampling".to_owned(), 48_000);
+
+    let measured_alias = |quality| {
+        let prepared = prepare_audio_playback_with_resampling_quality(
+            &project, &store, 50_000, 2_048, quality,
+        )
+        .expect("audio should prepare at requested quality");
+        let (mut graph, feeders) = prepared.into_parts();
+        for feeder in feeders {
+            feeder.join().expect("resampling worker should finish");
+        }
+        graph.transport_mut().start();
+        let mut output = vec![[0.0; 2]; 48_000];
+        for block in output.chunks_mut(2_048) {
+            let stats = graph
+                .render_into(block)
+                .expect("prepared audio should render");
+            assert_eq!(stats.underrun_samples, 0);
+        }
+        let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+        let margin = 256;
+        let stable = &output[margin..output.len() - margin];
+        let projection = stable
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                let absolute_index = index + margin;
+                (frame[0] / center_gain)
+                    * (2.0 * std::f32::consts::PI * 22_000.0 * absolute_index as f32 / 48_000.0)
+                        .sin()
+            })
+            .sum::<f32>();
+        2.0 * projection.abs() / stable.len() as f32
+    };
+
+    let playback_alias = measured_alias(ResamplingQuality::Sinc64);
+    let render_alias = measured_alias(ResamplingQuality::Sinc192);
+    assert!(
+        render_alias < playback_alias * 0.7,
+        "192pt render alias {render_alias} should be below 70% of 64pt playback alias {playback_alias}"
+    );
+
+    store.close().expect("project should close");
     remove_database(&database_path);
 }
 

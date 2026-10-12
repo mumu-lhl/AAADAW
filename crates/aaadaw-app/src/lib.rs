@@ -83,9 +83,12 @@ use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, DecodedAudioCache, DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
-    MediaError, decode_audio_source_for_cache, spawn_cached_stereo_audio_item_stream,
-    spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
-    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
+    MediaError, ResamplingQuality, decode_audio_source_for_cache,
+    spawn_cached_stereo_audio_item_stream_with_quality,
+    spawn_stereo_audio_item_stream_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_with_quality,
+    spawn_stereo_audio_item_stream_with_quality,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
 use std::collections::{HashMap, HashSet};
@@ -1649,7 +1652,31 @@ pub fn prepare_audio_playback(
     queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
-    prepare_audio_playback_at(project, store, 0, queue_capacity_frames, max_block_frames)
+    prepare_audio_playback_with_resampling_quality(
+        project,
+        store,
+        queue_capacity_frames,
+        max_block_frames,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Prepares a project media graph with a selected worker-side resampling quality.
+pub fn prepare_audio_playback_with_resampling_quality(
+    project: &Project,
+    store: &ProjectStore,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_resampling_quality(
+        project,
+        store,
+        0,
+        queue_capacity_frames,
+        max_block_frames,
+        quality,
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1756,6 +1783,25 @@ pub fn prepare_audio_playback_at(
     queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_resampling_quality(
+        project,
+        store,
+        timeline_sample,
+        queue_capacity_frames,
+        max_block_frames,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Prepares a seek-positioned media graph with a selected worker-side quality.
+pub fn prepare_audio_playback_at_with_resampling_quality(
+    project: &Project,
+    store: &ProjectStore,
+    timeline_sample: u64,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     let active_items = project
         .audio_items()
         .iter()
@@ -1830,12 +1876,13 @@ pub fn prepare_audio_playback_at(
                 cached_embedded_source(store, item.media_ref(), cache_key, should_decode)?
             {
                 let needs_refill = timeline_sample > item.start_sample();
-                let mut feeder = spawn_cached_stereo_audio_item_stream(
+                let mut feeder = spawn_cached_stereo_audio_item_stream_with_quality(
                     item,
                     timeline_sample,
                     source,
                     output_sample_rate,
                     producer,
+                    quality,
                 )
                 .map_err(PlaybackBuildError::Media)?;
                 feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
@@ -1873,7 +1920,7 @@ pub fn prepare_audio_playback_at(
                     .and_then(|value| value.to_str())
                     .map(str::to_owned);
                 if needs_refill {
-                    spawn_stereo_audio_item_stream_from_reader_at(
+                    spawn_stereo_audio_item_stream_from_reader_at_with_quality(
                         item,
                         timeline_sample,
                         reader,
@@ -1881,29 +1928,38 @@ pub fn prepare_audio_playback_at(
                         extension.as_deref(),
                         output_sample_rate,
                         producer,
+                        quality,
                     )
                 } else {
-                    spawn_stereo_audio_item_stream_from_reader(
+                    spawn_stereo_audio_item_stream_from_reader_with_quality(
                         item,
                         reader,
                         Some(byte_len),
                         extension.as_deref(),
                         output_sample_rate,
                         producer,
+                        quality,
                     )
                 }
                 .map_err(PlaybackBuildError::Media)?
             }
             ResolvedAudioAsset::LinkedFile { path, .. } => if needs_refill {
-                spawn_stereo_audio_item_stream_at(
+                spawn_stereo_audio_item_stream_at_with_quality(
                     item,
                     timeline_sample,
                     path,
                     output_sample_rate,
                     producer,
+                    quality,
                 )
             } else {
-                spawn_stereo_audio_item_stream(item, path, output_sample_rate, producer)
+                spawn_stereo_audio_item_stream_with_quality(
+                    item,
+                    path,
+                    output_sample_rate,
+                    producer,
+                    quality,
+                )
             }
             .map_err(PlaybackBuildError::Media)?,
         };

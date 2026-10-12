@@ -1,20 +1,37 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, DecodedAudioSource, MediaError};
 use aaadaw_core::AudioItem;
 use aaadaw_engine::{AudioStreamPosition, PcmStreamProducer, StereoPcmStreamProducer};
+use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const MAX_UPSAMPLE_RATIO: f64 = 64.0;
-const SINC_TAPS: usize = 64;
-const SINC_LEFT_TAPS: i32 = 31;
-const SINC_RIGHT_TAPS: i32 = (SINC_TAPS as i32) - SINC_LEFT_TAPS - 1;
+const PLAYBACK_SINC_TAPS: usize = 64;
+const RENDER_SINC_TAPS: usize = 192;
 const SINC_PHASES: usize = 1024;
 type WorkerStartupResult = Result<(), (Option<io::ErrorKind>, String)>;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ResamplingQuality {
+    /// 64-tap sinc filtering for project playback.
+    Sinc64,
+    /// 192-tap sinc filtering for offline project rendering and Freeze.
+    Sinc192,
+}
+
+impl ResamplingQuality {
+    fn taps(self) -> usize {
+        match self {
+            Self::Sinc64 => PLAYBACK_SINC_TAPS,
+            Self::Sinc192 => RENDER_SINC_TAPS,
+        }
+    }
+}
 
 /// A cancellable decoder/resampler worker feeding one mono engine stream.
 pub struct AudioFeedWorker {
@@ -75,6 +92,23 @@ pub fn spawn_stereo_audio_item_stream(
     output_sample_rate: u32,
     producer: StereoPcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
+    spawn_stereo_audio_item_stream_with_quality(
+        item,
+        resolved_path,
+        output_sample_rate,
+        producer,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Feeds a stereo item using the requested background resampling quality.
+pub fn spawn_stereo_audio_item_stream_with_quality(
+    item: &AudioItem,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
+) -> Result<AudioFeedWorker, MediaError> {
     if item.length_samples() == 0 {
         return Err(MediaError::InvalidAudioItemLength);
     }
@@ -86,6 +120,7 @@ pub fn spawn_stereo_audio_item_stream(
         0,
         AudioStreamPosition::new(item.start_sample()),
         producer,
+        quality,
     )
 }
 
@@ -117,6 +152,25 @@ pub fn spawn_stereo_audio_item_stream_at(
     output_sample_rate: u32,
     producer: StereoPcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
+    spawn_stereo_audio_item_stream_at_with_quality(
+        item,
+        timeline_sample,
+        resolved_path,
+        output_sample_rate,
+        producer,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Re-decodes a stereo item at the requested quality and timeline position.
+pub fn spawn_stereo_audio_item_stream_at_with_quality(
+    item: &AudioItem,
+    timeline_sample: u64,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
+) -> Result<AudioFeedWorker, MediaError> {
     let samples_to_skip = checked_item_seek(item, timeline_sample)?;
     spawn_stereo_stream(
         DecoderInput::Path(resolved_path.as_ref().to_owned()),
@@ -126,6 +180,7 @@ pub fn spawn_stereo_audio_item_stream_at(
         samples_to_skip,
         AudioStreamPosition::new(timeline_sample),
         producer,
+        quality,
     )
 }
 
@@ -136,6 +191,25 @@ pub fn spawn_cached_stereo_audio_item_stream(
     source: Arc<DecodedAudioSource>,
     output_sample_rate: u32,
     producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    spawn_cached_stereo_audio_item_stream_with_quality(
+        item,
+        timeline_sample,
+        source,
+        output_sample_rate,
+        producer,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Feeds a cached stereo source using the requested background resampling quality.
+pub fn spawn_cached_stereo_audio_item_stream_with_quality(
+    item: &AudioItem,
+    timeline_sample: u64,
+    source: Arc<DecodedAudioSource>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
 ) -> Result<AudioFeedWorker, MediaError> {
     if item.length_samples() == 0 {
         return Err(MediaError::InvalidAudioItemLength);
@@ -153,6 +227,7 @@ pub fn spawn_cached_stereo_audio_item_stream(
         samples_to_skip,
         AudioStreamPosition::new(item.start_sample() + samples_to_skip),
         producer,
+        quality,
     )
 }
 
@@ -201,6 +276,30 @@ pub fn spawn_stereo_audio_item_stream_from_reader<R>(
 where
     R: Read + Seek + Send + Sync + 'static,
 {
+    spawn_stereo_audio_item_stream_from_reader_with_quality(
+        item,
+        reader,
+        byte_len,
+        extension_hint,
+        output_sample_rate,
+        producer,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Decodes a seekable reader into a stereo item stream at the requested quality.
+pub fn spawn_stereo_audio_item_stream_from_reader_with_quality<R>(
+    item: &AudioItem,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
     if item.length_samples() == 0 {
         return Err(MediaError::InvalidAudioItemLength);
     }
@@ -216,6 +315,7 @@ where
         0,
         AudioStreamPosition::new(item.start_sample()),
         producer,
+        quality,
     )
 }
 
@@ -262,6 +362,33 @@ pub fn spawn_stereo_audio_item_stream_from_reader_at<R>(
 where
     R: Read + Seek + Send + Sync + 'static,
 {
+    spawn_stereo_audio_item_stream_from_reader_at_with_quality(
+        item,
+        timeline_sample,
+        reader,
+        byte_len,
+        extension_hint,
+        output_sample_rate,
+        producer,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Re-decodes a seekable stereo source at the requested quality and timeline position.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_stereo_audio_item_stream_from_reader_at_with_quality<R>(
+    item: &AudioItem,
+    timeline_sample: u64,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
     let samples_to_skip = checked_item_seek(item, timeline_sample)?;
     spawn_stereo_stream(
         DecoderInput::Reader {
@@ -275,6 +402,7 @@ where
         samples_to_skip,
         AudioStreamPosition::new(timeline_sample),
         producer,
+        quality,
     )
 }
 
@@ -298,6 +426,7 @@ fn spawn_stream(
         source_offset_remaining: source_offset_samples,
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
+        quality: ResamplingQuality::Sinc64,
     };
     let worker_position = position.clone();
     let thread = thread::Builder::new()
@@ -322,6 +451,7 @@ fn spawn_stream(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_stereo_stream(
     input: DecoderInput,
     output_sample_rate: u32,
@@ -330,6 +460,7 @@ fn spawn_stereo_stream(
     output_samples_to_skip: u64,
     position: AudioStreamPosition,
     producer: StereoPcmStreamProducer,
+    quality: ResamplingQuality,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
         return Err(MediaError::InvalidOutputSampleRate);
@@ -342,6 +473,7 @@ fn spawn_stereo_stream(
         source_offset_remaining: source_offset_samples,
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
+        quality,
     };
     let worker_position = position.clone();
     let thread = thread::Builder::new()
@@ -371,7 +503,7 @@ impl AudioFeedWorker {
         self.position.clone()
     }
 
-    /// Waits until the worker opens and probes its source successfully.
+    /// Waits until the worker opens its source and prepares known-rate resampling state.
     ///
     /// The source I/O remains on the worker thread; this caller only waits for its result.
     pub fn wait_ready(&mut self) -> Result<(), MediaError> {
@@ -461,12 +593,13 @@ enum WorkerDecoder {
 }
 
 impl WorkerDecoder {
-    fn open(input: DecoderInput) -> Result<(Self, usize), MediaError> {
+    fn open(input: DecoderInput) -> Result<(Self, usize, Option<u32>), MediaError> {
         match input {
             DecoderInput::Path(path) => {
                 let decoder = AudioStreamDecoder::open(path)?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
-                Ok((Self::Streaming(decoder), channels))
+                let sample_rate = decoder.metadata().sample_rate;
+                Ok((Self::Streaming(decoder), channels, sample_rate))
             }
             DecoderInput::Reader {
                 reader,
@@ -476,16 +609,19 @@ impl WorkerDecoder {
                 let decoder =
                     AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
-                Ok((Self::Streaming(decoder), channels))
+                let sample_rate = decoder.metadata().sample_rate;
+                Ok((Self::Streaming(decoder), channels, sample_rate))
             }
             DecoderInput::Cached(source) => {
                 let channels = source.channels();
+                let sample_rate = source.sample_rate();
                 Ok((
                     Self::Cached {
                         source,
                         cursor_frames: 0,
                     },
                     channels,
+                    Some(sample_rate),
                 ))
             }
         }
@@ -507,6 +643,7 @@ struct WorkerConfig {
     source_offset_remaining: u64,
     output_samples_remaining: Option<u64>,
     output_samples_to_skip: u64,
+    quality: ResamplingQuality,
 }
 
 trait FeedFrame: Copy + Send + 'static {
@@ -586,25 +723,35 @@ fn run_worker<P: FeedProducer>(
         mut source_offset_remaining,
         mut output_samples_remaining,
         mut output_samples_to_skip,
+        quality,
     } = config;
     let mut output_timeline_sample = position.requested_sample();
     let decoder_result = WorkerDecoder::open(input);
-    let mut decoder = match decoder_result {
-        Ok((decoder, channels)) => {
+    let (mut decoder, initial_sample_rate) = match decoder_result {
+        Ok((decoder, channels, sample_rate)) => {
             producer.set_source_channels(channels);
-            let _ = startup.send(Ok(()));
-            decoder
+            (decoder, sample_rate)
         }
         Err(error) => {
-            let io_kind = match &error {
-                MediaError::Io(error) => Some(error.kind()),
-                _ => None,
-            };
-            let _ = startup.send(Err((io_kind, error.to_string())));
+            let _ = startup.send(Err(worker_startup_error(&error)));
             return Err(error);
         }
     };
-    let mut resampler: Option<StreamingResampler<P::Frame>> = None;
+    let mut resampler = match initial_sample_rate {
+        Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_quality(
+            sample_rate,
+            output_sample_rate,
+            quality,
+        ) {
+            Ok(resampler) => Some(resampler),
+            Err(error) => {
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            }
+        },
+        None => None,
+    };
+    let _ = startup.send(Ok(()));
     let mut decoded_frames = Vec::new();
     let mut source_channels = None;
 
@@ -625,9 +772,10 @@ fn run_worker<P: FeedProducer>(
                     }
                     Some(resampler) => resampler,
                     None => {
-                        resampler = Some(StreamingResampler::<P::Frame>::new(
+                        resampler = Some(StreamingResampler::<P::Frame>::new_with_quality(
                             chunk.sample_rate(),
                             output_sample_rate,
+                            quality,
                         )?);
                         resampler.as_mut().expect("resampler was just initialized")
                     }
@@ -666,6 +814,14 @@ fn run_worker<P: FeedProducer>(
             }
         }
     }
+}
+
+fn worker_startup_error(error: &MediaError) -> (Option<io::ErrorKind>, String) {
+    let io_kind = match error {
+        MediaError::Io(error) => Some(error.kind()),
+        _ => None,
+    };
+    (io_kind, error.to_string())
 }
 
 fn skip_output<T: Copy>(samples: &mut Vec<T>, remaining: &mut u64) {
@@ -721,7 +877,10 @@ fn push_with_backpressure<P: FeedProducer>(
 struct StreamingResampler<F> {
     input_sample_rate: u32,
     output_sample_rate: u32,
-    coefficients: Vec<[f32; SINC_TAPS]>,
+    filter_taps: usize,
+    left_taps: i32,
+    right_taps: i32,
+    coefficients: Arc<[f32]>,
     next_position_numerator: u128,
     input_frames: u64,
     pending_start_frame: u64,
@@ -729,7 +888,11 @@ struct StreamingResampler<F> {
 }
 
 impl<F: FeedFrame> StreamingResampler<F> {
-    fn new(input_sample_rate: u32, output_sample_rate: u32) -> Result<Self, MediaError> {
+    fn new_with_quality(
+        input_sample_rate: u32,
+        output_sample_rate: u32,
+        quality: ResamplingQuality,
+    ) -> Result<Self, MediaError> {
         if input_sample_rate == 0 {
             return Err(MediaError::InvalidDecodedAudioSpec);
         }
@@ -742,14 +905,20 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 output: output_sample_rate,
             });
         }
+        let filter_taps = quality.taps();
+        let left_taps = (filter_taps / 2) as i32 - 1;
+        let right_taps = filter_taps as i32 - left_taps - 1;
         let coefficients = if input_sample_rate == output_sample_rate {
-            Vec::new()
+            Arc::from([])
         } else {
-            build_sinc_coefficients(input_sample_rate, output_sample_rate)
+            cached_sinc_coefficients(input_sample_rate, output_sample_rate, quality)
         };
         Ok(Self {
             input_sample_rate,
             output_sample_rate,
+            filter_taps,
+            left_taps,
+            right_taps,
             coefficients,
             next_position_numerator: 0,
             input_frames: 0,
@@ -792,7 +961,7 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 self.next_position_numerator += self.input_sample_rate as u128;
                 continue;
             }
-            let last_required_frame = center_frame.saturating_add(SINC_RIGHT_TAPS as u64);
+            let last_required_frame = center_frame.saturating_add(self.right_taps as u64);
             if !at_eof && last_required_frame >= self.input_frames {
                 break;
             }
@@ -802,11 +971,11 @@ impl<F: FeedFrame> StreamingResampler<F> {
             let phase = (phase_position / self.output_sample_rate as u64) as usize;
             let phase_remainder = phase_position % self.output_sample_rate as u64;
             let phase_fraction = phase_remainder as f32 / self.output_sample_rate as f32;
-            let first_coefficients = &self.coefficients[phase];
-            let second_coefficients = &self.coefficients[phase + 1];
+            let first_coefficients_start = phase * self.filter_taps;
+            let second_coefficients_start = (phase + 1) * self.filter_taps;
             let mut frame = F::zero();
-            for tap in 0..SINC_TAPS {
-                let offset = tap as i32 - SINC_LEFT_TAPS;
+            for tap in 0..self.filter_taps {
+                let offset = tap as i32 - self.left_taps;
                 let source_frame = if offset < 0 {
                     center_frame.saturating_sub((-offset) as u64)
                 } else {
@@ -815,8 +984,10 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 .min(self.input_frames - 1);
                 let sample =
                     self.pending_frames[(source_frame - self.pending_start_frame) as usize];
-                let coefficient = first_coefficients[tap]
-                    + (second_coefficients[tap] - first_coefficients[tap]) * phase_fraction;
+                let first_coefficient = self.coefficients[first_coefficients_start + tap];
+                let second_coefficient = self.coefficients[second_coefficients_start + tap];
+                let coefficient =
+                    first_coefficient + (second_coefficient - first_coefficient) * phase_fraction;
                 frame.add_scaled(sample, coefficient);
             }
             output.push(frame);
@@ -828,7 +999,7 @@ impl<F: FeedFrame> StreamingResampler<F> {
             next_center.min(self.input_frames)
         } else {
             next_center
-                .saturating_sub(SINC_LEFT_TAPS as u64)
+                .saturating_sub(self.left_taps as u64)
                 .min(self.input_frames)
         };
         let discard_count = (discard_until - self.pending_start_frame) as usize;
@@ -840,43 +1011,76 @@ impl<F: FeedFrame> StreamingResampler<F> {
     }
 }
 
+fn cached_sinc_coefficients(
+    input_sample_rate: u32,
+    output_sample_rate: u32,
+    quality: ResamplingQuality,
+) -> Arc<[f32]> {
+    type CoefficientCache = HashMap<(u32, u32, ResamplingQuality), Weak<[f32]>>;
+    static CACHE: OnceLock<Mutex<CoefficientCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.retain(|_, coefficients| coefficients.strong_count() > 0);
+    let key = (input_sample_rate, output_sample_rate, quality);
+    if let Some(coefficients) = cache.get(&key).and_then(Weak::upgrade) {
+        return coefficients;
+    }
+    if cache.len() >= 32 {
+        cache.clear();
+    }
+    let coefficients = Arc::<[f32]>::from(build_sinc_coefficients(
+        input_sample_rate,
+        output_sample_rate,
+        quality,
+    ));
+    cache.insert(key, Arc::downgrade(&coefficients));
+    coefficients
+}
+
 fn build_sinc_coefficients(
     input_sample_rate: u32,
     output_sample_rate: u32,
-) -> Vec<[f32; SINC_TAPS]> {
+    quality: ResamplingQuality,
+) -> Vec<f32> {
     let cutoff = (output_sample_rate as f64 / input_sample_rate as f64).min(1.0);
-    (0..=SINC_PHASES)
-        .map(|phase| {
-            let fraction = phase as f64 / SINC_PHASES as f64;
-            let mut coefficients = [0.0; SINC_TAPS];
-            let mut sum = 0.0;
-            for (tap, coefficient) in coefficients.iter_mut().enumerate() {
-                let distance = tap as f64 - SINC_LEFT_TAPS as f64 - fraction;
-                let normalized_distance = distance / (SINC_TAPS as f64 / 2.0);
-                if normalized_distance.abs() >= 1.0 {
-                    continue;
-                }
-                let window = 0.42
-                    + 0.5 * (std::f64::consts::PI * normalized_distance).cos()
-                    + 0.08 * (2.0 * std::f64::consts::PI * normalized_distance).cos();
-                let argument = std::f64::consts::PI * cutoff * distance;
-                let sinc = if argument.abs() < f64::EPSILON {
-                    1.0
-                } else {
-                    argument.sin() / argument
-                };
-                let value = cutoff * sinc * window;
-                *coefficient = value as f32;
-                sum += value;
+    let filter_taps = quality.taps();
+    let left_taps = (filter_taps / 2) as i32 - 1;
+    let mut table = Vec::with_capacity((SINC_PHASES + 1) * filter_taps);
+    for phase in 0..=SINC_PHASES {
+        let fraction = phase as f64 / SINC_PHASES as f64;
+        let mut row = vec![0.0; filter_taps];
+        let mut sum = 0.0;
+        for (tap, coefficient) in row.iter_mut().enumerate() {
+            let distance = tap as f64 - left_taps as f64 - fraction;
+            let normalized_distance = distance / (filter_taps as f64 / 2.0);
+            if normalized_distance.abs() >= 1.0 {
+                continue;
             }
-            if sum != 0.0 {
-                for coefficient in &mut coefficients {
-                    *coefficient = (*coefficient as f64 / sum) as f32;
-                }
-            }
-            coefficients
-        })
-        .collect()
+            let window = 0.42
+                + 0.5 * (std::f64::consts::PI * normalized_distance).cos()
+                + 0.08 * (2.0 * std::f64::consts::PI * normalized_distance).cos();
+            let argument = std::f64::consts::PI * cutoff * distance;
+            let sinc = if argument.abs() < f64::EPSILON {
+                1.0
+            } else {
+                argument.sin() / argument
+            };
+            let value = cutoff * sinc * window;
+            *coefficient = value;
+            sum += value;
+        }
+        if sum != 0.0 {
+            table.extend(
+                row.into_iter()
+                    .map(|coefficient| (coefficient / sum) as f32),
+            );
+        } else {
+            table.extend(row.into_iter().map(|coefficient| coefficient as f32));
+        }
+    }
+    table
 }
 
 impl DecodedAudioChunk {
@@ -913,17 +1117,20 @@ impl DecodedAudioChunk {
 
 #[cfg(test)]
 mod tests {
-    use super::StreamingResampler;
+    use super::{ResamplingQuality, StreamingResampler};
 
     #[test]
     fn streaming_resampler_preserves_constant_level_and_output_duration() {
-        let mut resampler = StreamingResampler::<f32>::new(24_000, 48_000)
-            .expect("valid sample rates should create a resampler");
-        let mut output = resampler.push(&[0.25; 200]).expect("input should process");
-        output.extend(resampler.finish());
+        for quality in [ResamplingQuality::Sinc64, ResamplingQuality::Sinc192] {
+            let mut resampler =
+                StreamingResampler::<f32>::new_with_quality(24_000, 48_000, quality)
+                    .expect("valid sample rates should create a resampler");
+            let mut output = resampler.push(&[0.25; 200]).expect("input should process");
+            output.extend(resampler.finish());
 
-        assert_eq!(output.len(), 400);
-        assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
+            assert_eq!(output.len(), 400);
+            assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
+        }
     }
 
     #[test]
@@ -931,13 +1138,15 @@ mod tests {
         let input = (0..1021)
             .map(|index| (index as f32 * 0.037).sin())
             .collect::<Vec<_>>();
-        let mut whole = StreamingResampler::<f32>::new(48_000, 44_100)
-            .expect("valid sample rates should create a resampler");
+        let mut whole =
+            StreamingResampler::<f32>::new_with_quality(48_000, 44_100, ResamplingQuality::Sinc64)
+                .expect("valid sample rates should create a resampler");
         let mut whole_output = whole.push(&input).expect("input should process");
         whole_output.extend(whole.finish());
 
-        let mut chunked = StreamingResampler::<f32>::new(48_000, 44_100)
-            .expect("valid sample rates should create a resampler");
+        let mut chunked =
+            StreamingResampler::<f32>::new_with_quality(48_000, 44_100, ResamplingQuality::Sinc64)
+                .expect("valid sample rates should create a resampler");
         let mut chunked_output = Vec::new();
         for chunk in input.chunks(37) {
             chunked_output.extend(chunked.push(chunk).expect("packet should process"));
@@ -955,15 +1164,16 @@ mod tests {
 
     #[test]
     fn sinc_resampler_suppresses_aliasing_when_downsampling() {
-        fn resample_tone(frequency: f32) -> Vec<f32> {
+        fn resample_tone(frequency: f32, quality: ResamplingQuality) -> Vec<f32> {
             let input_rate = 48_000.0;
             let input = (0..48_000)
                 .map(|index| {
                     (2.0 * std::f32::consts::PI * frequency * index as f32 / input_rate).sin()
                 })
                 .collect::<Vec<_>>();
-            let mut resampler = StreamingResampler::<f32>::new(48_000, 24_000)
-                .expect("valid sample rates should create a resampler");
+            let mut resampler =
+                StreamingResampler::<f32>::new_with_quality(48_000, 24_000, quality)
+                    .expect("valid sample rates should create a resampler");
             let mut output = resampler.push(&input).expect("input should process");
             output.extend(resampler.finish());
             output
@@ -986,11 +1196,66 @@ mod tests {
             2.0 * projection.abs() / stable.len() as f32
         }
 
-        let passband = measured_amplitude(&resample_tone(3_000.0), 3_000.0, 24_000.0);
-        let aliased = measured_amplitude(&resample_tone(18_000.0), 6_000.0, 24_000.0);
+        let passband = measured_amplitude(
+            &resample_tone(3_000.0, ResamplingQuality::Sinc64),
+            3_000.0,
+            24_000.0,
+        );
+        let aliased = measured_amplitude(
+            &resample_tone(18_000.0, ResamplingQuality::Sinc64),
+            6_000.0,
+            24_000.0,
+        );
 
         assert!(passband > 0.97, "passband amplitude was {passband}");
         assert!(aliased < 0.01, "aliased amplitude was {aliased}");
+    }
+
+    #[test]
+    fn render_sinc_has_a_sharper_downsampling_transition_than_playback_sinc() {
+        fn resample_tone(frequency: f32, quality: ResamplingQuality) -> Vec<f32> {
+            let input = (0..48_000)
+                .map(|index| {
+                    (2.0 * std::f32::consts::PI * frequency * index as f32 / 48_000.0).sin()
+                })
+                .collect::<Vec<_>>();
+            let mut resampler =
+                StreamingResampler::<f32>::new_with_quality(48_000, 24_000, quality)
+                    .expect("valid sample rates should create a resampler");
+            let mut output = resampler.push(&input).expect("input should process");
+            output.extend(resampler.finish());
+            output
+        }
+
+        fn amplitude(samples: &[f32], frequency: f32) -> f32 {
+            let stable = &samples[128..samples.len() - 128];
+            let projection = stable
+                .iter()
+                .enumerate()
+                .map(|(index, sample)| {
+                    let absolute_index = index + 128;
+                    sample
+                        * (2.0 * std::f32::consts::PI * frequency * absolute_index as f32
+                            / 24_000.0)
+                            .sin()
+                })
+                .sum::<f32>();
+            2.0 * projection.abs() / stable.len() as f32
+        }
+
+        let playback_alias = amplitude(
+            &resample_tone(13_000.0, ResamplingQuality::Sinc64),
+            11_000.0,
+        );
+        let render_alias = amplitude(
+            &resample_tone(13_000.0, ResamplingQuality::Sinc192),
+            11_000.0,
+        );
+
+        assert!(
+            render_alias < playback_alias * 0.7,
+            "render alias {render_alias} should be below 70% of playback alias {playback_alias}"
+        );
     }
 
     #[test]
@@ -1001,8 +1266,12 @@ mod tests {
                 [sample, -sample]
             })
             .collect::<Vec<_>>();
-        let mut resampler = StreamingResampler::<[f32; 2]>::new(24_000, 48_000)
-            .expect("valid rates should create a stereo resampler");
+        let mut resampler = StreamingResampler::<[f32; 2]>::new_with_quality(
+            24_000,
+            48_000,
+            ResamplingQuality::Sinc64,
+        )
+        .expect("valid rates should create a stereo resampler");
         let mut output = Vec::new();
         for chunk in input.chunks(13) {
             output.extend(resampler.push(chunk).expect("packet should process"));

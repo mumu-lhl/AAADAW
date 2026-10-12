@@ -1,4 +1,4 @@
-use crate::prepare_audio_playback;
+use crate::prepare_audio_playback_with_resampling_quality;
 use crate::{
     Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
     PreparedAudioPlayback, WavExport, WavExportError, WavExportOptions,
@@ -8,6 +8,7 @@ use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
 };
+use aaadaw_media::ResamplingQuality;
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -378,8 +379,14 @@ pub fn render_project_file_to_wav(
     .map_err(OfflineRenderError::WavExport)?;
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let prepared = prepare_audio_playback(project, &store, 16_384, 2_048)
-        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        project,
+        &store,
+        16_384,
+        2_048,
+        ResamplingQuality::Sinc192,
+    )
+    .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let close = store
         .close()
         .map_err(|error| OfflineRenderError::Media(error.to_string()));
@@ -602,8 +609,14 @@ pub fn render_freeze_track_to_float32_wav(
 
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let prepared = prepare_audio_playback(&source_project, &store, 16_384, 2_048)
-        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &source_project,
+        &store,
+        16_384,
+        2_048,
+        ResamplingQuality::Sinc192,
+    )
+    .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let close = store
         .close()
         .map_err(|error| OfflineRenderError::Media(error.to_string()));
