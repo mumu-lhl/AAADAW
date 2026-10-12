@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 0 dBFS sample-peak 及单个所选轨道 via-master 输出；多轨 Source、其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）及单个所选轨道 via-master 输出；多轨 Source、其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选固定 0 dBFS sample-peak 和单轨 via-master 子项，但多轨 Source、其他范围、多声道、归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak 子项和单轨 via-master，但多轨 Source、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -295,3 +295,11 @@ Linux REAPER `7.82/linux-x86_64` / Default 7 fresh config 探针记录：控制�
 Linux REAPER 7.82 / Default 7 / fresh isolated config 原生探针把两条相同居中轨道分别以 `RENDER_SETTINGS=0` 与 `128` 渲染：Master mix 与单轨 via-master 文件都是 48 kHz PCM24 stereo、48,000 帧；稳定样本分别是 `[0.25, 0.75]` 和 `[0.125, 0.375]`，单轨文件名 wildcard `$track` 生成 `selected-via-master-Selected.wav`。脚本与受测边界见[Render Source 记录](../verification/reaper-parity/render-source.md)。AAADAW 的双轨集成回归确认其 via-master 输出相对完整 Master mix 是单轨电平，solo 快照单测确认其它 solo 被清除而原项目状态不变；UI 校验无选择/多选时报错，队列快照回归确认 TrackId 不随之后选择更改。
 
 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 全量 891/891 通过、0 跳过；目标 Clippy `-D warnings`、fmt、CSV 67 个唯一 ID、9 个 JSON reference 和 `git diff --check` 通过。随后在同版本 REAPER 中运行峰值归一化探针：flags=0 的样本为 `[0.125, 0.375]`，flags=5/target=0.5 为约 `[0.1666665, 0.4999995]`，每个文件 48,000 帧。`RENDER-SOURCE-001` 与 `RENDER-POSTPROCESS-001` 仍为 `in_progress`：多选分文件、其它 Source/Bounds、wildcard 面板、可调归一化目标、RMS/LUFS/True Peak/limiter 尚未实现。下一步继续拓展 Render 的批量/范围能力并采集相应原厂输出，不将单轨子集等同于 Source 对齐完成。
+
+### 2026-10-12 Project Render 可调峰值目标
+
+`RENDER-POSTPROCESS-001` 目标设置子项提交 `8481d77`：峰值归一化目标输入扩展为 −60 至 0 dBFS、百分之一 dB 精度，默认仍为 0 dBFS。文本解析为有界整数百分之一 dB，队列捕获启用状态和目标；worker 以 `10^(dBFS/20)` 转成线性峰值，再沿既有离线双遍 spool 路径处理。正目标被限制以避免超 0 dBFS 的峰值输出；目标范围尚未与原厂 UI 边界逐项对照。
+
+7.82 探针的线性 target=0.5 输出约 `[0.1666665, 0.4999995]`；AAADAW `−6.02 dBFS` 线性换算为约 `0.5000346`，PCM24 回归确认输出对应目标值并保留左右声道比例。回归还覆盖 `0`、`−0.5`、`−6`、`−6.02`、`−60`、精度/范围拒绝，以及排队后修改目标不改变已入队任务。证据更新在[峰值归一化记录](../verification/reaper-parity/render-normalize.md)。
+
+最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 893/893 通过、0 跳过；目标 Clippy `-D warnings`、fmt、CSV 67 个唯一 ID、9 个 JSON reference 和 diff 检查通过。该项仍只实现 Master mix sample-peak 子集；RMS/LUFS/True Peak、limiter、stem normalization、fade/trim/pad 等仍缺。`RENDER-POSTPROCESS-001` 与 `UI-028` 保持 `in_progress`。
