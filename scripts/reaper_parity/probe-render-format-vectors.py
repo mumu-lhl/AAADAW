@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the stereo PCM24 source used by the REAPER 7.82 μ-law probe."""
+"""Generate the stereo PCM24 source used by REAPER 7.82 compressed-format probes."""
 
 import argparse
 import struct

@@ -1,6 +1,6 @@
 -- Run in Linux REAPER 7.82 with an isolated Default 7 configuration and an empty project.
 -- source.wav must be one second of 48 kHz stereo PCM24. For the standard format check use
--- constant L=0.125/R=0.375; probe-render-ulaw-vectors.py creates a segmented μ-law test fixture.
+-- constant L=0.125/R=0.375; probe-render-format-vectors.py creates a segmented codec test fixture.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 local source_description = os.getenv("AAADAW_REAPER_PROBE_SOURCE_DESCRIPTION")
   or "48 kHz PCM24 stereo; 48,000 frames; L=0.125/R=0.375"

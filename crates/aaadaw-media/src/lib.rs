@@ -146,6 +146,7 @@ pub struct AudioStreamDecoder {
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     metadata: AudioMetadata,
+    fact_frames_remaining: Option<u64>,
 }
 
 /// Errors encountered while opening or decoding an audio file.
@@ -265,13 +266,15 @@ impl AudioStreamDecoder {
 
     /// Opens a seekable reader, such as an embedded SQLite asset, for decoding.
     pub fn from_reader<R>(
-        reader: R,
+        mut reader: R,
         byte_len: Option<u64>,
         extension: Option<&str>,
     ) -> Result<Self, MediaError>
     where
         R: Read + Seek + Send + Sync + 'static,
     {
+        let fact_frame_count =
+            read_wave_fact_frame_count(&mut reader, byte_len).map_err(MediaError::Io)?;
         let source = SeekableMediaSource { reader, byte_len };
         let source = MediaSourceStream::new(Box::new(source), Default::default());
         let mut hint = Hint::new();
@@ -312,6 +315,14 @@ impl AudioStreamDecoder {
             .audio()
             .ok_or(MediaError::MissingAudioCodecParameters)?;
         let sample_rate = audio_params.sample_rate;
+        let frame_count = fact_frame_count.or(frame_count);
+        let fact_duration_nanos = match (fact_frame_count, sample_rate) {
+            (Some(frames), Some(rate)) if rate > 0 => {
+                u64::try_from(u128::from(frames) * 1_000_000_000 / u128::from(rate)).ok()
+            }
+            _ => None,
+        };
+        let duration_nanos = fact_duration_nanos.or(duration_nanos);
         let channel_count = audio_params
             .channels
             .as_ref()
@@ -335,6 +346,7 @@ impl AudioStreamDecoder {
             decoder,
             track_id,
             metadata,
+            fact_frames_remaining: fact_frame_count,
         })
     }
 
@@ -348,6 +360,9 @@ impl AudioStreamDecoder {
     /// background worker rather than on the realtime audio thread.
     pub fn next_chunk(&mut self) -> Result<Option<DecodedAudioChunk>, MediaError> {
         loop {
+            if self.fact_frames_remaining == Some(0) {
+                return Ok(None);
+            }
             let Some(packet) = self.format.next_packet()? else {
                 return Ok(None);
             };
@@ -363,6 +378,11 @@ impl AudioStreamDecoder {
             }
             let mut samples = vec![0.0; decoded.samples_interleaved()];
             decoded.copy_to_slice_interleaved(&mut samples);
+            if let Some(remaining) = &mut self.fact_frames_remaining {
+                let valid_frames = (*remaining).min((samples.len() / channels) as u64) as usize;
+                samples.truncate(valid_frames * channels);
+                *remaining -= valid_frames as u64;
+            }
             return Ok(Some(DecodedAudioChunk {
                 sample_rate: spec.rate(),
                 channels,
@@ -436,6 +456,53 @@ where
         channels,
         samples,
     }))
+}
+
+fn read_wave_fact_frame_count<R: Read + Seek>(
+    reader: &mut R,
+    byte_len: Option<u64>,
+) -> io::Result<Option<u64>> {
+    let original_position = reader.stream_position()?;
+    let frame_count = (|| {
+        let mut header = [0_u8; 12];
+        reader.seek(SeekFrom::Start(0)).ok()?;
+        reader.read_exact(&mut header).ok()?;
+        if &header[..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+            return None;
+        }
+        let file_end = byte_len.or_else(|| reader.seek(SeekFrom::End(0)).ok())?;
+        let riff_end =
+            8_u64.checked_add(u64::from(u32::from_le_bytes(header[4..8].try_into().ok()?)))?;
+        let limit = file_end.min(riff_end);
+        let mut offset = 12_u64;
+
+        for _ in 0..256 {
+            if offset.checked_add(8)? > limit {
+                return None;
+            }
+            reader.seek(SeekFrom::Start(offset)).ok()?;
+            let mut chunk_header = [0_u8; 8];
+            reader.read_exact(&mut chunk_header).ok()?;
+            let chunk_size = u64::from(u32::from_le_bytes(chunk_header[4..8].try_into().ok()?));
+            let chunk_data = offset.checked_add(8)?;
+            let chunk_end = chunk_data.checked_add(chunk_size)?;
+            if chunk_end > limit {
+                return None;
+            }
+            if &chunk_header[..4] == b"fact" {
+                if chunk_size < 4 {
+                    return None;
+                }
+                let mut frames = [0_u8; 4];
+                reader.read_exact(&mut frames).ok()?;
+                return Some(u64::from(u32::from_le_bytes(frames)));
+            }
+            offset = chunk_end.checked_add(chunk_size & 1)?;
+        }
+        None
+    })();
+    reader.seek(SeekFrom::Start(original_position))?;
+    Ok(frame_count)
 }
 
 struct SeekableMediaSource<R> {

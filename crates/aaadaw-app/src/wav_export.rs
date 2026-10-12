@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_RIFF_DATA_BYTES: u64 = u32::MAX as u64 - 36;
+const IMA_ADPCM_SAMPLES_PER_BLOCK: usize = 2041;
+const IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK: usize = 1024;
+const IMA_ADPCM_RIFF_OVERHEAD: u64 = 52;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 static NEXT_DITHER_SEED: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
@@ -17,17 +20,19 @@ pub enum WavSampleFormat {
     Pcm32,
     Float32,
     Float64,
+    ImaAdpcm4,
     MuLaw8,
 }
 
 impl WavSampleFormat {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Pcm8,
         Self::Pcm16,
         Self::Pcm24,
         Self::Pcm32,
         Self::Float32,
         Self::Float64,
+        Self::ImaAdpcm4,
         Self::MuLaw8,
     ];
 
@@ -40,6 +45,7 @@ impl WavSampleFormat {
             Self::Float32 => "Float 32-bit",
             Self::Float64 => "Float 64-bit",
             Self::MuLaw8 => "8-bit u-Law",
+            Self::ImaAdpcm4 => "4-bit IMA ADPCM",
         }
     }
 
@@ -139,6 +145,19 @@ pub struct MuLaw8WavExport {
     data_bytes: u64,
 }
 
+/// Incremental block-based 4-bit IMA ADPCM WAV export.
+pub struct ImaAdpcm4WavExport {
+    destination: PathBuf,
+    temporary: PathBuf,
+    file: Option<BufWriter<File>>,
+    sample_rate: u32,
+    channels: WavChannelCount,
+    total_frames: u64,
+    data_bytes: u64,
+    pending_frames: Vec<[i16; 2]>,
+    encoded_block: Vec<u8>,
+}
+
 /// User-facing WAV export writer. Float output ignores the integer-only dither setting.
 pub enum WavExport {
     Pcm8(Pcm8WavExport),
@@ -148,6 +167,7 @@ pub enum WavExport {
     Float32(Float32WavExport),
     Float64(Float64WavExport),
     MuLaw8(MuLaw8WavExport),
+    ImaAdpcm4(ImaAdpcm4WavExport),
 }
 
 #[derive(Debug)]
@@ -159,6 +179,7 @@ pub enum WavExportError {
     Float32(Float32WavExportError),
     Float64(Float32WavExportError),
     MuLaw8(MuLaw8WavExportError),
+    ImaAdpcm4(ImaAdpcmWavExportError),
 }
 
 impl std::fmt::Display for WavExportError {
@@ -169,6 +190,7 @@ impl std::fmt::Display for WavExportError {
             }
             Self::Float32(error) | Self::Float64(error) => error.fmt(formatter),
             Self::MuLaw8(error) => error.fmt(formatter),
+            Self::ImaAdpcm4(error) => error.fmt(formatter),
         }
     }
 }
@@ -181,6 +203,7 @@ impl std::error::Error for WavExportError {
             }
             Self::Float32(error) | Self::Float64(error) => Some(error),
             Self::MuLaw8(error) => Some(error),
+            Self::ImaAdpcm4(error) => Some(error),
         }
     }
 }
@@ -561,6 +584,166 @@ impl Drop for MuLaw8WavExport {
     }
 }
 
+/// Errors returned while creating or writing an IMA ADPCM WAV export.
+#[derive(Debug)]
+pub enum ImaAdpcmWavExportError {
+    Io(io::Error),
+    InvalidSampleRate,
+    RiffSizeLimit,
+    NonFiniteSample,
+}
+
+impl std::fmt::Display for ImaAdpcmWavExportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "IMA ADPCM WAV export failed: {error}"),
+            Self::InvalidSampleRate => formatter.write_str("WAV sample rate must be positive"),
+            Self::RiffSizeLimit => formatter.write_str("WAV export exceeds the RIFF size limit"),
+            Self::NonFiniteSample => {
+                formatter.write_str("IMA ADPCM WAV contains a non-finite sample")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImaAdpcmWavExportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::InvalidSampleRate | Self::RiffSizeLimit | Self::NonFiniteSample => None,
+        }
+    }
+}
+
+impl From<io::Error> for ImaAdpcmWavExportError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl ImaAdpcm4WavExport {
+    pub fn create(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+    ) -> Result<Self, ImaAdpcmWavExportError> {
+        Self::create_with_channels(destination, sample_rate, WavChannelCount::Stereo)
+    }
+
+    fn create_with_channels(
+        destination: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: WavChannelCount,
+    ) -> Result<Self, ImaAdpcmWavExportError> {
+        if sample_rate == 0 {
+            return Err(ImaAdpcmWavExportError::InvalidSampleRate);
+        }
+        let destination = destination.as_ref().to_path_buf();
+        if destination.exists() {
+            return Err(
+                io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists").into(),
+            );
+        }
+        let (temporary, mut file) = create_temporary_sibling(&destination)?;
+        let mut export = Self {
+            destination,
+            temporary,
+            file: None,
+            sample_rate,
+            channels,
+            total_frames: 0,
+            data_bytes: 0,
+            pending_frames: Vec::with_capacity(IMA_ADPCM_SAMPLES_PER_BLOCK),
+            encoded_block: vec![0; ima_adpcm_block_align(channels)],
+        };
+        write_ima_adpcm_header(&mut file, sample_rate, channels, 0, 0)?;
+        export.file = Some(BufWriter::new(file));
+        Ok(export)
+    }
+
+    pub fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), ImaAdpcmWavExportError> {
+        if frames.iter().flatten().any(|sample| !sample.is_finite()) {
+            return Err(ImaAdpcmWavExportError::NonFiniteSample);
+        }
+        let added_frames =
+            u64::try_from(frames.len()).map_err(|_| ImaAdpcmWavExportError::RiffSizeLimit)?;
+        let total_frames = self
+            .total_frames
+            .checked_add(added_frames)
+            .filter(|frames| *frames <= u64::from(u32::MAX))
+            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
+        ima_adpcm_data_bytes(total_frames, self.channels)
+            .filter(|bytes| {
+                bytes
+                    .checked_add(IMA_ADPCM_RIFF_OVERHEAD)
+                    .is_some_and(|size| size <= u64::from(u32::MAX))
+            })
+            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
+
+        for frame in frames {
+            let left = i16_from_float(self.channels.frame_sample(frame, 0));
+            let right = if self.channels == WavChannelCount::Stereo {
+                i16_from_float(frame[1])
+            } else {
+                left
+            };
+            self.pending_frames.push([left, right]);
+            if self.pending_frames.len() == IMA_ADPCM_SAMPLES_PER_BLOCK {
+                self.write_pending_block()?;
+            }
+        }
+        self.total_frames = total_frames;
+        Ok(())
+    }
+
+    fn write_pending_block(&mut self) -> Result<(), ImaAdpcmWavExportError> {
+        debug_assert_eq!(self.pending_frames.len(), IMA_ADPCM_SAMPLES_PER_BLOCK);
+        encode_ima_adpcm_block(&self.pending_frames, self.channels, &mut self.encoded_block);
+        self.file
+            .as_mut()
+            .expect("unfinished export retains its file")
+            .write_all(&self.encoded_block)?;
+        self.data_bytes = self
+            .data_bytes
+            .checked_add(self.encoded_block.len() as u64)
+            .ok_or(ImaAdpcmWavExportError::RiffSizeLimit)?;
+        self.pending_frames.clear();
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<PathBuf, ImaAdpcmWavExportError> {
+        if !self.pending_frames.is_empty() {
+            self.pending_frames
+                .resize(IMA_ADPCM_SAMPLES_PER_BLOCK, [0, 0]);
+            self.write_pending_block()?;
+        }
+        let mut file = self
+            .file
+            .take()
+            .expect("unfinished export retains its file");
+        file.flush()?;
+        file.seek(SeekFrom::Start(0))?;
+        write_ima_adpcm_header(
+            &mut file,
+            self.sample_rate,
+            self.channels,
+            self.data_bytes,
+            self.total_frames,
+        )?;
+        file.flush()?;
+        drop(file);
+        fs::hard_link(&self.temporary, &self.destination)?;
+        let _ = fs::remove_file(&self.temporary);
+        Ok(self.destination.clone())
+    }
+}
+
+impl Drop for ImaAdpcm4WavExport {
+    fn drop(&mut self) {
+        self.file.take();
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
 impl WavExport {
     pub fn create(
         destination: impl AsRef<Path>,
@@ -641,6 +824,11 @@ impl WavExport {
                     .map(Self::MuLaw8)
                     .map_err(WavExportError::MuLaw8)?
             }
+            WavSampleFormat::ImaAdpcm4 => {
+                ImaAdpcm4WavExport::create_with_channels(destination, sample_rate, channels)
+                    .map(Self::ImaAdpcm4)
+                    .map_err(WavExportError::ImaAdpcm4)?
+            }
         };
         Ok(export)
     }
@@ -654,6 +842,9 @@ impl WavExport {
             Self::Float32(export) => export.write_frames(frames).map_err(WavExportError::Float32),
             Self::Float64(export) => export.write_frames(frames).map_err(WavExportError::Float64),
             Self::MuLaw8(export) => export.write_frames(frames).map_err(WavExportError::MuLaw8),
+            Self::ImaAdpcm4(export) => export
+                .write_frames(frames)
+                .map_err(WavExportError::ImaAdpcm4),
         }
     }
 
@@ -666,6 +857,7 @@ impl WavExport {
             Self::Float32(export) => export.finish().map_err(WavExportError::Float32),
             Self::Float64(export) => export.finish().map_err(WavExportError::Float64),
             Self::MuLaw8(export) => export.finish().map_err(WavExportError::MuLaw8),
+            Self::ImaAdpcm4(export) => export.finish().map_err(WavExportError::ImaAdpcm4),
         }
     }
 }
@@ -1136,6 +1328,148 @@ fn write_mulaw_header(
     file.write_all(&data_bytes.to_le_bytes())
 }
 
+fn write_ima_adpcm_header(
+    file: &mut impl Write,
+    sample_rate: u32,
+    channels: WavChannelCount,
+    data_bytes: u64,
+    frame_count: u64,
+) -> io::Result<()> {
+    let data_bytes = u32::try_from(data_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV data exceeds RIFF limit"))?;
+    let frame_count = u32::try_from(frame_count).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "WAV frame count exceeds limit")
+    })?;
+    let channel_count = channels.channels();
+    let block_align = u16::try_from(ima_adpcm_block_align(channels))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IMA block size overflow"))?;
+    let byte_rate = match channels {
+        WavChannelCount::Mono => sample_rate / 2,
+        WavChannelCount::Stereo => sample_rate,
+    };
+    let riff_size = u32::try_from(IMA_ADPCM_RIFF_OVERHEAD + u64::from(data_bytes))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "WAV RIFF size overflow"))?;
+
+    file.write_all(b"RIFF")?;
+    file.write_all(&riff_size.to_le_bytes())?;
+    file.write_all(b"WAVEfmt ")?;
+    file.write_all(&20_u32.to_le_bytes())?;
+    file.write_all(&17_u16.to_le_bytes())?;
+    file.write_all(&channel_count.to_le_bytes())?;
+    file.write_all(&sample_rate.to_le_bytes())?;
+    file.write_all(&byte_rate.to_le_bytes())?;
+    file.write_all(&block_align.to_le_bytes())?;
+    file.write_all(&4_u16.to_le_bytes())?;
+    file.write_all(&2_u16.to_le_bytes())?;
+    file.write_all(&(IMA_ADPCM_SAMPLES_PER_BLOCK as u16).to_le_bytes())?;
+    file.write_all(b"fact")?;
+    file.write_all(&4_u32.to_le_bytes())?;
+    file.write_all(&frame_count.to_le_bytes())?;
+    file.write_all(b"data")?;
+    file.write_all(&data_bytes.to_le_bytes())
+}
+
+fn ima_adpcm_block_align(channels: WavChannelCount) -> usize {
+    IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK * channels.channels() as usize
+}
+
+fn ima_adpcm_data_bytes(frame_count: u64, channels: WavChannelCount) -> Option<u64> {
+    let frames_per_block = IMA_ADPCM_SAMPLES_PER_BLOCK as u64;
+    let block_count = frame_count.checked_add(frames_per_block - 1)? / frames_per_block;
+    block_count.checked_mul(ima_adpcm_block_align(channels) as u64)
+}
+
+fn i16_from_float(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * 32_768.0)
+        .round()
+        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+#[derive(Clone, Copy)]
+struct ImaAdpcmState {
+    predictor: i32,
+    step_index: usize,
+}
+
+const IMA_ADPCM_STEP_TABLE: [i32; 89] = [
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449,
+    494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272,
+    2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493,
+    10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767,
+];
+const IMA_ADPCM_INDEX_TABLE: [i32; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
+
+fn encode_ima_adpcm_block(frames: &[[i16; 2]], channels: WavChannelCount, output: &mut [u8]) {
+    debug_assert_eq!(frames.len(), IMA_ADPCM_SAMPLES_PER_BLOCK);
+    debug_assert_eq!(output.len(), ima_adpcm_block_align(channels));
+    output.fill(0);
+    let channel_count = channels.channels() as usize;
+    let mut states = [ImaAdpcmState {
+        predictor: 0,
+        step_index: 0,
+    }; 2];
+    for channel in 0..channel_count {
+        let predictor = i32::from(frames[0][channel]);
+        states[channel].predictor = predictor;
+        let header_offset = channel * 4;
+        output[header_offset..header_offset + 2].copy_from_slice(&(predictor as i16).to_le_bytes());
+        output[header_offset + 2] = 0;
+    }
+
+    let header_bytes = channel_count * 4;
+    for group in 0..((IMA_ADPCM_SAMPLES_PER_BLOCK - 1) / 8) {
+        for channel in 0..channel_count {
+            let channel_group_offset = header_bytes + group * channel_count * 4 + channel * 4;
+            for sample_in_group in 0..8 {
+                let frame_index = 1 + group * 8 + sample_in_group;
+                let nibble =
+                    encode_ima_adpcm_sample(frames[frame_index][channel], &mut states[channel]);
+                let byte_offset = channel_group_offset + sample_in_group / 2;
+                output[byte_offset] |= nibble << ((sample_in_group & 1) * 4);
+            }
+        }
+    }
+}
+
+fn encode_ima_adpcm_sample(sample: i16, state: &mut ImaAdpcmState) -> u8 {
+    let step = IMA_ADPCM_STEP_TABLE[state.step_index];
+    let mut difference = i32::from(sample) - state.predictor;
+    let mut nibble = 0_u8;
+    if difference < 0 {
+        nibble = 8;
+        difference = -difference;
+    }
+
+    let mut reconstructed_difference = step >> 3;
+    if difference > step {
+        nibble |= 4;
+        difference -= step;
+        reconstructed_difference += step;
+    }
+    if difference > step >> 1 {
+        nibble |= 2;
+        difference -= step >> 1;
+        reconstructed_difference += step >> 1;
+    }
+    if difference > step >> 2 {
+        nibble |= 1;
+        reconstructed_difference += step >> 2;
+    }
+
+    if nibble & 8 != 0 {
+        state.predictor -= reconstructed_difference;
+    } else {
+        state.predictor += reconstructed_difference;
+    }
+    state.predictor = state
+        .predictor
+        .clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+    let next_index = state.step_index as i32 + IMA_ADPCM_INDEX_TABLE[usize::from(nibble & 7)];
+    state.step_index = next_index.clamp(0, IMA_ADPCM_STEP_TABLE.len() as i32 - 1) as usize;
+    nibble
+}
+
 fn encode_mulaw_sample(sample: f32) -> u8 {
     const SEGMENT_ENDS: [i32; 8] = [0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff];
     let pcm = (sample.clamp(-1.0, 1.0) * 32_768.0).round() as i32;
@@ -1356,6 +1690,7 @@ mod tests {
                 WavExport::Float32(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::Float64(export) => export.inner.data_bytes = MAX_RIFF_DATA_BYTES,
                 WavExport::MuLaw8(export) => export.data_bytes = u64::MAX,
+                WavExport::ImaAdpcm4(export) => export.total_frames = u64::MAX,
             }
             assert!(write_error.write_frames(&[[0.25, -0.25]]).is_err());
             drop(write_error);
@@ -1433,9 +1768,11 @@ mod tests {
                 WavSampleFormat::Pcm32 | WavSampleFormat::Float32 => 4,
                 WavSampleFormat::Float64 => 8,
                 WavSampleFormat::MuLaw8 => 1,
+                WavSampleFormat::ImaAdpcm4 => 1,
             };
             let expected_format_tag = match sample_format {
                 WavSampleFormat::MuLaw8 => 7,
+                WavSampleFormat::ImaAdpcm4 => 17,
                 WavSampleFormat::Float32 | WavSampleFormat::Float64 => 3,
                 _ => 1,
             };
@@ -1446,7 +1783,11 @@ mod tests {
             let data_offset = find_wav_data_offset(&bytes).expect("mono data chunk should exist");
             assert_eq!(
                 u32::from_le_bytes(bytes[data_offset - 4..data_offset].try_into().unwrap()),
-                bytes_per_sample as u32
+                if sample_format == WavSampleFormat::ImaAdpcm4 {
+                    IMA_ADPCM_BYTES_PER_CHANNEL_BLOCK as u32
+                } else {
+                    bytes_per_sample as u32
+                }
             );
             let mut decoder =
                 aaadaw_media::AudioStreamDecoder::open(&path).expect("mono output should decode");
@@ -1456,7 +1797,10 @@ mod tests {
                 .expect("mono output should contain a frame");
             assert_eq!(chunk.channels(), 1);
             assert_eq!(chunk.samples().len(), 1);
-            let tolerance = if sample_format == WavSampleFormat::MuLaw8 {
+            let tolerance = if matches!(
+                sample_format,
+                WavSampleFormat::MuLaw8 | WavSampleFormat::ImaAdpcm4
+            ) {
                 0.02
             } else {
                 1.0e-6
@@ -1476,6 +1820,216 @@ mod tests {
             }
             fs::remove_file(path).expect("test output should be removed");
         }
+    }
+
+    #[test]
+    fn ima_adpcm_wav_matches_native_block_layout_and_round_trips() {
+        let path = temp_destination("ima-adpcm-native-block");
+        let frames = vec![[0.25, 0.75]; IMA_ADPCM_SAMPLES_PER_BLOCK];
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::ImaAdpcm4,
+                dither: false,
+            },
+        )
+        .expect("IMA ADPCM writer should open");
+        export
+            .write_frames(&frames[..997])
+            .expect("first partial block should be accepted");
+        export
+            .write_frames(&frames[997..])
+            .expect("remaining block samples should be accepted");
+        export.finish().expect("IMA ADPCM WAV should publish");
+
+        let bytes = fs::read(&path).expect("IMA ADPCM WAV should be readable");
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            52 + 2048
+        );
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 20);
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 17);
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[28..32].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(u16::from_le_bytes(bytes[32..34].try_into().unwrap()), 2048);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 4);
+        assert_eq!(u16::from_le_bytes(bytes[36..38].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(bytes[38..40].try_into().unwrap()), 2041);
+        assert_eq!(&bytes[40..44], b"fact");
+        assert_eq!(u32::from_le_bytes(bytes[48..52].try_into().unwrap()), 2041);
+        assert_eq!(&bytes[52..56], b"data");
+        assert_eq!(u32::from_le_bytes(bytes[56..60].try_into().unwrap()), 2048);
+        assert_eq!(&bytes[60..68], &[0, 0x20, 0, 0, 0, 0x60, 0, 0]);
+        assert!(bytes[68..].iter().all(|byte| *byte == 0));
+
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("AAADAW should open IMA ADPCM WAV");
+        assert_eq!(decoder.metadata().sample_rate, Some(48_000));
+        assert_eq!(decoder.metadata().channel_count, Some(2));
+        let chunk = decoder
+            .next_chunk()
+            .expect("IMA block should decode")
+            .expect("IMA block should contain samples");
+        assert_eq!(chunk.channels(), 2);
+        assert!((chunk.samples()[0] - 0.25).abs() < 1.0e-4);
+        assert!((chunk.samples()[1] - 0.75).abs() < 1.0e-4);
+        fs::remove_file(path).expect("test WAV should be removed");
+    }
+
+    #[test]
+    fn ima_adpcm_first_block_predictors_match_native_level_vectors() {
+        let path = temp_destination("ima-adpcm-native-vectors");
+        let frames = vec![[-0.999, -0.999]; IMA_ADPCM_SAMPLES_PER_BLOCK];
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::ImaAdpcm4,
+                dither: false,
+            },
+        )
+        .expect("IMA ADPCM writer should open");
+        export
+            .write_frames(&frames)
+            .expect("native level vector should write");
+        export.finish().expect("IMA ADPCM WAV should publish");
+        let bytes = fs::read(&path).expect("IMA ADPCM WAV should be readable");
+        assert_eq!(&bytes[60..68], &[0x21, 0x80, 0, 0, 0x21, 0x80, 0, 0]);
+        assert!(bytes[68..].iter().all(|byte| *byte == 0));
+        fs::remove_file(path).expect("test WAV should be removed");
+    }
+
+    #[test]
+    fn ima_adpcm_matches_native_render_vector_headers_and_decoded_levels() {
+        let path = temp_destination("ima-adpcm-native-render-vectors");
+        let levels = [
+            -0.999_f32, -0.75, -0.5, -0.25, -0.125, -0.1, -0.05, -0.01, 0.0, 0.01, 0.05, 0.1,
+            0.125, 0.25, 0.5, 0.75,
+        ];
+        let mut frames = Vec::with_capacity(48_000);
+        for level in levels {
+            let source_sample = ((level * 0.5) * 8_388_608.0).round() as i32;
+            let master_sample = (source_sample as f32 / 8_388_608.0) * 2.0;
+            frames.extend(std::iter::repeat_n([master_sample, master_sample], 3_000));
+        }
+        assert_eq!(frames.len(), 48_000);
+
+        let mut export = WavExport::create(
+            &path,
+            48_000,
+            WavExportOptions {
+                sample_format: WavSampleFormat::ImaAdpcm4,
+                dither: false,
+            },
+        )
+        .expect("IMA ADPCM writer should open");
+        for chunk in frames.chunks(1_237) {
+            export
+                .write_frames(chunk)
+                .expect("native level source should encode");
+        }
+        export.finish().expect("IMA ADPCM WAV should publish");
+
+        let bytes = fs::read(&path).expect("IMA ADPCM WAV should be readable");
+        let data_offset = find_wav_data_offset(&bytes).expect("IMA data chunk should exist");
+        let data_size =
+            u32::from_le_bytes(bytes[data_offset - 4..data_offset].try_into().unwrap()) as usize;
+        assert_eq!(data_size, 49_152);
+        let native_predictors = [
+            -32_735_i16,
+            -32_735,
+            -24_576,
+            -16_384,
+            -16_384,
+            -8_192,
+            -4_096,
+            -4_096,
+            -3_277,
+            -1_638,
+            -1_638,
+            -328,
+            0,
+            0,
+            328,
+            1_638,
+            1_638,
+            3_277,
+            4_096,
+            4_096,
+            8_192,
+            16_384,
+            16_384,
+            24_576,
+        ];
+        for (block, expected_predictor) in native_predictors.into_iter().enumerate() {
+            let offset = data_offset + block * 2048;
+            assert_eq!(
+                i16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+                expected_predictor,
+                "left predictor for native block {block}"
+            );
+            assert_eq!(
+                i16::from_le_bytes(bytes[offset + 4..offset + 6].try_into().unwrap()),
+                expected_predictor,
+                "right predictor for native block {block}"
+            );
+            assert_eq!(&bytes[offset + 2..offset + 4], &[0, 0]);
+            assert_eq!(&bytes[offset + 6..offset + 8], &[0, 0]);
+        }
+
+        let native_levels = [
+            -0.998_992_9_f32,
+            -0.75,
+            -0.5,
+            -0.25,
+            -0.125,
+            -0.100_006_1,
+            -0.049_987_8,
+            -0.010_009_8,
+            0.0,
+            0.010_040_3,
+            0.049_987_8,
+            0.100_097_7,
+            0.125,
+            0.250_061,
+            0.5,
+            0.750_091_6,
+        ];
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .expect("AAADAW should decode the generated IMA ADPCM WAV");
+        assert_eq!(decoder.metadata().frame_count, Some(48_000));
+        let mut decoded_left = Vec::new();
+        while let Some(chunk) = decoder
+            .next_chunk()
+            .expect("IMA ADPCM vector should decode")
+        {
+            decoded_left.extend(
+                chunk
+                    .samples()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|frame| frame[0]),
+            );
+        }
+        assert_eq!(decoded_left.len(), 48_000);
+        for (level_index, expected) in native_levels.into_iter().enumerate() {
+            let frame = level_index * 3_000 + 1_500;
+            assert!(
+                (decoded_left[frame] - expected).abs() < 0.001,
+                "IMA decoded sample at level {level_index} was {}",
+                decoded_left[frame]
+            );
+        }
+        fs::remove_file(path).expect("test WAV should be removed");
     }
 
     #[test]

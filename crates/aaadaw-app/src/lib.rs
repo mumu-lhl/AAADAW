@@ -58,10 +58,10 @@ pub use offline_render::{
 };
 pub use wav_export::{
     Float32WavExport, Float32WavExportError, Float64WavExport, Float64WavExportError,
-    IntegerPcmWavExportError, MuLaw8WavExport, MuLaw8WavExportError, Pcm8WavExport,
-    Pcm8WavExportError, Pcm16WavExport, Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError,
-    Pcm32WavExport, Pcm32WavExportError, WavChannelCount, WavExport, WavExportError,
-    WavExportOptions, WavSampleFormat,
+    ImaAdpcm4WavExport, ImaAdpcmWavExportError, IntegerPcmWavExportError, MuLaw8WavExport,
+    MuLaw8WavExportError, Pcm8WavExport, Pcm8WavExportError, Pcm16WavExport, Pcm16WavExportError,
+    Pcm24WavExport, Pcm24WavExportError, Pcm32WavExport, Pcm32WavExportError, WavChannelCount,
+    WavExport, WavExportError, WavExportOptions, WavSampleFormat,
 };
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 

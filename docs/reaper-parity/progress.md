@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；IMA ADPCM/cADPCM、其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；cADPCM、其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；IMA ADPCM/cADPCM、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；cADPCM、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -354,6 +354,16 @@ REAPER 7.82 原厂 Render 选择 `8 bit u-Law` 后生成 WAVE format tag 7、8-b
 
 AAADAW 新增 `8-bit u-Law` 输出格式：使用 WAVE format tag 7 和 18-byte fmt chunk，实现标准分段 companding，Mono 使用已有的左右声道平均，Stereo 保持独立声道；奇数长度的单声道数据会写入 RIFF pad byte。写入仍经过现有固定内存离线队列、取消清理和 no-clobber 发布；u-Law 输出由应用自己的 media decoder 回读验证。应用中的线性 TPDF dither 不应用于 companding 路径，原厂对 u-Law 的全部 dither/noise-shaping 语义仍待对照。
 
-`RENDER-FORMATS-001` 和 `RENDER-CHANNELS-001` 现在覆盖六种线性格式加 8-bit u-Law，仍保持 `in_progress`：原厂 4-bit IMA ADPCM、2-bit cADPCM、全量格式菜单/dither、RF64 与完整 Render 窗口均未实现或验收。
+`RENDER-FORMATS-001` 和 `RENDER-CHANNELS-001` 现在覆盖六种线性格式、4-bit IMA ADPCM 和 8-bit u-Law，仍保持 `in_progress`：原厂 2-bit cADPCM、全量格式菜单/dither、RF64 与完整 Render 窗口均未实现或验收。
 
 奇数帧单声道 RIFF 填充修正后，针对性 u-Law/Mono 测试通过；完整 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 902/902 通过、0 跳过，媒体/app/UI Clippy `-D warnings` 通过。fmt、68 个唯一 parity ID、reference JSON 与 `git diff --check` 也通过；Render 覆盖仍按上列缺口保持 `in_progress`。
+
+### 2026-10-12 Render 4-bit IMA ADPCM
+
+Linux REAPER 7.82 Default 7 的 `4 bit IMA ADPCM` 原生 Render 输出为 WAVE tag 17、48 kHz stereo、4-bit、block align 2048、samples per block 2041；`fmt` chunk 为 20 bytes，`fact` chunk 的帧数为 48,000，数据为 24 个完整块（49,152 bytes）。菜单及已选择编码的截图和原生文件/数据 SHA-256 见[Render 格式记录](../verification/reaper-parity/render-formats.md)，可复现的 16 段 PCM24 输入由共享向量脚本生成。
+
+AAADAW 新增有界块式 IMA encoder、tag 17/fmt/fact/data 写入、4-bit 左低右高 nibble layout 和最后一个块的 fact 帧数。启用 Symphonia ADPCM decoder 后，媒体层读取 RIFF `fact` 计数并截掉最后一个 ADPCM block 的填充帧；否则 `48,000` 帧原生输出会被块长度误报为 `48,984` 帧。writer 回归校验 mono/stereo block headers、PCM level predictors、16 个电平锚点、解码帧数、取消和 no-clobber。
+
+IMA 输出的头字段、原生 block predictor 与解码电平锚点已对照；REAPER 与 AAADAW 的有损 nibble 在若干阶跃过渡处仍非逐字节一致，精确 encoder/dither 对照继续开放。cADPCM、BWF metadata/完整格式窗口也未覆盖，因此 `RENDER-FORMATS-001`、`RENDER-CHANNELS-001`、`UI-028` 与 P10 均保持 `in_progress`。
+
+完整 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 回归为 905/905 通过、0 跳过；媒体/app/UI strict Clippy `-D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。此提交只扩大格式支持，不关闭 Render parity 条目。
