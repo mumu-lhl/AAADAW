@@ -1112,7 +1112,21 @@ impl Project {
 
     /// Creates an empty project with explicit timebase settings.
     pub fn with_settings(settings: ProjectSettings) -> Self {
-        Self {
+        Self::with_settings_and_initial_time_signature(
+            settings,
+            TimeSignature::new(4, 4).expect("4/4 is a valid time signature"),
+        )
+        .expect("the default time signature is valid for every supported PPQ")
+    }
+
+    /// Creates an empty project with explicit timebase settings and starting meter.
+    pub fn with_settings_and_initial_time_signature(
+        settings: ProjectSettings,
+        initial_time_signature: TimeSignature,
+    ) -> Result<Self, TimebaseError> {
+        let mut meter_map = MeterMap::new(settings.ppq(), settings.start_measure());
+        meter_map.replace_points(&[(0, initial_time_signature)])?;
+        Ok(Self {
             state: ProjectState {
                 pan_mode: settings.pan_mode(),
                 frame_rate: settings.frame_rate(),
@@ -1121,11 +1135,11 @@ impl Project {
                 project_start_time_fractional_frame_offset_allowed: settings
                     .project_start_time_fractional_frame_offset_allowed(),
                 tempo_map: TempoMap::new(settings),
-                meter_map: MeterMap::new(settings.ppq(), settings.start_measure()),
+                meter_map,
                 ..ProjectState::default()
             },
             ..Self::default()
-        }
+        })
     }
 
     /// Whether a folder can own this track and its complete subtree.

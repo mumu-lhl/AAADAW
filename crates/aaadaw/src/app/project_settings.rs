@@ -228,11 +228,37 @@ impl App {
     }
 
     pub(super) fn apply_project_settings(&mut self) -> Task<Message> {
+        self.commit_project_settings(true).0
+    }
+
+    pub(super) fn save_project_settings_as_default(&mut self) -> Task<Message> {
+        self.save_project_settings_as_default_with(super::project_defaults::save)
+    }
+
+    fn save_project_settings_as_default_with(
+        &mut self,
+        save: impl FnOnce(&super::project_defaults::ProjectDefaults) -> Result<(), String>,
+    ) -> Task<Message> {
+        let (task, applied) = self.commit_project_settings(false);
+        if !applied {
+            return task;
+        }
+        let defaults = super::project_defaults::ProjectDefaults::from_project(&self.project);
+        match save(&defaults) {
+            Ok(()) => self.status = "Default project settings saved".to_owned(),
+            Err(error) => {
+                self.status = format!("Default project settings could not be saved: {error}")
+            }
+        }
+        task
+    }
+
+    fn commit_project_settings(&mut self, close_on_success: bool) -> (Task<Message>, bool) {
         let Some(draft) = self.project_settings.as_ref() else {
-            return Task::none();
+            return (Task::none(), false);
         };
         if draft.generation != self.project_generation {
-            return self.close_project_settings();
+            return (self.close_project_settings(), false);
         }
         if self.io_busy
             || self.path_picker_busy
@@ -241,46 +267,46 @@ impl App {
             || self.playback_busy()
         {
             self.status = "Wait for the current operation before applying project settings".into();
-            return Task::none();
+            return (Task::none(), false);
         }
         let sample_rate = draft.sample_rate;
         if sample_rate != self.project.settings().sample_rate() && self.playback_active() {
             self.status = "Stop playback before changing the project sample rate".into();
-            return Task::none();
+            return (Task::none(), false);
         }
         let tempo_bpm = match draft.tempo_bpm.parse::<f64>() {
             Ok(value) if value.is_finite() && value > 0.0 => value,
             _ => {
                 self.status = "Enter a finite positive project tempo".into();
-                return Task::none();
+                return (Task::none(), false);
             }
         };
         let numerator = match draft.meter_numerator.parse::<u32>() {
             Ok(value) => value,
             _ => {
                 self.status = "Enter a valid time-signature numerator".into();
-                return Task::none();
+                return (Task::none(), false);
             }
         };
         let denominator = match draft.meter_denominator.parse::<u32>() {
             Ok(value) => value,
             _ => {
                 self.status = "Enter a valid time-signature denominator".into();
-                return Task::none();
+                return (Task::none(), false);
             }
         };
         let signature = match TimeSignature::new(numerator, denominator) {
             Ok(signature) => signature,
             Err(_) => {
                 self.status = "Enter a valid time signature".into();
-                return Task::none();
+                return (Task::none(), false);
             }
         };
         let start_measure = match draft.start_measure.parse::<i32>() {
             Ok(value) => value,
             _ => {
                 self.status = "Enter a valid project start measure".into();
-                return Task::none();
+                return (Task::none(), false);
             }
         };
         let start_time = if draft.project_start_time
@@ -292,7 +318,7 @@ impl App {
                 Ok(value) => value,
                 Err(error) => {
                     self.status = error.to_owned();
-                    return Task::none();
+                    return (Task::none(), false);
                 }
             }
         };
@@ -403,10 +429,15 @@ impl App {
                     != allow_fractional_frame_offset
                 || self.project.project_notes() != &notes
             {
-                return Task::none();
+                return (Task::none(), false);
             }
         }
-        self.close_project_settings()
+        let task = if close_on_success {
+            self.close_project_settings()
+        } else {
+            Task::none()
+        };
+        (task, true)
     }
 }
 
@@ -555,6 +586,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             content,
             row![
                 iced::widget::space().width(Length::Fill),
+                button("Save as default project settings")
+                    .on_press(Message::SaveProjectSettingsAsDefault),
                 button("OK").on_press(Message::ApplyProjectSettings),
                 button("Cancel").on_press(Message::CloseProjectSettings)
             ]
@@ -621,6 +654,55 @@ mod tests {
         assert_eq!(app.project.settings().bpm_basis(), BpmBasis::Quarter);
         assert!(app.project.settings().base_ruler_label_spacing_on_measure());
         assert_eq!(app.project.project_notes(), &notes);
+    }
+
+    #[test]
+    fn save_as_default_applies_valid_drafts_and_keeps_the_settings_window_open() {
+        let mut app = App::default();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsTempoChanged("96".into()));
+        let _ = app.update(Message::ProjectSettingsMeterNumeratorChanged("7".into()));
+        let _ = app.update(Message::ProjectSettingsMeterDenominatorChanged("8".into()));
+
+        let mut persisted = None;
+        let _ = app.save_project_settings_as_default_with(|defaults| {
+            persisted = Some(defaults.clone());
+            Ok(())
+        });
+
+        let defaults = persisted.expect("valid settings should be saved");
+        let new_project = defaults.create_project().unwrap();
+        assert_eq!(app.project.tempo_at_tick(0), 96.0);
+        assert_eq!(
+            app.project.time_signature_at_tick(0),
+            TimeSignature::new(7, 8).unwrap()
+        );
+        assert_eq!(new_project.tempo_at_tick(0), 96.0);
+        assert_eq!(
+            new_project.time_signature_at_tick(0),
+            TimeSignature::new(7, 8).unwrap()
+        );
+        assert!(app.project_settings.is_some());
+        assert_eq!(app.status, "Default project settings saved");
+    }
+
+    #[test]
+    fn save_as_default_does_not_persist_invalid_drafts() {
+        let mut app = App::default();
+        let original = app.project.snapshot();
+        let _ = app.open_project_settings();
+        let _ = app.update(Message::ProjectSettingsTempoChanged("NaN".into()));
+        let mut attempted_save = false;
+
+        let _ = app.save_project_settings_as_default_with(|_| {
+            attempted_save = true;
+            Ok(())
+        });
+
+        assert!(!attempted_save);
+        assert_eq!(app.project.snapshot(), original);
+        assert!(app.project_settings.is_some());
+        assert_eq!(app.status, "Enter a finite positive project tempo");
     }
 
     #[test]

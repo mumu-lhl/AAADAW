@@ -186,6 +186,7 @@ pub(crate) enum Message {
     OpenProjectSettings,
     CloseProjectSettings,
     ApplyProjectSettings,
+    SaveProjectSettingsAsDefault,
     ProjectFrameRateChanged(aaadaw_core::FrameRate),
     ProjectSettingsBpmBasisChanged(aaadaw_core::BpmBasis),
     ProjectSettingsBaseRulerLabelSpacingChanged(bool),

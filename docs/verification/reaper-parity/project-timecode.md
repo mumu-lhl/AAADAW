@@ -24,7 +24,7 @@ Item Properties 的 Position/Length 在 H:M:S:F 下按工程设置转换；Take 
 
 新增 File → Project settings... / 动作列表 / 默认 Alt+Enter（实机 action 40021）入口，显式用户快捷键优先。窗口当前只提供已实现的 Video Frame rate 草稿与 OK/Cancel；选项修改不会即时修改工程，OK 通过一次 DawAction 提交，Cancel/Escape 丢弃草稿。帧率菜单打开时，Escape 重置该控件状态并只收起菜单；随后 Escape 才取消窗口，其他控件捕获的 Escape 仍先交给控件；忙碌和过期工程草稿不能写入工程，重复打开聚焦已有窗口。外部帧率变更保持已打开 Item Properties 的原文本，按上述实测规则提交。
 
-窗口采用已测原厂 606×535 初始尺寸以容纳十项帧率菜单，但不表示全页、Project Settings/Media/Advanced/Notes/Video 全控件或 Save as default project settings 已实现。入口和控件仍等待下列真实 GUI 验证；完整页继续按矩阵推进。
+窗口采用已测原厂 606×535 初始尺寸以容纳十项帧率菜单，但不表示全页或 Project Settings/Media/Advanced/Notes/Video 全控件已实现。Save as default project settings 后续已接入 AAADAW 用户默认配置，只覆盖当前实现的字段，不表示 REAPER 完整模板或全页对齐。入口和控件仍等待下列真实 GUI 验证；完整页继续按矩阵推进。
 
 本次验证：853 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt/diff 通过。真实 X11 窗口已验证 Alt+Enter、十项菜单、第一次 Escape 收起菜单、第二次 Escape 取消；OK 选择 25 fps 后，活动恢复工程 schema 27 帧率编码为 2，一次 Ctrl+Z 恢复 30 fps 编码 5，Ctrl+Shift+Z 恢复编码 2。完整键盘菜单导航、各页布局与全部设置仍待实现。
 

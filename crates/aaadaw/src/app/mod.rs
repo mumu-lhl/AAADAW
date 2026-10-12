@@ -63,6 +63,7 @@ mod keyboard_config;
 mod media;
 mod messages;
 mod offline_job_queue;
+mod project_defaults;
 mod project_io;
 mod project_settings;
 #[cfg(feature = "audio-device")]
@@ -1163,6 +1164,12 @@ impl App {
 
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
+        match project_defaults::load().and_then(|defaults| defaults.create_project()) {
+            Ok(project) => app.project = project,
+            Err(error) => {
+                app.status = format!("Default project settings unavailable: {error}");
+            }
+        }
         match create_unsaved_project_session_dir() {
             Ok(session_dir) => app.session_media_dir = Some(session_dir),
             Err(error) => {
@@ -1671,6 +1678,7 @@ impl App {
                     | Message::OpenSettings
                     | Message::OpenProjectSettings
                     | Message::CloseProjectSettings
+                    | Message::SaveProjectSettingsAsDefault
                     | Message::ProjectFrameRateChanged(_)
                     | Message::ProjectFrameRateMenuChanged(_)
                     | Message::ProjectSettingsTabChanged(_)
@@ -2095,6 +2103,7 @@ impl App {
             Message::OpenProjectSettings => task = self.open_project_settings(),
             Message::CloseProjectSettings => task = self.close_project_settings(),
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
+            Message::SaveProjectSettingsAsDefault => task = self.save_project_settings_as_default(),
             Message::ProjectSettingsTempoChanged(value) => {
                 if let Some(draft) = &mut self.project_settings {
                     draft.tempo_bpm = value;
@@ -4725,7 +4734,12 @@ impl App {
 
         self.routing_track_id = None;
         self.routing_send_drafts.clear();
-        self.project = Project::new();
+        let (new_project, defaults_error) =
+            match project_defaults::load().and_then(|defaults| defaults.create_project()) {
+                Ok(project) => (project, None),
+                Err(error) => (Project::new(), Some(error)),
+            };
+        self.project = new_project;
         self.refresh_tempo_map_edits();
         self.refresh_meter_map_edits();
         self.tempo_map_feedback.clear();
@@ -4769,6 +4783,9 @@ impl App {
         self.audio_waveforms.clear();
         self.audio_asset_source_statuses.clear();
         self.status = new_project_status(session_media_error.as_deref());
+        if let Some(error) = defaults_error {
+            self.status = format!("Default project settings unavailable: {error}");
+        }
     }
 
     fn begin_project_transition(&mut self, transition: PendingProjectTransition) -> Task<Message> {
