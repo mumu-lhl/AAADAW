@@ -56,6 +56,8 @@ pub struct ProjectWavRenderSettings {
 pub enum ProjectWavRenderSource {
     #[default]
     MasterMix,
+    /// Render one selected track as a stem without the Master mix output stage.
+    SelectedTrackStem(TrackId),
     /// Isolate one track in an in-memory project snapshot and render it through Master.
     SelectedTrackViaMaster(TrackId),
 }
@@ -724,11 +726,15 @@ pub fn render_project_file_to_wav_with_settings(
         end_sample,
         tail_milliseconds,
     )?;
-    let isolated_project = match source {
-        ProjectWavRenderSource::MasterMix => None,
-        ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => {
-            Some(selected_track_via_master_project(project, track_id)?)
+    let (isolated_project, bypass_master_output) = match source {
+        ProjectWavRenderSource::MasterMix => (None, false),
+        ProjectWavRenderSource::SelectedTrackStem(track_id) => {
+            (Some(selected_track_stem_project(project, track_id)?), true)
         }
+        ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => (
+            Some(selected_track_via_master_project(project, track_id)?),
+            false,
+        ),
     };
     let render_project = isolated_project.as_ref().unwrap_or(project);
     let export = WavExport::create_with_channels(
@@ -777,7 +783,14 @@ pub fn render_project_file_to_wav_with_settings(
         .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let mut prepared = prepared?;
     close?;
-    prepared.set_master_output_ceiling_dbfs(master_ceiling);
+    if bypass_master_output {
+        prepared
+            .graph()
+            .master_output_safety_controller()
+            .set_guard_enabled(false);
+    } else {
+        prepared.set_master_output_ceiling_dbfs(master_ceiling);
+    }
 
     let mut instrument_owners = Vec::new();
     let mut instrument_processors = Vec::new();
@@ -982,7 +995,8 @@ pub fn render_project_wav_sources_to_wavs(
 
     let mut unique_destinations = HashSet::with_capacity(outputs.len());
     for (source, destination) in outputs {
-        if let ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
+        if let ProjectWavRenderSource::SelectedTrackStem(track_id)
+        | ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
             && !project.tracks().iter().any(|track| track.id() == *track_id)
         {
             return Err(OfflineRenderError::Media(format!(
@@ -1141,6 +1155,21 @@ fn selected_track_via_master_project(
     project: &Project,
     selected_track_id: TrackId,
 ) -> Result<Project, OfflineRenderError> {
+    selected_track_render_project(project, selected_track_id, false)
+}
+
+fn selected_track_stem_project(
+    project: &Project,
+    selected_track_id: TrackId,
+) -> Result<Project, OfflineRenderError> {
+    selected_track_render_project(project, selected_track_id, true)
+}
+
+fn selected_track_render_project(
+    project: &Project,
+    selected_track_id: TrackId,
+    bypass_master_mix: bool,
+) -> Result<Project, OfflineRenderError> {
     let mut render_project = Project::from_snapshot(project.snapshot())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     if !render_project
@@ -1151,6 +1180,13 @@ fn selected_track_via_master_project(
         return Err(OfflineRenderError::Media(
             "selected render track no longer exists".to_owned(),
         ));
+    }
+    if bypass_master_mix {
+        render_project
+            .apply(DawAction::SetMasterMix {
+                mix: aaadaw_core::MasterMix::default(),
+            })
+            .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     }
     let solo_updates: Vec<_> = render_project
         .tracks()
@@ -1868,15 +1904,26 @@ mod tests {
         let mix = base.with_file_name(format!("{unique}-mix.wav"));
         let mixed_first = base.with_file_name(format!("{unique}-mix-first.wav"));
         let mixed_second = base.with_file_name(format!("{unique}-mix-second.wav"));
+        let via_master = base.with_file_name(format!("{unique}-mix-via-master.wav"));
+        project
+            .apply(DawAction::SetMasterMix {
+                mix: aaadaw_core::MasterMix::new(-6.0206, 0.0)
+                    .expect("half-gain Master mix should be valid"),
+            })
+            .expect("Master mix should be lowered for the source comparison");
         let mix_and_stems = vec![
             (ProjectWavRenderSource::MasterMix, mix.clone()),
             (
-                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[0].id()),
+                ProjectWavRenderSource::SelectedTrackStem(project.tracks()[0].id()),
                 mixed_first.clone(),
             ),
             (
-                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[1].id()),
+                ProjectWavRenderSource::SelectedTrackStem(project.tracks()[1].id()),
                 mixed_second.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[0].id()),
+                via_master.clone(),
             ),
         ];
         render_project_wav_sources_to_wavs(
@@ -1888,7 +1935,7 @@ mod tests {
             |_, _| {},
         )
         .expect("Master mix and selected stems should publish together");
-        for path in [&mix, &mixed_first, &mixed_second] {
+        for path in [&mix, &mixed_first, &mixed_second, &via_master] {
             let bytes = fs::read(path).expect("Master/stem output should be readable");
             assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
         }
@@ -1903,16 +1950,20 @@ mod tests {
             ]);
             signed as f64 / 8_388_608.0
         };
-        assert!((read_pcm24(&mix_bytes, 44) - 0.25).abs() < 1.0e-6);
-        assert!((read_pcm24(&mix_bytes, 47) - 0.75).abs() < 1.0e-6);
+        assert!((read_pcm24(&mix_bytes, 44) - 0.125).abs() < 1.0e-6);
+        assert!((read_pcm24(&mix_bytes, 47) - 0.375).abs() < 1.0e-6);
         for path in [&mixed_first, &mixed_second] {
-            let bytes = fs::read(path).expect("track stem should be readable");
+            let bytes = fs::read(path).expect("plain track stem should be readable");
             assert!((read_pcm24(&bytes, 44) - 0.125).abs() < 1.0e-6);
             assert!((read_pcm24(&bytes, 47) - 0.375).abs() < 1.0e-6);
         }
+        let via_master_bytes = fs::read(&via_master).expect("via-Master track should be readable");
+        assert!((read_pcm24(&via_master_bytes, 44) - 0.0625).abs() < 1.0e-6);
+        assert!((read_pcm24(&via_master_bytes, 47) - 0.1875).abs() < 1.0e-6);
         fs::remove_file(&mix).expect("Master mix should be removed");
         fs::remove_file(&mixed_first).expect("first combined stem should be removed");
         fs::remove_file(&mixed_second).expect("second combined stem should be removed");
+        fs::remove_file(&via_master).expect("via-Master comparison should be removed");
         fs::remove_file(source_path).expect("control source should be removed");
         for suffix in ["", "-wal", "-shm"] {
             let mut path = project_path.as_os_str().to_owned();
