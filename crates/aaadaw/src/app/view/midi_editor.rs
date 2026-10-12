@@ -204,7 +204,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let grid_toolbar: Element<'_, Message> = if touch_targets {
         scrollable(
             row![
-                button(if !app.timeline.has_snap_grid() {
+                button(if !app.timeline.midi_editor_has_snap_grid() {
                     "Snap unavailable"
                 } else if app.timeline.snap_enabled {
                     "Snap On"
@@ -219,12 +219,14 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 })
                 .on_press_maybe(
                     app.timeline
-                        .has_snap_grid()
-                        .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+                        .midi_editor_has_snap_grid()
+                        .then_some(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap)),
                 ),
-                pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
-                    Message::Timeline(TimelineEvent::SetSnapGrid(grid))
-                })
+                pick_list(
+                    &SnapGrid::ALL[..],
+                    Some(app.timeline.midi_editor_snap_grid),
+                    |grid| Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(grid)),
+                )
                 .padding([SPACING_LG, SPACING_XS])
                 .width(Length::Fixed(120.0)),
             ]
@@ -237,8 +239,8 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .into()
     } else {
         row![
-            text("Shared grid").size(12),
-            button(if !app.timeline.has_snap_grid() {
+            text("MIDI grid").size(12),
+            button(if !app.timeline.midi_editor_has_snap_grid() {
                 "Snap unavailable"
             } else if app.timeline.snap_enabled {
                 "Snap On"
@@ -252,12 +254,14 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
             })
             .on_press_maybe(
                 app.timeline
-                    .has_snap_grid()
-                    .then_some(Message::Timeline(TimelineEvent::ToggleSnap)),
+                    .midi_editor_has_snap_grid()
+                    .then_some(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap)),
             ),
-            pick_list(&SnapGrid::ALL[..], Some(app.timeline.snap_grid), |grid| {
-                Message::Timeline(TimelineEvent::SetSnapGrid(grid))
-            })
+            pick_list(
+                &SnapGrid::ALL[..],
+                Some(app.timeline.midi_editor_snap_grid),
+                |grid| Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(grid)),
+            )
             .width(Length::Fixed(112.0)),
             text("Wheel: pitch · Shift+wheel: time · Ctrl/Cmd+wheel: zoom").size(11),
         ]
@@ -280,7 +284,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .into()
     };
     let midi_snap = MidiSnap {
-        grid: app.timeline.snap_grid,
+        grid: app.timeline.midi_editor_snap_grid,
         enabled: app.timeline.snap_enabled,
         cursor_tick: visible_edit_cursor_tick(app),
         context_menu_epoch: app.midi_expression_context_menu_epoch,
@@ -298,7 +302,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
         snap: MidiSnap {
-            grid: app.timeline.snap_grid,
+            grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
@@ -542,7 +546,7 @@ fn controller_lane<'a>(
         ticks_per_beat,
         playhead_tick: app.midi_editor_playhead_tick(item),
         snap: MidiSnap {
-            grid: app.timeline.snap_grid,
+            grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
@@ -569,7 +573,7 @@ fn pitch_bend_lane<'a>(
         ticks_per_beat,
         playhead_tick: app.midi_editor_playhead_tick(item),
         snap: MidiSnap {
-            grid: app.timeline.snap_grid,
+            grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
@@ -3152,7 +3156,7 @@ mod tests {
         assert_eq!(visible_edit_cursor_tick(&app), 960);
 
         app.midi_editor_edit_cursor_tick = Some(190);
-        app.timeline.snap_grid = SnapGrid::EighthTriplet;
+        app.timeline.midi_editor_snap_grid = SnapGrid::EighthTriplet;
         assert_eq!(visible_edit_cursor_tick(&app), 320);
 
         app.timeline.snap_enabled = false;
@@ -3166,7 +3170,7 @@ mod tests {
         let _ = app.update(Message::AddMidiItem);
         let item_id = app.project.midi_items()[0].id();
         let _ = app.update(Message::OpenMidiEditor(item_id));
-        let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+        let _ = app.update(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap));
         app.midi_editor_edit_cursor_tick = Some(190);
         app.midi_note_clipboard.notes = vec![MidiNoteData {
             pitch: 60,
@@ -3179,10 +3183,10 @@ mod tests {
         let _ = app.update(Message::PasteMidiNotes(item_id));
         assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 190);
 
-        let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
+        let _ = app.update(Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(
             SnapGrid::Sixteenth,
         )));
-        let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+        let _ = app.update(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap));
         assert_eq!(visible_edit_cursor_tick(&app), 480);
 
         let _ = app.update(Message::PasteMidiNotes(item_id));

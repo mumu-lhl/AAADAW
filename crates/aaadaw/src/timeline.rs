@@ -1,6 +1,6 @@
 mod renderer;
 
-use aaadaw_core::{ItemId, Project, TempoCurve, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{ItemId, MarkerId, Project, TempoCurve, TrackId, VolumeAutomationPoint};
 use aaadaw_media::{AudioWaveform, WaveformPeak};
 use aaadaw_storage::{
     ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
@@ -233,6 +233,14 @@ pub(crate) enum TimelineEvent {
     ClearSelectedFxAutomationPoint,
     SelectEmpty(u64),
     SetEditCursor(u64),
+    SelectProjectMarker {
+        marker_id: MarkerId,
+        position_ticks: u64,
+    },
+    MoveProjectMarker {
+        marker_id: MarkerId,
+        position_ticks: u64,
+    },
     SetTimeSelection {
         start_tick: u64,
         end_tick: u64,
@@ -240,6 +248,8 @@ pub(crate) enum TimelineEvent {
     ClearTimeSelection,
     ToggleSnap,
     SetSnapGrid(SnapGrid),
+    ToggleMidiEditorSnap,
+    SetMidiEditorSnapGrid(SnapGrid),
     BeginItemDrag {
         item_id: ItemId,
         pointer_delta_ticks: i128,
@@ -741,6 +751,7 @@ pub(crate) struct TimelineState {
     pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) selected_project_marker: Option<MarkerId>,
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
@@ -751,6 +762,7 @@ pub(crate) struct TimelineState {
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
     pub(crate) snap_enabled: bool,
     pub(crate) snap_grid: SnapGrid,
+    pub(crate) midi_editor_snap_grid: SnapGrid,
     pub(crate) edit_cursor_tick: u64,
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
@@ -920,7 +932,7 @@ impl Default for TimelineState {
     fn default() -> Self {
         let project = Project::new();
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, SnapGrid::Sixteenth);
+        cache.rebuild(&project, SnapGrid::Quarter);
         let (mut panes, track_pane) = pane_grid::State::new(ArrangementPane::TrackControls);
         let (_timeline_pane, split) = panes
             .split(Axis::Vertical, track_pane, ArrangementPane::Timeline)
@@ -935,6 +947,7 @@ impl Default for TimelineState {
             selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
+            selected_project_marker: None,
             time_selection: None,
             context_track: None,
             context_item: None,
@@ -944,7 +957,8 @@ impl Default for TimelineState {
             context_automation_position: None,
             audio_waveforms: HashMap::new(),
             snap_enabled: true,
-            snap_grid: SnapGrid::Sixteenth,
+            snap_grid: SnapGrid::Quarter,
+            midi_editor_snap_grid: SnapGrid::Sixteenth,
             edit_cursor_tick: 0,
             origin_tick: 0,
             pixels_per_tick: 0.065,
@@ -980,6 +994,7 @@ impl TimelineState {
         project: &Project,
         view_state: Option<&ArrangementViewState>,
     ) {
+        self.selected_project_marker = None;
         self.context_fade = None;
         self.item_fade_preview = None;
         self.folder_compact.clear();
@@ -1143,6 +1158,14 @@ impl TimelineState {
     }
 
     pub(crate) fn rebuild(&mut self, project: &Project) {
+        if self.selected_project_marker.is_some_and(|marker_id| {
+            !project
+                .markers()
+                .iter()
+                .any(|marker| marker.id() == marker_id)
+        }) {
+            self.selected_project_marker = None;
+        }
         self.folder_parents = project
             .tracks()
             .iter()
@@ -1674,6 +1697,16 @@ impl TimelineState {
                 self.select_item(None, false, false, false);
             }
             TimelineEvent::SetEditCursor(tick) => self.edit_cursor_tick = tick,
+            TimelineEvent::SelectProjectMarker {
+                marker_id,
+                position_ticks,
+            } => {
+                self.selected_project_marker = Some(marker_id);
+                self.edit_cursor_tick = position_ticks;
+            }
+            TimelineEvent::MoveProjectMarker { marker_id, .. } => {
+                self.selected_project_marker = Some(marker_id);
+            }
             TimelineEvent::SetTimeSelection {
                 start_tick,
                 end_tick,
@@ -1690,6 +1723,14 @@ impl TimelineState {
                 if self.cache.snap_grid_ticks.is_none() {
                     self.snap_enabled = false;
                 }
+            }
+            TimelineEvent::ToggleMidiEditorSnap => {
+                if self.midi_editor_has_snap_grid() {
+                    self.snap_enabled = !self.snap_enabled;
+                }
+            }
+            TimelineEvent::SetMidiEditorSnapGrid(grid) => {
+                self.midi_editor_snap_grid = grid;
             }
             TimelineEvent::BeginItemDrag {
                 item_id,
@@ -2067,6 +2108,12 @@ impl TimelineState {
 
     pub(crate) fn has_snap_grid(&self) -> bool {
         self.cache.snap_grid_ticks.is_some()
+    }
+
+    pub(crate) fn midi_editor_has_snap_grid(&self) -> bool {
+        self.midi_editor_snap_grid
+            .tick_interval(self.cache.ppq)
+            .is_some()
     }
 
     pub(crate) fn selected_item_geometries(&self) -> Vec<SelectedItemGeometry> {
@@ -4045,32 +4092,99 @@ struct RulerProgram<'a> {
 }
 
 impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
-    type State = ();
+    type State = Option<ProjectMarkerDrag>;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<crate::app::Message>> {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            let position = cursor.position_in(bounds)?;
-            let tick = tick_at_x(
-                self.state.origin_tick,
-                self.state.pixels_per_tick,
-                position.x,
-            );
-            return Some(canvas::Action::publish(crate::app::Message::Timeline(
-                TimelineEvent::SetEditCursor(tick),
-            )));
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let position = cursor.position_in(bounds)?;
+                if let Some(marker) = project_marker_hit(self.project, self.state, position) {
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    *state = Some(ProjectMarkerDrag {
+                        marker_id: marker.id(),
+                        original_position_ticks: marker.position_ticks(),
+                        pointer_offset_ticks: i128::from(marker.position_ticks())
+                            - i128::from(pointer_tick),
+                        start_pointer_x: position.x,
+                        preview_position_ticks: marker.position_ticks(),
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
+                let tick = tick_at_x(
+                    self.state.origin_tick,
+                    self.state.pixels_per_tick,
+                    position.x,
+                );
+                Some(canvas::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::SetEditCursor(tick),
+                )))
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let drag = state.as_mut()?;
+                let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
+                if !drag.moved && (position.x - drag.start_pointer_x).abs() < 3.0 {
+                    return Some(canvas::Action::capture());
+                }
+                drag.moved = true;
+                let pointer_tick = tick_at_x(
+                    self.state.origin_tick,
+                    self.state.pixels_per_tick,
+                    position.x,
+                );
+                let target_tick = (i128::from(pointer_tick) + drag.pointer_offset_ticks)
+                    .clamp(0, i128::from(u64::MAX)) as u64;
+                drag.preview_position_ticks = snap_tick_to_grid(
+                    target_tick,
+                    self.state.cache.snap_grid_ticks,
+                    self.state.snap_enabled,
+                    false,
+                );
+                Some(canvas::Action::request_redraw().and_capture())
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let drag = state.take()?;
+                if drag.moved {
+                    (drag.preview_position_ticks != drag.original_position_ticks)
+                        .then(|| {
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::MoveProjectMarker {
+                                    marker_id: drag.marker_id,
+                                    position_ticks: drag.preview_position_ticks,
+                                },
+                            ))
+                            .and_capture()
+                        })
+                        .or_else(|| Some(canvas::Action::capture()))
+                } else {
+                    Some(
+                        canvas::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectProjectMarker {
+                                marker_id: drag.marker_id,
+                                position_ticks: drag.original_position_ticks,
+                            },
+                        ))
+                        .and_capture(),
+                    )
+                }
+            }
+            _ => None,
         }
-        None
     }
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &iced::Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -4145,15 +4259,27 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             }
         }
         for (index, marker) in self.project.markers().iter().enumerate() {
+            let position_ticks = state
+                .as_ref()
+                .filter(|drag| drag.marker_id == marker.id() && drag.moved)
+                .map_or(marker.position_ticks(), |drag| drag.preview_position_ticks);
             let x = project_marker_x(
-                marker.position_ticks(),
+                position_ticks,
                 self.state.origin_tick,
                 self.state.pixels_per_tick,
             );
             if !x.is_finite() || x < -8.0 || x > bounds.width {
                 continue;
             }
-            let color = Color::from_rgb8(224, 91, 76);
+            let color = if self.state.selected_project_marker == Some(marker.id())
+                || state
+                    .as_ref()
+                    .is_some_and(|drag| drag.marker_id == marker.id())
+            {
+                Color::from_rgb8(255, 135, 113)
+            } else {
+                Color::from_rgb8(224, 91, 76)
+            };
             let stem = canvas::Path::line(Point::new(x, 8.0), Point::new(x, bounds.height));
             frame.stroke(
                 &stem,
@@ -4186,6 +4312,47 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
         }
         vec![frame.into_geometry()]
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectMarkerDrag {
+    marker_id: MarkerId,
+    original_position_ticks: u64,
+    pointer_offset_ticks: i128,
+    start_pointer_x: f32,
+    preview_position_ticks: u64,
+    moved: bool,
+}
+
+fn project_marker_hit<'a>(
+    project: &'a Project,
+    state: &TimelineState,
+    position: Point,
+) -> Option<&'a aaadaw_core::ProjectMarker> {
+    if !(0.0..=14.0).contains(&position.y) {
+        return None;
+    }
+    project
+        .markers()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, marker)| {
+            let x = project_marker_x(
+                marker.position_ticks(),
+                state.origin_tick,
+                state.pixels_per_tick,
+            );
+            let label = if marker.name().is_empty() {
+                (index + 1).to_string()
+            } else {
+                marker.name().to_owned()
+            };
+            let right = x + 12.0 + label.chars().count() as f32 * 6.0;
+            (position.x >= x - 5.0 && position.x <= right)
+                .then_some((marker, (position.x - x).abs()))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(marker, _)| marker)
 }
 
 fn project_marker_x(position_tick: u64, origin_tick: u64, pixels_per_tick: f32) -> f32 {
@@ -4592,7 +4759,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = ();
+        let mut interaction = None;
         let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let cursor = mouse::Cursor::Available(Point::new(100.0, 16.0));
@@ -4611,6 +4778,177 @@ mod tests {
                 440
             )))
         ));
+    }
+
+    #[test]
+    fn ruler_marker_click_selects_marker_and_moves_edit_cursor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = None;
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+        assert_eq!(press_action.into_inner().2, iced::event::Status::Captured);
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker click should select the marker");
+        let (message, _, status) = release_action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker {
+                    marker_id: selected_id,
+                    position_ticks: 1_000,
+                }
+            )) if selected_id == marker_id
+        ));
+    }
+
+    #[test]
+    fn ruler_marker_drag_preserves_grab_offset_and_publishes_one_move() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = None;
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(611.0, 6.0),
+        });
+        let move_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(611.0, 6.0)),
+        )
+        .expect("marker drag should update its preview");
+        assert_eq!(move_action.into_inner().2, iced::event::Status::Captured);
+        assert_eq!(
+            interaction.map(|drag| drag.preview_position_ticks),
+            Some(1_200)
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(611.0, 6.0)),
+        )
+        .expect("marker drag release should commit one move");
+        let (message, _, status) = release_action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectMarker {
+                    marker_id: moved_id,
+                    position_ticks: 1_200,
+                }
+            )) if moved_id == marker_id
+        ));
+        assert!(interaction.is_none());
+    }
+
+    #[test]
+    fn ruler_marker_drag_uses_enabled_quarter_note_snap_grid() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 5_000,
+                name: String::new(),
+            })
+            .unwrap();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: true,
+            snap_grid: SnapGrid::Quarter,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = None;
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(555.0, 6.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(555.0, 6.0)),
+        )
+        .expect("marker drag should update its snapped preview");
+        assert_eq!(
+            interaction.map(|drag| drag.preview_position_ticks),
+            Some(5_760)
+        );
     }
 
     #[test]
@@ -4771,11 +5109,12 @@ mod tests {
     #[test]
     fn drag_below_track_rows_creates_a_time_selection() {
         let project = Project::new();
-        let timeline = TimelineState {
+        let mut timeline = TimelineState {
             origin_tick: 240,
             pixels_per_tick: 0.5,
             ..TimelineState::default()
         };
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         let program = timeline.program(&project, None);
         let mut interaction = super::TimelineInteractionState::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
@@ -5105,6 +5444,7 @@ mod tests {
             pixels_per_tick: 0.5,
             ..TimelineState::default()
         };
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         timeline.rebuild(&project);
         let program = timeline.program(&project, None);
         let mut interaction = super::TimelineInteractionState::default();
@@ -6372,11 +6712,23 @@ mod tests {
     }
 
     #[test]
-    fn default_snap_grid_is_available_in_a_new_empty_project() {
+    fn arrange_and_midi_snap_grids_match_defaults_and_change_independently() {
         let timeline = TimelineState::default();
-        assert_eq!(timeline.snap_grid, SnapGrid::Sixteenth);
+        assert_eq!(timeline.snap_grid, SnapGrid::Quarter);
+        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::Sixteenth);
         assert!(timeline.has_snap_grid());
+        assert!(timeline.midi_editor_has_snap_grid());
         assert!(timeline.snap_enabled);
+
+        let mut timeline = timeline;
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Eighth));
+        timeline.handle(TimelineEvent::SetMidiEditorSnapGrid(
+            SnapGrid::EighthTriplet,
+        ));
+        assert_eq!(timeline.snap_grid, SnapGrid::Eighth);
+        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::EighthTriplet);
+        timeline.handle(TimelineEvent::ToggleMidiEditorSnap);
+        assert!(!timeline.snap_enabled);
     }
 
     #[test]
@@ -6756,6 +7108,7 @@ mod tests {
         let (project, _, _) = project_with_items();
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
 
         assert_eq!(
             snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false),
@@ -6873,6 +7226,7 @@ mod tests {
         let project = Project::with_settings(settings);
         let mut unavailable = TimelineState::default();
         unavailable.rebuild(&project);
+        unavailable.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         assert!(!unavailable.snap_enabled);
         unavailable.handle(TimelineEvent::ToggleSnap);
         assert!(!unavailable.snap_enabled);

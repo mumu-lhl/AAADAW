@@ -2435,7 +2435,7 @@ impl App {
                             .unwrap_or(0);
                         let copy_grid = if self.timeline.snap_enabled {
                             self.timeline
-                                .snap_grid
+                                .midi_editor_snap_grid
                                 .tick_interval(self.project.settings().ppq())
                                 .unwrap_or(1)
                         } else {
@@ -4821,8 +4821,43 @@ impl App {
         let edit_cursor_tick = match &event {
             timeline::TimelineEvent::SelectEmpty(tick)
             | timeline::TimelineEvent::SetEditCursor(tick) => Some(*tick),
+            timeline::TimelineEvent::SelectProjectMarker { position_ticks, .. } => {
+                Some(*position_ticks)
+            }
             _ => None,
         };
+        if let timeline::TimelineEvent::MoveProjectMarker {
+            marker_id,
+            position_ticks,
+        } = &event
+        {
+            if commands::project_edit_busy(self) {
+                self.status =
+                    "Stop playback or finish the current project operation before moving a marker"
+                        .to_owned();
+                return;
+            }
+            let Some(name) = self
+                .project
+                .markers()
+                .iter()
+                .find(|marker| marker.id() == *marker_id)
+                .map(|marker| marker.name().to_owned())
+            else {
+                self.status = "Project marker no longer exists".to_owned();
+                return;
+            };
+            self.timeline.selected_project_marker = Some(*marker_id);
+            self.apply_action(
+                DawAction::UpdateProjectMarker {
+                    marker_id: *marker_id,
+                    position_ticks: *position_ticks,
+                    name,
+                },
+                "Project marker moved",
+            );
+            return;
+        }
         let previous_view_state = matches!(
             &event,
             timeline::TimelineEvent::ToggleVolumeAutomation(_)
@@ -8027,7 +8062,7 @@ impl App {
     fn midi_editor_snap_interval(&self) -> u64 {
         if self.timeline.snap_enabled {
             self.timeline
-                .snap_grid
+                .midi_editor_snap_grid
                 .tick_interval(self.project.settings().ppq())
                 .unwrap_or(1)
         } else {

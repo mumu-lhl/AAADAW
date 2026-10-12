@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有基础 Project Marker 模型、schema35 保存、插入/导航、光标前后严格小于 1 秒最近标记删除、1–10 号 Marker 主键盘 Ctrl 快捷动作（停止播放时编辑光标）与时间尺显示；cADPCM 编码尚未逐字节一致、其它 Bounds、Marker/Region 全交互和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有基础 Project Marker 模型、schema35 保存、插入/导航、光标前后严格小于 1 秒最近标记删除、1–10 号 Marker 主键盘 Ctrl 快捷动作、标尺选择/定位/拖动及默认 1/4 网格吸附；cADPCM 编码尚未逐字节一致、其它 Bounds、Marker/Region 全交互和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；基础 Project Marker 插入/导航/光标前后严格小于 1 秒删除/1–10 号 Marker 动作（停止播放时）/时间尺显示已接入；播放中 play cursor、完整 Marker/Region、GUI、基本编辑和自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；基础 Project Marker 插入/导航/光标前后严格小于 1 秒删除/1–10 号 Marker 动作（停止播放时）/标尺选择定位和拖动/时间尺显示已接入；播放中 play cursor、Marker 管理器、完整 Region、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -382,4 +382,12 @@ AAADAW 现在用共享的有界 ADPCM block writer 导出 cADPCM，并通过自�
 
 Marker 输入和状态回归覆盖名称/位置校验、稳定排序、Undo/Redo、快照、schema34→35、默认键、导航和 GPU 绘制数据。实现遇到旧存储测试通过降低 `user_version` 模拟旧库的方式；将 schema35 表及索引创建改为 `IF NOT EXISTS` 后，schema34 缺表迁移和历史降级夹具均通过。基础 Marker 插入/导航切片的 workspace nextest 为 914/914、0 跳过；近光标删除扩展后为 915/915；加入编号 Marker 槽位、主键盘映射、NumPad 不冲突和稳定身份 Undo 后，workspace nextest 917/917、0 跳过。strict workspace Clippy、`cargo check --workspace --all-targets` 与 fmt 检查通过；原厂证据分别见 `marker-delete-near-cursor-native.tsv` 和 `numbered-markers-native.tsv`。
 
-`PROJECT-MARKERS-001` 和 UI-013 继续 `in_progress`：Marker 选中/拖动/命名/管理器、Region、颜色/隐藏、负时间、tempo/timebase 行为及原厂实窗视觉/边界对照未完成。`[`/`]` 的末尾行为目前按 AAADAW 可见 Item/Marker 推导，也还没有证明覆盖 REAPER 所有项目结束规则；不据此关闭 P4 或 UI-013。
+`PROJECT-MARKERS-001` 和 UI-013 继续 `in_progress`：Marker 双击命名/管理器、Region、颜色/隐藏、负时间、tempo/timebase 行为及原厂实窗视觉/边界对照未完成。`[`/`]` 的末尾行为目前按 AAADAW 可见 Item/Marker 推导，也还没有证明覆盖 REAPER 所有项目结束规则；不据此关闭 P4 或 UI-013。
+
+### 2026-10-12 Marker 标尺选择与拖动
+
+在 Linux REAPER 7.82 Default 7 的一次性工程中实测：点击 Marker 旗标会定位编辑光标；拖动旗标移动 Marker，单次 Undo 恢复整个拖动；Snap/Grid Settings 默认 Snap 开启、Arrange 网格 `1/4`，开启时标记吸附到四分音符网格，关闭时可停在网格线之间。原厂位置输出、操作结果与截图见[鼠标交互证据](../verification/reaper-parity/fixtures/marker-ruler-native.tsv)。
+
+AAADAW 标尺现在支持 Marker 旗标/标签单击选择和编辑光标定位；拖动显示游标预览，保持鼠标抓取偏移，释放后以一条 `UpdateProjectMarker` 历史动作提交，Undo/Redo 保留 Marker ID 和名称。提交经过播放/工程忙碌守卫。Arrange 默认网格从 `1/16` 改为原厂实测 `1/4`；MIDI Editor 网格分度独立控制（AAADAW 当前默认为 `1/16`，原厂 MIDI Editor 的初始分度还未实测），并共用 Snap 开关，匹配原厂默认未勾选的“Use same grid division”选项。尚未对照双击命名、鼠标修饰键、同位置 Marker 命中/排序、负时间及全网格设置；不要据此关闭 `PROJECT-MARKERS-001`、P4 或 UI-013。
+
+专项回归：`ruler_marker_click_selects_marker_and_moves_edit_cursor`、`ruler_marker_drag_preserves_grab_offset_and_publishes_one_move`、`ruler_marker_drag_uses_enabled_quarter_note_snap_grid`、`ruler_marker_move_is_one_undoable_edit_and_respects_busy_guard`。最终 workspace nextest 921/921、0 跳过（串行运行；CLAP X11 helper 测试串行复验通过）；workspace all-targets strict Clippy `-D warnings`、`cargo check --workspace --all-targets`、fmt 与 `git diff --check` 均通过。`PROJECT-MARKERS-001` 仍为 `in_progress`。

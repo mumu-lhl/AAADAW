@@ -320,6 +320,44 @@ fn numbered_marker_slots_insert_move_by_position_and_undo() {
 }
 
 #[test]
+fn ruler_marker_move_is_one_undoable_edit_and_respects_busy_guard() {
+    let mut app = App::default();
+    app.apply_action(
+        DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Verse".to_owned(),
+        },
+        "Project marker inserted",
+    );
+    let marker_id = app.project.markers()[0].id();
+
+    app.io_busy = true;
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::MoveProjectMarker {
+        marker_id,
+        position_ticks: 1_920,
+    });
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    assert!(app.status.contains("before moving a marker"));
+    app.io_busy = false;
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::MoveProjectMarker {
+        marker_id,
+        position_ticks: 1_920,
+    });
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 1_920);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.timeline.selected_project_marker, Some(marker_id));
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.markers()[0].id(), marker_id);
+    assert_eq!(app.project.markers()[0].position_ticks(), 960);
+    assert_eq!(app.project.markers()[0].name(), "Verse");
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.markers()[0].position_ticks(), 1_920);
+}
+
+#[test]
 fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     let mut app = App::default();
     for _ in 0..3 {
@@ -4988,13 +5026,13 @@ fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
 }
 
 #[test]
-fn piano_roll_paste_uses_the_shared_snap_grid_and_respects_snap_off() {
+fn piano_roll_paste_uses_its_own_grid_division_and_respects_shared_snap_off() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
     let item_id = app.project.midi_items()[0].id();
     let _ = app.update(Message::OpenMidiEditor(item_id));
-    let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
+    let _ = app.update(Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(
         SnapGrid::EighthTriplet,
     )));
     app.midi_editor_edit_cursor_tick = Some(190);
@@ -5008,7 +5046,7 @@ fn piano_roll_paste_uses_the_shared_snap_grid_and_respects_snap_off() {
     let _ = app.update(Message::PasteMidiNotes(item_id));
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 320);
 
-    let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+    let _ = app.update(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap));
     app.midi_editor_edit_cursor_tick = Some(510);
     app.midi_note_clipboard.last_paste = None;
     let _ = app.update(Message::PasteMidiNotes(item_id));
@@ -5713,6 +5751,8 @@ fn audio_timeline_exact_position_edit_preserves_source_and_is_undoable() {
 #[test]
 fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
     let mut app = App::default();
+    app.timeline
+        .handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
     for _ in 0..3 {
         let _ = app.update(Message::AddTrack);
     }
@@ -5813,6 +5853,8 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
 #[test]
 fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
     let mut app = App::default();
+    app.timeline
+        .handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
     for _ in 0..3 {
         let _ = app.update(Message::AddTrack);
     }
@@ -5920,6 +5962,8 @@ fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
 #[test]
 fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
     let mut app = App::default();
+    app.timeline
+        .handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
     let start = app.project.sample_at_tick(480).unwrap();
