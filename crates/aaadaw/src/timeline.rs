@@ -4334,7 +4334,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             });
             frame.fill(&flag, color);
             let label = if marker.name().is_empty() {
-                marker.id().value().saturating_add(1).to_string()
+                marker.number().to_string()
             } else {
                 marker.name().to_owned()
             };
@@ -4390,7 +4390,7 @@ fn project_marker_hit<'a>(
                 state.pixels_per_tick,
             );
             let label = if marker.name().is_empty() {
-                marker.id().value().saturating_add(1).to_string()
+                marker.number().to_string()
             } else {
                 marker.name().to_owned()
             };

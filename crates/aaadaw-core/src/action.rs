@@ -52,9 +52,22 @@ pub enum DawAction {
         position_ticks: u64,
         name: String,
     },
+    /// Insert a project marker with an explicit REAPER marker number.
+    InsertNumberedProjectMarker {
+        number: u32,
+        position_ticks: u64,
+        name: String,
+    },
     /// Rename or reposition a project marker while preserving its identity.
     UpdateProjectMarker {
         marker_id: MarkerId,
+        position_ticks: u64,
+        name: String,
+    },
+    /// Update marker properties while preserving its stable internal identity.
+    UpdateProjectMarkerProperties {
+        marker_id: MarkerId,
+        number: u32,
         position_ticks: u64,
         name: String,
     },

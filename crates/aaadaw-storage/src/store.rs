@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 35;
+pub const CURRENT_SCHEMA_VERSION: u32 = 36;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS project_markers (
     name TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_markers_by_position ON project_markers(position_ticks, id);
+"#;
+const MIGRATION_36: &str = r#"
+ALTER TABLE project_markers ADD COLUMN marker_number INTEGER NOT NULL DEFAULT 1 CHECK(marker_number BETWEEN 1 AND 2147483647);
+UPDATE project_markers SET marker_number = CASE WHEN id >= 2147483646 THEN 2147483647 ELSE id + 1 END;
 "#;
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
@@ -622,7 +626,67 @@ mod project_marker_storage_tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema_version, 35);
+        assert_eq!(schema_version, 36);
+    }
+
+    #[test]
+    fn schema_35_marker_rows_migrate_to_visible_numbers_without_losing_stable_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers-schema-35.aaadaw");
+        let mut project = Project::new();
+        for (number, position_ticks, name) in [(5, 960, "Five"), (10, 1_920, "Ten")] {
+            project
+                .apply(DawAction::InsertNumberedProjectMarker {
+                    number,
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE project_markers DROP COLUMN marker_number; PRAGMA user_version = 35;",
+            )
+            .unwrap();
+        drop(store);
+
+        let store = ProjectStore::open(&path).unwrap();
+        let markers = store.load().unwrap().markers().to_vec();
+        assert_eq!(markers[0].id().value(), 0);
+        assert_eq!(markers[0].number(), 1);
+        assert_eq!(markers[1].id().value(), 1);
+        assert_eq!(markers[1].number(), 2);
+        assert_eq!(markers[0].name(), "Five");
+        assert_eq!(markers[1].name(), "Ten");
+    }
+
+    #[test]
+    fn project_marker_round_trip_preserves_sparse_and_duplicate_numbers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers-number-round-trip.aaadaw");
+        let mut project = Project::new();
+        for (number, position_ticks, name) in [
+            (5, 960, "Five"),
+            (10, 1_920, "Ten earlier"),
+            (10, 2_880, "Ten later"),
+        ] {
+            project
+                .apply(DawAction::InsertNumberedProjectMarker {
+                    number,
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+        let expected = project.markers().to_vec();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().markers(), expected);
     }
 }
 
@@ -2666,6 +2730,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
             }
             35 => transaction.execute_batch(MIGRATION_35)?,
+            36 => {
+                if !table_has_column(&transaction, "project_markers", "marker_number")? {
+                    transaction.execute_batch(MIGRATION_36)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2935,11 +3004,12 @@ fn write_snapshot(
     }
     for marker in &snapshot.markers {
         transaction.execute(
-            "INSERT INTO project_markers(id, position_ticks, name) VALUES(?1, ?2, ?3)",
+            "INSERT INTO project_markers(id, position_ticks, name, marker_number) VALUES(?1, ?2, ?3, ?4)",
             params![
                 to_sql_integer(marker.id)?,
                 to_sql_integer(marker.position_ticks)?,
-                marker.name
+                marker.name,
+                i64::from(marker.number)
             ],
         )?;
     }
@@ -3586,21 +3656,23 @@ fn read_project_markers(
     connection: &Connection,
 ) -> Result<Vec<ProjectMarkerSnapshot>, StorageError> {
     let mut statement = connection.prepare(
-        "SELECT id, position_ticks, name FROM project_markers ORDER BY position_ticks, id",
+        "SELECT id, marker_number, position_ticks, name FROM project_markers ORDER BY position_ticks, id",
     )?;
     let rows = statement
         .query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, position_ticks, name)| {
+        .map(|(id, number, position_ticks, name)| {
             Ok(ProjectMarkerSnapshot {
                 id: from_sql_u64(id)?,
+                number: from_sql_u32(number)?,
                 position_ticks: from_sql_u64(position_ticks)?,
                 name,
             })

@@ -40,11 +40,24 @@ fn valid_project_markers(markers: &[ProjectMarker]) -> bool {
     let mut ids = HashSet::with_capacity(markers.len());
     markers.iter().all(|marker| {
         marker.position_ticks <= crate::timebase::MAX_EXACT_FLOAT_POSITION
+            && (1..=crate::MAX_PROJECT_MARKER_NUMBER).contains(&marker.number)
             && crate::markers::valid_marker_name(&marker.name)
             && ids.insert(marker.id)
     }) && markers.windows(2).all(|pair| {
         (pair[0].position_ticks, pair[0].id.value()) <= (pair[1].position_ticks, pair[1].id.value())
     })
+}
+
+fn lowest_available_marker_number(markers: &[ProjectMarker]) -> Option<u32> {
+    let used: HashSet<_> = markers.iter().map(ProjectMarker::number).collect();
+    let mut candidate = 1;
+    while used.contains(&candidate) {
+        candidate = candidate.checked_add(1)?;
+        if candidate > crate::MAX_PROJECT_MARKER_NUMBER {
+            return None;
+        }
+    }
+    Some(candidate)
 }
 
 type TrackStructure = Vec<(TrackId, Option<TrackId>, bool)>;
@@ -1690,6 +1703,7 @@ impl Project {
             markers.push(
                 ProjectMarker::new(
                     MarkerId::from_raw(marker.id),
+                    marker.number,
                     marker.position_ticks,
                     marker.name,
                 )
@@ -2026,8 +2040,34 @@ impl Project {
                     .next_marker_id
                     .checked_add(1)
                     .ok_or(ActionError::MarkerIdExhausted)?;
+                let number = lowest_available_marker_number(&state.markers)
+                    .ok_or(ActionError::ProjectMarkerNumberExhausted)?;
                 let marker = ProjectMarker::new(
                     MarkerId::from_raw(ids.next_marker_id),
+                    number,
+                    position_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectMarker)?;
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                after.push(marker);
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ids.next_marker_id = next_marker_id;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::InsertNumberedProjectMarker {
+                number,
+                position_ticks,
+                name,
+            } => {
+                let next_marker_id = ids
+                    .next_marker_id
+                    .checked_add(1)
+                    .ok_or(ActionError::MarkerIdExhausted)?;
+                let marker = ProjectMarker::new(
+                    MarkerId::from_raw(ids.next_marker_id),
+                    number,
                     position_ticks,
                     name,
                 )
@@ -2050,7 +2090,24 @@ impl Project {
                     .iter_mut()
                     .find(|marker| marker.id == marker_id)
                     .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
-                *marker = ProjectMarker::new(marker_id, position_ticks, name)
+                *marker = ProjectMarker::new(marker_id, marker.number, position_ticks, name)
+                    .ok_or(ActionError::InvalidProjectMarker)?;
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::UpdateProjectMarkerProperties {
+                marker_id,
+                number,
+                position_ticks,
+                name,
+            } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                *marker = ProjectMarker::new(marker_id, number, position_ticks, name)
                     .ok_or(ActionError::InvalidProjectMarker)?;
                 after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
                 ProjectEvent::ProjectMarkersChanged { before, after }

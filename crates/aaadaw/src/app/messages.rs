@@ -216,6 +216,7 @@ pub(crate) enum Message {
     ApplyItemProperties(bool),
     CloseItemProperties,
     MarkerNameChanged(String),
+    MarkerNumberChanged(String),
     MarkerPositionChanged(String),
     ApplyMarkerProperties,
     CloseMarkerProperties,

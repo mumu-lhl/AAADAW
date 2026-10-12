@@ -267,7 +267,7 @@ fn marker_manager_keeps_global_undo_shortcut_available() {
 }
 
 #[test]
-fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
+fn marker_properties_edit_name_number_and_position_as_one_undoable_change() {
     let mut app = App::default();
     app.project
         .apply(DawAction::SetTempo {
@@ -282,6 +282,7 @@ fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
         })
         .unwrap();
     let marker_id = app.project.markers()[0].id();
+    assert_eq!(app.project.markers()[0].number(), 1);
     let revision_before = app.revision;
 
     let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
@@ -291,9 +292,11 @@ fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
     assert_eq!(app.marker_properties.as_ref().unwrap().position, "1.2.00");
     assert!(app.marker_properties_window_id.is_some());
     let _ = app.update(Message::MarkerNameChanged("discarded".to_owned()));
+    let _ = app.update(Message::MarkerNumberChanged("8".to_owned()));
     let _ = app.update(Message::MarkerPositionChanged("1.3.50".to_owned()));
     let _ = app.update(Message::CloseMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.project.markers()[0].number(), 1);
     assert_eq!(app.project.markers()[0].position_ticks(), 960);
     assert_eq!(app.revision, revision_before);
 
@@ -301,9 +304,11 @@ fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
         marker_id,
     }));
     let _ = app.update(Message::MarkerNameChanged("Verse".to_owned()));
+    let _ = app.update(Message::MarkerNumberChanged("8".to_owned()));
     let _ = app.update(Message::MarkerPositionChanged("1.3.50".to_owned()));
     let _ = app.update(Message::ApplyMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].number(), 8);
     assert_eq!(app.project.markers()[0].id(), marker_id);
     assert_eq!(app.project.markers()[0].position_ticks(), 2_400);
     assert_eq!(app.timeline.edit_cursor_tick, 0);
@@ -312,10 +317,12 @@ fn marker_properties_cancel_rename_undo_and_redo_preserve_marker_identity() {
 
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.markers()[0].name(), "");
+    assert_eq!(app.project.markers()[0].number(), 1);
     assert_eq!(app.project.markers()[0].id(), marker_id);
     assert_eq!(app.project.markers()[0].position_ticks(), 960);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.markers()[0].name(), "Verse");
+    assert_eq!(app.project.markers()[0].number(), 8);
     assert_eq!(app.project.markers()[0].id(), marker_id);
     assert_eq!(app.project.markers()[0].position_ticks(), 2_400);
 }
@@ -333,6 +340,13 @@ fn marker_properties_keep_invalid_or_busy_edits_open_without_changing_project() 
     let _ = app.update(Message::Timeline(TimelineEvent::EditProjectMarker {
         marker_id,
     }));
+    let _ = app.update(Message::MarkerNumberChanged("0".to_owned()));
+    let _ = app.update(Message::ApplyMarkerProperties);
+    assert_eq!(app.project.markers()[0].number(), 1);
+    assert!(app.marker_properties_window_id.is_some());
+    assert!(app.marker_properties.as_ref().unwrap().error.is_some());
+
+    let _ = app.update(Message::MarkerNumberChanged("1".to_owned()));
     let _ = app.update(Message::MarkerNameChanged("\0".to_owned()));
     let _ = app.update(Message::ApplyMarkerProperties);
     assert_eq!(app.project.markers()[0].name(), "Verse");
@@ -463,52 +477,64 @@ fn deleting_nearby_marker_matches_reaper_radius_and_nearest_selection() {
 }
 
 #[test]
-fn numbered_marker_slots_insert_move_by_position_and_undo() {
+fn numbered_marker_slots_match_visible_numbers_and_duplicate_order() {
     let mut app = App::default();
-    app.timeline.edit_cursor_tick = 1_920;
-    let _ = app.update(Message::MoveProjectMarkerSlot(1));
-    assert_eq!(app.project.markers().len(), 1);
-    let first_id = app.project.markers()[0].id();
-    assert_eq!(app.project.markers()[0].position_ticks(), 1_920);
-    assert_eq!(app.project.markers()[0].name(), "");
-
-    let _ = app.update(Message::Undo);
-    assert!(app.project.markers().is_empty());
-    let _ = app.update(Message::Redo);
-    assert_eq!(app.project.markers()[0].id(), first_id);
-
-    app.timeline.edit_cursor_tick = 0;
-    let _ = app.update(Message::MoveProjectMarkerSlot(2));
-    assert_eq!(app.project.markers().len(), 2);
-    let second_id = app.project.markers()[0].id();
-    assert_ne!(second_id, first_id);
-    assert_eq!(app.project.markers()[0].position_ticks(), 0);
-    assert_eq!(app.project.markers()[1].id(), first_id);
-
-    app.apply_action(
-        DawAction::UpdateProjectMarker {
-            marker_id: first_id,
-            position_ticks: 1_920,
-            name: "Verse".to_owned(),
-        },
-        "Marker renamed",
-    );
+    for (number, position_ticks, name) in [
+        (2, 0, "M2"),
+        (1, 960, "M1-later"),
+        (1, 1_920, "M1-duplicate"),
+    ] {
+        app.apply_action(
+            DawAction::InsertNumberedProjectMarker {
+                number,
+                position_ticks,
+                name: name.to_owned(),
+            },
+            "Project marker inserted",
+        );
+    }
+    let first_number_one_id = app.project.markers()[1].id();
+    let duplicate_number_one_id = app.project.markers()[2].id();
     app.timeline.edit_cursor_tick = 3_840;
     let _ = app.update(Message::MoveProjectMarkerSlot(1));
-    assert_eq!(app.project.markers()[0].id(), first_id);
-    assert_eq!(app.project.markers()[1].id(), second_id);
-    assert_eq!(app.project.markers()[1].position_ticks(), 3_840);
+    let moved = app
+        .project
+        .markers()
+        .iter()
+        .find(|marker| marker.id() == first_number_one_id)
+        .unwrap();
+    assert_eq!(moved.position_ticks(), 3_840);
+    assert_eq!(moved.number(), 1);
+    assert_eq!(moved.name(), "M1-later");
+    assert_eq!(
+        app.project
+            .markers()
+            .iter()
+            .find(|marker| marker.id() == duplicate_number_one_id)
+            .unwrap()
+            .position_ticks(),
+        1_920
+    );
     let _ = app.update(Message::Undo);
-    assert_eq!(app.project.markers()[0].id(), second_id);
-    assert_eq!(app.project.markers()[1].id(), first_id);
+    assert_eq!(
+        app.project
+            .markers()
+            .iter()
+            .find(|marker| marker.id() == first_number_one_id)
+            .unwrap()
+            .position_ticks(),
+        960
+    );
 
-    app.timeline.edit_cursor_tick = 960;
-    let _ = app.update(Message::MoveProjectMarkerSlot(2));
-    assert_eq!(app.project.markers()[1].id(), first_id);
-    assert_eq!(app.project.markers()[1].position_ticks(), 960);
-    assert_eq!(app.project.markers()[1].name(), "Verse");
-    let _ = app.update(Message::Undo);
-    assert_eq!(app.project.markers()[1].position_ticks(), 1_920);
+    app.timeline.edit_cursor_tick = 4_800;
+    let _ = app.update(Message::MoveProjectMarkerSlot(3));
+    let inserted = app
+        .project
+        .markers()
+        .iter()
+        .find(|marker| marker.number() == 3)
+        .unwrap();
+    assert_eq!(inserted.position_ticks(), 4_800);
 }
 
 #[test]

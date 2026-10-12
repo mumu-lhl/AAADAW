@@ -1721,6 +1721,7 @@ impl App {
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
+                    | Message::MarkerNumberChanged(_)
                     | Message::MarkerPositionChanged(_)
                     | Message::ApplyMarkerProperties
                     | Message::CloseMarkerProperties
@@ -2254,6 +2255,12 @@ impl App {
             Message::MarkerNameChanged(value) => {
                 if let Some(draft) = &mut self.marker_properties {
                     draft.name = value;
+                    draft.error = None;
+                }
+            }
+            Message::MarkerNumberChanged(value) => {
+                if let Some(draft) = &mut self.marker_properties {
+                    draft.number = value;
                     draft.error = None;
                 }
             }
@@ -3848,7 +3855,8 @@ impl App {
                     let existing = self
                         .project
                         .markers()
-                        .get(usize::from(slot - 1))
+                        .iter()
+                        .find(|marker| marker.number() == u32::from(slot))
                         .map(|marker| (marker.id(), marker.name().to_owned()));
                     if let Some((marker_id, name)) = existing {
                         self.apply_action(
@@ -3861,7 +3869,8 @@ impl App {
                         );
                     } else {
                         self.apply_action(
-                            DawAction::InsertProjectMarker {
+                            DawAction::InsertNumberedProjectMarker {
+                                number: u32::from(slot),
                                 position_ticks,
                                 name: String::new(),
                             },

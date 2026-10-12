@@ -3,6 +3,7 @@ use aaadaw_core::{DawAction, MarkerId};
 use iced::Task;
 
 pub(super) const NAME_INPUT_ID: &str = "project-marker-name";
+pub(super) const NUMBER_INPUT_ID: &str = "project-marker-number";
 pub(super) const POSITION_INPUT_ID: &str = "project-marker-position";
 
 #[derive(Debug, Clone)]
@@ -10,6 +11,7 @@ pub(super) struct MarkerProperties {
     pub(super) marker_id: MarkerId,
     generation: u64,
     pub(super) name: String,
+    pub(super) number: String,
     pub(super) position: String,
     pub(super) error: Option<String>,
 }
@@ -33,6 +35,7 @@ impl App {
             marker_id,
             generation: self.project_generation,
             name: marker.name().to_owned(),
+            number: marker.number().to_string(),
             position: super::item_properties::format_marker_position(
                 &self.project,
                 marker.position_ticks(),
@@ -41,8 +44,8 @@ impl App {
             error: None,
         });
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(440.0, 176.0),
-            min_size: Some(iced::Size::new(440.0, 176.0)),
+            size: iced::Size::new(480.0, 184.0),
+            min_size: Some(iced::Size::new(480.0, 184.0)),
             ..iced::window::Settings::default()
         });
         self.marker_properties_window_id = Some(window_id);
@@ -75,7 +78,22 @@ impl App {
         }
         let marker_id = draft.marker_id;
         let name = draft.name.clone();
+        let number = draft.number.clone();
         let position = draft.position.clone();
+        let number = match number.parse::<u32>() {
+            Ok(number) if (1..=aaadaw_core::MAX_PROJECT_MARKER_NUMBER).contains(&number) => number,
+            _ => {
+                let error = format!(
+                    "Marker ID must be between 1 and {}",
+                    aaadaw_core::MAX_PROJECT_MARKER_NUMBER
+                );
+                self.status = error.clone();
+                if let Some(draft) = &mut self.marker_properties {
+                    draft.error = Some(error);
+                }
+                return Task::none();
+            }
+        };
         let position_ticks =
             match super::item_properties::parse_marker_position(&self.project, &position) {
                 Ok(position_ticks) => position_ticks,
@@ -100,13 +118,17 @@ impl App {
             }
             return Task::none();
         };
-        if marker.name() == name && marker.position_ticks() == position_ticks {
+        if marker.name() == name
+            && marker.number() == number
+            && marker.position_ticks() == position_ticks
+        {
             return self.close_marker_properties();
         }
 
         self.apply_action(
-            DawAction::UpdateProjectMarker {
+            DawAction::UpdateProjectMarkerProperties {
                 marker_id,
+                number,
                 position_ticks,
                 name: name.clone(),
             },
@@ -115,6 +137,7 @@ impl App {
         if self.project.markers().iter().any(|marker| {
             marker.id() == marker_id
                 && marker.name() == name
+                && marker.number() == number
                 && marker.position_ticks() == position_ticks
         }) {
             self.close_marker_properties()

@@ -37,7 +37,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             let is_selected = manager.selected_marker == Some(marker_id);
             let row_button = button(
                 row![
-                    text(marker_manager_id_label(marker)).width(Length::Fixed(50.0)),
+                    text(marker_manager_id_label(marker)).width(Length::Fixed(96.0)),
                     text(marker.name()).width(Length::Fill),
                     text(position).width(Length::Fixed(116.0)),
                     text(current).width(Length::Fixed(64.0)),
@@ -145,7 +145,7 @@ fn matches_filter(project: &Project, marker: &ProjectMarker, query: &str) -> boo
 }
 
 fn marker_manager_id_label(marker: &ProjectMarker) -> String {
-    format!("M{}", marker.id().value().saturating_add(1))
+    format!("M{}", marker.number())
 }
 
 fn format_position(project: &Project, tick: u64) -> String {
@@ -175,7 +175,8 @@ mod tests {
     fn marker_manager_searches_name_id_and_reaper_bar_beat_position() {
         let mut project = Project::new();
         project
-            .apply(DawAction::InsertProjectMarker {
+            .apply(DawAction::InsertNumberedProjectMarker {
+                number: 5,
                 position_ticks: 1920,
                 name: "Bridge".to_owned(),
             })
@@ -183,10 +184,10 @@ mod tests {
         let marker = &project.markers()[0];
 
         assert_eq!(format_position(&project, 1920), "1.3.00");
-        assert_eq!(marker_manager_id_label(marker), "M1");
+        assert_eq!(marker_manager_id_label(marker), "M5");
         assert!(matches_filter(&project, marker, "bridge"));
-        assert!(matches_filter(&project, marker, "1"));
-        assert!(matches_filter(&project, marker, "m1"));
+        assert!(matches_filter(&project, marker, "5"));
+        assert!(matches_filter(&project, marker, "m5"));
         assert!(matches_filter(&project, marker, "1.3.00"));
         assert!(!matches_filter(&project, marker, "verse"));
     }

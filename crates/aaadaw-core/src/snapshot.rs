@@ -22,6 +22,7 @@ pub struct ProjectSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectMarkerSnapshot {
     pub id: u64,
+    pub number: u32,
     pub position_ticks: u64,
     pub name: String,
 }
@@ -30,6 +31,7 @@ impl From<&ProjectMarker> for ProjectMarkerSnapshot {
     fn from(marker: &ProjectMarker) -> Self {
         Self {
             id: marker.id().value(),
+            number: marker.number(),
             position_ticks: marker.position_ticks(),
             name: marker.name().to_owned(),
         }

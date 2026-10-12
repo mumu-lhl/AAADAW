@@ -16,16 +16,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .on_input(Message::MarkerPositionChanged)
         .on_submit(Message::ApplyMarkerProperties)
         .width(Length::Fixed(116.0));
-    let marker_id = draft.marker_id.value().saturating_add(1).to_string();
+    let marker_number = text_input("", &draft.number)
+        .id(iced::widget::Id::new(marker_properties::NUMBER_INPUT_ID))
+        .on_input(Message::MarkerNumberChanged)
+        .on_submit(Message::ApplyMarkerProperties)
+        .width(Length::Fixed(96.0));
     let content = column![
-        row![
-            text("Name:").width(52),
-            name,
-            text("ID:"),
-            text(marker_id).width(24),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+        row![text("Name:").width(52), name, text("ID:"), marker_number,]
+            .spacing(8)
+            .align_y(Alignment::Center),
         row![
             text("Position:").width(72),
             position,

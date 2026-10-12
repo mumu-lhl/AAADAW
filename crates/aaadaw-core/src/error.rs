@@ -54,6 +54,8 @@ pub enum ActionError {
     InvalidProjectTimeOffset,
     /// A project marker position or name is outside its supported range.
     InvalidProjectMarker,
+    /// Every REAPER-compatible positive marker number is already in use.
+    ProjectMarkerNumberExhausted,
     /// The requested project marker does not exist.
     ProjectMarkerNotFound {
         marker_id: MarkerId,
@@ -203,6 +205,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidProjectMarker => {
                 formatter.write_str("project marker position or name is invalid")
+            }
+            Self::ProjectMarkerNumberExhausted => {
+                formatter.write_str("project marker numbers are exhausted")
             }
             Self::ProjectMarkerNotFound { marker_id } => {
                 write!(formatter, "project marker {} does not exist", marker_id.value())

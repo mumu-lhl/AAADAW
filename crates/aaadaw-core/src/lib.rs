@@ -23,7 +23,7 @@ pub use action::DawAction;
 pub use audio::AudioItem;
 pub use error::ActionError;
 pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
-pub use markers::{MarkerId, ProjectMarker};
+pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,

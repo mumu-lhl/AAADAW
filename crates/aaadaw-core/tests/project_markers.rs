@@ -75,3 +75,86 @@ fn invalid_marker_edits_leave_state_and_history_unchanged() {
         .expect("empty names use automatic marker numbering");
     assert_eq!(project.markers()[0].id().value(), 0);
 }
+
+#[test]
+fn visible_numbers_are_independent_from_stable_ids_and_may_be_sparse_or_duplicated() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::InsertNumberedProjectMarker {
+            number: 5,
+            position_ticks: 1_920,
+            name: "M5".to_owned(),
+        })
+        .unwrap();
+    let stable_id = project.markers()[0].id();
+    project
+        .apply(DawAction::InsertNumberedProjectMarker {
+            number: 10,
+            position_ticks: 960,
+            name: "M10".to_owned(),
+        })
+        .unwrap();
+    let earlier_duplicate = project.markers()[0].id();
+
+    project
+        .apply(DawAction::InsertNumberedProjectMarker {
+            number: 10,
+            position_ticks: 2_880,
+            name: "duplicate".to_owned(),
+        })
+        .unwrap();
+    assert_eq!(project.markers()[0].number(), 10);
+    assert_eq!(project.markers()[0].id(), earlier_duplicate);
+    assert_eq!(project.markers()[2].number(), 10);
+
+    project
+        .apply(DawAction::UpdateProjectMarkerProperties {
+            marker_id: stable_id,
+            number: 1,
+            position_ticks: 3_840,
+            name: "Renumbered".to_owned(),
+        })
+        .unwrap();
+    let changed = project
+        .markers()
+        .iter()
+        .find(|marker| marker.id() == stable_id)
+        .unwrap();
+    assert_eq!(changed.number(), 1);
+    assert_eq!(changed.name(), "Renumbered");
+    assert_eq!(changed.position_ticks(), 3_840);
+    assert!(project.undo().unwrap());
+    let restored = project
+        .markers()
+        .iter()
+        .find(|marker| marker.id() == stable_id)
+        .unwrap();
+    assert_eq!(restored.number(), 5);
+    assert_eq!(restored.name(), "M5");
+    assert_eq!(restored.position_ticks(), 1_920);
+    assert!(project.redo().unwrap());
+    let snapshot = project.snapshot();
+    let restored_project = Project::from_snapshot(snapshot).unwrap();
+    assert_eq!(restored_project.markers(), project.markers());
+}
+
+#[test]
+fn plain_marker_insertion_uses_lowest_available_positive_number() {
+    let mut project = Project::new();
+    for number in [5, 10] {
+        project
+            .apply(DawAction::InsertNumberedProjectMarker {
+                number,
+                position_ticks: u64::from(number) * 960,
+                name: String::new(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 0,
+            name: String::new(),
+        })
+        .unwrap();
+    assert_eq!(project.markers()[0].number(), 1);
+}
