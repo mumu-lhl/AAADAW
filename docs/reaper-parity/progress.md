@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、Selected tracks via master 与 Master mix and stems；其它 Bounds 和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；其它 Bounds 和完整 Render 对照仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak、Selected tracks (stems)/via master 与 Master mix and stems；其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -329,3 +329,11 @@ AAADAW 集成回归确认 grouped Master+stems 输出每份 WAV 帧数/首样本
 AAADAW 增加 `Selected tracks (stems)` 源：离线 worker 对每轨构建 solo 隔离快照，临时 Master gain 置 unity、绕过最终 Master safety clamp，输出仍经过轨道混音与已有轨道 FX；保存工程、播放与 UI 选择保持不变。`Master mix and stems` 改为组合 MasterMix 与普通 stems；`Selected tracks via master` 继续独立经过 Master 输出级。单轨复用指定 WAV 路径，多选沿用同文件系统暂存、无覆盖发布、取消与发布失败清理。受控回归在 Master −6.0206 dB 时确认 Master `[0.125, 0.375]`、plain stem `[0.125, 0.375]`、via-master stem `[0.0625, 0.1875]`，并检查 WAV 帧长与队列源模式。
 
 最终 `xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 898/898 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、JSON 解析和 `git diff --check` 通过。`RENDER-SOURCE-001`、`UI-028` 与 P10 仍 `in_progress`：REAPER 文件名规则、pre-fader stems、Folder/Send/FX 细节、Region matrix、Items、Razor、多声道以及完整 Render 窗口交互仍未覆盖。
+
+### 2026-10-12 Project Render stems pre-fader
+
+REAPER 原厂窗口勾选 `Render stems pre-fader` 后，轨道 `D_VOL=0.5` 的 stems 从 `[0.0625, 0.1875]` 变为 `[0.125, 0.375]`；两种状态都是两份 48 kHz PCM24 stereo、48,000 帧文件。默认 Source 为 `Selected tracks (stems)`，同一 `[Selected tracks (stems)]` / [checkbox checked](../verification/reaper-parity/images/render-pre-fader-stems-native.png) 截图分别记录模式和开启状态；复现脚本可生成前推子或后推子窗口。
+
+AAADAW Render 面板加入原厂 checkbox，plain stems 和 Master mix and stems 可操作；Master mix 与 via-master 模式禁用该控件。单轨和多轨队列分别捕获 post-fader/pre-fader 源类型，组合渲染只改变每个 stem，Master 输出不变。离线源快照把选中轨道静态音量设为 unity 并清除其音量自动化，Master gain 与最终 safety clamp 按普通 stems 路径绕过；原项目和实时播放保持不变。真实 WAV 回归断言 post-fader 静态/自动化增益输出 `[0.0625, 0.1875]` / `[0.03125, 0.09375]`，pre-fader 两者都输出 `[0.125, 0.375]`；原厂自动化、Folder/Send 路径对比仍未完成。
+
+`xvfb-run -a rtk proxy cargo xtest --no-fail-fast` 为 899/899 通过、0 跳过；媒体/app/UI 目标 Clippy `-D warnings`、fmt、67 个唯一 parity ID、JSON 和本次文档本地链接校验通过。`RENDER-SOURCE-001`、`UI-028` 与 P10 仍 `in_progress`：native volume automation 和路由下的 pre-fader tap 语义尚待采集；Region matrix、Items、Razor、多声道、通道映射、Wildcard 与完整窗口行为继续未覆盖。

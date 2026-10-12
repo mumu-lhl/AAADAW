@@ -2909,6 +2909,11 @@ impl App {
             Message::SetRenderSource(source) => {
                 self.render_dialog.source = source;
             }
+            Message::SetRenderStemsPreFader(enabled) => {
+                if self.can_render_stems_pre_fader() {
+                    self.render_dialog.stems_pre_fader = enabled;
+                }
+            }
             Message::SetRenderChannels(channels) => {
                 self.render_dialog.channels = channels;
             }

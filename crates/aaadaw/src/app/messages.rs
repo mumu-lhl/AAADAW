@@ -451,6 +451,7 @@ pub(crate) enum Message {
     SetRenderBounds(RenderBounds),
     SetRenderSampleRate(RenderSampleRate),
     SetRenderSource(RenderSource),
+    SetRenderStemsPreFader(bool),
     SetRenderChannels(WavChannelCount),
     SetRenderPeakNormalization(bool),
     SetRenderPeakTarget(String),

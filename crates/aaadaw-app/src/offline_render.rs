@@ -58,6 +58,8 @@ pub enum ProjectWavRenderSource {
     MasterMix,
     /// Render one selected track as a stem without the Master mix output stage.
     SelectedTrackStem(TrackId),
+    /// Render one selected track's signal before its volume fader and automation.
+    SelectedTrackStemPreFader(TrackId),
     /// Isolate one track in an in-memory project snapshot and render it through Master.
     SelectedTrackViaMaster(TrackId),
 }
@@ -728,9 +730,14 @@ pub fn render_project_file_to_wav_with_settings(
     )?;
     let (isolated_project, bypass_master_output) = match source {
         ProjectWavRenderSource::MasterMix => (None, false),
-        ProjectWavRenderSource::SelectedTrackStem(track_id) => {
-            (Some(selected_track_stem_project(project, track_id)?), true)
-        }
+        ProjectWavRenderSource::SelectedTrackStem(track_id) => (
+            Some(selected_track_stem_project(project, track_id, false)?),
+            true,
+        ),
+        ProjectWavRenderSource::SelectedTrackStemPreFader(track_id) => (
+            Some(selected_track_stem_project(project, track_id, true)?),
+            true,
+        ),
         ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => (
             Some(selected_track_via_master_project(project, track_id)?),
             false,
@@ -996,6 +1003,7 @@ pub fn render_project_wav_sources_to_wavs(
     let mut unique_destinations = HashSet::with_capacity(outputs.len());
     for (source, destination) in outputs {
         if let ProjectWavRenderSource::SelectedTrackStem(track_id)
+        | ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
         | ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
             && !project.tracks().iter().any(|track| track.id() == *track_id)
         {
@@ -1155,22 +1163,37 @@ fn selected_track_via_master_project(
     project: &Project,
     selected_track_id: TrackId,
 ) -> Result<Project, OfflineRenderError> {
-    selected_track_render_project(project, selected_track_id, false)
+    selected_track_render_project(project, selected_track_id, false, false)
 }
 
 fn selected_track_stem_project(
     project: &Project,
     selected_track_id: TrackId,
+    pre_fader: bool,
 ) -> Result<Project, OfflineRenderError> {
-    selected_track_render_project(project, selected_track_id, true)
+    selected_track_render_project(project, selected_track_id, true, pre_fader)
 }
 
 fn selected_track_render_project(
     project: &Project,
     selected_track_id: TrackId,
     bypass_master_mix: bool,
+    pre_fader: bool,
 ) -> Result<Project, OfflineRenderError> {
-    let mut render_project = Project::from_snapshot(project.snapshot())
+    let mut snapshot = project.snapshot();
+    if bypass_master_mix {
+        snapshot.master_mix = aaadaw_core::MasterMix::default();
+    }
+    if pre_fader
+        && let Some(track) = snapshot
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == selected_track_id.value())
+    {
+        track.volume_db = 0.0;
+        track.volume_automation.clear();
+    }
+    let mut render_project = Project::from_snapshot(snapshot)
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     if !render_project
         .tracks()
@@ -1180,13 +1203,6 @@ fn selected_track_render_project(
         return Err(OfflineRenderError::Media(
             "selected render track no longer exists".to_owned(),
         ));
-    }
-    if bypass_master_mix {
-        render_project
-            .apply(DawAction::SetMasterMix {
-                mix: aaadaw_core::MasterMix::default(),
-            })
-            .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
     }
     let solo_updates: Vec<_> = render_project
         .tracks()
@@ -1960,6 +1976,76 @@ mod tests {
         let via_master_bytes = fs::read(&via_master).expect("via-Master track should be readable");
         assert!((read_pcm24(&via_master_bytes, 44) - 0.0625).abs() < 1.0e-6);
         assert!((read_pcm24(&via_master_bytes, 47) - 0.1875).abs() < 1.0e-6);
+
+        let first_track = project.tracks()[0].id();
+        let second_track = project.tracks()[1].id();
+        for track_id in [first_track, second_track] {
+            project
+                .apply(DawAction::SetTrackVolume {
+                    track_id,
+                    volume_db: -6.0206,
+                })
+                .expect("track fader should be lowered for pre-fader comparison");
+        }
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id: first_track,
+                points: vec![
+                    aaadaw_core::VolumeAutomationPoint::new(0, -6.0206)
+                        .expect("automation gain should be valid"),
+                ],
+            })
+            .expect("track volume automation should be available for pre-fader comparison");
+        let post_fader_automated = base.with_file_name(format!("{unique}-post-fader-auto.wav"));
+        let pre_fader_automated = base.with_file_name(format!("{unique}-pre-fader-auto.wav"));
+        let post_fader = base.with_file_name(format!("{unique}-post-fader.wav"));
+        let pre_fader = base.with_file_name(format!("{unique}-pre-fader.wav"));
+        let pre_fader_sources = [
+            (
+                ProjectWavRenderSource::SelectedTrackStem(first_track),
+                post_fader_automated.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStemPreFader(first_track),
+                pre_fader_automated.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStem(second_track),
+                post_fader.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStemPreFader(second_track),
+                pre_fader.clone(),
+            ),
+        ];
+        render_project_wav_sources_to_wavs(
+            &project_path,
+            &project,
+            &pre_fader_sources,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("post-fader and pre-fader stems should render together");
+        for (path, expected) in [
+            (&post_fader_automated, [0.03125, 0.09375]),
+            (&post_fader, [0.0625, 0.1875]),
+            (&pre_fader_automated, [0.125, 0.375]),
+            (&pre_fader, [0.125, 0.375]),
+        ] {
+            let bytes = fs::read(path).expect("pre-fader comparison output should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+            assert!((read_pcm24(&bytes, 44) - expected[0]).abs() < 1.0e-6);
+            assert!((read_pcm24(&bytes, 47) - expected[1]).abs() < 1.0e-6);
+        }
+        for path in [
+            &post_fader_automated,
+            &pre_fader_automated,
+            &post_fader,
+            &pre_fader,
+        ] {
+            fs::remove_file(path).expect("pre-fader comparison output should be removed");
+        }
         fs::remove_file(&mix).expect("Master mix should be removed");
         fs::remove_file(&mixed_first).expect("first combined stem should be removed");
         fs::remove_file(&mixed_second).expect("second combined stem should be removed");

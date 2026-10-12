@@ -5,7 +5,7 @@ use super::super::audio_export::{
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::{WavChannelCount, WavSampleFormat};
-use iced::widget::{button, column, container, pick_list, row, rule, text, text_input};
+use iced::widget::{button, checkbox, column, container, pick_list, row, rule, text, text_input};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -51,6 +51,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
         text(app.render_source_description()).size(11),
+        row![
+            column![
+                checkbox(app.render_dialog.stems_pre_fader)
+                    .label("Render stems pre-fader")
+                    .on_toggle_maybe(
+                        app.can_render_stems_pre_fader()
+                            .then_some(|enabled| { Message::SetRenderStemsPreFader(enabled) })
+                    ),
+                text("Bypasses selected-track volume fader and automation for stems.").size(11),
+            ]
+            .spacing(2),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
         row![
             text("Bounds").size(13),
             iced::widget::Space::new().width(Length::Fill),

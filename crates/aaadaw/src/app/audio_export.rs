@@ -54,6 +54,13 @@ impl std::fmt::Display for RenderSource {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectedTrackStemMode {
+    PostFader,
+    PreFader,
+    ViaMaster,
+}
+
 pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'static str> {
     let value = value.trim();
     if value.is_empty() {
@@ -148,7 +155,7 @@ fn selected_track_stem_destinations(
     project: &Project,
     selected_tracks: &[TrackId],
     include_master_mix: bool,
-    render_stems_via_master: bool,
+    stem_mode: SelectedTrackStemMode,
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
     let parent = base_path
         .parent()
@@ -199,10 +206,16 @@ fn selected_track_stem_destinations(
                 disambiguator += 1;
             }
         }
-        let source = if render_stems_via_master {
-            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
-        } else {
-            aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+        let source = match stem_mode {
+            SelectedTrackStemMode::PostFader => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+            }
+            SelectedTrackStemMode::PreFader => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(*track_id)
+            }
+            SelectedTrackStemMode::ViaMaster => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
+            }
         };
         outputs.push((source, parent.join(format!("{candidate}.{extension}"))));
     }
@@ -277,6 +290,7 @@ pub(super) struct RenderDialogState {
     pub(super) normalize_peak: bool,
     pub(super) normalize_peak_target_text: String,
     pub(super) tail_duration_text: String,
+    pub(super) stems_pre_fader: bool,
 }
 
 #[derive(Debug)]
@@ -299,6 +313,7 @@ impl Default for RenderDialogState {
             normalize_peak: false,
             normalize_peak_target_text: "0".to_owned(),
             tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
+            stems_pre_fader: false,
         }
     }
 }
@@ -423,7 +438,11 @@ impl App {
         );
         let source = match (self.render_dialog.source, selected_tracks.as_slice()) {
             (RenderSource::SelectedTracksStems, [track_id]) => {
-                aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+                if self.render_dialog.stems_pre_fader {
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(*track_id)
+                } else {
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+                }
             }
             (RenderSource::SelectedTracksViaMaster, [track_id]) => {
                 aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
@@ -466,7 +485,20 @@ impl App {
                 &self.project,
                 &selected_tracks,
                 self.render_dialog.source == RenderSource::MasterMixAndSelectedTracks,
-                self.render_dialog.source == RenderSource::SelectedTracksViaMaster,
+                match self.render_dialog.source {
+                    RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+                    RenderSource::SelectedTracksStems
+                    | RenderSource::MasterMixAndSelectedTracks
+                        if self.render_dialog.stems_pre_fader =>
+                    {
+                        SelectedTrackStemMode::PreFader
+                    }
+                    RenderSource::SelectedTracksStems
+                    | RenderSource::MasterMixAndSelectedTracks => SelectedTrackStemMode::PostFader,
+                    RenderSource::MasterMix => {
+                        unreachable!("Master mix cannot request a multi-track output set")
+                    }
+                },
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -580,6 +612,13 @@ impl App {
                 "Renders one Master mix WAV plus one stem for each selected track."
             }
         }
+    }
+
+    pub(super) fn can_render_stems_pre_fader(&self) -> bool {
+        matches!(
+            self.render_dialog.source,
+            RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+        )
     }
 
     pub(super) fn render_output_sample_rate(&self) -> u32 {
@@ -1140,6 +1179,27 @@ mod tests {
     }
 
     #[test]
+    fn pre_fader_stem_control_is_available_only_for_stem_sources() {
+        let mut app = App::default();
+        assert!(!app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(true));
+        assert!(!app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::SelectedTracksStems;
+        assert!(app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(true));
+        assert!(app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        assert!(!app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(false));
+        assert!(app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::MasterMixAndSelectedTracks;
+        assert!(app.can_render_stems_pre_fader());
+    }
+
+    #[test]
     fn render_bounds_resolve_the_current_time_selection_to_project_samples() {
         let mut app = App::default();
         app.render_dialog.bounds = RenderBounds::TimeSelection;
@@ -1250,8 +1310,14 @@ mod tests {
             .collect::<Vec<_>>();
         let base = std::env::temp_dir().join("aaadaw-stem-prefix.wav");
 
-        let outputs = selected_track_stem_destinations(&base, &project, &ids, false, true)
-            .expect("selected tracks should receive distinct output names");
+        let outputs = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::ViaMaster,
+        )
+        .expect("selected tracks should receive distinct output names");
         assert_eq!(
             outputs[0].1,
             std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox.wav")
@@ -1264,14 +1330,38 @@ mod tests {
             outputs[0].0,
             aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(_)
         ));
-        let plain_stems = selected_track_stem_destinations(&base, &project, &ids, false, false)
-            .expect("plain selected stems should keep the selected track source");
+        let plain_stems = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::PostFader,
+        )
+        .expect("plain selected stems should keep the selected track source");
         assert!(matches!(
             plain_stems[0].0,
             aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(_)
         ));
-        let combined = selected_track_stem_destinations(&base, &project, &ids, true, false)
-            .expect("Master mix plus stems should receive distinct output names");
+        let pre_fader_stems = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::PreFader,
+        )
+        .expect("pre-fader stems should keep the selected track source");
+        assert!(matches!(
+            pre_fader_stems[0].0,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(_)
+        ));
+        let combined = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            true,
+            SelectedTrackStemMode::PostFader,
+        )
+        .expect("Master mix plus stems should receive distinct output names");
         assert_eq!(
             combined[0],
             (
@@ -1428,6 +1518,23 @@ mod tests {
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
         }
+
+        app.render_dialog.stems_pre_fader = true;
+        let _task = app.start_offline_render(std::env::temp_dir().join("plain-stem-prefader.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("pre-fader stem should be queued");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWav { settings, .. } => assert_eq!(
+                settings.source,
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(selected)
+            ),
+            OfflineRenderKind::ProjectWavStems { .. } => {
+                panic!("one selected stem should keep the single-file path")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
+        }
     }
 
     #[test]
@@ -1539,6 +1646,39 @@ mod tests {
             }
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("Master mix plus stems should make a grouped output job")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
+        }
+
+        app.render_dialog.stems_pre_fader = true;
+        let _task =
+            app.start_offline_render(std::env::temp_dir().join("combined-stems-prefader.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("pre-fader Master mix and stems should enter the render queue");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWavStems { outputs, .. } => {
+                assert_eq!(
+                    outputs,
+                    [
+                        (
+                            aaadaw_app::ProjectWavRenderSource::MasterMix,
+                            std::env::temp_dir().join("combined-stems-prefader-Master.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(first),
+                            std::env::temp_dir().join("combined-stems-prefader-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(second),
+                            std::env::temp_dir().join("combined-stems-prefader-Bass.wav")
+                        ),
+                    ]
+                );
+            }
+            OfflineRenderKind::ProjectWav { .. } => {
+                panic!("pre-fader Master mix plus stems should make a grouped output job")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
         }
