@@ -27,6 +27,7 @@ use aaadaw_engine::{
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
+use audio_export::RenderBounds;
 use commands::CommandId;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
@@ -3144,7 +3145,16 @@ impl App {
                     enabled && self.wav_export_options.sample_format.is_integer();
             }
             Message::SetRenderBounds(bounds) => {
+                if bounds == RenderBounds::CustomTimeRange {
+                    self.initialize_custom_render_range();
+                }
                 self.render_dialog.bounds = bounds;
+            }
+            Message::SetRenderCustomStart(value) => {
+                self.render_dialog.custom_start_text = value;
+            }
+            Message::SetRenderCustomEnd(value) => {
+                self.render_dialog.custom_end_text = value;
             }
             Message::SetRenderSampleRate(sample_rate) => {
                 self.render_dialog.sample_rate = sample_rate;
@@ -5647,6 +5657,7 @@ impl App {
     }
 
     fn open_render_window(&mut self) -> Task<Message> {
+        self.initialize_custom_render_range();
         if let Some(window_id) = self.render_window_id {
             return iced::window::gain_focus(window_id);
         }

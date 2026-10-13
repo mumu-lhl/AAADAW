@@ -16,6 +16,7 @@ const JOB_HISTORY_CAPACITY: usize = 4;
 pub(crate) enum RenderBounds {
     #[default]
     EntireProject,
+    CustomTimeRange,
     TimeSelection,
     AllProjectRegions,
     AllProjectMarkers,
@@ -475,7 +476,8 @@ impl std::fmt::Display for RenderSampleRate {
 }
 
 impl RenderBounds {
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 5] = [
+        Self::CustomTimeRange,
         Self::EntireProject,
         Self::TimeSelection,
         Self::AllProjectRegions,
@@ -486,6 +488,7 @@ impl RenderBounds {
 impl std::fmt::Display for RenderBounds {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::CustomTimeRange => "Custom time range",
             Self::EntireProject => "Entire project",
             Self::TimeSelection => "Time selection",
             Self::AllProjectRegions => "All project regions",
@@ -497,6 +500,9 @@ impl std::fmt::Display for RenderBounds {
 #[derive(Clone, Debug)]
 pub(super) struct RenderDialogState {
     pub(super) bounds: RenderBounds,
+    pub(super) custom_start_text: String,
+    pub(super) custom_end_text: String,
+    custom_range_initialized: bool,
     pub(super) source: RenderSource,
     pub(super) sample_rate: RenderSampleRate,
     pub(super) channels: WavChannelCount,
@@ -520,6 +526,9 @@ impl Default for RenderDialogState {
     fn default() -> Self {
         Self {
             bounds: RenderBounds::EntireProject,
+            custom_start_text: "0:00.000".to_owned(),
+            custom_end_text: "0:00.000".to_owned(),
+            custom_range_initialized: false,
             source: RenderSource::MasterMix,
             sample_rate: RenderSampleRate::Project,
             channels: WavChannelCount::Stereo,
@@ -565,6 +574,28 @@ impl OfflineRenderJob {
 }
 
 impl App {
+    pub(super) fn initialize_custom_render_range(&mut self) {
+        if self.render_dialog.custom_range_initialized {
+            return;
+        }
+        let start_seconds = self.project.project_time_at_sample(0).unwrap_or(0.0);
+        let end_seconds = aaadaw_app::project_content_end_sample(&self.project)
+            .ok()
+            .and_then(|sample| self.project.project_time_at_sample(sample).ok())
+            .unwrap_or(start_seconds);
+        self.render_dialog.custom_start_text =
+            crate::project_time::format_project_time(start_seconds);
+        self.render_dialog.custom_end_text = crate::project_time::format_project_time(end_seconds);
+        self.render_dialog.custom_range_initialized = true;
+    }
+
+    pub(super) fn custom_render_length_text(&self) -> Option<String> {
+        let (start_sample, end_sample) = self.selected_render_bounds().ok()?;
+        let duration_seconds =
+            (end_sample - start_sample) as f64 / f64::from(self.project.settings().sample_rate());
+        Some(crate::project_time::format_project_time(duration_seconds))
+    }
+
     pub(super) fn offline_job_submission_allowed(&self) -> bool {
         #[cfg(feature = "audio-device")]
         let recording_active =
@@ -1021,6 +1052,29 @@ impl App {
             RenderBounds::EntireProject => aaadaw_app::project_content_end_sample(&self.project)
                 .map(|end_sample| (0, end_sample))
                 .map_err(|error| format!("Could not determine render bounds: {error}")),
+            RenderBounds::CustomTimeRange => {
+                let start_seconds =
+                    crate::project_time::parse_project_time(&self.render_dialog.custom_start_text)
+                        .map_err(|error| format!("Invalid custom start time: {error}"))?;
+                let end_seconds =
+                    crate::project_time::parse_project_time(&self.render_dialog.custom_end_text)
+                        .map_err(|error| format!("Invalid custom end time: {error}"))?;
+                let start_sample = self
+                    .project
+                    .sample_at_project_time(start_seconds)
+                    .map_err(|error| format!("Could not convert custom start: {error}"))?;
+                let end_sample = self
+                    .project
+                    .sample_at_project_time(end_seconds)
+                    .map_err(|error| format!("Could not convert custom end: {error}"))?;
+                if end_sample <= start_sample {
+                    return Err(
+                        "Custom time range end must be after its start by at least one project sample"
+                            .to_owned(),
+                    );
+                }
+                Ok((start_sample, end_sample))
+            }
             RenderBounds::TimeSelection => {
                 let Some(selection) = self.timeline.time_selection else {
                     return Err("Create a time selection in Arrange before rendering it".to_owned());
@@ -1575,6 +1629,128 @@ mod tests {
         assert_eq!(
             RenderSource::SelectedTracksViaMaster.to_string(),
             "Selected tracks via master"
+        );
+    }
+
+    #[test]
+    fn custom_render_range_maps_project_clock_values_to_sample_boundaries_and_freezes_them() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .expect("project clock offset should be set");
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-custom-range-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_start_text: "-0:04.877".to_owned(),
+                custom_end_text: "-0:02.544".to_owned(),
+                custom_range_initialized: true,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+
+        assert_eq!(app.selected_render_bounds(), Ok((5_904, 117_888)));
+        assert_eq!(app.custom_render_length_text().as_deref(), Some("0:02.333"));
+        assert!(app.can_submit_render());
+
+        let output =
+            std::env::temp_dir().join(format!("aaadaw-custom-range-{}.wav", std::process::id()));
+        let _task = app.start_offline_render(output);
+        app.render_dialog.custom_start_text = "0:00.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("custom time range should queue as a project render");
+        let OfflineRenderKind::ProjectWav { settings, .. } = queued.job.kind else {
+            panic!("a custom time range should queue one bounded WAV render")
+        };
+        assert_eq!(settings.start_sample, 5_904);
+        assert_eq!(settings.end_sample, 117_888);
+    }
+
+    #[test]
+    fn custom_render_range_initializes_from_project_clock_and_content_end_once() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .expect("project clock offset should be set");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Range".to_owned(),
+            })
+            .expect("range track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 2_400,
+            })
+            .expect("project content should have a 1.25-second end");
+        let mut app = App {
+            project,
+            ..App::default()
+        };
+
+        app.initialize_custom_render_range();
+        assert_eq!(app.render_dialog.custom_start_text, "-0:05.000");
+        assert_eq!(app.render_dialog.custom_end_text, "-0:03.750");
+
+        app.render_dialog.custom_start_text = "-0:04.500".to_owned();
+        app.project = Project::default();
+        app.initialize_custom_render_range();
+        assert_eq!(app.render_dialog.custom_start_text, "-0:04.500");
+        assert_eq!(app.render_dialog.custom_end_text, "-0:03.750");
+    }
+
+    #[test]
+    fn custom_render_range_rejects_invalid_out_of_project_and_empty_ranges() {
+        let mut app = App {
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_range_initialized: true,
+                ..RenderDialogState::default()
+            },
+            ..App::default()
+        };
+
+        app.render_dialog.custom_start_text = "not a time".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("malformed start should be rejected")
+                .contains("Invalid custom start time")
+        );
+
+        app.render_dialog.custom_start_text = "0:02.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("reversed range should be rejected")
+                .contains("end must be after")
+        );
+
+        app.render_dialog.custom_start_text = "0:01.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("zero-length range should be rejected")
+                .contains("end must be after")
+        );
+
+        app.render_dialog.custom_start_text = "-0:00.001".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("time before project sample zero should be rejected")
+                .contains("Could not convert custom start")
         );
     }
 

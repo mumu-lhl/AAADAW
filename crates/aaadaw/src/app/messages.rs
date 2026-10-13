@@ -498,6 +498,8 @@ pub(crate) enum Message {
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),
     SetRenderBounds(RenderBounds),
+    SetRenderCustomStart(String),
+    SetRenderCustomEnd(String),
     SetRenderSampleRate(RenderSampleRate),
     SetRenderSource(RenderSource),
     SetRenderStemsPreFader(bool),

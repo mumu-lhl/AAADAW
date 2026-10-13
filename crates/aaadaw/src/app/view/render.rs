@@ -21,6 +21,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .is_err()
     {
         Some("Tail must be a non-negative number with up to 3 decimal places.")
+    } else if bounds == RenderBounds::CustomTimeRange
+        && crate::project_time::parse_project_time(&app.render_dialog.custom_start_text).is_err()
+    {
+        Some("Enter a valid custom start time (for example, 0:00.000).")
+    } else if bounds == RenderBounds::CustomTimeRange
+        && crate::project_time::parse_project_time(&app.render_dialog.custom_end_text).is_err()
+    {
+        Some("Enter a valid custom end time (for example, 0:05.000).")
     } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
         Some("Create a time selection in Arrange to render that range.")
     } else if bounds == RenderBounds::AllProjectRegions && app.project.regions().is_empty() {
@@ -36,6 +44,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .is_err()
     {
         Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
+    } else if bounds == RenderBounds::CustomTimeRange && !app.can_submit_render() {
+        Some("Custom range end must follow start and both times must map to valid project samples.")
     } else if bounds == RenderBounds::AllProjectMarkers && !app.can_submit_render() {
         Some(
             "Each project marker must have a non-empty range up to the next marker or project end.",
@@ -94,6 +104,36 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
+        {
+            let fields: Element<'_, Message> = if bounds == RenderBounds::CustomTimeRange {
+                row![
+                    text("Start:").size(13),
+                    text_input("0:00.000", &app.render_dialog.custom_start_text)
+                        .on_input(Message::SetRenderCustomStart)
+                        .size(13)
+                        .padding([4, 8])
+                        .width(Length::FillPortion(1)),
+                    text("End:").size(13),
+                    text_input("0:05.000", &app.render_dialog.custom_end_text)
+                        .on_input(Message::SetRenderCustomEnd)
+                        .size(13)
+                        .padding([4, 8])
+                        .width(Length::FillPortion(1)),
+                    text("Length:").size(13),
+                    text(
+                        app.custom_render_length_text()
+                            .unwrap_or_else(|| "—".to_owned())
+                    )
+                    .size(13),
+                ]
+                .spacing(tokens::SPACING_SM)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                iced::widget::Space::new().height(Length::Fixed(0.0)).into()
+            };
+            fields
+        },
         row![
             text("Tail (seconds)").size(13),
             iced::widget::Space::new().width(Length::Fill),
