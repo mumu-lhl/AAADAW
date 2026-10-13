@@ -8203,6 +8203,116 @@ fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
 }
 
 #[test]
+fn selected_item_cursor_actions_use_outer_audio_midi_bounds() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let audio_start = app.project.sample_at_tick(960).unwrap();
+    let audio_end = app.project.sample_at_tick(1_920).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[1],
+            media_ref: "asset://selected-item-cursor-audio".to_owned(),
+            start_sample: audio_start,
+            source_offset_samples: 0,
+            length_samples: audio_end - audio_start,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 2_880,
+            length_ticks: 480,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 0,
+            length_ticks: 480,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let selected_midi_id = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.track_id() == tracks[0])
+        .unwrap()
+        .id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(selected_midi_id, tracks[0]), (audio_id, tracks[1])]);
+    app.timeline.selected_track = Some(tracks[1]);
+    app.timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
+    app.timeline.edit_cursor_tick = 5_000;
+    let selected_items = app.timeline.selected_items.clone();
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let start = CommandId::MoveEditCursorToStartOfItems;
+    assert!(commands::is_enabled(&app, start));
+    app.action_list
+        .set_query("move cursor to start of items".to_owned());
+    app.action_list
+        .select("item.navigate-cursor-selected-start".to_owned());
+    let start_entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == start)
+        .expect("selected item start action is searchable");
+    assert!(start_entry.shortcut.is_none());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.edit_cursor_tick, 960);
+    assert_eq!(app.timeline.selected_items, selected_items);
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(
+        app.timeline.selected_tracks,
+        HashSet::from([tracks[0], tracks[1]])
+    );
+
+    let end = CommandId::MoveEditCursorToEndOfItems;
+    assert!(commands::is_enabled(&app, end));
+    app.action_list
+        .set_query("move cursor to end of items".to_owned());
+    app.action_list
+        .select("item.navigate-cursor-selected-end".to_owned());
+    let end_entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == end)
+        .expect("selected item end action is searchable");
+    assert!(end_entry.shortcut.is_none());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.edit_cursor_tick, 3_360);
+    assert_eq!(app.timeline.selected_items, selected_items);
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(
+        app.timeline.selected_tracks,
+        HashSet::from([tracks[0], tracks[1]])
+    );
+
+    app.timeline.clear_selected_items();
+    app.timeline.edit_cursor_tick = 1_111;
+    assert!(!commands::is_enabled(&app, start));
+    assert!(!commands::is_enabled(&app, end));
+    let _ = app.update(Message::ExecuteCommand(start));
+    let _ = app.update(Message::ExecuteCommand(end));
+    assert_eq!(app.timeline.edit_cursor_tick, 1_111);
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
 fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

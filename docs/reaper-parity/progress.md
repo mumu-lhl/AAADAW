@@ -575,3 +575,9 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 隔离官方 Linux REAPER 7.82 / Default 7 / Dummy Audio 探针实测 41139/41140：只检查项目顺序紧邻的上一/下一轨；源为首个按轨道和时间排列的 selected item；目标为该轨上第一个与源时间区间正长度重叠的 item。成功时只选择目标、光标移至目标起点并保持轨道选择；无重叠目标时清空 item 选择、不跳过空轨且不移动光标。探针通过真实 item 点击驱动，避免仅用 API 修改选择时丢失原厂活动 item 状态。
 
 AAADAW 新增稳定动作 `item.select-previous-track` / `item.select-next-track`。同时按原厂输出修正 41127/41128 的严格边界、多选映射及无目标清空行为。`adjacent_track_navigation_uses_first_overlapping_item_and_preserves_track_selection` 与相邻选择回归覆盖紧邻空轨、多个重叠候选、多选锚点、光标、轨道选择、边界和 Undo；native TSV 与复现脚本已落档。Stable `aaadaw` 全量测试 496/496 通过，all-target strict Clippy `-D warnings`、fmt、diff 检查及 parity CSV 87 项/15 列结构和证据路径检查通过。本切片的 nightly+Cranelift 冷构建未产出可运行测试二进制，因此不计作通过；隔离 target 已清理。当前仅覆盖动作核心语义；空选择可用性、Action List 键盘焦点、实窗视觉和整套 Item 行为仍待验收，`ITEM-SELECT-010` 至 `ITEM-SELECT-015` 均保持 `in_progress`。
+
+### 2026-10-13 Main actions 41173/41174：移动光标到所选 items 边界
+
+REAPER 7.82 / Default 7 原厂点击探针确认 41173 将 edit cursor 移到所选 Audio/MIDI items 的最早起点，41174 移到最晚终点；两项覆盖同轨/跨轨多选，空选择不移动光标，选择和工程状态保持不变。记录追加到 [item navigation TSV](../verification/reaper-parity/fixtures/item-navigation-native.tsv)，可用已存探针脚本复测。
+
+AAADAW 注册 `item.navigate-cursor-selected-start` 与 `item.navigate-cursor-selected-end`，按共同项目 tick 计算所选区间的 min-start/max-end，只修改 edit cursor。`selected_item_cursor_actions_use_outer_audio_midi_bounds` 经 Action List Run 验证跨轨 Audio/MIDI 选择、忽略未选的更早 item、保留 item/track selection、空选择 no-op 以及项目/Undo/Redo 状态不变。Stable `aaadaw` 全量测试 497/497 通过，strict all-target Clippy `-D warnings`、fmt、diff 和 parity CSV 89 项/15 列唯一 ID/证据路径检查通过。当前 edit cursor 使用整数 tick，任意 Audio sample endpoint 可能被量化；非 tick 对齐样本位置、空选择时原厂 Action List 启用状态、完整键盘焦点与 Arrange 实窗视觉仍待确认，`ITEM-SELECT-016/017` 保持 `in_progress`。

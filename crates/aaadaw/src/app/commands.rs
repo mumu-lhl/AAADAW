@@ -55,6 +55,8 @@ pub(crate) enum CommandId {
     SelectItemOnNextTrack,
     MoveEditCursorToPreviousItemEdge,
     MoveEditCursorToNextItemEdge,
+    MoveEditCursorToStartOfItems,
+    MoveEditCursorToEndOfItems,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -156,6 +158,8 @@ enum CommandKind {
     SelectItemOnNextTrack,
     MoveEditCursorToPreviousItemEdge,
     MoveEditCursorToNextItemEdge,
+    MoveEditCursorToStartOfItems,
+    MoveEditCursorToEndOfItems,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -894,6 +898,26 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::MoveEditCursorToStartOfItems,
+        menu: None,
+        category: "Item navigation",
+        label: "Move cursor to start of items",
+        aliases: &["move cursor to start of selected items", "item start"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveEditCursorToEndOfItems,
+        menu: None,
+        category: "Item navigation",
+        label: "Move cursor to end of items",
+        aliases: &["move cursor to end of selected items", "item end"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SelectItemUnderMouseCursor,
         menu: None,
         category: "Item",
@@ -1285,6 +1309,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SelectItemOnNextTrack
             | CommandKind::MoveEditCursorToPreviousItemEdge
             | CommandKind::MoveEditCursorToNextItemEdge
+            | CommandKind::MoveEditCursorToStartOfItems
+            | CommandKind::MoveEditCursorToEndOfItems
             | CommandKind::SelectItemUnderMouseCursor
             | CommandKind::AddItemUnderMouseToSelection
             | CommandKind::ToggleSelectionOfItemUnderMouse
@@ -1834,6 +1860,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SelectItemOnNextTrack => "item.select-next-track",
         CommandKind::MoveEditCursorToPreviousItemEdge => "item.navigate-cursor-left-edge",
         CommandKind::MoveEditCursorToNextItemEdge => "item.navigate-cursor-right-edge",
+        CommandKind::MoveEditCursorToStartOfItems => "item.navigate-cursor-selected-start",
+        CommandKind::MoveEditCursorToEndOfItems => "item.navigate-cursor-selected-end",
         CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
         CommandKind::AddItemUnderMouseToSelection => "item.add-under-mouse-to-selection",
         CommandKind::ToggleSelectionOfItemUnderMouse => "item.toggle-under-mouse-selection",
@@ -1971,6 +1999,12 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::MoveEditCursorToNearestItemEdge(false)
         }
         CommandId::MoveEditCursorToNextItemEdge => Message::MoveEditCursorToNearestItemEdge(true),
+        CommandId::MoveEditCursorToStartOfItems => {
+            Message::MoveEditCursorToSelectedItemsBoundary(false)
+        }
+        CommandId::MoveEditCursorToEndOfItems => {
+            Message::MoveEditCursorToSelectedItemsBoundary(true)
+        }
         CommandId::SelectItemUnderMouseCursor => Message::Timeline(
             TimelineEvent::SelectHoveredItem(HoveredItemSelectionMode::Replace),
         ),
@@ -2330,6 +2364,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::MoveEditCursorToPreviousItemEdge => app.nearest_item_edge(false).is_some(),
         CommandKind::MoveEditCursorToNextItemEdge => app.nearest_item_edge(true).is_some(),
+        CommandKind::MoveEditCursorToStartOfItems | CommandKind::MoveEditCursorToEndOfItems => {
+            !app.timeline.selected_items.is_empty()
+        }
         CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
@@ -2471,6 +2508,8 @@ fn command_id(kind: CommandKind) -> CommandId {
             CommandId::MoveEditCursorToPreviousItemEdge
         }
         CommandKind::MoveEditCursorToNextItemEdge => CommandId::MoveEditCursorToNextItemEdge,
+        CommandKind::MoveEditCursorToStartOfItems => CommandId::MoveEditCursorToStartOfItems,
+        CommandKind::MoveEditCursorToEndOfItems => CommandId::MoveEditCursorToEndOfItems,
         CommandKind::SelectItemUnderMouseCursor => CommandId::SelectItemUnderMouseCursor,
         CommandKind::AddItemUnderMouseToSelection => CommandId::AddItemUnderMouseToSelection,
         CommandKind::ToggleSelectionOfItemUnderMouse => CommandId::ToggleSelectionOfItemUnderMouse,

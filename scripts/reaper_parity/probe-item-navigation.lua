@@ -1,4 +1,4 @@
--- Run in a fresh unsaved Linux REAPER 7.82 / Default 7 project while stopped.
+-- Run in a fresh unsaved Linux REAPER 7.82 / Default 7 project with Dummy Audio while stopped.
 -- This fixture uses real item clicks: click a source item, then write
 -- label<TAB>action-id[<TAB>cursor-seconds] to the request file below.
 -- The script records one action result and never saves the project.
@@ -74,8 +74,9 @@ local function selected_tracks()
 end
 out:write("version\t", reaper.GetAppVersion(), "\n")
 out:write("theme\tDefault_7.0.ReaperThemeZip\n")
+out:write("audio_device\tDummy Audio; no hardware I/O\n")
 out:write("fixture\tU:UA[0,1],UB[2,3],UO[2.5,3.5],UC[4,5]; EMPTY:EA[0,1],EA2[2,3],EASTART[3,3.25],EALATE[3.5,4.5]; M:MD[0.5,1.5],MN[1.5,2],ME[2,3],MO[2.5,3.5],MX[3,4],MF[4,5],MIDI[5,6]; L:LA[0,1],LB[2,3],LC[4,5]\n")
-out:write("case\taction_id\tselected_items_before\tselected_items_after\tselected_tracks_after\tcursor_after_seconds\tproject_state_delta\n")
+out:write("case\taction_id\tselected_items_before\tselected_items_after\tselected_tracks_after\tcursor_after_seconds\tproject_state_change_delta\tfixture_note\n")
 out:flush()
 local ready = assert(io.open("/tmp/aaadaw-item-navigation-ready", "w"))
 ready:write("ready\n")
@@ -98,7 +99,7 @@ local function poll()
       out:write(table.concat({
         label, action_id, before, selected_items(), selected_tracks(),
         string.format("%.6f", reaper.GetCursorPosition()),
-        tostring(reaper.GetProjectStateChangeCount(0) - change_before),
+        tostring(reaper.GetProjectStateChangeCount(0) - change_before), "",
       }, "\t"), "\n")
       out:flush()
     end

@@ -4269,6 +4269,9 @@ impl App {
                     self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
                 }
             }
+            Message::MoveEditCursorToSelectedItemsBoundary(move_to_end) => {
+                self.move_cursor_to_selected_items_boundary(move_to_end);
+            }
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9352,6 +9355,24 @@ impl App {
             edges.filter(|tick| *tick > cursor).min()
         } else {
             edges.filter(|tick| *tick < cursor).max()
+        }
+    }
+
+    fn move_cursor_to_selected_items_boundary(&mut self, move_to_end: bool) {
+        let tick = self
+            .project_item_ranges()
+            .into_iter()
+            .filter(|(item_id, _, _, _)| self.timeline.selected_items.contains(item_id))
+            .map(|(_, _, start, end)| if move_to_end { end } else { start })
+            .reduce(|current, next| {
+                if move_to_end {
+                    current.max(next)
+                } else {
+                    current.min(next)
+                }
+            });
+        if let Some(tick) = tick {
+            self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
         }
     }
 

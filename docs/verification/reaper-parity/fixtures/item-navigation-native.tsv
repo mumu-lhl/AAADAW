@@ -24,3 +24,13 @@ edge_left_skips_equal_boundary	41167	MD	MD	M	1.500000	0	Cursor override 2; edge 
 edge_left_with_no_item_selection	41167			M	4.000000	0	Cursor override 4.5; item selection is empty
 edge_right_from_midi_start	41168			M	6.000000	0	Cursor override 5; MIDI item ends at 6
 edge_left_from_midi_end	41167			M	5.000000	0	Cursor override 6; MIDI item starts at 5
+single_audio_item_start	41173	MD	MD	M	0.500000	0	One selected Audio item; cursor moves to its start and selection remains
+single_audio_item_end	41174	MD	MD	M	1.500000	0	One selected Audio item; cursor moves to its end and selection remains
+multiple_items_start	41173	MD,ME	MD,ME	M	0.500000	0	Native click MD then Ctrl-click ME; use earliest selected start
+multiple_items_end	41174	MD,ME	MD,ME	M	3.000000	0	Native click MD then Ctrl-click ME; use latest selected end
+multiple_tracks_start	41173	LC,UA	LC,UA	U	0.000000	0	Native click LC then Ctrl-click UA; use earliest selected start across tracks
+multiple_tracks_end	41174	LC,UA	LC,UA	U	5.000000	0	Native click LC then Ctrl-click UA; use latest selected end across tracks
+empty_selection_start	41173			M	4.500000	0	No selected items; cursor remains at 4.5 seconds
+empty_selection_end	41174			M	4.500000	0	No selected items; cursor remains at 4.5 seconds
+midi_item_start	41173	MIDI	MIDI	M	5.000000	0	One selected MIDI item; cursor moves to its start
+midi_item_end	41174	MIDI	MIDI	M	6.000000	0	One selected MIDI item; cursor moves to its end
