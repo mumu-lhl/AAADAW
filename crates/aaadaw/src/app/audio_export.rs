@@ -2,7 +2,7 @@ use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
 use aaadaw_app::WavChannelCount;
-use aaadaw_core::{DawAction, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
+use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::HashSet;
@@ -37,14 +37,16 @@ pub(crate) enum RenderSource {
     SelectedTracksStems,
     SelectedTracksViaMaster,
     MasterMixAndSelectedTracks,
+    SelectedMediaItems,
 }
 
 impl RenderSource {
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::MasterMix,
         Self::SelectedTracksStems,
         Self::MasterMixAndSelectedTracks,
         Self::SelectedTracksViaMaster,
+        Self::SelectedMediaItems,
     ];
 }
 
@@ -55,6 +57,7 @@ impl std::fmt::Display for RenderSource {
             Self::SelectedTracksStems => "Selected tracks (stems)",
             Self::SelectedTracksViaMaster => "Selected tracks via master",
             Self::MasterMixAndSelectedTracks => "Master mix and stems",
+            Self::SelectedMediaItems => "Selected media items",
         })
     }
 }
@@ -196,6 +199,74 @@ fn selected_track_stem_destinations(
     Ok(outputs)
 }
 
+fn selected_media_item_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    selected_items: &HashSet<ItemId>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let selected_midi_count = project
+        .midi_items()
+        .iter()
+        .filter(|item| selected_items.contains(&item.id()))
+        .count();
+    if selected_midi_count > 0 {
+        return Err(
+            "Selected media item rendering currently supports audio items; deselect MIDI items"
+                .to_owned(),
+        );
+    }
+    let items = project
+        .audio_items()
+        .iter()
+        .filter(|item| selected_items.contains(&item.id()))
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return Err("Select at least one audio media item in Arrange to render it".to_owned());
+    }
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the selected-item prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    let mut outputs = Vec::with_capacity(items.len());
+    let mut used_names = HashSet::with_capacity(items.len());
+    for item in items {
+        let ordinal = project
+            .audio_items()
+            .iter()
+            .position(|candidate| candidate.id() == item.id())
+            .unwrap_or(0)
+            .saturating_add(1);
+        let mut name = format!("{base_name}-item_{ordinal:02}");
+        let mut disambiguator = 2;
+        while !used_names.insert(name.to_lowercase()) {
+            name = format!("{base_name}-item_{ordinal:02}-{disambiguator}");
+            disambiguator += 1;
+        }
+        outputs.push((
+            aaadaw_app::ProjectWavRenderSettings {
+                source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item.id()),
+                start_sample: item.start_sample(),
+                end_sample: item.end_sample(),
+                tail_milliseconds: 0,
+                ..settings
+            },
+            parent.join(format!("{name}.{extension}")),
+        ));
+    }
+    Ok(outputs)
+}
+
 fn project_region_render_jobs(
     base_path: &Path,
     project: &Project,
@@ -244,6 +315,9 @@ fn project_region_render_jobs(
             SelectedTrackStemMode::PostFader
         }
         RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+        RenderSource::SelectedMediaItems => {
+            unreachable!("selected media items are not a track stem mode")
+        }
     };
     let mut used_region_names = HashSet::with_capacity(regions.len());
     let mut jobs = Vec::new();
@@ -291,6 +365,9 @@ fn project_region_render_jobs(
                 true,
                 stem_mode,
             )?,
+            RenderSource::SelectedMediaItems => {
+                unreachable!("selected media items are not a region source mode")
+            }
         };
         for (render_source, destination) in destinations {
             let mut region_settings = settings;
@@ -353,6 +430,9 @@ fn project_marker_render_jobs(
             SelectedTrackStemMode::PostFader
         }
         RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+        RenderSource::SelectedMediaItems => {
+            unreachable!("selected media items are not a track stem mode")
+        }
     };
     let mut used_marker_names = HashSet::with_capacity(markers.len());
     let mut jobs = Vec::new();
@@ -415,6 +495,9 @@ fn project_marker_render_jobs(
                 true,
                 stem_mode,
             )?,
+            RenderSource::SelectedMediaItems => {
+                unreachable!("selected media items are not a marker source mode")
+            }
         };
         for (render_source, destination) in destinations {
             let mut marker_settings = settings;
@@ -701,6 +784,12 @@ impl App {
             (RenderSource::SelectedTracksViaMaster, [track_id]) => {
                 aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
             }
+            (RenderSource::SelectedMediaItems, _) => self
+                .effective_selected_audio_item_ids()
+                .first()
+                .copied()
+                .map(aaadaw_app::ProjectWavRenderSource::SelectedAudioItem)
+                .unwrap_or(aaadaw_app::ProjectWavRenderSource::MasterMix),
             _ => aaadaw_app::ProjectWavRenderSource::MasterMix,
         };
         let settings = aaadaw_app::ProjectWavRenderSettings {
@@ -715,6 +804,71 @@ impl App {
             tail_milliseconds,
             normalize_peak: self.render_dialog.normalize_peak,
         };
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            let selected_items = self.effective_selected_media_item_ids();
+            let outputs = match selected_media_item_render_jobs(
+                &destination,
+                &self.project,
+                &selected_items,
+                settings,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs = if outputs.len() == 1 {
+                vec![(outputs[0].0, destination.clone())]
+            } else {
+                outputs
+            };
+            if let Some((_, existing)) =
+                outputs
+                    .iter()
+                    .find(|(_, path)| match std::fs::symlink_metadata(path) {
+                        Ok(_) => true,
+                        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                    })
+            {
+                self.status = format!(
+                    "Choose a new render filename; selected-item output already exists: {}",
+                    existing.display()
+                );
+                return Task::none();
+            }
+            if outputs.iter().any(|(_, path)| path == &project_path) {
+                self.status =
+                    "Choose selected-item output separate from the project file".to_owned();
+                return Task::none();
+            }
+            if outputs.len() == 1 {
+                let (settings, _) = outputs[0];
+                return self.enqueue_offline_job(OfflineRenderJob {
+                    kind: OfflineRenderKind::ProjectWav {
+                        destination,
+                        settings,
+                    },
+                    snapshot: Arc::new(self.project.snapshot()),
+                    project_path,
+                    project_generation: self.project_generation,
+                    label: format!("Render {file_name}"),
+                });
+            }
+            if cfg!(target_os = "android") {
+                self.status =
+                    "Rendering multiple selected media items requires a desktop build".to_owned();
+                return Task::none();
+            }
+            let job = OfflineRenderJob {
+                kind: OfflineRenderKind::ProjectWavBatch { outputs },
+                snapshot: Arc::new(self.project.snapshot()),
+                project_path,
+                project_generation: self.project_generation,
+                label: format!("Render {} selected media items", selected_items.len()),
+            };
+            return self.enqueue_offline_job(job);
+        }
         if matches!(
             self.render_dialog.bounds,
             RenderBounds::AllProjectRegions
@@ -768,6 +922,7 @@ impl App {
             };
             let outputs_per_range = match self.render_dialog.source {
                 RenderSource::MasterMix => 1,
+                RenderSource::SelectedMediaItems => 1,
                 RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
                     selected_tracks.len()
                 }
@@ -848,6 +1003,9 @@ impl App {
                     RenderSource::MasterMix => {
                         unreachable!("Master mix cannot request a multi-track output set")
                     }
+                    RenderSource::SelectedMediaItems => {
+                        unreachable!("selected media item jobs are enqueued above")
+                    }
                 },
             ) {
                 Ok(outputs) => outputs,
@@ -921,7 +1079,8 @@ impl App {
         if cfg!(target_os = "android") && self.render_requires_multiple_files() {
             return false;
         }
-        if cfg!(target_os = "android")
+        if self.render_dialog.source != RenderSource::SelectedMediaItems
+            && cfg!(target_os = "android")
             && matches!(
                 self.render_dialog.bounds,
                 RenderBounds::AllProjectRegions
@@ -938,6 +1097,7 @@ impl App {
     pub(super) fn has_valid_render_source(&self) -> bool {
         match self.render_dialog.source {
             RenderSource::MasterMix => true,
+            RenderSource::SelectedMediaItems => self.selected_media_item_source_error().is_none(),
             RenderSource::SelectedTracksStems
             | RenderSource::SelectedTracksViaMaster
             | RenderSource::MasterMixAndSelectedTracks => {
@@ -947,6 +1107,9 @@ impl App {
     }
 
     pub(super) fn render_requires_multiple_files(&self) -> bool {
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            return self.effective_selected_media_item_ids().len() > 1;
+        }
         if matches!(
             self.render_dialog.bounds,
             RenderBounds::AllProjectRegions
@@ -958,6 +1121,7 @@ impl App {
         }
         let outputs_per_range = match self.render_dialog.source {
             RenderSource::MasterMix => 1,
+            RenderSource::SelectedMediaItems => 1,
             RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
                 self.selected_render_track_count()
             }
@@ -975,6 +1139,9 @@ impl App {
     pub(super) fn render_source_description(&self) -> &'static str {
         match self.render_dialog.source {
             RenderSource::MasterMix => "Renders the project through the Master mix.",
+            RenderSource::SelectedMediaItems => {
+                "Renders each selected audio item from its trimmed media source as a separate WAV."
+            }
             RenderSource::SelectedTracksStems => {
                 "Renders each selected track as a separate stem without the Master mix gain."
             }
@@ -1002,6 +1169,9 @@ impl App {
     }
 
     pub(super) fn render_bounds_summary(&self) -> Option<String> {
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            return None;
+        }
         let count = match self.render_dialog.bounds {
             RenderBounds::AllProjectRegions => self.project.regions().len(),
             RenderBounds::SelectedProjectRegions => self
@@ -1059,14 +1229,83 @@ impl App {
         ))
     }
 
+    pub(super) fn selected_media_items_summary(&self) -> String {
+        let count = self.effective_selected_media_item_ids().len();
+        format!("{count} media item{}", if count == 1 { "" } else { "s" })
+    }
+
+    pub(super) fn selected_media_item_source_error(&self) -> Option<&'static str> {
+        if self
+            .project
+            .midi_items()
+            .iter()
+            .any(|item| self.timeline.selected_items.contains(&item.id()))
+        {
+            return Some(
+                "Selected media item rendering currently supports audio items; deselect MIDI items.",
+            );
+        }
+        if self.effective_selected_audio_item_ids().is_empty() {
+            return Some("Select one or more audio media items in Arrange to render them.");
+        }
+        None
+    }
+
+    fn effective_selected_media_item_ids(&self) -> HashSet<ItemId> {
+        self.project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .filter(|item_id| self.timeline.selected_items.contains(item_id))
+            .collect()
+    }
+
+    fn effective_selected_audio_item_ids(&self) -> Vec<ItemId> {
+        self.project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .map(|item| item.id())
+            .collect()
+    }
+
+    fn selected_media_item_union_range(&self) -> Result<(u64, u64), String> {
+        if let Some(error) = self.selected_media_item_source_error() {
+            return Err(error.to_owned());
+        }
+        let mut selected = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()));
+        let first = selected
+            .next()
+            .expect("selection validation requires one audio media item");
+        let (start, end) = selected.fold(
+            (first.start_sample(), first.end_sample()),
+            |(start, end), item| (start.min(item.start_sample()), end.max(item.end_sample())),
+        );
+        (end > start)
+            .then_some((start, end))
+            .ok_or_else(|| "Selected audio items must span at least one project sample".to_owned())
+    }
+
     fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
-        let tail_milliseconds = if self.render_dialog.tail_enabled {
+        let tail_milliseconds = if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            0
+        } else if self.render_dialog.tail_enabled {
             parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
                 .map_err(str::to_owned)?
         } else {
             0
         };
-        let (start_sample, end_sample) = self.selected_render_bounds()?;
+        let (start_sample, end_sample) =
+            if self.render_dialog.source == RenderSource::SelectedMediaItems {
+                self.selected_media_item_union_range()?
+            } else {
+                self.selected_render_bounds()?
+            };
         aaadaw_app::render_range_length_samples_with_tail_milliseconds(
             self.project.settings().sample_rate(),
             start_sample,
@@ -1075,7 +1314,7 @@ impl App {
         )
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
         let selected_tracks = match self.render_dialog.source {
-            RenderSource::MasterMix => Vec::new(),
+            RenderSource::MasterMix | RenderSource::SelectedMediaItems => Vec::new(),
             RenderSource::SelectedTracksStems
             | RenderSource::SelectedTracksViaMaster
             | RenderSource::MasterMixAndSelectedTracks => {
@@ -1093,10 +1332,12 @@ impl App {
             0
         };
         let output_sample_rate = self.render_output_sample_rate();
-        if matches!(
-            self.render_dialog.bounds,
-            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
-        ) {
+        if self.render_dialog.source != RenderSource::SelectedMediaItems
+            && matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+            )
+        {
             let selected_markers = (self.render_dialog.bounds
                 == RenderBounds::SelectedProjectMarkers)
                 .then(|| self.effective_selected_marker_ids())
@@ -1803,6 +2044,7 @@ mod tests {
                 RenderSource::SelectedTracksStems,
                 RenderSource::MasterMixAndSelectedTracks,
                 RenderSource::SelectedTracksViaMaster,
+                RenderSource::SelectedMediaItems,
             ]
         );
         assert_eq!(
@@ -1816,6 +2058,195 @@ mod tests {
         assert_eq!(
             RenderSource::SelectedTracksViaMaster.to_string(),
             "Selected tracks via master"
+        );
+        assert_eq!(
+            RenderSource::SelectedMediaItems.to_string(),
+            "Selected media items"
+        );
+    }
+
+    #[test]
+    fn selected_media_items_queue_independent_direct_source_outputs() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Media source".to_owned(),
+            })
+            .expect("source track should be created");
+        let track_id = project.tracks()[0].id();
+        for (start_sample, length_samples) in [(24_000, 48_000), (96_000, 24_000)] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: format!("linked-{start_sample}"),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples,
+                })
+                .expect("audio item should be inserted");
+        }
+        let item_ids = project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix =
+            std::env::temp_dir().join(format!("aaadaw-selected-items-{}.wav", std::process::id()));
+        let jobs = selected_media_item_render_jobs(
+            &prefix,
+            &project,
+            &item_ids.iter().copied().collect::<HashSet<_>>(),
+            settings,
+        )
+        .expect("each selected audio item should produce one job");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            (jobs[0].0.start_sample, jobs[0].0.end_sample),
+            (24_000, 72_000)
+        );
+        assert_eq!(jobs[0].0.tail_milliseconds, 0);
+        assert_eq!(
+            jobs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[1])
+        );
+        assert_eq!(
+            (jobs[1].0.start_sample, jobs[1].0.end_sample),
+            (96_000, 120_000)
+        );
+        assert_eq!(
+            jobs[1]
+                .1
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap(),
+            format!("aaadaw-selected-items-{}-item_02.wav", std::process::id())
+        );
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-selected-items-project-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                source: RenderSource::SelectedMediaItems,
+                bounds: RenderBounds::AllProjectMarkers,
+                tail_enabled: true,
+                tail_duration_text: "invalid-but-disabled-for-items".to_owned(),
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        app.timeline.selected_items.extend(item_ids.iter().copied());
+        assert_eq!(app.selected_media_items_summary(), "2 media items");
+        assert!(app.has_valid_render_source());
+        assert!(app.can_submit_render());
+        assert!(app.render_requires_multiple_files());
+        let _task = app.start_offline_render(prefix.clone());
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("selected item set should queue one atomic batch");
+        assert_eq!(queued.job.label, "Render 2 selected media items");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("multiple selected media items should use a grouped job")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(
+            outputs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            outputs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[1])
+        );
+
+        app.timeline.selected_items.remove(&item_ids[1]);
+        let single_destination = std::env::temp_dir().join(format!(
+            "aaadaw-selected-item-single-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(single_destination.clone());
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("one selected item should queue a single-file render");
+        let OfflineRenderKind::ProjectWav {
+            destination,
+            settings,
+        } = queued.job.kind
+        else {
+            panic!("one selected item should use the user-selected destination")
+        };
+        assert_eq!(destination, single_destination);
+        assert_eq!(
+            settings.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            (settings.start_sample, settings.end_sample),
+            (24_000, 72_000)
+        );
+        assert_eq!(settings.tail_milliseconds, 0);
+    }
+
+    #[test]
+    fn selected_media_item_source_rejects_empty_and_midi_only_selection() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI source".to_owned(),
+            })
+            .expect("source track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should be inserted");
+        let midi_item_id = project.midi_items()[0].id();
+        let mut app = App {
+            project,
+            render_dialog: RenderDialogState {
+                source: RenderSource::SelectedMediaItems,
+                ..RenderDialogState::default()
+            },
+            ..App::default()
+        };
+        assert!(!app.has_valid_render_source());
+        assert!(
+            app.selected_media_item_source_error()
+                .unwrap()
+                .contains("audio media items")
+        );
+        app.timeline.selected_items.insert(midi_item_id);
+        assert!(!app.has_valid_render_source());
+        assert!(!app.can_submit_render());
+        assert!(
+            app.selected_media_item_source_error()
+                .unwrap()
+                .contains("deselect MIDI")
         );
     }
 

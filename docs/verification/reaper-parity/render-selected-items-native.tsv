@@ -1,0 +1,17 @@
+key	value
+reference	Linux REAPER 7.82 (7.82/linux-x86_64), Default 7 theme, isolated profile
+render_source	Selected media items
+selection	One second item, second of three one-second items; no item/take FX
+filename_pattern	bounds-ui-$region-$item
+resolved_filename	bounds-ui-Region 2-item_02.wav
+output_format	WAV PCM24 stereo, 48000 Hz, 48000 frames, 1.000 seconds
+sample_points	frame 0, 12000, 24000, 24001, 36000, 47999
+source_samples_pcm24	all points L=1048576, R=3145728
+render_samples_pcm24	all points L=1048576, R=3145728
+source_file_sha256	3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+render_file_sha256	8c7aae22d591f2c39524bd7895bc95f034685e59d58d57a7250f61c4dd26958f
+source_file_bytes	288044
+render_file_bytes	288690
+render_dialog_screenshot_sha256	76e419058b2e531b3f1f4c00cc639adaee2bfd3196507d2d90486f92d0324116
+finished_dialog_screenshot_sha256	16063552ba507b661b6e98fde55014ec769086e6540717f30520fa0924680c43
+aaadaw_render_dialog_screenshot_sha256	cd1cea3f09d4f384574cf762571876a00be64706f75ba6db070a4eb8105dbfa6

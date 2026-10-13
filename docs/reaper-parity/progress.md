@@ -624,4 +624,12 @@ Render Bounds 新增 `Selected regions` 和 `Selected markers`。Region/Marker M
 
 原厂 REAPER 7.82 / Default 7 实窗确认两种 bounds 均显示 2 个文件，空选择回退及 Manager 多选持久化也已探测。AAADAW 实窗截图确认 Selected markers 的两项计数与跨窗口保存的多选；Selected regions Manager 多选、Native Render 数量及范围计算由截图/单测覆盖。所有截图 SHA-256、原厂输出帧数和证据边界见 [selected-bounds fixture](../verification/reaper-parity/fixtures/render-selected-bounds.tsv)。AAADAW 视觉 fixture 未写出 Selected regions WAV，因此没有将对应音频输出视作实机验收。
 
-Selected-bounds 定向 nightly+Cranelift 测试 1/1，`aaadaw` 全量测试 508/508 passed；Stable all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Cranelift 构建仍发出 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`RENDER-BOUNDS-001` 与 P10 继续 `in_progress`：完整 Render 速率菜单、item/Razor 范围、Presets/Metadata、完整原厂焦点与禁用态及 Selected regions 的 AAADAW 实窗渲染输出仍待实现/验证。
+Selected-bounds 定向 nightly+Cranelift 测试 1/1，`aaadaw` 全量测试 508/508 passed；Stable all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Cranelift 构建仍发出 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`RENDER-BOUNDS-001` 与 P10 继续 `in_progress`：完整 Render 速率菜单、Razor-area Source、Presets/Metadata、完整原厂焦点与禁用态及 Selected regions 的 AAADAW 实窗渲染输出仍待实现/验证。
+
+### 2026-10-13 Render Source：Selected media items
+
+Render Source 新增 `Selected media items`。Arrange 中选择的音频 item 按其 source offset 和长度直接渲染，每个 item 一份 WAV；item fades、输出采样率转换、格式、Mono/Stereo 映射和峰值归一化继续复用离线输出管线。多文件先进入目标目录内的私有 staging，再一次性发布；入队快照中找不到的 item ID 在写文件前拒绝。选中 MIDI 时明确提示当前只支持 audio items。该模式忽略项目 Bounds 与 Tail，Render 窗口显示所选媒体计数并禁用 Tail 控件。项目与实时播放状态不变。
+
+Linux REAPER 7.82 / Default 7 实窗 Source 菜单确认该模式显示 `1 media item` 与 1 个输出；实际渲染为 48 kHz、PCM24、立体声、48,000 帧。常量测试源 L/R PCM24 为 `[1048576, 3145728]`，选中 item 的多个采样点与源逐整数相同。Render/完成窗口截图、SHA-256、样本点、原生探针和对照限制见 [Render Source 验证记录](../verification/reaper-parity/render-source.md)。
+
+新增 audio-only 单 item、失效 item 预检、多 item 独立 trims 和批次取消/发布回归。Stable all-target Clippy `-D warnings` 通过；nightly+Cranelift workspace nextest 全量 999/999（66 个测试二进制）通过。全量测试使用绝对 `CARGO_TARGET_DIR`，避免 CLAP fixture 子进程从 crate 工作目录解析相对路径；Cranelift 仍报告既有 iced/wgpu recursion-depth future-incompatible warning。`RENDER-SOURCE-001`、`RENDER-BOUNDS-001`、`UI-028` 和 P10 继续 `in_progress`：MIDI/take FX、item FX 与原厂音量/自动化行为未建模或未测；当前 `prefix-item_NN.wav` 命名不是完整 wildcard 规则；Region matrix、Razor source、完整原厂命名/Render UI 和 Android 多文件选择仍未完成。

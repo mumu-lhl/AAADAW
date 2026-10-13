@@ -13,38 +13,56 @@ use iced::{Alignment, Element, Length};
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     let bounds = app.render_dialog.bounds;
+    let selected_media_items = app.render_dialog.source == RenderSource::SelectedMediaItems;
     let multiple_files = app.render_requires_multiple_files();
-    let output_description = if multiple_files {
-        "Choose the render range and audio format, then select a filename prefix for the output set."
-    } else {
-        "Choose the render range and audio format, then select an output filename."
+    let output_description = match (selected_media_items, multiple_files) {
+        (true, true) => "Choose an audio format and filename prefix for the selected media items.",
+        (true, false) => "Choose an audio format and output filename for the selected media item.",
+        (false, true) => {
+            "Choose the render range and audio format, then select a filename prefix for the output set."
+        }
+        (false, false) => {
+            "Choose the render range and audio format, then select an output filename."
+        }
     };
-    let form_hint = if app.render_dialog.tail_enabled
+    let form_hint = if !selected_media_items
+        && app.render_dialog.tail_enabled
         && parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err()
     {
         Some("Tail must be a non-negative whole number of milliseconds.")
-    } else if bounds == RenderBounds::CustomTimeRange
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
         && crate::project_time::parse_project_time(&app.render_dialog.custom_start_text).is_err()
     {
         Some("Enter a valid custom start time (for example, 0:00.000).")
-    } else if bounds == RenderBounds::CustomTimeRange
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
         && crate::project_time::parse_project_time(&app.render_dialog.custom_end_text).is_err()
     {
         Some("Enter a valid custom end time (for example, 0:05.000).")
-    } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
+    } else if !selected_media_items
+        && bounds == RenderBounds::TimeSelection
+        && app.timeline.time_selection.is_none()
+    {
         Some("Create a time selection in Arrange to render that range.")
-    } else if matches!(
-        bounds,
-        RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
-    ) && app.project.regions().is_empty()
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        )
+        && app.project.regions().is_empty()
     {
         Some("Add at least one project region in Arrange to render regions.")
-    } else if matches!(
-        bounds,
-        RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
-    ) && app.project.markers().is_empty()
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+        )
+        && app.project.markers().is_empty()
     {
         Some("Add at least one project marker in Arrange to render markers.")
+    } else if selected_media_items && !app.has_valid_render_source() {
+        app.selected_media_item_source_error()
     } else if !app.has_valid_render_source() {
         Some("Select one or more tracks in Arrange to render them via the master.")
     } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
@@ -54,12 +72,17 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .is_err()
     {
         Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
-    } else if bounds == RenderBounds::CustomTimeRange && !app.can_submit_render() {
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
+        && !app.can_submit_render()
+    {
         Some("Custom range end must follow start and both times must map to valid project samples.")
-    } else if matches!(
-        bounds,
-        RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
-    ) && !app.can_submit_render()
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+        )
+        && !app.can_submit_render()
     {
         Some(
             "Each project marker must have a non-empty range up to the next marker or project end.",
@@ -71,6 +94,32 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     let form_hint: Option<Element<'_, Message>> =
         form_hint.map(|message| text(message).size(11).into());
+    let bounds_control: Element<'_, Message> = if selected_media_items {
+        row![
+            text("Time bounds").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            text(app.selected_media_items_summary()).size(13),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        row![
+            text("Bounds").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderBounds::ALL[..],
+                Some(bounds),
+                Message::SetRenderBounds,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
+    };
     let mut contents = column![
         text("Render project to WAV").size(20),
         text(output_description).size(12),
@@ -104,60 +153,47 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
-        row![
-            text("Bounds").size(13),
-            iced::widget::Space::new().width(Length::Fill),
-            pick_list(
-                &RenderBounds::ALL[..],
-                Some(bounds),
-                Message::SetRenderBounds,
-            )
-            .text_size(13)
-            .padding([4, 8])
-            .width(Length::Fixed(180.0)),
-        ]
-        .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
+        bounds_control,
         {
-            let fields: Element<'_, Message> = if bounds == RenderBounds::CustomTimeRange {
-                row![
-                    text("Start:").size(13),
-                    text_input("0:00.000", &app.render_dialog.custom_start_text)
-                        .on_input(Message::SetRenderCustomStart)
-                        .size(13)
-                        .padding([4, 8])
-                        .width(Length::FillPortion(1)),
-                    text("End:").size(13),
-                    text_input("0:05.000", &app.render_dialog.custom_end_text)
-                        .on_input(Message::SetRenderCustomEnd)
-                        .size(13)
-                        .padding([4, 8])
-                        .width(Length::FillPortion(1)),
-                    text("Length:").size(13),
-                    text(
-                        app.custom_render_length_text()
-                            .unwrap_or_else(|| "—".to_owned())
-                    )
-                    .size(13),
-                ]
-                .spacing(tokens::SPACING_SM)
-                .align_y(Alignment::Center)
-                .into()
-            } else if let Some(summary) = app.render_bounds_summary() {
-                text(summary).size(13).into()
-            } else {
-                iced::widget::Space::new().height(Length::Fixed(0.0)).into()
-            };
+            let fields: Element<'_, Message> =
+                if !selected_media_items && bounds == RenderBounds::CustomTimeRange {
+                    row![
+                        text("Start:").size(13),
+                        text_input("0:00.000", &app.render_dialog.custom_start_text)
+                            .on_input(Message::SetRenderCustomStart)
+                            .size(13)
+                            .padding([4, 8])
+                            .width(Length::FillPortion(1)),
+                        text("End:").size(13),
+                        text_input("0:05.000", &app.render_dialog.custom_end_text)
+                            .on_input(Message::SetRenderCustomEnd)
+                            .size(13)
+                            .padding([4, 8])
+                            .width(Length::FillPortion(1)),
+                        text("Length:").size(13),
+                        text(
+                            app.custom_render_length_text()
+                                .unwrap_or_else(|| "—".to_owned())
+                        )
+                        .size(13),
+                    ]
+                    .spacing(tokens::SPACING_SM)
+                    .align_y(Alignment::Center)
+                    .into()
+                } else if let Some(summary) = app.render_bounds_summary() {
+                    text(summary).size(13).into()
+                } else {
+                    iced::widget::Space::new().height(Length::Fixed(0.0)).into()
+                };
             fields
         },
         row![
             checkbox(app.render_dialog.tail_enabled)
                 .label("Tail")
-                .on_toggle(Message::SetRenderTailEnabled),
+                .on_toggle_maybe((!selected_media_items).then_some(Message::SetRenderTailEnabled),),
             text_input("1000", &app.render_dialog.tail_duration_text)
                 .on_input_maybe(
-                    app.render_dialog
-                        .tail_enabled
+                    (app.render_dialog.tail_enabled && !selected_media_items)
                         .then_some(Message::SetRenderTailDuration)
                 )
                 .size(13)

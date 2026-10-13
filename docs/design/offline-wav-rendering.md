@@ -11,6 +11,12 @@ runs on a background worker, feeds media through bounded queues, writes output i
 does not change project history or the active playback graph. The UI reports frame progress and
 can cancel a render.
 
+The `Selected media items` source is a separate path: it streams each selected item's trimmed
+media, applies modeled item fades, then reuses the output sample-rate conversion, channel mapping,
+normalization, and WAV writer. It bypasses the track and Master graph. Native item/take FX and
+track-fader behavior for this REAPER source remain unverified and are tracked separately in the
+REAPER parity record.
+
 Each finite floating-point output sample is clamped to [-1, 1], multiplied by 2^23, rounded to the
 nearest integer, then saturated to the signed 24-bit range and written little-endian. The renderer
 does not normalize or dither. A temporary file is used until rendering and media workers finish;

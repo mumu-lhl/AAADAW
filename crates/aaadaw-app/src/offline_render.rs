@@ -7,12 +7,17 @@ use crate::{
     prepare_audio_playback_with_resampling_quality,
 };
 use aaadaw_core::{DawAction, ItemId, Project, TrackId};
+use aaadaw_engine::stereo_pcm_stream;
 use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
 };
 use aaadaw_media::{ResamplingQuality, StereoPcmResampler};
-use aaadaw_storage::ProjectStore;
+use aaadaw_media::{
+    spawn_stereo_audio_item_stream_from_reader_with_quality,
+    spawn_stereo_audio_item_stream_with_quality,
+};
+use aaadaw_storage::{ProjectStore, ResolvedAudioAsset};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -56,6 +61,8 @@ pub struct ProjectWavRenderSettings {
 pub enum ProjectWavRenderSource {
     #[default]
     MasterMix,
+    /// Render the trimmed media source for one selected audio item directly.
+    SelectedAudioItem(ItemId),
     /// Render one selected track as a stem without the Master mix output stage.
     SelectedTrackStem(TrackId),
     /// Render one selected track's signal before its volume fader and automation.
@@ -712,6 +719,17 @@ pub fn render_project_file_to_wav_with_settings(
     cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
+    if let ProjectWavRenderSource::SelectedAudioItem(item_id) = settings.source {
+        return render_selected_audio_item_to_wav(
+            project_path,
+            project,
+            item_id,
+            destination,
+            settings,
+            cancelled,
+            report_progress,
+        );
+    }
     let ProjectWavRenderSettings {
         master_ceiling,
         export_options,
@@ -735,6 +753,9 @@ pub fn render_project_file_to_wav_with_settings(
     )?;
     let (isolated_project, bypass_master_output) = match source {
         ProjectWavRenderSource::MasterMix => (None, false),
+        ProjectWavRenderSource::SelectedAudioItem(_) => {
+            unreachable!("selected audio items use their direct source renderer")
+        }
         ProjectWavRenderSource::SelectedTrackStem(track_id) => (
             Some(selected_track_stem_project(project, track_id, false)?),
             true,
@@ -937,6 +958,155 @@ pub fn render_project_file_to_wav_with_settings(
     result
 }
 
+fn render_selected_audio_item_to_wav(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    item_id: ItemId,
+    destination: impl AsRef<Path>,
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+    let item = project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .ok_or_else(|| OfflineRenderError::Media("selected audio item no longer exists".into()))?;
+    let total_frames = item.length_samples();
+    if total_frames == 0 {
+        return Err(OfflineRenderError::TimelineRange);
+    }
+
+    let store = ProjectStore::open(project_path.as_ref())
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let asset = store
+        .resolve_audio_asset(item.media_ref())
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let close = store
+        .close()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let asset = asset?;
+    close?;
+
+    let (producer, mut consumer) =
+        stereo_pcm_stream(8_192).map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let project_sample_rate = project.settings().sample_rate();
+    let mut feeder = match asset {
+        ResolvedAudioAsset::LinkedFile { path, .. } => spawn_stereo_audio_item_stream_with_quality(
+            item,
+            path,
+            project_sample_rate,
+            producer,
+            ResamplingQuality::Sinc192,
+        ),
+        ResolvedAudioAsset::Embedded(reader) => {
+            let byte_len = reader.byte_len();
+            let extension = Path::new(reader.original_name())
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::to_owned);
+            spawn_stereo_audio_item_stream_from_reader_with_quality(
+                item,
+                reader,
+                Some(byte_len),
+                extension.as_deref(),
+                project_sample_rate,
+                producer,
+                ResamplingQuality::Sinc192,
+            )
+        }
+    }
+    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    feeder
+        .wait_ready()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+
+    let ProjectWavRenderSettings {
+        master_ceiling: _,
+        export_options,
+        output_sample_rate,
+        output_channels,
+        source: _,
+        start_sample: _,
+        end_sample: _,
+        tail_milliseconds: _,
+        normalize_peak,
+        normalize_peak_target_centi_dbfs,
+    } = settings;
+    let export = WavExport::create_with_channels(
+        destination.as_ref(),
+        output_sample_rate,
+        export_options,
+        output_channels,
+    )
+    .map_err(OfflineRenderError::WavExport)?;
+    let output_resampler = (output_sample_rate != project_sample_rate)
+        .then(|| {
+            StereoPcmResampler::new(
+                project_sample_rate,
+                output_sample_rate,
+                ResamplingQuality::Sinc192,
+            )
+        })
+        .transpose()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let normalization_target = 10_f64.powf(f64::from(normalize_peak_target_centi_dbfs) / 2_000.0);
+    let export = PeakNormalizingWriter::new(
+        export,
+        output_channels,
+        normalize_peak,
+        normalization_target,
+        cancelled,
+    )?;
+    let mut export = SampleRateConvertingWriter {
+        inner: export,
+        resampler: output_resampler,
+    };
+
+    let fades = item.fades();
+    let mut rendered_frames = 0_u64;
+    let mut frames = vec![[0.0_f32; 2]; 2_048];
+    while rendered_frames < total_frames {
+        if cancelled.load(Ordering::Acquire) {
+            let _ = feeder.cancel();
+            return Err(OfflineRenderError::Cancelled);
+        }
+        let available = consumer.available_frames();
+        if available == 0 {
+            if feeder.is_finished() {
+                feeder
+                    .join()
+                    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+                return Err(OfflineRenderError::SourceEndedEarly { item_id });
+            }
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        let frame_count = available
+            .min(frames.len())
+            .min(usize::try_from(total_frames - rendered_frames).unwrap_or(usize::MAX));
+        let block = &mut frames[..frame_count];
+        consumer.read_into(block);
+        for (offset, frame) in block.iter_mut().enumerate() {
+            let item_offset = rendered_frames + offset as u64;
+            let gain = fades.gain_at(item_offset, total_frames);
+            frame[0] *= gain;
+            frame[1] *= gain;
+        }
+        export.write_frames(block)?;
+        rendered_frames += frame_count as u64;
+        report_progress(rendered_frames, total_frames);
+    }
+    feeder
+        .join()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    export.finish()?;
+    Ok(())
+}
+
 /// Renders each selected track through Master and publishes the complete WAV stem set.
 ///
 /// Stems are rendered into a private staging directory on the destination filesystem. Existing
@@ -1040,6 +1210,16 @@ pub fn render_project_wav_jobs_to_wavs(
                 "selected render track {} no longer exists",
                 track_id.value()
             )));
+        }
+        if let ProjectWavRenderSource::SelectedAudioItem(item_id) = source
+            && !project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+        {
+            return Err(OfflineRenderError::Media(
+                "selected audio item no longer exists".to_owned(),
+            ));
         }
         let parent = destination
             .parent()
@@ -1750,6 +1930,230 @@ mod tests {
         project
     }
 
+    fn pcm24_sample_at(bytes: &[u8], frame: usize, channel: usize) -> i32 {
+        let sample_offset = 44 + (frame * 2 + channel) * 3;
+        let encoded = [
+            bytes[sample_offset],
+            bytes[sample_offset + 1],
+            bytes[sample_offset + 2],
+            if bytes[sample_offset + 2] & 0x80 == 0 {
+                0
+            } else {
+                0xff
+            },
+        ];
+        i32::from_le_bytes(encoded)
+    }
+
+    #[test]
+    fn selected_audio_item_source_renders_its_trimmed_media_without_track_mix_gain() {
+        let project_path = destination().with_extension("aaadaw");
+        let source_path = destination();
+        let output_path = destination();
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("source WAV should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 24_000])
+            .expect("first source section should be written");
+        source_export
+            .write_frames(&vec![[0.25, 0.5]; 24_000])
+            .expect("second source section should be written");
+        source_export
+            .finish()
+            .expect("source WAV should be published");
+
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let media_ref = store
+            .import_audio_file(&source_path)
+            .expect("source WAV should be embedded");
+        store.close().expect("project store should close");
+
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref,
+                start_sample: 96_000,
+                source_offset_samples: 24_000,
+                length_samples: 12_000,
+            })
+            .expect("trimmed audio item should be inserted");
+        let item_id = project.audio_items()[0].id();
+        let before = project.snapshot();
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 96_000,
+            end_sample: 108_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut last_progress = (0, 0);
+        render_project_file_to_wav_with_settings(
+            &project_path,
+            &project,
+            &output_path,
+            settings,
+            &cancelled,
+            |done, total| last_progress = (done, total),
+        )
+        .expect("selected item should render its source directly");
+
+        let bytes = fs::read(&output_path).expect("rendered WAV should be readable");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            44_100
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+            11_025 * 6
+        );
+        let left_expected = (0.25_f64 * 8_388_608.0).round() as i32;
+        let right_expected = (0.5_f64 * 8_388_608.0).round() as i32;
+        assert!((pcm24_sample_at(&bytes, 5_512, 0) - left_expected).abs() <= 1);
+        assert!((pcm24_sample_at(&bytes, 5_512, 1) - right_expected).abs() <= 1);
+        assert_eq!(last_progress, (12_000, 12_000));
+        assert_eq!(
+            project.snapshot(),
+            before,
+            "source render must not edit the project"
+        );
+
+        fs::remove_file(source_path).expect("source WAV should be removed");
+        fs::remove_file(output_path).expect("rendered WAV should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn selected_audio_item_batch_publishes_each_trimmed_source_as_a_set() {
+        let project_path = destination().with_extension("aaadaw");
+        let source_path = destination();
+        let first_output = destination();
+        let second_output = destination();
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("source WAV should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 24_000])
+            .expect("first source half should be written");
+        source_export
+            .write_frames(&vec![[0.25, 0.5]; 24_000])
+            .expect("second source half should be written");
+        source_export
+            .finish()
+            .expect("source WAV should be published");
+
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let media_ref = store
+            .link_external_audio_file(&source_path)
+            .expect("source WAV should be linked");
+        store.close().expect("project store should close");
+
+        let mut project = project_with_one_track();
+        for (start_sample, source_offset_samples) in [(0, 0), (48_000, 24_000)] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id: project.tracks()[0].id(),
+                    media_ref: media_ref.clone(),
+                    start_sample,
+                    source_offset_samples,
+                    length_samples: 24_000,
+                })
+                .expect("trimmed audio item should be inserted");
+        }
+        let before = project.snapshot();
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let outputs = project
+            .audio_items()
+            .iter()
+            .zip([first_output.clone(), second_output.clone()])
+            .map(|(item, path)| {
+                (
+                    ProjectWavRenderSettings {
+                        source: ProjectWavRenderSource::SelectedAudioItem(item.id()),
+                        start_sample: item.start_sample(),
+                        end_sample: item.end_sample(),
+                        ..settings
+                    },
+                    path,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let cancelled = AtomicBool::new(false);
+        assert!(matches!(
+            render_project_wav_jobs_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                &cancelled,
+                |done, _| {
+                    if done == 24_000 {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!first_output.exists() && !second_output.exists());
+
+        cancelled.store(false, Ordering::Release);
+        let mut progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("both selected media items should publish together");
+        assert_eq!(progress.last(), Some(&(48_000, 48_000)));
+        for (path, expected) in [(&first_output, 0.125_f64), (&second_output, 0.25_f64)] {
+            let bytes = fs::read(path).expect("selected-item output should be readable");
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                24_000 * 6
+            );
+            assert_eq!(
+                pcm24_sample_at(&bytes, 12_000, 0),
+                (expected * 8_388_608.0).round() as i32
+            );
+        }
+        assert_eq!(project.snapshot(), before);
+
+        fs::remove_file(source_path).expect("source WAV should be removed");
+        fs::remove_file(first_output).expect("first output should be removed");
+        fs::remove_file(second_output).expect("second output should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
     #[test]
     fn project_render_length_includes_midi_end_and_the_fixed_effect_tail() {
         let mut project = project_with_one_track();
@@ -2292,7 +2696,15 @@ mod tests {
                 .to_string_lossy()
         ));
         let project_path = first_output.with_extension("aaadaw");
-        let project = project_with_one_track();
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should be inserted for the stale-audio-source check");
+        let midi_item_id = project.midi_items()[0].id();
         ProjectStore::open(&project_path)
             .expect("empty project store should be created")
             .close()
@@ -2309,6 +2721,33 @@ mod tests {
             normalize_peak: false,
             normalize_peak_target_centi_dbfs: 0,
         };
+        let stale_audio_source = first_output.with_file_name(format!(
+            "{}-stale-item.wav",
+            first_output
+                .file_stem()
+                .expect("render path should have a stem")
+                .to_string_lossy()
+        ));
+        let error = render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &[(
+                ProjectWavRenderSettings {
+                    source: ProjectWavRenderSource::SelectedAudioItem(midi_item_id),
+                    ..settings
+                },
+                stale_audio_source.clone(),
+            )],
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect_err("a MIDI/stale item ID must fail selected-audio batch preflight");
+        assert!(
+            error
+                .to_string()
+                .contains("selected audio item no longer exists")
+        );
+        assert!(!stale_audio_source.exists());
         let jobs = [
             (
                 ProjectWavRenderSettings {
