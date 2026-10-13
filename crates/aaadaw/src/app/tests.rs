@@ -243,7 +243,7 @@ fn insert_region_command_uses_a_non_empty_time_selection() {
     assert_eq!(app.project.regions()[0].start_ticks(), 960);
     assert_eq!(app.project.regions()[0].end_ticks(), 3_840);
     assert_eq!(app.project.regions()[0].number(), 1);
-    assert_eq!(app.revision, 1);
+    assert_eq!(app.revision, 2);
     assert!(app.timeline.time_selection.is_some());
     let _ = app.update(Message::Undo);
     assert!(app.project.regions().is_empty());
@@ -517,10 +517,13 @@ fn loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions() {
         let _ = commands::dispatch(app, command);
     };
 
+    let previous_revision = app.revision;
     let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
         start_tick: 100,
         end_tick: 200,
     }));
+    assert_ne!(app.revision, previous_revision);
+    assert!(app.is_dirty());
     assert_eq!(app.timeline.time_selection, Some(range(100, 200)));
     assert_eq!(app.timeline.loop_points, Some(loop_range(100, 200)));
 
@@ -5163,6 +5166,14 @@ fn project_session_round_trip_restores_arrangement_view_state() {
             stepped: false,
             height: 48.0,
         }],
+        time_selection: Some(aaadaw_storage::ArrangementTimeRangeState {
+            start_seconds: 0.5,
+            end_seconds: 1.0,
+        }),
+        loop_points: Some(aaadaw_storage::ArrangementTimeRangeState {
+            start_seconds: 1.5,
+            end_seconds: 2.0,
+        }),
     };
     let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
     save_project_session_file_with_media(
@@ -5185,6 +5196,20 @@ fn project_session_round_trip_restores_arrangement_view_state() {
     let row = timeline.row_layout(0).unwrap();
     assert_eq!(row.fx_lane_count, 1);
     assert_eq!(row.height, crate::timeline::TIMELINE_ROW_HEIGHT + 48.0);
+    assert_eq!(
+        timeline.time_selection,
+        Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 1_920,
+        })
+    );
+    assert_eq!(
+        timeline.loop_points,
+        Some(crate::timeline::LoopPoints {
+            start_tick: 2_880,
+            end_tick: 3_840,
+        })
+    );
 }
 
 #[cfg(feature = "audio-device")]

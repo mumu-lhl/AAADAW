@@ -4566,8 +4566,6 @@ impl App {
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
                         self.timeline.selected_tracks.clear();
-                        self.timeline.time_selection = None;
-                        self.timeline.loop_points = None;
                         self.timeline.origin_tick = 0;
                         self.timeline.edit_cursor_tick = 0;
                         self.timeline.vertical_scroll = 0.0;
@@ -5235,6 +5233,7 @@ impl App {
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
         )
         .then(|| self.timeline.arrangement_view_state(&self.project));
+        let previous_time_ranges = (self.timeline.time_selection, self.timeline.loop_points);
         let item_trim_preview_changed = matches!(
             &event,
             timeline::TimelineEvent::BeginItemTrim { .. }
@@ -5259,6 +5258,7 @@ impl App {
         }
         if previous_view_state
             .is_some_and(|previous| previous != self.timeline.arrangement_view_state(&self.project))
+            || previous_time_ranges != (self.timeline.time_selection, self.timeline.loop_points)
         {
             self.revision = self.revision.wrapping_add(1);
         }

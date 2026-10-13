@@ -7,6 +7,16 @@ pub struct ArrangementViewState {
     pub folder_compact: Vec<FolderCompactViewState>,
     pub volume_lanes: Vec<VolumeAutomationLaneViewState>,
     pub fx_lanes: Vec<FxAutomationLaneViewState>,
+    /// Project-time positions in seconds from the project's sample origin.
+    pub time_selection: Option<ArrangementTimeRangeState>,
+    /// Loop points are independent of the time selection and may have zero length.
+    pub loop_points: Option<ArrangementTimeRangeState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArrangementTimeRangeState {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

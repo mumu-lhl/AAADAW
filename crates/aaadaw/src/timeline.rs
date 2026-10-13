@@ -3,7 +3,8 @@ mod renderer;
 use aaadaw_core::{ItemId, MarkerId, Project, TempoCurve, TrackId, VolumeAutomationPoint};
 use aaadaw_media::{AudioWaveform, WaveformPeak};
 use aaadaw_storage::{
-    ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+    ArrangementTimeRangeState, ArrangementViewState, FxAutomationLaneViewState,
+    VolumeAutomationLaneViewState,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas;
@@ -1056,8 +1057,21 @@ impl TimelineState {
         self.selected_tracks.clear();
         self.track_selection_anchor = None;
         self.rebuild(project);
+        self.time_selection = None;
+        self.loop_points = None;
 
         if let Some(view_state) = view_state {
+            self.time_selection = view_state
+                .time_selection
+                .and_then(|range| time_range_ticks_at_project_seconds(project, range))
+                .and_then(|(start_tick, end_tick)| TimeSelection::normalized(start_tick, end_tick));
+            self.loop_points = view_state
+                .loop_points
+                .and_then(|range| time_range_ticks_at_project_seconds(project, range))
+                .map(|(start_tick, end_tick)| LoopPoints {
+                    start_tick: start_tick.min(end_tick),
+                    end_tick: start_tick.max(end_tick),
+                });
             for folder in &view_state.folder_compact {
                 if folder.mode <= 2
                     && let Some(track) = project
@@ -1197,6 +1211,12 @@ impl TimelineState {
             folder_compact,
             volume_lanes,
             fx_lanes,
+            time_selection: self.time_selection.and_then(|range| {
+                time_range_at_project_seconds(project, range.start_tick, range.end_tick)
+            }),
+            loop_points: self.loop_points.and_then(|range| {
+                time_range_at_project_seconds(project, range.start_tick, range.end_tick)
+            }),
         }
     }
 
@@ -2321,6 +2341,38 @@ impl TimelineState {
     pub(crate) fn ruler_lines(&self, project: &Project, width: f32) -> Vec<RulerLine> {
         ruler_lines(project, self.origin_tick, self.pixels_per_tick, width)
     }
+}
+
+fn time_range_at_project_seconds(
+    project: &Project,
+    start_tick: u64,
+    end_tick: u64,
+) -> Option<ArrangementTimeRangeState> {
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let start_sample = project.sample_at_tick(start_tick).ok()?;
+    let end_sample = project.sample_at_tick(end_tick).ok()?;
+    Some(ArrangementTimeRangeState {
+        start_seconds: start_sample as f64 / sample_rate,
+        end_seconds: end_sample as f64 / sample_rate,
+    })
+}
+
+fn time_range_ticks_at_project_seconds(
+    project: &Project,
+    range: ArrangementTimeRangeState,
+) -> Option<(u64, u64)> {
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let sample_at_seconds = |seconds: f64| {
+        let sample = seconds * sample_rate;
+        (sample.is_finite() && (0.0..=((1_u64 << 53) - 1) as f64).contains(&sample))
+            .then(|| sample.round() as u64)
+    };
+    let start_sample = sample_at_seconds(range.start_seconds)?;
+    let end_sample = sample_at_seconds(range.end_seconds)?;
+    Some((
+        project.tick_at_sample(start_sample).ok()?,
+        project.tick_at_sample(end_sample).ok()?,
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -7456,6 +7508,15 @@ mod tests {
             parameter_id: 7,
             height: 48.0,
         });
+        source.handle(TimelineEvent::ToggleLoopPointsLinked);
+        source.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 960,
+            end_tick: 1_920,
+        });
+        source.handle(TimelineEvent::SetLoopPoints {
+            start_tick: 2_880,
+            end_tick: 3_840,
+        });
         let saved_view = source.arrangement_view_state(&project);
 
         let mut reopened = TimelineState::default();
@@ -7465,6 +7526,20 @@ mod tests {
         assert!(reopened.fx_automation_lanes.contains(&(track_id, 0, 7)));
         assert_eq!(reopened.fx_automation_lane_height((track_id, 0, 7)), 48.0);
         assert!(reopened.fx_automation_lane_info[&(track_id, 0, 7)].stepped);
+        assert_eq!(
+            reopened.time_selection,
+            Some(TimeSelection {
+                start_tick: 960,
+                end_tick: 1_920,
+            })
+        );
+        assert_eq!(
+            reopened.loop_points,
+            Some(LoopPoints {
+                start_tick: 2_880,
+                end_tick: 3_840,
+            })
+        );
         assert_eq!(
             reopened.row_layout(0).unwrap().height,
             TIMELINE_ROW_HEIGHT + 48.0
@@ -7490,6 +7565,8 @@ mod tests {
         reopened.replace_project(&other_project, None);
         assert!(reopened.fx_automation_lanes.is_empty());
         assert!(reopened.hidden_volume_automation_tracks.is_empty());
+        assert_eq!(reopened.time_selection, None);
+        assert_eq!(reopened.loop_points, None);
         assert_eq!(reopened.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
     }
 

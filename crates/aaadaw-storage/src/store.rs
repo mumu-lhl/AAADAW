@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 37;
+pub const CURRENT_SCHEMA_VERSION: u32 = 38;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -53,6 +53,28 @@ CREATE TABLE IF NOT EXISTS project_regions (
     name TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_regions_by_start ON project_regions(start_ticks, id);
+"#;
+
+const MIGRATION_38: &str = r#"
+CREATE TABLE IF NOT EXISTS arrangement_time_ranges (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    time_selection_start_seconds REAL,
+    time_selection_end_seconds REAL,
+    loop_start_seconds REAL,
+    loop_end_seconds REAL,
+    CHECK((time_selection_start_seconds IS NULL) = (time_selection_end_seconds IS NULL)),
+    CHECK(time_selection_start_seconds IS NULL OR (
+        time_selection_start_seconds > -1.0e999 AND time_selection_start_seconds < 1.0e999 AND
+        time_selection_end_seconds > -1.0e999 AND time_selection_end_seconds < 1.0e999 AND
+        time_selection_start_seconds < time_selection_end_seconds
+    )),
+    CHECK((loop_start_seconds IS NULL) = (loop_end_seconds IS NULL)),
+    CHECK(loop_start_seconds IS NULL OR (
+        loop_start_seconds > -1.0e999 AND loop_start_seconds < 1.0e999 AND
+        loop_end_seconds > -1.0e999 AND loop_end_seconds < 1.0e999 AND
+        loop_start_seconds <= loop_end_seconds
+    ))
+);
 "#;
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
@@ -489,7 +511,10 @@ impl std::error::Error for StorageError {
 #[cfg(test)]
 mod arrangement_view_state_tests {
     use super::{ProjectStore, StorageError};
-    use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
+    use crate::{
+        ArrangementTimeRangeState, ArrangementViewState, FxAutomationLaneViewState,
+        VolumeAutomationLaneViewState,
+    };
     use aaadaw_core::{DawAction, Project, TrackFxPlugin};
 
     #[test]
@@ -525,6 +550,14 @@ mod arrangement_view_state_tests {
                 stepped: false,
                 height: 48.0,
             }],
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 1.25,
+                end_seconds: 2.5,
+            }),
+            loop_points: Some(ArrangementTimeRangeState {
+                start_seconds: 3.5,
+                end_seconds: 3.5,
+            }),
         };
 
         let directory = tempfile::tempdir().unwrap();
@@ -557,6 +590,68 @@ mod arrangement_view_state_tests {
     }
 
     #[test]
+    fn schema_37_projects_gain_empty_time_ranges_and_invalid_ranges_roll_back() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("time-range-schema-37.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Original".to_owned(),
+            })
+            .unwrap();
+        let initial_state = ArrangementViewState {
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 1.0,
+                end_seconds: 2.0,
+            }),
+            loop_points: Some(ArrangementTimeRangeState {
+                start_seconds: 3.0,
+                end_seconds: 3.0,
+            }),
+            ..ArrangementViewState::default()
+        };
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store
+            .save_with_arrangement_view_state(&project, &initial_state)
+            .unwrap();
+        let invalid_state = ArrangementViewState {
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 2.0,
+                end_seconds: 1.0,
+            }),
+            ..ArrangementViewState::default()
+        };
+        assert!(matches!(
+            store.save_with_arrangement_view_state(&Project::new(), &invalid_state),
+            Err(StorageError::InvalidStoredData(_))
+        ));
+        assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(initial_state)
+        );
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP TABLE arrangement_time_ranges; PRAGMA user_version = 37;")
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 38);
+        assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(ArrangementViewState::default())
+        );
+    }
+
+    #[test]
     fn invalid_view_state_does_not_partially_replace_the_saved_project() {
         let mut project = Project::new();
         project
@@ -584,6 +679,8 @@ mod arrangement_view_state_tests {
                 stepped: false,
                 height: 48.0,
             }],
+            time_selection: None,
+            loop_points: None,
         };
         assert!(matches!(
             store.save_with_arrangement_view_state(&Project::new(), &invalid_view_state),
@@ -636,7 +733,7 @@ mod project_marker_storage_tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema_version, 37);
+        assert_eq!(schema_version, 38);
     }
 
     #[test]
@@ -739,7 +836,7 @@ mod project_marker_storage_tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema_version, 37);
+        assert_eq!(schema_version, 38);
     }
 }
 
@@ -2381,6 +2478,24 @@ impl ProjectStore {
                     mode: mode as u8,
                 });
         }
+        if let Some((selection_columns, loop_columns)) = self
+            .connection
+            .query_row(
+                "SELECT time_selection_start_seconds, time_selection_end_seconds, \
+                 loop_start_seconds, loop_end_seconds FROM arrangement_time_ranges WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok((
+                        (row.get::<_, Option<f64>>(0)?, row.get::<_, Option<f64>>(1)?),
+                        (row.get::<_, Option<f64>>(2)?, row.get::<_, Option<f64>>(3)?),
+                    ))
+                },
+            )
+            .optional()?
+        {
+            view_state.time_selection = time_range_from_columns(selection_columns, false)?;
+            view_state.loop_points = time_range_from_columns(loop_columns, true)?;
+        }
         Ok(Some(view_state))
     }
 
@@ -2791,6 +2906,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
             }
             37 => transaction.execute_batch(MIGRATION_37)?,
+            38 => transaction.execute_batch(MIGRATION_38)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3089,6 +3205,8 @@ fn write_arrangement_view_state(
     transaction: &Transaction<'_>,
     view_state: &ArrangementViewState,
 ) -> Result<(), StorageError> {
+    validate_time_range(view_state.time_selection, false)?;
+    validate_time_range(view_state.loop_points, true)?;
     transaction.execute("DELETE FROM arrangement_folder_compact", [])?;
     for folder in &view_state.folder_compact {
         if folder.mode > 2 {
@@ -3107,6 +3225,22 @@ fn write_arrangement_view_state(
         "INSERT INTO arrangement_view_meta(singleton, state_version) VALUES(1, 1) \
          ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version",
         [],
+    )?;
+    transaction.execute(
+        "INSERT INTO arrangement_time_ranges(\
+         singleton, time_selection_start_seconds, time_selection_end_seconds, \
+         loop_start_seconds, loop_end_seconds) VALUES(1, ?1, ?2, ?3, ?4) \
+         ON CONFLICT(singleton) DO UPDATE SET \
+         time_selection_start_seconds = excluded.time_selection_start_seconds, \
+         time_selection_end_seconds = excluded.time_selection_end_seconds, \
+         loop_start_seconds = excluded.loop_start_seconds, \
+         loop_end_seconds = excluded.loop_end_seconds",
+        params![
+            view_state.time_selection.map(|range| range.start_seconds),
+            view_state.time_selection.map(|range| range.end_seconds),
+            view_state.loop_points.map(|range| range.start_seconds),
+            view_state.loop_points.map(|range| range.end_seconds),
+        ],
     )?;
     for lane in &view_state.volume_lanes {
         transaction.execute(
@@ -3147,6 +3281,46 @@ fn write_arrangement_view_state(
         )?;
     }
     Ok(())
+}
+
+fn validate_time_range(
+    range: Option<crate::ArrangementTimeRangeState>,
+    allow_zero_length: bool,
+) -> Result<(), StorageError> {
+    if range.is_some_and(|range| {
+        !range.start_seconds.is_finite()
+            || !range.end_seconds.is_finite()
+            || if allow_zero_length {
+                range.start_seconds > range.end_seconds
+            } else {
+                range.start_seconds >= range.end_seconds
+            }
+    }) {
+        return Err(StorageError::InvalidStoredData(
+            "invalid Arrangement time range",
+        ));
+    }
+    Ok(())
+}
+
+fn time_range_from_columns(
+    columns: (Option<f64>, Option<f64>),
+    allow_zero_length: bool,
+) -> Result<Option<crate::ArrangementTimeRangeState>, StorageError> {
+    match columns {
+        (None, None) => Ok(None),
+        (Some(start_seconds), Some(end_seconds)) => {
+            let range = crate::ArrangementTimeRangeState {
+                start_seconds,
+                end_seconds,
+            };
+            validate_time_range(Some(range), allow_zero_length)?;
+            Ok(Some(range))
+        }
+        _ => Err(StorageError::InvalidStoredData(
+            "incomplete Arrangement time range",
+        )),
+    }
 }
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
