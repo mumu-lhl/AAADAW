@@ -1,0 +1,15 @@
+case	time_selection_start	time_selection_end	loop_start	loop_end	link	snap	edit_cursor
+ready_plain-drag-unlinked-loop-body	1.000000	2.000000	3.000000	4.000000	unlinked	no-snap	0.000000
+after_plain-drag-unlinked-loop-body	1.000000	2.000000	3.494799	3.494799	unlinked	no-snap	0.000000
+ready_plain-drag-unlinked-empty-lane	0.000000	0.000000	0.000000	0.000000	unlinked	no-snap	0.000000
+after_plain-drag-unlinked-empty-lane	0.000000	0.000000	5.010401	5.010401	unlinked	no-snap	0.000000
+ready_plain-click-unlinked-empty-lane	0.000000	0.000000	0.000000	0.000000	unlinked	no-snap	0.000000
+after_plain-click-unlinked-empty-lane	0.000000	0.000000	0.000000	0.000000	unlinked	no-snap	5.013967
+ready_shift-move-unlinked-loop-body	1.000000	2.000000	3.000000	4.000000	unlinked	no-snap	0.000000
+after_shift-move-unlinked-loop-body	1.000000	2.000000	3.499257	4.499257	unlinked	no-snap	0.000000
+ready_shift-create-unlinked-empty-lane	0.000000	0.000000	0.000000	0.000000	unlinked	no-snap	0.000000
+after_shift-create-unlinked-empty-lane	0.000000	0.000000	5.010401	5.010401	unlinked	no-snap	0.000000
+ready_shift-move-unlinked-loop-body-snap	1.000000	2.000000	3.000000	4.000000	unlinked	snap	0.000000
+after_shift-move-unlinked-loop-body-snap	1.000000	2.000000	3.500000	4.500000	unlinked	snap	0.000000
+ready_shift-create-linked-empty-lane	0.000000	0.000000	0.000000	0.000000	linked	no-snap	0.000000
+after_shift-create-linked-empty-lane	5.010401	5.010401	5.010401	5.010401	linked	no-snap	0.000000

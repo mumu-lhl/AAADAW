@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有Project Marker 内部稳定 MarkerId 与可见编号分离、schema36 保存/迁移、插入/导航、光标前后严格小于 1 秒最近标记删除、1–10 号 Marker 主键盘 Ctrl 快捷动作、标尺选择/定位/拖动及默认 1/4 网格吸附、双击改名和单步 Undo/Redo；cADPCM 编码尚未逐字节一致、其它 Bounds、Marker/Region 全交互和完整 Render 对照仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有Project Marker 内部稳定 MarkerId 与可见编号分离、schema36 保存/迁移、插入/导航、光标前后严格小于 1 秒最近标记删除、1–10 号 Marker 主键盘 Ctrl 快捷动作、标尺选择/定位/拖动及默认 1/4 网格吸附、双击改名和单步 Undo/Redo；cADPCM 编码尚未逐字节一致、其它 Bounds、Marker/Region 全交互和完整 Render 对照仍未完成；Loop Ruler 已补充原厂 Shift 整段移动/Snap 与空白底栏拖动建点语义；Repeat 播放、Loop/Time Selection 持久化和全量 P4/P6 仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；播放中 play cursor、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作与 Ruler 端点、Shift 整段拖动、空白 lane 零长度点手势已接入；播放中 play cursor、Repeat、Region 原厂交互、持久化、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -459,3 +459,11 @@ Linux REAPER 7.82 Default 7 原厂实测：未链接时，拖动 Loop start/end 
 AAADAW Ruler 底栏现在绘制灰色 Loop bracket 与两端手柄。拖动端点时在画布预览，释放后一次性提交 LoopPoints；默认链接开启时由现有状态规则同步 Time Selection。实窗画面见[AAADAW 截图](../verification/reaper-parity/fixtures/loop-time-selection-aaadaw.png)，其中保留未链接的 Time Selection `[1,2]` 和 Loop `[3,4]`。此截图窗口尺寸和缩放与原厂不同，只验证显示形态与两种范围分离，不代表完整窗口几何对齐。
 
 本切片增加手柄命中/底栏约束、交越折叠和 Canvas 预览/提交回归。最终 workspace nextest 为 955/955 通过、0 跳过（66 个测试二进制）；`cargo check --workspace --all-targets`、workspace strict Clippy `-D warnings`、`cargo build -p aaadaw`、fmt 检查和 `git diff --check` 通过。`PROJECT-LOOP-001` 保持 `in_progress`：空白底栏建区、整段移动、鼠标修饰键及 Snap 边界、Action List 链接勾选状态、Repeat 播放、偏好/工程持久化、Tempo/Meter/timebase 变化和完整原厂交互/视觉仍未完成；未将 Loop points 引入实时音频 callback。
+
+### 2026-10-13 Loop Ruler 整段拖动与零长度点手势
+
+Linux REAPER 7.82 / Default 7 隔离探针确认：普通拖动已有 loop bracket 主体或空白底栏，都将 Loop 折叠为按下位置的零长度点；普通点击空白底栏只定位编辑光标。Shift+拖动 bracket 主体保留长度并移动整段；Snap 开启时依默认四分音符网格吸附。未链接时 Time Selection 保持独立，链接时底栏建点同步两种范围。逐阶段 Loop/Time Selection/Snap/编辑光标值见[原厂 TSV](../verification/reaper-parity/fixtures/loop-point-ruler-gestures-native.tsv)，手动阶段探针见[Lua 脚本](../../scripts/reaper_parity/probe-loop-point-ruler-gestures.lua)。
+
+AAADAW runtime modifier 状态现在传入 Timeline；Ruler 的 Shift+主体拖动有长度保持预览，释放一次提交并沿用现有 Snap/链接规则。普通底栏拖动在鼠标按下处建立零长度点；未拖动时只将编辑光标定位于点击处。原厂实测未发现该 lane 单次建非零范围的手势，AAADAW 不虚构该行为。本实现只更新 UI 工程状态，不将范围发送给实时音频 callback。
+
+新增 Canvas 回归覆盖 Shift 整段移动、Snap 后长度保持、主体/空白底栏建点、空白点击定位以及 runtime 修饰键同步；Loop 手势专项当前 8/8 通过。最终 `xvfb-run -a rtk cargo nextest run --workspace --no-fail-fast -j 1` 为 960/960 passed、0 skipped（66 个测试二进制）；聚焦 Loop 手势为 8/8。`cargo check --workspace --all-targets`、workspace strict Clippy `-D warnings`、`cargo build -p aaadaw`、fmt 与 `git diff --check` 均通过；parity CSV 为 71 个唯一 ID、15 列。`PROJECT-LOOP-001`、P4 和 P6 仍为 `in_progress`：Repeat 与 Transport/audio-engine 联动、配置/工程持久化、其它修饰键、端点与空白点创建的 Snap/边界、链接 Action List 勾选状态、Tempo/Meter/timebase 和完整原厂视觉仍未完成。

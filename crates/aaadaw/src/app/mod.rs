@@ -3391,6 +3391,7 @@ impl App {
                     &event
                 {
                     self.keyboard_modifiers = *modifiers;
+                    self.timeline.modifiers = *modifiers;
                 }
                 if self.shortcut_capture_id.is_some() {
                     if let Some(message) = keyboard_shortcut_event(

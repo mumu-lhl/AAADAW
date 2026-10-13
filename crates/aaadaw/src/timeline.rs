@@ -792,6 +792,7 @@ pub(crate) struct TimelineState {
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) loop_points: Option<LoopPoints>,
     pub(crate) loop_points_linked: bool,
+    pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
     pub(crate) context_fade: Option<FadeMenuContext>,
@@ -990,6 +991,7 @@ impl Default for TimelineState {
             time_selection: None,
             loop_points: None,
             loop_points_linked: true,
+            modifiers: keyboard::Modifiers::default(),
             context_track: None,
             context_item: None,
             context_fade: None,
@@ -4292,10 +4294,13 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     let anchor_tick = match target {
                         LoopPointDragTarget::Start => loop_points.start_tick,
                         LoopPointDragTarget::End => loop_points.end_tick,
+                        LoopPointDragTarget::Move | LoopPointDragTarget::SetPoint => {
+                            loop_points.start_tick
+                        }
                     };
                     state.loop_drag = Some(LoopPointDrag {
                         target,
-                        original: loop_points,
+                        original: Some(loop_points),
                         pointer_offset_ticks: i128::from(anchor_tick) - i128::from(pointer_tick),
                         start_pointer: position,
                         preview: loop_points,
@@ -4377,6 +4382,53 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     });
                     return Some(canvas::Action::capture());
                 }
+                if position.y >= bounds.height - LOOP_POINT_HANDLE_ROW_HEIGHT {
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    if self.state.modifiers.shift()
+                        && let Some(loop_points) = self.state.loop_points
+                        && loop_point_body_hit(
+                            loop_points,
+                            self.state.origin_tick,
+                            self.state.pixels_per_tick,
+                            position.x,
+                        )
+                    {
+                        state.last_click = None;
+                        state.pending_double_click = None;
+                        state.drag = None;
+                        state.region_drag = None;
+                        state.loop_drag = Some(LoopPointDrag {
+                            target: LoopPointDragTarget::Move,
+                            original: Some(loop_points),
+                            pointer_offset_ticks: i128::from(loop_points.start_tick)
+                                - i128::from(pointer_tick),
+                            start_pointer: position,
+                            preview: loop_points,
+                            moved: false,
+                        });
+                        return Some(canvas::Action::capture());
+                    }
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    state.drag = None;
+                    state.region_drag = None;
+                    state.loop_drag = Some(LoopPointDrag {
+                        target: LoopPointDragTarget::SetPoint,
+                        original: self.state.loop_points,
+                        pointer_offset_ticks: 0,
+                        start_pointer: position,
+                        preview: LoopPoints {
+                            start_tick: pointer_tick,
+                            end_tick: pointer_tick,
+                        },
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
                 state.last_click = None;
                 state.pending_double_click = None;
                 state.drag = None;
@@ -4416,8 +4468,14 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                         self.state.snap_enabled,
                         false,
                     );
-                    drag.preview =
-                        loop_points_at_drag_target(drag.original, drag.target, target_tick);
+                    if drag.target != LoopPointDragTarget::SetPoint {
+                        drag.preview = loop_points_at_drag_target(
+                            drag.original
+                                .expect("existing loop drags retain their range"),
+                            drag.target,
+                            target_tick,
+                        );
+                    }
                     state.loop_drag = Some(drag);
                     return Some(canvas::Action::request_redraw().and_capture());
                 }
@@ -4487,13 +4545,26 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(drag) = state.loop_drag.take() {
-                    if drag.moved && drag.preview != drag.original {
+                    if drag.moved && Some(drag.preview) != drag.original {
                         return Some(
                             canvas::Action::publish(crate::app::Message::Timeline(
                                 TimelineEvent::SetLoopPoints {
                                     start_tick: drag.preview.start_tick,
                                     end_tick: drag.preview.end_tick,
                                 },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    if !drag.moved && drag.target == LoopPointDragTarget::SetPoint {
+                        let tick = tick_at_x(
+                            self.state.origin_tick,
+                            self.state.pixels_per_tick,
+                            drag.start_pointer.x,
+                        );
+                        return Some(
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetEditCursor(tick),
                             ))
                             .and_capture(),
                         );
@@ -4815,12 +4886,14 @@ enum ProjectRegionDragTarget {
 enum LoopPointDragTarget {
     Start,
     End,
+    Move,
+    SetPoint,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct LoopPointDrag {
     target: LoopPointDragTarget,
-    original: LoopPoints,
+    original: Option<LoopPoints>,
     pointer_offset_ticks: i128,
     start_pointer: Point,
     preview: LoopPoints,
@@ -4880,6 +4953,18 @@ fn loop_points_at_drag_target(
     tick: u64,
 ) -> LoopPoints {
     match target {
+        LoopPointDragTarget::Move => {
+            let length = original.end_tick - original.start_tick;
+            let start_tick = tick.min(u64::MAX.saturating_sub(length));
+            LoopPoints {
+                start_tick,
+                end_tick: start_tick + length,
+            }
+        }
+        LoopPointDragTarget::SetPoint => LoopPoints {
+            start_tick: tick,
+            end_tick: tick,
+        },
         LoopPointDragTarget::Start if tick <= original.end_tick => LoopPoints {
             start_tick: tick,
             end_tick: original.end_tick,
@@ -4897,6 +4982,21 @@ fn loop_points_at_drag_target(
             end_tick: tick,
         },
     }
+}
+
+fn loop_point_body_hit(
+    loop_points: LoopPoints,
+    origin_tick: u64,
+    pixels_per_tick: f32,
+    x: f32,
+) -> bool {
+    let start_x = project_marker_x(loop_points.start_tick, origin_tick, pixels_per_tick);
+    let end_x = project_marker_x(loop_points.end_tick, origin_tick, pixels_per_tick);
+    start_x.is_finite()
+        && end_x.is_finite()
+        && end_x - start_x > LOOP_POINT_HANDLE_HIT_RADIUS * 2.0
+        && x > start_x + LOOP_POINT_HANDLE_HIT_RADIUS
+        && x < end_x - LOOP_POINT_HANDLE_HIT_RADIUS
 }
 
 fn project_marker_hit<'a>(
@@ -5356,7 +5456,7 @@ mod tests {
         TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
         TimelineInteractionState, TimelineState, automation_sample_between,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at,
-        item_trim_edge_at_x, loop_point_target_at, loop_points_at_drag_target,
+        item_trim_edge_at_x, loop_point_body_hit, loop_point_target_at, loop_points_at_drag_target,
         midi_note_preview_geometry, project_marker_x, row_at_y, slowest_tempo_in_viewport,
         snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
@@ -5415,6 +5515,15 @@ mod tests {
                 end_tick: 50,
             }
         );
+        assert_eq!(
+            loop_points_at_drag_target(points, LoopPointDragTarget::Move, 250),
+            LoopPoints {
+                start_tick: 250,
+                end_tick: 550,
+            }
+        );
+        assert!(loop_point_body_hit(points, 0, 1.0, 250.0));
+        assert!(!loop_point_body_hit(points, 0, 1.0, 101.0));
     }
 
     #[test]
@@ -5488,6 +5597,305 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn ruler_shift_drag_moves_the_loop_body_and_preserves_its_length() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            modifiers: keyboard::Modifiers::SHIFT,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("Shift-drag on the bracket body should capture the gesture");
+        assert_eq!(press_action.into_inner().2, iced::event::Status::Captured);
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(350.0, 28.0),
+        });
+        let move_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("Shift-drag movement should update the whole-range preview");
+        let (message, _, status) = move_action.into_inner();
+        assert!(message.is_none());
+        assert_eq!(status, iced::event::Status::Captured);
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 500,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("Shift-drag release should publish the moved loop range");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 200,
+                    end_tick: 500,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn ruler_shift_drag_snaps_the_loop_start_and_preserves_its_length() {
+        let project = Project::new();
+        let mut timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: true,
+            modifiers: keyboard::Modifiers::SHIFT,
+            ..TimelineState::default()
+        };
+        timeline.cache.snap_grid_ticks = Some(100);
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("Shift-drag should begin on the loop body");
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(349.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(349.0, 28.0)),
+        )
+        .expect("Shift-drag should snap the translated loop start");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 500,
+            })
+        );
+    }
+
+    #[test]
+    fn plain_drag_in_the_loop_body_sets_a_point_at_the_drag_origin() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("plain bracket-body drag should capture the point gesture");
+        assert!(press_action.into_inner().0.is_none());
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(350.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("plain body drag should preview the collapsed point");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 250,
+                end_tick: 250,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("plain body drag should publish the collapsed point");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 250,
+                    end_tick: 250,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn dragging_an_empty_bottom_ruler_lane_creates_a_point_at_the_drag_origin() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(200.0, 28.0)),
+        )
+        .expect("bottom-lane press should start a potential point gesture");
+        let (press_message, _, press_status) = press_action.into_inner();
+        assert!(press_message.is_none());
+        assert_eq!(press_status, iced::event::Status::Captured);
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(250.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("drag movement should preview the zero-length loop point");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 200,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("bottom-lane drag release should publish the zero-length point");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 200,
+                    end_tick: 200,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn clicking_an_empty_bottom_ruler_lane_sets_the_edit_cursor_without_creating_loop_points() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 28.0)),
+        )
+        .expect("empty bottom-lane click should be captured until release");
+        assert!(press_action.into_inner().0.is_none());
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 28.0)),
+        )
+        .expect("empty bottom-lane click should position the edit cursor");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(TimelineEvent::SetEditCursor(
+                440
+            )))
+        ));
+        assert!(interaction.loop_drag.is_none());
     }
 
     #[test]

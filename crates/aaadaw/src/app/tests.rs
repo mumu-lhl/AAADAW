@@ -1127,6 +1127,7 @@ fn track_header_selection_uses_runtime_modifiers_and_keeps_a_primary_track() {
     ));
     let modifiers = app.keyboard_modifiers;
     assert_eq!(modifiers, Modifiers::CTRL);
+    assert_eq!(app.timeline.modifiers, Modifiers::CTRL);
     let _ = app.update(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
         track_id: tracks[0],
         modifiers,
