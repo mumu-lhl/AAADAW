@@ -79,6 +79,12 @@ Main Section 动作导出确认 41115 的描述为 `Item: Invert selection`，�
 
 `invert_item_selection_action_selects_the_complement_of_audio_and_midi_items` 覆盖 Action List 搜索/Run、混合 item 类型、多轨结果、再次执行恢复原集合，以及工程/撤销历史不变。REAPER 原厂的空选择/部分选择运行时启用边界、活动 item 规则与实际窗口焦点尚未单独探测，`ITEM-SELECT-009` 保持 `in_progress`。
 
+## 2026-10-13 Main actions 41127/41128：相邻非重叠 item 选择
+
+Main Section 动作导出列出 41127 `Item: Select next adjacent non-overlapping item` 和 41128 `Item: Select previous adjacent non-overlapping item`，均无默认快捷键。AAADAW 以当前活动且已选中的 item 为基准，只在该 item 所属轨道内查找边界之后/之前最近的非重叠 Audio 或 MIDI item，并替换为单项选择；重叠项和其它轨道上的 item 不会成为目标。没有合格目标时动作禁用。Audio 的 sample 边界先换算到项目 tick，与 MIDI item 在同一时基比较。
+
+`adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 覆盖跨类型导航、越过重叠项、排除其它轨道、首尾无目标禁用，以及工程/Undo 历史不变。当前允许相邻目标之间存在空隙；原厂是否会越过空隙、多个选中 item 的锚点规则与 active item 变更尚待运行探针，`ITEM-SELECT-010/011` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

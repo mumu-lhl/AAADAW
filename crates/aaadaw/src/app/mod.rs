@@ -4259,6 +4259,8 @@ impl App {
             }
             Message::UnselectAllItems => self.timeline.clear_selected_items(),
             Message::InvertItemSelection => self.invert_item_selection(),
+            Message::SelectNextAdjacentItem => self.select_adjacent_non_overlapping_item(true),
+            Message::SelectPreviousAdjacentItem => self.select_adjacent_non_overlapping_item(false),
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9213,6 +9215,82 @@ impl App {
             .filter(|(item_id, _)| !self.timeline.selected_items.contains(item_id))
             .collect();
         self.timeline.select_items(selected);
+    }
+
+    pub(super) fn adjacent_non_overlapping_item(&self, forward: bool) -> Option<(ItemId, TrackId)> {
+        let active_id = self.timeline.selected_item?;
+        if !self.timeline.selected_items.contains(&active_id) {
+            return None;
+        }
+        let active = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == active_id)
+            .and_then(|item| {
+                Some((
+                    item.track_id(),
+                    self.project.tick_at_sample(item.start_sample()).ok()?,
+                    self.project.tick_at_sample(item.end_sample()).ok()?,
+                ))
+            })
+            .or_else(|| {
+                self.project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == active_id)
+                    .and_then(|item| {
+                        Some((
+                            item.track_id(),
+                            item.start_tick(),
+                            item.start_tick().checked_add(item.length_ticks())?,
+                        ))
+                    })
+            })?;
+        let track_id = active.0;
+        let candidates = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| item.track_id() == track_id && item.id() != active_id)
+            .filter_map(|item| {
+                Some((
+                    item.id(),
+                    self.project.tick_at_sample(item.start_sample()).ok()?,
+                    self.project.tick_at_sample(item.end_sample()).ok()?,
+                ))
+            })
+            .chain(
+                self.project
+                    .midi_items()
+                    .iter()
+                    .filter(|item| item.track_id() == track_id && item.id() != active_id)
+                    .filter_map(|item| {
+                        Some((
+                            item.id(),
+                            item.start_tick(),
+                            item.start_tick().checked_add(item.length_ticks())?,
+                        ))
+                    }),
+            );
+        let adjacent = if forward {
+            candidates
+                .filter(|(_, start_tick, _)| *start_tick >= active.2)
+                .min_by_key(|(item_id, start_tick, _)| (*start_tick, item_id.value()))
+        } else {
+            candidates
+                .filter(|(_, _, end_tick)| *end_tick <= active.1)
+                .min_by_key(|(item_id, _, end_tick)| {
+                    (std::cmp::Reverse(*end_tick), item_id.value())
+                })
+        }?;
+        Some((adjacent.0, track_id))
+    }
+
+    fn select_adjacent_non_overlapping_item(&mut self, forward: bool) {
+        if let Some(item) = self.adjacent_non_overlapping_item(forward) {
+            self.timeline.select_items(vec![item]);
+        }
     }
 
     fn select_all_items_in_track(&mut self) {
