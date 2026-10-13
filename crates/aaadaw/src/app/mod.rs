@@ -60,6 +60,7 @@ mod fader;
 mod fader_data;
 mod item_properties;
 mod keyboard_config;
+mod loop_time_preferences;
 mod marker_manager;
 mod marker_properties;
 mod media;
@@ -285,6 +286,7 @@ struct App {
     shortcut_defaults_restored: HashSet<String>,
     media_panel_dock: MediaPanelDock,
     desktop_layout_save_at: Option<Instant>,
+    loop_time_preferences_save_at: Option<Instant>,
     main_workspace: MainWorkspace,
     shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
@@ -1213,6 +1215,12 @@ impl App {
                 Err(error) => app.status = format!("Desktop layout unavailable: {error}"),
             }
         }
+        match loop_time_preferences::load() {
+            Ok(preferences) => app.timeline.loop_points_linked = preferences.linked,
+            Err(error) => {
+                app.status = format!("Loop/time selection preferences unavailable: {error}");
+            }
+        }
         match item_properties::load_unit() {
             Ok(unit) => app.item_properties_unit = unit,
             Err(error) => {
@@ -1468,6 +1476,7 @@ impl App {
                 || self.track_mix_gesture.is_some()
                 || self.master_mix_gesture.is_some()
                 || self.desktop_layout_save_at.is_some()
+                || self.loop_time_preferences_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
@@ -2413,6 +2422,9 @@ impl App {
             }
             Message::ApplyMeterMap => self.apply_meter_map_edits(),
             Message::WindowClosed(window_id) => {
+                if self.main_window_id == Some(window_id) {
+                    self.flush_loop_time_preferences();
+                }
                 if self.project_settings_window_id == Some(window_id) {
                     self.project_settings_window_id = None;
                     self.project_settings = None;
@@ -2485,6 +2497,7 @@ impl App {
             Message::WindowCloseRequested(window_id) => {
                 if self.main_window_id == Some(window_id) {
                     self.flush_desktop_layout();
+                    self.flush_loop_time_preferences();
                 }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
@@ -4414,6 +4427,7 @@ impl App {
             Message::BackgroundTick => {
                 self.update_offline_render_progress();
                 self.flush_desktop_layout_if_due();
+                self.flush_loop_time_preferences_if_due();
                 #[cfg(all(feature = "audio-device", target_os = "android"))]
                 if self.settings_category == SettingsCategory::Audio {
                     match crate::android_platform::midi_port_counts() {
@@ -5234,12 +5248,16 @@ impl App {
         )
         .then(|| self.timeline.arrangement_view_state(&self.project));
         let previous_time_ranges = (self.timeline.time_selection, self.timeline.loop_points);
+        let previous_loop_points_linked = self.timeline.loop_points_linked;
         let item_trim_preview_changed = matches!(
             &event,
             timeline::TimelineEvent::BeginItemTrim { .. }
                 | timeline::TimelineEvent::UpdateItemTrim { .. }
         );
         self.timeline.handle(event);
+        if previous_loop_points_linked != self.timeline.loop_points_linked {
+            self.schedule_loop_time_preferences_save();
+        }
         if item_trim_preview_changed && let Some(preview) = self.timeline.item_trim_preview() {
             let valid = self.item_trim_preview_is_valid(preview);
             self.timeline.set_item_trim_valid(valid);

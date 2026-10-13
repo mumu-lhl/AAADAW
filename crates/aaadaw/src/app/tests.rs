@@ -623,6 +623,20 @@ fn loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions() {
 }
 
 #[test]
+fn toggling_loop_time_link_schedules_global_save_without_dirtying_project() {
+    let mut app = App::default();
+    let revision = app.revision;
+
+    let _ = app.update(Message::Timeline(TimelineEvent::ToggleLoopPointsLinked));
+
+    assert!(!app.timeline.loop_points_linked);
+    assert!(app.loop_time_preferences_save_at.is_some());
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.loop_points, None);
+}
+
+#[test]
 fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() {
     let mut app = App::default();
     app.project

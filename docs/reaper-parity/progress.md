@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点和项目级 Loop/Time Selection 保存恢复；cADPCM 编码、Repeat 播放、link 全局偏好、其他 P4/P6 和完整原厂验收仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复和全局 link 偏好持久化；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Ruler 手势与项目级范围保存恢复已接入；播放中 play cursor、Repeat、link 全局偏好、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -473,3 +473,9 @@ AAADAW runtime modifier 状态现在传入 Timeline；Ruler 的 Shift+主体拖�
 Linux REAPER 7.82 / Default 7 原厂探针通过 `Main_SaveProjectEx` 保存两个隔离 `.rpp`，再启动独立实例并以 `GetSet_LoopTimeRange2` 回读：Time Selection 与 Loop points 分别恢复 `SELECTION`/`SELECTION2` 秒数范围，既覆盖未链接的独立 `[1.25,2.5]` / `[3.5,5.75]`，也覆盖保存时 linked 且范围相同的情况。40621 link 状态在重开后跟随隔离 REAPER 配置 `locklooptotime`，不是工程文件字段；原始结果和探针见[持久化 TSV](../verification/reaper-parity/fixtures/loop-time-selection-persistence-native.tsv)与[ReaScript](../../scripts/reaper_parity/probe-loop-persistence.lua)。
 
 AAADAW 新增 SQLite schema 38，以工程采样原点的秒数原子保存两种范围，Loop 可保存零长度；加载时用该工程采样率和 tempo map 转回当前 timeline tick。时间范围编辑纳入未保存修订，project load 恢复保存状态；link 开关仍作为全局配置缺口，不会错误地混入工程范围表。schema 37 项目迁移为空范围，无效范围回滚整个工程保存。全 workspace nightly+Cranelift nextest 在调试符号关闭的测试构建下为 961/961 passed、0 skipped；stable `cargo check --workspace --all-targets`、stable strict Clippy `-D warnings`、fmt 和 `git diff --check` 通过。Stable 默认调试符号测试链接在本环境超过 30 分钟并耗尽 overlay 空间，清理可重建的包构建缓存后改由上述 nightly 全量测试完成；stable 静态检查仍覆盖全部 targets。PROJECT-LOOP-001、P4 和 P6 继续 `in_progress`：Repeat/实时循环、link 偏好持久化、负时间与其它 timebase、Snap/修饰键/边界和 Default 7 完整视觉仍未验收。
+
+### 2026-10-13 Loop 40621 全局链接偏好持久化
+
+原厂验证表明 40621 随 REAPER 用户配置 `locklooptotime` 恢复，而不属于 `.rpp` 工程。AAADAW 将链接布尔值存入平台全局用户配置目录的 `loop-time-preferences.json`，缺失配置默认链接开启；启动时恢复，切换后 500 ms 防抖原子保存，主窗口关闭请求及关闭事件都会刷新待写值。此设置不会单独增加工程未保存修订；如果切换时按原厂语义同步了实际范围，范围变化仍由既有工程修订逻辑处理。设置文件使用版本 1，未知版本拒绝加载且不覆盖原文件。
+
+回归覆盖配置默认值、未链接 round-trip、未知版本保留，以及 40621 切换后安排全局写入且不误标工程修改。全 workspace nightly+Cranelift nextest 为 963/963 passed、0 skipped（66 个测试二进制）；Stable `cargo check --workspace --all-targets`、strict Clippy `-D warnings`、fmt 与 `git diff --check` 通过。Cranelift 构建仍报告此前已记录的 iced/wgpu `TimelinePipeline: MaybeSync` 递归深度 warning；Stable Clippy 无警告。PROJECT-LOOP-001、P4 和 P6 保持 `in_progress`：Repeat 播放及实时边界安全、其它修饰键/Snap/边界、Action List 40621 勾选状态、Tempo/Meter/timebase 和完整 Default 7 交互/视觉尚未验收。
