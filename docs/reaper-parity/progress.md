@@ -617,3 +617,11 @@ REAPER 7.82 Render 将 Tail 显示为未勾选的 checkbox，旁边是禁用的 
 扩展离线渲染回归验证 44.1 kHz 输出在 1.25 秒尾音和关闭尾音两种情况下的精确帧数。测试同时发现自定义范围早于媒体 EOF 时 feeder 会因队列满而在 join 阶段停住；渲染边界已经消费完毕后，现在会取消未读的 feeder 剩余段并等待线程结束，避免离线任务永久挂起。该清理仅在离线 worker 中执行，不触及实时音频回调。
 
 nightly+Cranelift `aaadaw` Render 定向 nextest 16/16 passed；`aaadaw-app` 的 `project_render_time_selection` 1/1 passed，覆盖有/无 Tail；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt 与 diff 检查通过。RENDER 范围行与 P10 继续 `in_progress`：Tail 最大值、键盘焦点、所选范围之后的时间线材料、原厂采样率列表、Selected regions/markers、多声道、Presets/Metadata 和整个对话框的原厂交互仍未完成。
+
+### 2026-10-13 Render Bounds：Selected regions 与 Selected markers
+
+Render Bounds 新增 `Selected regions` 和 `Selected markers`。Region/Marker Manager 支持行选择状态跨窗口关闭/重开保留；Linux Ctrl-click（macOS Command-click）可切换多选，普通点击未选行则替换当前集合。所选区域各自输出半开区间；所选标记沿用 All project markers 的规则，结束于下一个项目标记（无论其是否选中），最后一段延至最后媒体内容终点，零长度段不输出。无选择时按 REAPER 7.82 行为回退到全部可渲染区域/标记。
+
+原厂 REAPER 7.82 / Default 7 实窗确认两种 bounds 均显示 2 个文件，空选择回退及 Manager 多选持久化也已探测。AAADAW 实窗截图确认 Selected markers 的两项计数与跨窗口保存的多选；Selected regions Manager 多选、Native Render 数量及范围计算由截图/单测覆盖。所有截图 SHA-256、原厂输出帧数和证据边界见 [selected-bounds fixture](../verification/reaper-parity/fixtures/render-selected-bounds.tsv)。AAADAW 视觉 fixture 未写出 Selected regions WAV，因此没有将对应音频输出视作实机验收。
+
+Selected-bounds 定向 nightly+Cranelift 测试 1/1，`aaadaw` 全量测试 508/508 passed；Stable all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Cranelift 构建仍发出 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`RENDER-BOUNDS-001` 与 P10 继续 `in_progress`：完整 Render 速率菜单、item/Razor 范围、Presets/Metadata、完整原厂焦点与禁用态及 Selected regions 的 AAADAW 实窗渲染输出仍待实现/验证。

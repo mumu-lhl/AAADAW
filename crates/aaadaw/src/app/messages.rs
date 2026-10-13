@@ -9,7 +9,7 @@ use aaadaw_app::{
 };
 use aaadaw_core::{
     DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId,
-    Project, TrackId,
+    Project, RegionId, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -236,10 +236,10 @@ pub(crate) enum Message {
     MarkerManagerShowRegionsChanged(bool),
     MarkerManagerShowMarkersChanged(bool),
     MarkerManagerClearFilter,
-    MarkerManagerSelectMarker(MarkerId),
+    MarkerManagerSelectMarker(MarkerId, bool),
     MarkerManagerEditMarker(MarkerId),
     MarkerManagerDeleteMarker(MarkerId),
-    MarkerManagerSelectRegion(aaadaw_core::RegionId),
+    MarkerManagerSelectRegion(RegionId, bool),
     MarkerManagerEditRegion(aaadaw_core::RegionId),
     MarkerManagerDeleteRegion(aaadaw_core::RegionId),
     OpenTempoMap,

@@ -16,8 +16,8 @@ use aaadaw_app::{
 #[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
-    AudioItem, DawAction, FxParameterChange, ItemId, MeterPointSnapshot, MidiItem, Project,
-    TempoCurve, TimeSignature, TrackId,
+    AudioItem, DawAction, FxParameterChange, ItemId, MarkerId, MeterPointSnapshot, MidiItem,
+    Project, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -334,6 +334,8 @@ struct App {
     region_properties_window_id: Option<iced::window::Id>,
     marker_manager: Option<marker_manager::MarkerManager>,
     marker_manager_window_id: Option<iced::window::Id>,
+    selected_render_markers: HashSet<MarkerId>,
+    selected_render_regions: HashSet<RegionId>,
     active_menu: Option<MainMenu>,
     menu_selected_command: Option<CommandId>,
     action_menu_scroll_offset: f32,
@@ -1837,10 +1839,10 @@ impl App {
                     | Message::MarkerManagerShowRegionsChanged(_)
                     | Message::MarkerManagerShowMarkersChanged(_)
                     | Message::MarkerManagerClearFilter
-                    | Message::MarkerManagerSelectMarker(_)
+                    | Message::MarkerManagerSelectMarker(_, _)
                     | Message::MarkerManagerEditMarker(_)
                     | Message::MarkerManagerDeleteMarker(_)
-                    | Message::MarkerManagerSelectRegion(_)
+                    | Message::MarkerManagerSelectRegion(_, _)
                     | Message::MarkerManagerEditRegion(_)
                     | Message::MarkerManagerDeleteRegion(_)
                     | Message::InsertRegionFromTimeSelection
@@ -2437,8 +2439,8 @@ impl App {
                     manager.filter.clear();
                 }
             }
-            Message::MarkerManagerSelectMarker(marker_id) => {
-                self.select_marker_from_manager(marker_id)
+            Message::MarkerManagerSelectMarker(marker_id, additive) => {
+                self.select_marker_from_manager(marker_id, additive)
             }
             Message::MarkerManagerEditMarker(marker_id) => {
                 task = self.open_marker_properties(marker_id)
@@ -2446,8 +2448,8 @@ impl App {
             Message::MarkerManagerDeleteMarker(marker_id) => {
                 self.delete_marker_from_manager(marker_id)
             }
-            Message::MarkerManagerSelectRegion(region_id) => {
-                self.select_region_from_manager(region_id)
+            Message::MarkerManagerSelectRegion(region_id, additive) => {
+                self.select_region_from_manager(region_id, additive)
             }
             Message::MarkerManagerEditRegion(region_id) => {
                 task = self.open_region_properties(region_id)
@@ -3332,6 +3334,12 @@ impl App {
             Message::ActionListDeleteBinding => self.delete_action_list_binding(),
             Message::ActionListRun(close) => task = self.run_action_list(close),
             Message::RuntimeKeyboardEvent(event, status, window_id) => {
+                if let iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) =
+                    &event
+                {
+                    self.keyboard_modifiers = *modifiers;
+                    self.timeline.modifiers = *modifiers;
+                }
                 if self.project_settings_window_id == Some(window_id) {
                     if status == iced::event::Status::Ignored
                         && matches!(
@@ -3505,12 +3513,6 @@ impl App {
                     return self.action_list_keyboard_event(event, status);
                 }
 
-                if let iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) =
-                    &event
-                {
-                    self.keyboard_modifiers = *modifiers;
-                    self.timeline.modifiers = *modifiers;
-                }
                 if self.shortcut_capture_id.is_some() {
                     if let Some(message) = keyboard_shortcut_event(
                         event,
@@ -4735,10 +4737,8 @@ impl App {
                         self.unsaved_session_snapshot_revision = 0;
                         self.recording_recovery_candidates.clear();
                         self.project_generation = self.project_generation.wrapping_add(1);
-                        if let Some(manager) = &mut self.marker_manager {
-                            manager.selected_marker = None;
-                            manager.selected_region = None;
-                        }
+                        self.selected_render_markers.clear();
+                        self.selected_render_regions.clear();
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
@@ -4913,10 +4913,8 @@ impl App {
                         self.project_path_query.clear();
                         self.project_lock = None;
                         self.project_generation = self.project_generation.wrapping_add(1);
-                        if let Some(manager) = &mut self.marker_manager {
-                            manager.selected_marker = None;
-                            manager.selected_region = None;
-                        }
+                        self.selected_render_markers.clear();
+                        self.selected_render_regions.clear();
                         self.revision = 1;
                         self.saved_revision = 0;
                         self.unsaved_session_snapshot_revision = self.revision;
@@ -5349,6 +5347,27 @@ impl App {
             return;
         }
         let event = match event {
+            timeline::TimelineEvent::SelectProjectMarker {
+                marker_id,
+                position_ticks,
+            } => {
+                if !self
+                    .project
+                    .markers()
+                    .iter()
+                    .any(|marker| marker.id() == marker_id)
+                {
+                    self.status = "Project marker no longer exists".to_owned();
+                    return;
+                }
+                self.selected_render_markers.clear();
+                self.selected_render_regions.clear();
+                self.selected_render_markers.insert(marker_id);
+                timeline::TimelineEvent::SelectProjectMarker {
+                    marker_id,
+                    position_ticks,
+                }
+            }
             timeline::TimelineEvent::SelectProjectRegion { region_id, .. } => {
                 let Some(region) = self
                     .project
@@ -5362,10 +5381,9 @@ impl App {
                 let start_ticks = region.start_ticks();
                 let end_ticks = region.end_ticks();
                 self.timeline.selected_project_marker = None;
-                if let Some(manager) = &mut self.marker_manager {
-                    manager.selected_region = Some(region_id);
-                    manager.selected_marker = None;
-                }
+                self.selected_render_markers.clear();
+                self.selected_render_regions.clear();
+                self.selected_render_regions.insert(region_id);
                 timeline::TimelineEvent::SelectProjectRegion {
                     region_id,
                     start_ticks,
@@ -5449,10 +5467,8 @@ impl App {
         self.tempo_map_feedback.clear();
         self.meter_map_feedback.clear();
         self.project_generation = self.project_generation.wrapping_add(1);
-        if let Some(manager) = &mut self.marker_manager {
-            manager.selected_marker = None;
-            manager.selected_region = None;
-        }
+        self.selected_render_markers.clear();
+        self.selected_render_regions.clear();
         self.recording_recovery_candidates.clear();
         self.recording_recovery_scanning = false;
         self.midi_note_clipboard.last_paste = None;

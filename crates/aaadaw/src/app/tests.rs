@@ -221,12 +221,9 @@ fn marker_manager_filters_selects_edits_and_deletes_with_undo() {
     let _ = app.update(Message::MarkerManagerShowMarkersChanged(true));
     let _ = app.update(Message::MarkerManagerFilterChanged("bridge".to_owned()));
     assert_eq!(app.marker_manager.as_ref().unwrap().filter, "bridge");
-    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id));
+    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id, false));
     assert_eq!(app.timeline.edit_cursor_tick, 1920);
-    assert_eq!(
-        app.marker_manager.as_ref().unwrap().selected_marker,
-        Some(marker_id)
-    );
+    assert!(app.selected_render_markers.contains(&marker_id));
 
     let _ = app.update(Message::MarkerManagerEditMarker(marker_id));
     assert_eq!(app.marker_properties.as_ref().unwrap().name, "Bridge");
@@ -234,6 +231,7 @@ fn marker_manager_filters_selects_edits_and_deletes_with_undo() {
 
     let _ = app.update(Message::MarkerManagerDeleteMarker(marker_id));
     assert!(app.project.markers().is_empty());
+    assert!(!app.selected_render_markers.contains(&marker_id));
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.markers()[0].id(), marker_id);
     assert_eq!(app.project.markers()[0].name(), "Bridge");
@@ -309,13 +307,10 @@ fn region_manager_selects_edits_filters_and_deletes_with_undo() {
     assert!(app.marker_manager.as_ref().unwrap().show_regions);
     assert!(!app.marker_manager.as_ref().unwrap().show_markers);
     let _ = app.update(Message::MarkerManagerShowMarkersChanged(true));
-    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id));
-    assert_eq!(
-        app.marker_manager.as_ref().unwrap().selected_marker,
-        Some(marker_id)
-    );
+    let _ = app.update(Message::MarkerManagerSelectMarker(marker_id, false));
+    assert!(app.selected_render_markers.contains(&marker_id));
     let _ = app.update(Message::MarkerManagerFilterChanged("r1".to_owned()));
-    let _ = app.update(Message::MarkerManagerSelectRegion(region_id));
+    let _ = app.update(Message::MarkerManagerSelectRegion(region_id, false));
     assert_eq!(
         app.timeline.time_selection,
         Some(crate::timeline::TimeSelection {
@@ -324,11 +319,8 @@ fn region_manager_selects_edits_filters_and_deletes_with_undo() {
         })
     );
     assert_eq!(app.timeline.edit_cursor_tick, 0);
-    assert_eq!(
-        app.marker_manager.as_ref().unwrap().selected_region,
-        Some(region_id)
-    );
-    assert_eq!(app.marker_manager.as_ref().unwrap().selected_marker, None);
+    assert!(app.selected_render_regions.contains(&region_id));
+    assert!(app.selected_render_markers.is_empty());
 
     let _ = app.update(Message::MarkerManagerEditRegion(region_id));
     assert_eq!(app.region_properties.as_ref().unwrap().number, "1");
@@ -835,6 +827,69 @@ fn ruler_region_edit_rejects_a_stale_drag_after_another_edit() {
     assert_eq!(app.project.regions()[0].end_ticks(), 4_800);
     assert_eq!(app.revision, revision);
     assert!(app.status.contains("changed before the drag completed"));
+}
+
+#[test]
+fn marker_manager_modifier_selects_multiple_render_bounds_and_keeps_them_after_close() {
+    let mut app = App::default();
+    for (position_ticks, name) in [(0, "One"), (960, "Two"), (1_920, "Three")] {
+        app.project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks,
+                name: name.to_owned(),
+            })
+            .expect("marker should be inserted");
+    }
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 0,
+            end_ticks: 1_920,
+            name: "Whole".to_owned(),
+        })
+        .expect("region should be inserted");
+    let first_marker = app.project.markers()[0].id();
+    let second_marker = app.project.markers()[1].id();
+    let third_marker = app.project.markers()[2].id();
+    let region = app.project.regions()[0].id();
+
+    let _ = app.update(Message::OpenMarkerManager);
+    let _ = app.update(Message::MarkerManagerSelectMarker(first_marker, false));
+    let manager_window = app.marker_manager_window_id.unwrap();
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+            iced::keyboard::Modifiers::CTRL,
+        )),
+        iced::event::Status::Ignored,
+        manager_window,
+    ));
+    let additive = app.keyboard_modifiers.command();
+    let _ = app.update(Message::MarkerManagerSelectMarker(second_marker, additive));
+    assert!(app.keyboard_modifiers.command());
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+            iced::keyboard::Modifiers::NONE,
+        )),
+        iced::event::Status::Ignored,
+        manager_window,
+    ));
+    assert_eq!(app.selected_render_markers.len(), 2);
+    assert!(app.selected_render_markers.contains(&first_marker));
+    assert!(app.selected_render_markers.contains(&second_marker));
+
+    let _ = app.update(Message::MarkerManagerSelectRegion(region, true));
+    assert!(app.selected_render_regions.contains(&region));
+    assert_eq!(app.selected_render_markers.len(), 2);
+
+    let _ = app.update(Message::CloseMarkerManager);
+    assert!(app.marker_manager.is_none());
+    assert!(app.selected_render_markers.contains(&first_marker));
+    assert!(app.selected_render_markers.contains(&second_marker));
+    assert!(app.selected_render_regions.contains(&region));
+
+    let _ = app.update(Message::OpenMarkerManager);
+    let _ = app.update(Message::MarkerManagerSelectMarker(third_marker, false));
+    assert_eq!(app.selected_render_markers, HashSet::from([third_marker]));
+    assert!(app.selected_render_regions.is_empty());
 }
 
 #[test]
@@ -9249,6 +9304,20 @@ fn unsaved_session_can_queue_project_rendering() {
         session_media_dir: Some(session),
         ..App::default()
     };
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Render content".to_owned(),
+        })
+        .expect("track should be created for rendering");
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("render should have a non-empty project range");
 
     let _task = app.start_offline_render(destination);
 

@@ -33,10 +33,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         Some("Enter a valid custom end time (for example, 0:05.000).")
     } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
         Some("Create a time selection in Arrange to render that range.")
-    } else if bounds == RenderBounds::AllProjectRegions && app.project.regions().is_empty() {
-        Some("Add at least one project region in Arrange to render all regions.")
-    } else if bounds == RenderBounds::AllProjectMarkers && app.project.markers().is_empty() {
-        Some("Add at least one project marker in Arrange to render all markers.")
+    } else if matches!(
+        bounds,
+        RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+    ) && app.project.regions().is_empty()
+    {
+        Some("Add at least one project region in Arrange to render regions.")
+    } else if matches!(
+        bounds,
+        RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+    ) && app.project.markers().is_empty()
+    {
+        Some("Add at least one project marker in Arrange to render markers.")
     } else if !app.has_valid_render_source() {
         Some("Select one or more tracks in Arrange to render them via the master.")
     } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
@@ -48,7 +56,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
     } else if bounds == RenderBounds::CustomTimeRange && !app.can_submit_render() {
         Some("Custom range end must follow start and both times must map to valid project samples.")
-    } else if bounds == RenderBounds::AllProjectMarkers && !app.can_submit_render() {
+    } else if matches!(
+        bounds,
+        RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+    ) && !app.can_submit_render()
+    {
         Some(
             "Each project marker must have a non-empty range up to the next marker or project end.",
         )
@@ -131,6 +143,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .spacing(tokens::SPACING_SM)
                 .align_y(Alignment::Center)
                 .into()
+            } else if let Some(summary) = app.render_bounds_summary() {
+                text(summary).size(13).into()
             } else {
                 iced::widget::Space::new().height(Length::Fixed(0.0)).into()
             };

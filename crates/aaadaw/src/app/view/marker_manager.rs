@@ -59,7 +59,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 } else {
                     ""
                 };
-                let is_selected = manager.selected_marker == Some(marker_id);
+                let is_selected = app.selected_render_markers.contains(&marker_id);
                 let row_button = manager_row(ManagerRow {
                     number: marker_manager_id_label(marker),
                     name: marker.name(),
@@ -68,7 +68,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     length: "-".to_owned(),
                     current,
                     selected: is_selected,
-                    message: Message::MarkerManagerSelectMarker(marker_id),
+                    message: Message::MarkerManagerSelectMarker(
+                        marker_id,
+                        app.keyboard_modifiers.command(),
+                    ),
                 });
                 (
                     row_button,
@@ -97,7 +100,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 } else {
                     ""
                 };
-                let is_selected = manager.selected_region == Some(region_id);
+                let is_selected = app.selected_render_regions.contains(&region_id);
                 let row_button = manager_row(ManagerRow {
                     number: region_manager_id_label(region),
                     name: region.name(),
@@ -106,7 +109,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     length,
                     current,
                     selected: is_selected,
-                    message: Message::MarkerManagerSelectRegion(region_id),
+                    message: Message::MarkerManagerSelectRegion(
+                        region_id,
+                        app.keyboard_modifiers.command(),
+                    ),
                 });
                 (
                     row_button,

@@ -2,7 +2,7 @@ use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
 use aaadaw_app::WavChannelCount;
-use aaadaw_core::{DawAction, Project, ProjectSnapshot, TrackId};
+use aaadaw_core::{DawAction, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::HashSet;
@@ -19,7 +19,9 @@ pub(crate) enum RenderBounds {
     CustomTimeRange,
     TimeSelection,
     AllProjectRegions,
+    SelectedProjectRegions,
     AllProjectMarkers,
+    SelectedProjectMarkers,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,6 +203,7 @@ fn project_region_render_jobs(
     selected_tracks: &[TrackId],
     stems_pre_fader: bool,
     settings: aaadaw_app::ProjectWavRenderSettings,
+    selected_region_ids: Option<&HashSet<RegionId>>,
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let parent = base_path
         .parent()
@@ -216,8 +219,18 @@ fn project_region_render_jobs(
         .and_then(|extension| extension.to_str())
         .filter(|extension| !extension.is_empty())
         .unwrap_or("wav");
-    if project.regions().is_empty() {
-        return Err("Add at least one project region before rendering all regions".to_owned());
+    let regions = project
+        .regions()
+        .iter()
+        .enumerate()
+        .filter(|(_, region)| {
+            selected_region_ids.is_none_or(|selected| selected.contains(&region.id()))
+        })
+        .collect::<Vec<_>>();
+    if regions.is_empty() {
+        return Err(
+            "Add or select at least one project region before rendering regions".to_owned(),
+        );
     }
 
     let stem_mode = match source {
@@ -232,9 +245,9 @@ fn project_region_render_jobs(
         }
         RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
     };
-    let mut used_region_names = HashSet::with_capacity(project.regions().len());
+    let mut used_region_names = HashSet::with_capacity(regions.len());
     let mut jobs = Vec::new();
-    for (index, region) in project.regions().iter().enumerate() {
+    for (index, region) in regions {
         let start_sample = project
             .sample_at_tick(region.start_ticks())
             .map_err(|error| format!("Could not convert region start: {error}"))?;
@@ -297,6 +310,7 @@ fn project_marker_render_jobs(
     selected_tracks: &[TrackId],
     stems_pre_fader: bool,
     settings: aaadaw_app::ProjectWavRenderSettings,
+    selected_marker_ids: Option<&HashSet<MarkerId>>,
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let parent = base_path
         .parent()
@@ -312,11 +326,21 @@ fn project_marker_render_jobs(
         .and_then(|extension| extension.to_str())
         .filter(|extension| !extension.is_empty())
         .unwrap_or("wav");
-    if project.markers().is_empty() {
-        return Err("Add at least one project marker before rendering all markers".to_owned());
-    }
     let project_end_sample = aaadaw_app::project_content_end_sample(project)
         .map_err(|error| format!("Could not determine project render end: {error}"))?;
+    let markers = project
+        .markers()
+        .iter()
+        .enumerate()
+        .filter(|(_, marker)| {
+            selected_marker_ids.is_none_or(|selected| selected.contains(&marker.id()))
+        })
+        .collect::<Vec<_>>();
+    if markers.is_empty() {
+        return Err(
+            "Add or select at least one project marker before rendering markers".to_owned(),
+        );
+    }
 
     let stem_mode = match source {
         RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
@@ -330,9 +354,9 @@ fn project_marker_render_jobs(
         }
         RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
     };
-    let mut used_marker_names = HashSet::with_capacity(project.markers().len());
+    let mut used_marker_names = HashSet::with_capacity(markers.len());
     let mut jobs = Vec::new();
-    for (index, marker) in project.markers().iter().enumerate() {
+    for (index, marker) in markers {
         let start_sample = project
             .sample_at_tick(marker.position_ticks())
             .map_err(|error| format!("Could not convert marker position: {error}"))?;
@@ -342,6 +366,11 @@ fn project_marker_render_jobs(
                 .map_err(|error| format!("Could not convert next marker position: {error}"))?,
             None => project_end_sample,
         };
+        // REAPER skips a marker whose next marker or project end leaves it
+        // with no audio frames to render (for example, a marker at project end).
+        if end_sample <= start_sample {
+            continue;
+        }
         aaadaw_app::render_range_length_samples_with_tail_milliseconds(
             project.settings().sample_rate(),
             start_sample,
@@ -395,6 +424,9 @@ fn project_marker_render_jobs(
             jobs.push((marker_settings, destination));
         }
     }
+    if jobs.is_empty() {
+        return Err("Selected project markers have no non-empty render ranges".to_owned());
+    }
     Ok(jobs)
 }
 
@@ -445,12 +477,14 @@ impl std::fmt::Display for RenderSampleRate {
 }
 
 impl RenderBounds {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::CustomTimeRange,
         Self::EntireProject,
         Self::TimeSelection,
         Self::AllProjectRegions,
+        Self::SelectedProjectRegions,
         Self::AllProjectMarkers,
+        Self::SelectedProjectMarkers,
     ];
 }
 
@@ -461,7 +495,9 @@ impl std::fmt::Display for RenderBounds {
             Self::EntireProject => "Entire project",
             Self::TimeSelection => "Time selection",
             Self::AllProjectRegions => "All project regions",
+            Self::SelectedProjectRegions => "Selected regions",
             Self::AllProjectMarkers => "All project markers",
+            Self::SelectedProjectMarkers => "Selected markers",
         })
     }
 }
@@ -681,29 +717,46 @@ impl App {
         };
         if matches!(
             self.render_dialog.bounds,
-            RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+            RenderBounds::AllProjectRegions
+                | RenderBounds::SelectedProjectRegions
+                | RenderBounds::AllProjectMarkers
+                | RenderBounds::SelectedProjectMarkers
         ) {
             if cfg!(target_os = "android") {
                 self.status = "Rendering project regions or markers to multiple files requires a desktop build".to_owned();
                 return Task::none();
             }
+            let selected_regions = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectRegions)
+                .then(|| self.effective_selected_region_ids())
+                .flatten();
+            let selected_markers = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectMarkers)
+                .then(|| self.effective_selected_marker_ids())
+                .flatten();
             let output_result = match self.render_dialog.bounds {
-                RenderBounds::AllProjectRegions => project_region_render_jobs(
-                    &destination,
-                    &self.project,
-                    self.render_dialog.source,
-                    &selected_tracks,
-                    self.render_dialog.stems_pre_fader,
-                    settings,
-                ),
-                RenderBounds::AllProjectMarkers => project_marker_render_jobs(
-                    &destination,
-                    &self.project,
-                    self.render_dialog.source,
-                    &selected_tracks,
-                    self.render_dialog.stems_pre_fader,
-                    settings,
-                ),
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                    project_region_render_jobs(
+                        &destination,
+                        &self.project,
+                        self.render_dialog.source,
+                        &selected_tracks,
+                        self.render_dialog.stems_pre_fader,
+                        settings,
+                        selected_regions.as_ref(),
+                    )
+                }
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                    project_marker_render_jobs(
+                        &destination,
+                        &self.project,
+                        self.render_dialog.source,
+                        &selected_tracks,
+                        self.render_dialog.stems_pre_fader,
+                        settings,
+                        selected_markers.as_ref(),
+                    )
+                }
                 _ => unreachable!("only region and marker bounds create render batches"),
             };
             let outputs = match output_result {
@@ -713,6 +766,15 @@ impl App {
                     return Task::none();
                 }
             };
+            let outputs_per_range = match self.render_dialog.source {
+                RenderSource::MasterMix => 1,
+                RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                    selected_tracks.len()
+                }
+                RenderSource::MasterMixAndSelectedTracks => selected_tracks.len().saturating_add(1),
+            }
+            .max(1);
+            let range_count = outputs.len() / outputs_per_range;
             if let Some((_, existing)) =
                 outputs
                     .iter()
@@ -732,11 +794,11 @@ impl App {
                 return Task::none();
             }
             let label = match self.render_dialog.bounds {
-                RenderBounds::AllProjectRegions => {
-                    format!("Render {} project regions", self.project.regions().len())
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                    format!("Render {range_count} project regions")
                 }
-                RenderBounds::AllProjectMarkers => {
-                    format!("Render {} project markers", self.project.markers().len())
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                    format!("Render {range_count} project markers")
                 }
                 _ => unreachable!("only region and marker bounds create render batches"),
             };
@@ -862,7 +924,10 @@ impl App {
         if cfg!(target_os = "android")
             && matches!(
                 self.render_dialog.bounds,
-                RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+                RenderBounds::AllProjectRegions
+                    | RenderBounds::SelectedProjectRegions
+                    | RenderBounds::AllProjectMarkers
+                    | RenderBounds::SelectedProjectMarkers
             )
         {
             return false;
@@ -884,7 +949,10 @@ impl App {
     pub(super) fn render_requires_multiple_files(&self) -> bool {
         if matches!(
             self.render_dialog.bounds,
-            RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+            RenderBounds::AllProjectRegions
+                | RenderBounds::SelectedProjectRegions
+                | RenderBounds::AllProjectMarkers
+                | RenderBounds::SelectedProjectMarkers
         ) {
             return true;
         }
@@ -933,6 +1001,64 @@ impl App {
         }
     }
 
+    pub(super) fn render_bounds_summary(&self) -> Option<String> {
+        let count = match self.render_dialog.bounds {
+            RenderBounds::AllProjectRegions => self.project.regions().len(),
+            RenderBounds::SelectedProjectRegions => self
+                .effective_selected_region_ids()
+                .map_or(self.project.regions().len(), |selected| selected.len()),
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                let selected = if self.render_dialog.bounds == RenderBounds::SelectedProjectMarkers
+                {
+                    self.effective_selected_marker_ids()
+                } else {
+                    None
+                };
+                let Ok(project_end_sample) = aaadaw_app::project_content_end_sample(&self.project)
+                else {
+                    return Some("No renderable markers".to_owned());
+                };
+                self.project
+                    .markers()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, marker)| {
+                        selected
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&marker.id()))
+                    })
+                    .filter(|(index, marker)| {
+                        let Ok(start_sample) = self.project.sample_at_tick(marker.position_ticks())
+                        else {
+                            return false;
+                        };
+                        let end_sample = match self.project.markers().get(index + 1) {
+                            Some(next_marker) => self
+                                .project
+                                .sample_at_tick(next_marker.position_ticks())
+                                .unwrap_or(start_sample),
+                            None => project_end_sample,
+                        };
+                        end_sample > start_sample
+                    })
+                    .count()
+            }
+            _ => return None,
+        };
+        let noun = if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        ) {
+            "region"
+        } else {
+            "marker"
+        };
+        Some(format!(
+            "{count} {noun}{}",
+            if count == 1 { "" } else { "s" }
+        ))
+    }
+
     fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
         let tail_milliseconds = if self.render_dialog.tail_enabled {
             parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
@@ -967,7 +1093,14 @@ impl App {
             0
         };
         let output_sample_rate = self.render_output_sample_rate();
-        if self.render_dialog.bounds == RenderBounds::AllProjectMarkers {
+        if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+        ) {
+            let selected_markers = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectMarkers)
+                .then(|| self.effective_selected_marker_ids())
+                .flatten();
             let validation_settings = aaadaw_app::ProjectWavRenderSettings {
                 master_ceiling: self.audio_settings.master_output_ceiling,
                 export_options: self.wav_export_options,
@@ -987,6 +1120,7 @@ impl App {
                 &[],
                 false,
                 validation_settings,
+                selected_markers.as_ref(),
             )?;
         }
         Ok(ResolvedRenderSettings {
@@ -1019,6 +1153,34 @@ impl App {
             .filter(|track| self.timeline.selected_tracks.contains(&track.id()))
             .map(|track| track.id())
             .collect()
+    }
+
+    fn effective_selected_region_ids(&self) -> Option<HashSet<RegionId>> {
+        let selected = self
+            .project
+            .regions()
+            .iter()
+            .filter_map(|region| {
+                self.selected_render_regions
+                    .contains(&region.id())
+                    .then_some(region.id())
+            })
+            .collect::<HashSet<_>>();
+        (!selected.is_empty()).then_some(selected)
+    }
+
+    fn effective_selected_marker_ids(&self) -> Option<HashSet<MarkerId>> {
+        let selected = self
+            .project
+            .markers()
+            .iter()
+            .filter_map(|marker| {
+                self.selected_render_markers
+                    .contains(&marker.id())
+                    .then_some(marker.id())
+            })
+            .collect::<HashSet<_>>();
+        (!selected.is_empty()).then_some(selected)
     }
 
     fn selected_render_bounds(&self) -> Result<(u64, u64), String> {
@@ -1066,47 +1228,98 @@ impl App {
                 }
                 Ok((start_sample, end_sample))
             }
-            RenderBounds::AllProjectRegions => {
-                let Some(first) = self.project.regions().first() else {
-                    return Err(
-                        "Add at least one project region before rendering all regions".to_owned(),
-                    );
-                };
-                let last = self
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                let selected_regions = (self.render_dialog.bounds
+                    == RenderBounds::SelectedProjectRegions)
+                    .then(|| self.effective_selected_region_ids())
+                    .flatten();
+                let regions = self
                     .project
                     .regions()
-                    .last()
-                    .expect("a first region guarantees a last region");
-                let start_sample = self
-                    .project
-                    .sample_at_tick(first.start_ticks())
-                    .map_err(|error| format!("Could not convert first region start: {error}"))?;
-                let end_sample = self
-                    .project
-                    .sample_at_tick(last.end_ticks())
-                    .map_err(|error| format!("Could not convert last region end: {error}"))?;
+                    .iter()
+                    .filter(|region| {
+                        selected_regions
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&region.id()))
+                    })
+                    .collect::<Vec<_>>();
+                if regions.is_empty() {
+                    return Err(
+                        "Add at least one project region before rendering regions".to_owned()
+                    );
+                }
+                let start_sample = regions
+                    .iter()
+                    .map(|region| {
+                        self.project
+                            .sample_at_tick(region.start_ticks())
+                            .map_err(|error| format!("Could not convert region start: {error}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .min()
+                    .expect("non-empty regions have a first start");
+                let end_sample = regions
+                    .iter()
+                    .map(|region| {
+                        self.project
+                            .sample_at_tick(region.end_ticks())
+                            .map_err(|error| format!("Could not convert region end: {error}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .max()
+                    .expect("non-empty regions have a last end");
                 if end_sample <= start_sample {
                     return Err("Project regions must span at least one project sample".to_owned());
                 }
                 Ok((start_sample, end_sample))
             }
-            RenderBounds::AllProjectMarkers => {
-                let Some(first) = self.project.markers().first() else {
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                let selected_markers = (self.render_dialog.bounds
+                    == RenderBounds::SelectedProjectMarkers)
+                    .then(|| self.effective_selected_marker_ids())
+                    .flatten();
+                if self.project.markers().is_empty() {
                     return Err(
-                        "Add at least one project marker before rendering all markers".to_owned(),
-                    );
-                };
-                let start_sample = self
-                    .project
-                    .sample_at_tick(first.position_ticks())
-                    .map_err(|error| format!("Could not convert first marker position: {error}"))?;
-                let end_sample = aaadaw_app::project_content_end_sample(&self.project)
-                    .map_err(|error| format!("Could not determine project render end: {error}"))?;
-                if end_sample < start_sample {
-                    return Err(
-                        "Project markers must not start after the project render end".to_owned(),
+                        "Add at least one project marker before rendering markers".to_owned()
                     );
                 }
+                let end_sample = aaadaw_app::project_content_end_sample(&self.project)
+                    .map_err(|error| format!("Could not determine project render end: {error}"))?;
+                let mut ranges = Vec::new();
+                for (index, marker) in self.project.markers().iter().enumerate() {
+                    if selected_markers
+                        .as_ref()
+                        .is_some_and(|selected| !selected.contains(&marker.id()))
+                    {
+                        continue;
+                    }
+                    let start_sample = self
+                        .project
+                        .sample_at_tick(marker.position_ticks())
+                        .map_err(|error| format!("Could not convert marker position: {error}"))?;
+                    let marker_end_sample = match self.project.markers().get(index + 1) {
+                        Some(next_marker) => self
+                            .project
+                            .sample_at_tick(next_marker.position_ticks())
+                            .map_err(|error| {
+                                format!("Could not convert next marker position: {error}")
+                            })?,
+                        None => end_sample,
+                    };
+                    if marker_end_sample > start_sample {
+                        ranges.push((start_sample, marker_end_sample));
+                    }
+                }
+                let Some(start_sample) = ranges.iter().map(|range| range.0).min() else {
+                    return Err("Project markers have no non-empty render ranges".to_owned());
+                };
+                let end_sample = ranges
+                    .iter()
+                    .map(|range| range.1)
+                    .max()
+                    .expect("non-empty marker ranges have a last end");
                 Ok((start_sample, end_sample))
             }
         }
@@ -1876,6 +2089,7 @@ mod tests {
             &[track_id],
             false,
             settings,
+            None,
         )
         .expect("each project region should make a stem render job");
 
@@ -2004,6 +2218,7 @@ mod tests {
             &[],
             false,
             settings,
+            None,
         )
         .expect("every marker should create a bounded render job");
         assert_eq!(outputs.len(), 3);
@@ -2086,6 +2301,162 @@ mod tests {
                 .contains("Add at least one project marker")
         );
         assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn render_selected_regions_and_markers_use_their_selected_ranges() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Selection fixture".to_owned(),
+            })
+            .expect("render track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 4_800,
+            })
+            .expect("project media should extend to five seconds");
+        for (start_ticks, end_ticks, name) in [
+            (960, 1_920, "First region"),
+            (2_880, 4_800, "Second region"),
+        ] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("region should be inserted");
+        }
+        for (position_ticks, name) in [
+            (960, "First marker"),
+            (2_880, "Second marker"),
+            (3_840, "Last marker"),
+        ] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("marker should be inserted");
+        }
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 4_800,
+                name: "At project end".to_owned(),
+            })
+            .expect("project-end marker should be inserted");
+        let selected_region = project.regions()[1].id();
+        let selected_marker = project.markers()[1].id();
+        let final_marker = project.markers()[2].id();
+        let project_end_marker = project.markers()[3].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let region_ids = HashSet::from([selected_region]);
+        let region_outputs = project_region_render_jobs(
+            Path::new("selected-region-prefix.wav"),
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+            Some(&region_ids),
+        )
+        .expect("selected region should produce a render job");
+        assert_eq!(region_outputs.len(), 1);
+        assert_eq!(region_outputs[0].0.start_sample, 72_000);
+        assert_eq!(region_outputs[0].0.end_sample, 120_000);
+        assert_eq!(
+            region_outputs[0]
+                .1
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("selected-region-prefix-Second region.wav")
+        );
+
+        let marker_ids = HashSet::from([selected_marker, final_marker]);
+        let marker_outputs = project_marker_render_jobs(
+            Path::new("selected-marker-prefix.wav"),
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+            Some(&marker_ids),
+        )
+        .expect("selected markers should produce bounded render jobs");
+        assert_eq!(marker_outputs.len(), 2);
+        assert_eq!(marker_outputs[0].0.start_sample, 72_000);
+        assert_eq!(marker_outputs[0].0.end_sample, 96_000);
+        assert_eq!(marker_outputs[1].0.start_sample, 96_000);
+        assert_eq!(marker_outputs[1].0.end_sample, 120_000);
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-selected-bounds-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::SelectedProjectMarkers,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert!(app.selected_render_markers.is_empty());
+        assert!(app.selected_render_regions.is_empty());
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("3 markers"));
+        app.render_dialog.bounds = RenderBounds::SelectedProjectRegions;
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("2 regions"));
+        app.render_dialog.bounds = RenderBounds::SelectedProjectMarkers;
+        app.selected_render_markers
+            .extend([selected_marker, final_marker, project_end_marker]);
+        assert_eq!(app.selected_render_bounds(), Ok((72_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("2 markers"));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-selected-marker-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("selected marker jobs should be queued as a batch");
+        assert_eq!(queued.job.label, "Render 2 project markers");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("selected markers should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].0.start_sample, 72_000);
+        assert_eq!(outputs[0].0.end_sample, 96_000);
+        assert_eq!(outputs[1].0.start_sample, 96_000);
+        assert_eq!(outputs[1].0.end_sample, 120_000);
+
+        app.render_dialog.bounds = RenderBounds::SelectedProjectRegions;
+        app.selected_render_regions.insert(selected_region);
+        assert_eq!(app.selected_render_bounds(), Ok((72_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("1 region"));
+        assert!(app.can_submit_render());
     }
 
     #[test]
@@ -2354,6 +2725,13 @@ mod tests {
             })
             .expect("render source track should be created");
         let selected = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id: selected,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("selected render track should contain non-empty media");
         app.timeline.selected_track = Some(selected);
         app.timeline.selected_tracks.insert(selected);
         app.render_dialog.source = RenderSource::SelectedTracksStems;
@@ -2661,6 +3039,13 @@ mod tests {
             })
             .unwrap();
         let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
         let mut app = App {
             project,
             project_path: Some(project_path.clone()),
