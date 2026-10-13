@@ -2365,6 +2365,7 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
         MainMenu::Track,
         MainMenu::Options,
         MainMenu::Actions,
+        MainMenu::Help,
     ];
     for menu in menus {
         let _ = app.update(Message::ToggleMainMenu(menu));
@@ -3520,6 +3521,37 @@ fn options_menu_exposes_preferences_and_updates_the_loop_link_checkmark() {
     assert!(!app.timeline.loop_points_linked);
     assert!(app.loop_time_preferences_save_at.is_some());
     assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn help_menu_opens_the_action_list_and_a_single_about_window() {
+    let mut app = App::default();
+    let help = commands::for_menu(&app, MainMenu::Help);
+    assert_eq!(help.len(), 2);
+    assert_eq!(help[0].id, CommandId::OpenActionList);
+    assert_eq!(help[0].label, "Action list and shortcuts...");
+    assert_eq!(help[1].id, CommandId::OpenAbout);
+    assert_eq!(help[1].label, "About AAADAW...");
+    assert_eq!(help[1].shortcut.as_deref(), Some("Ctrl+F1"));
+    assert!(matches!(
+        shortcut_message(
+            Key::Named(iced::keyboard::key::Named::F1),
+            Modifiers::CTRL,
+            &HashMap::new()
+        ),
+        Some(Message::ExecuteCommand(CommandId::OpenAbout))
+    ));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenAbout));
+    let about_window_id = app.about_window_id;
+    assert!(about_window_id.is_some());
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenAbout));
+    assert_eq!(app.about_window_id, about_window_id);
+    let _ = app.update(Message::WindowClosed(about_window_id.unwrap()));
+    assert_eq!(app.about_window_id, None);
+
+    let _ = app.update(Message::ExecuteCommand(help[0].id));
+    assert!(app.action_list_window_id.is_some());
 }
 
 #[test]
@@ -4745,6 +4777,7 @@ fn menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_searc
         ("a", MainMenu::Actions),
         ("e", MainMenu::Edit),
         ("f", MainMenu::File),
+        ("h", MainMenu::Help),
         ("i", MainMenu::Insert),
         ("o", MainMenu::Options),
         ("v", MainMenu::View),
@@ -4906,6 +4939,7 @@ fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
         MainMenu::Track,
         MainMenu::Options,
         MainMenu::Actions,
+        MainMenu::Help,
     ] {
         let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
         assert_eq!(app.active_menu, Some(menu));

@@ -21,6 +21,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+mod about;
 mod action_list;
 mod arrangement;
 mod fx_chain;
@@ -102,6 +103,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         super::project_settings::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
+    } else if app.about_window_id == Some(window_id) {
+        about::view()
     } else if app.render_window_id == Some(window_id) {
         render::view(app)
     } else if app.tempo_map_window_id == Some(window_id) {

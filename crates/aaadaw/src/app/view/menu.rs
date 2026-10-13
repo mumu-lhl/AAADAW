@@ -16,7 +16,7 @@ struct MenuLayout {
     popup_width: f32,
 }
 
-const MENU_LAYOUT: [MenuLayout; 8] = [
+const MENU_LAYOUT: [MenuLayout; 9] = [
     MenuLayout {
         menu: MainMenu::File,
         button_width: 48.0,
@@ -57,6 +57,11 @@ const MENU_LAYOUT: [MenuLayout; 8] = [
         button_width: 68.0,
         popup_width: 400.0,
     },
+    MenuLayout {
+        menu: MainMenu::Help,
+        button_width: 48.0,
+        popup_width: 284.0,
+    },
 ];
 
 impl MainMenu {
@@ -70,6 +75,7 @@ impl MainMenu {
             Self::Track => "Track",
             Self::Options => "Options",
             Self::Actions => "Actions",
+            Self::Help => "Help",
         }
     }
 }

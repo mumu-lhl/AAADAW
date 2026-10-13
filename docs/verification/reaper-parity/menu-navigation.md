@@ -6,8 +6,8 @@
 
 ## AAADAW 当前实现与差异
 
-主窗口按原厂已验证的 `Alt+F/E/V/I/O/A` 打开 File/Edit/View/Insert/Options/Actions 菜单；快捷键只在 Iced 将按键标为未消费时触发。同一访问键会重新打开对应菜单，不会意外将它关掉。F10 不再打开菜单。Options 现包含原厂 Preferences...（Ctrl+P）入口和“Loop points linked to time selection”开关；后者显示当前状态勾选，执行后通过现有全局偏好保存路径持久化，不修改工程修订。菜单顺序已将 Options 放在 Track 和 Actions 之间。
+主窗口按原厂已验证的 `Alt+F/E/V/I/O/A/H` 打开 File/Edit/View/Insert/Options/Actions/Help 菜单；快捷键只在 Iced 将按键标为未消费时触发。同一访问键会重新打开对应菜单，不会意外将它关掉。F10 不再打开菜单。主菜单栏和左右导航现有原厂九项顺序。Options 包含 Preferences...（Ctrl+P）和“Loop points linked to time selection”开关；后者显示当前状态勾选，执行后通过现有全局偏好保存路径持久化，不修改工程修订。Help 有“Action list and shortcuts...”入口和单实例 About AAADAW 窗口，`Ctrl+F1` 打开 About。
 
-回归 `options_menu_exposes_preferences_and_updates_the_loop_link_checkmark` 验证菜单命令、快捷键绑定可用、勾选态切换、全局偏好排队保存和工程 revision 不变；`menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_search_has_focus` 覆盖 Alt+O，`keyboard_navigation_switches_menus_and_wraps_enabled_commands` 覆盖现有八项顺序。定向 nightly+Cranelift nextest 5/5 通过。
+回归 `options_menu_exposes_preferences_and_updates_the_loop_link_checkmark` 验证菜单命令、快捷键绑定可用、勾选态切换、全局偏好排队保存和工程 revision 不变；`help_menu_opens_the_action_list_and_a_single_about_window` 验证帮助入口、About 复用同一窗口、关闭清理和 Ctrl+F1；菜单键盘回归覆盖 Alt+O/Alt+H 与九项左右顺序。nightly+Cranelift 定向 nextest 6/6 通过。
 
-Help 菜单仍缺失，故完整九项布局及 `Alt+H`、Actions 后的原厂导航仍未完成；Options 中除上述两个可用项目外的大量原厂设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`，本次只接入已经有实际后端行为的 Options 项目。
+Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。

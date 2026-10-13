@@ -339,6 +339,7 @@ struct App {
     keyboard_modifiers: iced::keyboard::Modifiers,
     main_window_id: Option<iced::window::Id>,
     settings_window_id: Option<iced::window::Id>,
+    about_window_id: Option<iced::window::Id>,
     project_settings_window_id: Option<iced::window::Id>,
     project_settings: Option<project_settings::Draft>,
     routing_window_id: Option<iced::window::Id>,
@@ -1401,6 +1402,8 @@ impl App {
             "Project Settings".to_owned()
         } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
+        } else if self.about_window_id == Some(window_id) {
+            "About AAADAW".to_owned()
         } else if self.render_window_id == Some(window_id) {
             "Render project to WAV".to_owned()
         } else if self.fx_chain_window_id == Some(window_id) {
@@ -1704,6 +1707,8 @@ impl App {
                     | Message::ActionListFindShortcut
                     | Message::ActionListRun(_)
                     | Message::OpenSettings
+                    | Message::OpenAbout
+                    | Message::CloseAbout
                     | Message::OpenProjectSettings
                     | Message::CloseProjectSettings
                     | Message::SaveProjectSettingsAsDefault
@@ -2153,6 +2158,12 @@ impl App {
             }
             Message::MobileNavigateBack => self.navigate_back_mobile_panel(),
             Message::OpenSettings => task = self.open_settings(),
+            Message::OpenAbout => task = self.open_about(),
+            Message::CloseAbout => {
+                if let Some(window_id) = self.about_window_id {
+                    task = iced::window::close(window_id);
+                }
+            }
             Message::OpenProjectSettings => task = self.open_project_settings(),
             Message::CloseProjectSettings => task = self.close_project_settings(),
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
@@ -2457,6 +2468,8 @@ impl App {
                     self.settings_window_id = None;
                     self.shortcut_capture_id = None;
                     self.shortcut_editor_feedback.clear();
+                } else if self.about_window_id == Some(window_id) {
+                    self.about_window_id = None;
                 } else if self.render_window_id == Some(window_id) {
                     self.render_window_id = None;
                 } else if self.tempo_map_window_id == Some(window_id) {
@@ -5445,6 +5458,19 @@ impl App {
     fn close_main_window(&mut self, window_id: iced::window::Id) -> Task<Message> {
         self.close_fx_editor_resources();
         iced::window::close(window_id)
+    }
+
+    fn open_about(&mut self) -> Task<Message> {
+        if let Some(window_id) = self.about_window_id {
+            return iced::window::gain_focus(window_id);
+        }
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(440.0, 280.0),
+            min_size: Some(iced::Size::new(400.0, 240.0)),
+            ..iced::window::Settings::default()
+        });
+        self.about_window_id = Some(window_id);
+        task.discard()
     }
 
     fn open_settings(&mut self) -> Task<Message> {
@@ -8507,7 +8533,7 @@ impl App {
     }
 
     fn navigate_main_menu(&mut self, navigation: MenuNavigation) -> Task<Message> {
-        const MENUS: [MainMenu; 8] = [
+        const MENUS: [MainMenu; 9] = [
             MainMenu::File,
             MainMenu::Edit,
             MainMenu::View,
@@ -8516,6 +8542,7 @@ impl App {
             MainMenu::Track,
             MainMenu::Options,
             MainMenu::Actions,
+            MainMenu::Help,
         ];
         match navigation {
             MenuNavigation::OpenMenu(menu) => self.open_main_menu(menu),
@@ -9677,6 +9704,9 @@ fn menu_navigation_event(
             }
             iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("f") => {
                 Some(MainMenu::File)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("h") => {
+                Some(MainMenu::Help)
             }
             iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("i") => {
                 Some(MainMenu::Insert)

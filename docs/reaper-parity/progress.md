@@ -509,3 +509,9 @@ AAADAW 已移除不匹配的 F10 菜单行为，为当前已有的 File/Edit/Vie
 将现有 Preferences 窗口从 File 移到原厂 Options 菜单，显示原厂 `Preferences...` 与 `Ctrl+P`；保留原有 `file.settings` 稳定动作 ID，避免丢失已保存的快捷键绑定。把已有的 40621 loop-link 功能加入 Options，按 `loop_points_linked` 显示勾选态；执行后沿用全局 `loop-time-preferences.json` 防抖持久化，不误增工程修订。主菜单增加 Options 与 `Alt+O`，左右切换顺序现包含 File/Edit/View/Insert/Item/Track/Options/Actions。
 
 新增回归覆盖 Options 命令和勾选状态变更、Alt+O、菜单栏项及左右导航；nightly+Cranelift（独立 `target/cranelift`、测试调试符号关闭）定向 nextest 为 5/5 passed、496 skipped。Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、`git diff --check` 及 72 项/15 列 parity CSV 唯一 ID/证据路径检查通过。`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：Help 和 `Alt+H`、九项完整菜单顺序、Options 其余大量功能、Item/Track 命令及原厂全菜单视觉/焦点行为仍未完成。
+
+### 2026-10-13 Help 菜单与 About
+
+新增第九项 Help 和原厂 `Alt+H`；Help 的 Action list and shortcuts 项复用现有 Action List，About AAADAW 打开单实例应用信息窗口，`Ctrl+F1` 也打开 About。About 展示应用名称、当前版本和项目地址；窗口可由关闭按钮或系统关闭事件清理，不影响工程状态。菜单顺序现在是 File/Edit/View/Insert/Item/Track/Options/Actions/Help。
+
+Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cranelift nextest 为 6/6 passed、496 skipped；stable all-target strict Clippy、fmt、diff 与 parity CSV 检查通过。`SHELL-MENU-KEYBOARD-001` 仍 `in_progress`：Help 原厂 Documentation、键鼠绑定、HTML Action List、ReaScript、EULA、购买信息、changelog 和更新检查缺失；Options 其余功能、Item/Track 内容、所有状态/禁用项和完整原厂 GUI 验收也未完成。

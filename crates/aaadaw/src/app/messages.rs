@@ -53,6 +53,7 @@ pub(crate) enum MainMenu {
     Track,
     Options,
     Actions,
+    Help,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +174,8 @@ pub(crate) enum Message {
     ToggleMediaBrowserPanel,
     ToggleMixerPanel,
     OpenSettings,
+    OpenAbout,
+    CloseAbout,
     OpenActionList,
     OpenActionMacroEditor,
     CloseActionList,

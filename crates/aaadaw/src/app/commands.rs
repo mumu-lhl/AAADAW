@@ -19,6 +19,7 @@ pub(crate) enum CommandId {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenAbout,
     OpenProjectSettings,
     OpenActionList,
     Undo,
@@ -104,6 +105,7 @@ enum CommandKind {
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
+    OpenAbout,
     OpenProjectSettings,
     OpenActionList,
     Undo,
@@ -158,6 +160,7 @@ struct CommandDefinition {
 }
 
 const ACTION_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('/', Modifiers::SHIFT)];
+const ABOUT_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F1, Modifiers::CTRL)];
 const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::COMMAND)];
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
 const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
@@ -297,6 +300,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: PREFERENCES_SHORTCUT,
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenAbout,
+        menu: Some(MainMenu::Help),
+        category: "Help",
+        label: "About AAADAW...",
+        aliases: &["about", "about aaadaw", "version"],
+        shortcuts: ABOUT_SHORTCUT,
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::OpenActionList,
@@ -973,6 +986,7 @@ const COMMANDS: &[CommandDefinition] = &[
     },
 ];
 
+#[derive(Clone)]
 pub(super) struct CommandEntry {
     pub(super) id: CommandId,
     pub(super) category: &'static str,
@@ -1102,11 +1116,24 @@ fn macro_step_supported(kind: CommandKind) -> bool {
 }
 
 pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
-    entries(app)
-        .into_iter()
+    let all_entries = entries(app);
+    let mut menu_entries = all_entries
+        .iter()
         .filter(|entry| entry.section == Some(menu))
-        .map(|entry| entry.command)
-        .collect()
+        .map(|entry| entry.command.clone())
+        .collect::<Vec<_>>();
+    if menu == MainMenu::Help
+        && let Some(mut action_list) = all_entries
+            .into_iter()
+            .find(|entry| entry.command.id == CommandId::OpenActionList)
+            .map(|entry| entry.command)
+    {
+        action_list.category = "Help";
+        action_list.label = "Action list and shortcuts...".to_owned();
+        action_list.separator_before = false;
+        menu_entries.insert(0, action_list);
+    }
+    menu_entries
 }
 
 pub(super) fn for_actions_menu(app: &App) -> Vec<CommandEntry> {
@@ -1206,6 +1233,7 @@ fn default_may_yield(kind: CommandKind) -> bool {
     matches!(
         kind,
         CommandKind::OpenActionList
+            | CommandKind::OpenAbout
             | CommandKind::OpenProjectSettings
             | CommandKind::OpenItemProperties
             | CommandKind::ToggleItemProperties
@@ -1535,6 +1563,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
+        CommandKind::OpenAbout => "help.about",
         CommandKind::OpenProjectSettings => "file.project-settings",
         CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
@@ -1644,6 +1673,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ExportWav => Message::OpenRenderWindow,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
+        CommandId::OpenAbout => Message::OpenAbout,
         CommandId::OpenProjectSettings => Message::OpenProjectSettings,
         CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
@@ -1901,6 +1931,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings
+        | CommandKind::OpenAbout
         | CommandKind::OpenProjectSettings
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
@@ -2097,6 +2128,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
+        CommandKind::OpenAbout => CommandId::OpenAbout,
         CommandKind::OpenProjectSettings => CommandId::OpenProjectSettings,
         CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
