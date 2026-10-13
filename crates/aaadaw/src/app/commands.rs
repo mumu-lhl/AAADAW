@@ -506,6 +506,7 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Loop points linked to time selection",
         aliases: &[
             "toggle loop points linked",
+            "toggle loop points linked to time selection",
             "link loop points to time selection",
         ],
         shortcuts: &[],
@@ -1317,14 +1318,14 @@ pub(super) fn validate_bindings_with_macros(
         let Some(value) = bindings.get(id) else {
             continue;
         };
-        insert_normalized_binding(id, value, &mut resolved, &mut normalized_bindings)?;
+        insert_normalized_binding(id, value, true, &mut resolved, &mut normalized_bindings)?;
     }
     for action_macro in macros {
         let id = macro_id(action_macro.id);
         let Some(value) = bindings.get(&id) else {
             continue;
         };
-        insert_normalized_binding(&id, value, &mut resolved, &mut normalized_bindings)?;
+        insert_normalized_binding(&id, value, false, &mut resolved, &mut normalized_bindings)?;
     }
     for definition in COMMANDS {
         let id = command_kind_id(definition.kind);
@@ -1333,9 +1334,14 @@ pub(super) fn validate_bindings_with_macros(
         }
         for shortcut in definition.shortcuts {
             // Adding a new factory binding must not invalidate older custom maps.
-            if default_may_yield(definition.kind)
-                && resolved.iter().any(|(bound, _)| shortcut.conflicts(*bound))
-            {
+            if resolved.iter().any(|(bound, bound_id)| {
+                shortcut.conflicts(*bound)
+                    && (default_may_yield(definition.kind)
+                        || (bindings.contains_key(bound_id)
+                            && COMMANDS
+                                .iter()
+                                .any(|candidate| command_kind_id(candidate.kind) == bound_id)))
+            }) {
                 continue;
             }
             let allow_reserved_default = matches!(
@@ -1373,12 +1379,24 @@ fn register_shortcut(
 fn insert_normalized_binding(
     id: &str,
     value: &str,
+    allow_action_conflicts: bool,
     resolved: &mut Vec<(Shortcut, String)>,
     normalized_bindings: &mut ShortcutBindings,
 ) -> Result<(), String> {
     let shortcuts = parse_bindings(value)?;
     for shortcut in &shortcuts {
-        register_shortcut(*shortcut, id, resolved, false)?;
+        if shortcut.is_reserved() {
+            return Err("Escape is reserved for cancelling the current operation".to_owned());
+        }
+        if let Some((_, other_id)) = resolved.iter().find(|(other, other_id)| {
+            shortcut.conflicts(*other) && (!allow_action_conflicts || other_id == id)
+        }) {
+            return Err(format!(
+                "{} is already assigned to both {other_id} and {id}",
+                shortcut.config_label()
+            ));
+        }
+        resolved.push((*shortcut, id.to_owned()));
     }
     normalized_bindings.insert(id.to_owned(), serialize_bindings(&shortcuts));
     Ok(())
@@ -2402,6 +2420,16 @@ mod macro_tests {
         assert!(
             validate_bindings_with_macros(
                 &ShortcutBindings::from([("macro.999".to_owned(), "Mod+M".to_owned())]),
+                &macros,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_bindings_with_macros(
+                &ShortcutBindings::from([
+                    ("edit.undo".to_owned(), "Mod+M".to_owned()),
+                    ("macro.23".to_owned(), "Mod+M".to_owned()),
+                ]),
                 &macros,
             )
             .is_err()

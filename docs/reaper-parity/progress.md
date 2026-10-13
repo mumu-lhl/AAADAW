@@ -515,3 +515,9 @@ AAADAW 已移除不匹配的 F10 菜单行为，为当前已有的 File/Edit/Vie
 新增第九项 Help 和原厂 `Alt+H`；Help 的 Action list and shortcuts 项复用现有 Action List，About AAADAW 打开单实例应用信息窗口，`Ctrl+F1` 也打开 About。About 展示应用名称、当前版本和项目地址；窗口可由关闭按钮或系统关闭事件清理，不影响工程状态。菜单顺序现在是 File/Edit/View/Insert/Item/Track/Options/Actions/Help。
 
 Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cranelift nextest 为 6/6 passed、496 skipped；stable all-target strict Clippy、fmt、diff 与 parity CSV 检查通过。`SHELL-MENU-KEYBOARD-001` 仍 `in_progress`：Help 原厂 Documentation、键鼠绑定、HTML Action List、ReaScript、EULA、购买信息、changelog 和更新检查缺失；Options 其余功能、Item/Track 内容、所有状态/禁用项和完整原厂 GUI 验收也未完成。
+
+### 2026-10-13 Action List 重复快捷键
+
+针对 REAPER 7.82 实测中 Undo 与 Show undo history 同时保留 `Ctrl+Alt+7` 的结果，AAADAW 现在允许不同普通动作保留相同快捷键。Action List 提交和 Settings 捕获都经过同一配置校验；Undo 显式设为 `Mod+S` 后，Save project 的工厂默认值仍显示为 `Mod+S`，按键解析优先执行显式 Undo。不同普通动作的显式映射也会同时保存在配置中。宏与普通动作、多个宏之间的快捷键冲突仍拒绝；Escape 保留规则、未知 action ID、非法键和保存失败的原子性没有放宽。
+
+6 项 nightly+Cranelift 定向回归通过，覆盖 Action List 持久化、Settings 捕获、显式/工厂映射重复、普通动作重复、旧键重叠规则和宏冲突；随后 `aaadaw` 全部 502 项测试通过、0 跳过。Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 检查及 parity CSV/证据链接检查也通过。`INPUT-BIND-001` 仍 `in_progress`：实测仅证明显式 Undo 在一个默认动作重复例子中的优先关系；所有重复绑定的 Section/宏/用户动作/工厂默认优先级、Main 以外 Section、默认动作完整覆盖、特殊键/Scope/MIDI/OSC、导入导出与原厂界面验收仍未完成。

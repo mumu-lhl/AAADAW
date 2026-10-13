@@ -479,7 +479,8 @@ fn loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions() {
         ),
     ];
     for (query, stable_id) in commands_to_check {
-        let command = commands::find(&app, query).expect("loop/time action should be searchable");
+        let command = commands::find(&app, query)
+            .unwrap_or_else(|| panic!("loop/time action should be searchable: {query}"));
         assert_eq!(commands::stable_id(command).as_deref(), Some(stable_id));
     }
     for (command, shortcut) in [
@@ -3413,7 +3414,7 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
 }
 
 #[test]
-fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_binding() {
+fn settings_menu_opens_one_window_and_accepts_duplicate_shortcut_bindings() {
     let mut app = App::default();
     assert!(
         commands::for_menu(&app, MainMenu::Options)
@@ -3436,34 +3437,32 @@ fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_
     let _ = app.update(Message::ExecuteCommand(CommandId::OpenSettings));
     assert_eq!(app.settings_window_id, settings_window_id);
 
-    let original = app.shortcut_binding_edits.get("edit.undo").cloned();
     let _ = app.update(Message::StartShortcutCapture("edit.undo".to_owned()));
     let _ = app.update(Message::ShortcutCaptureKey {
         action_id: "edit.undo".to_owned(),
         key: "s".to_owned(),
         modifiers: Modifiers::COMMAND,
     });
-    assert_eq!(
-        app.shortcut_binding_edits.get("edit.undo").cloned(),
-        original
-    );
-    assert!(app.shortcut_capture_id.is_some());
-    assert!(app.shortcut_editor_feedback.contains("Save project"));
-
-    let _ = app.update(Message::ShortcutCaptureKey {
-        action_id: "edit.undo".to_owned(),
-        key: "u".to_owned(),
-        modifiers: Modifiers::COMMAND,
-    });
+    assert_eq!(app.shortcut_capture_id, None);
     assert_eq!(
         app.shortcut_binding_edits
             .get("edit.undo")
             .map(String::as_str),
-        Some("Mod+U")
+        Some("Mod+S")
     );
     assert!(
         app.shortcut_editor_feedback
-            .contains(&commands::format_shortcut_label("Mod+U"))
+            .contains(&commands::format_shortcut_label("Mod+S"))
+    );
+    let validated = commands::validate_bindings(&app.shortcut_binding_edits).unwrap();
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("s"),
+            Modifiers::COMMAND,
+            &validated,
+            &app.action_macros,
+        ),
+        Some(CommandId::Undo)
     );
 
     let _ = app.update(Message::ClearShortcutBinding("edit.undo".to_owned()));
@@ -4120,7 +4119,7 @@ fn track_context_instrument_picker_assigns_only_instruments_through_undoable_act
 }
 
 #[test]
-fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
+fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_duplicate_bindings() {
     let bindings = HashMap::from([
         ("edit.undo".to_owned(), "Mod+U".to_owned()),
         ("file.save-project".to_owned(), "Mod+Shift+S".to_owned()),
@@ -4150,7 +4149,9 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
         ("edit.undo".to_owned(), "Mod+X".to_owned()),
         ("file.save-project".to_owned(), "Mod+X".to_owned()),
     ]);
-    assert!(commands::validate_bindings(&conflicting).is_err());
+    let duplicate = commands::validate_bindings(&conflicting).unwrap();
+    assert_eq!(duplicate["edit.undo"], "Mod+X");
+    assert_eq!(duplicate["file.save-project"], "Mod+X");
     assert!(
         commands::validate_bindings(&HashMap::from([(
             "file.typo".to_owned(),
@@ -4168,7 +4169,7 @@ fn configurable_shortcuts_drive_dispatch_and_menu_hints_with_conflict_checks() {
 }
 
 #[test]
-fn shortcut_alternatives_dispatch_named_keys_and_detect_legacy_overlap() {
+fn shortcut_alternatives_dispatch_named_keys_and_allow_action_duplicates() {
     assert!(
         commands::validate_bindings(&HashMap::from([(
             "edit.undo".to_owned(),
@@ -4204,19 +4205,20 @@ fn shortcut_alternatives_dispatch_named_keys_and_detect_legacy_overlap() {
             Some(Message::ExecuteCommand(CommandId::Undo))
         ));
     }
+    // Existing factory defaults do not make otherwise valid user chords fail.
     assert!(
         commands::validate_bindings(&HashMap::from([(
             "edit.undo".to_owned(),
             "F1; Backspace".to_owned(),
         )]))
-        .is_err()
+        .is_ok()
     );
     assert!(
         commands::validate_bindings(&HashMap::from([
             ("edit.undo".to_owned(), "Alt+F1; Alt+F2".to_owned()),
             ("file.save-project".to_owned(), "Alt+F2".to_owned()),
         ]))
-        .is_err()
+        .is_ok()
     );
 }
 
@@ -4351,7 +4353,7 @@ fn focused_track_name_editor_routes_native_text_escape_and_undo_keys() {
 }
 
 #[test]
-fn shortcut_add_capture_preserves_existing_bindings_and_rejected_candidates() {
+fn shortcut_add_capture_preserves_existing_bindings_and_duplicate_candidates() {
     let mut app = App::default();
     let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));
     let _ = app.update(Message::ShortcutCaptureKey {
@@ -4376,11 +4378,10 @@ fn shortcut_add_capture_preserves_existing_bindings_and_rejected_candidates() {
         key: "F12".to_owned(),
         modifiers: Modifiers::ALT,
     });
-    assert_eq!(app.shortcut_binding_edits, saved);
-    assert!(app.shortcut_editor_feedback.contains("already assigned"));
-    assert!(app.shortcut_capture_id.is_some());
-    let _ = app.update(Message::CancelShortcutCapture);
-    assert_eq!(app.shortcut_binding_edits, saved);
+    assert_ne!(app.shortcut_binding_edits, saved);
+    assert_eq!(app.shortcut_binding_edits["edit.undo"], "Mod+Z; Alt+F12");
+    assert!(app.shortcut_binding_edits["file.save-project"].contains("Alt+F12"));
+    assert!(app.shortcut_capture_id.is_none());
 }
 
 #[test]

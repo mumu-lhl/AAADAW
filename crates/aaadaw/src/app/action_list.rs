@@ -330,22 +330,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn action_list_binding_commit_is_atomic_on_conflict_and_save_failure() {
+    fn action_list_binding_commit_accepts_duplicate_and_save_failure_is_atomic() {
         let mut app = App::default();
         app.shortcut_binding_edits
             .insert("file.open-project".into(), "Alt+O".into());
-        let conflict = shortcut::parse_bindings("Mod+S").unwrap();
+        // REAPER keeps both an explicitly assigned action and the factory
+        // action that already uses the same chord in the Action List.
+        let duplicate = shortcut::parse_bindings("Mod+S").unwrap();
         assert!(
-            !app.commit_action_list_bindings("edit.undo", &conflict, |_| panic!(
-                "conflict must not write"
-            ))
+            app.commit_action_list_bindings("edit.undo", &duplicate, |bindings| {
+                assert_eq!(bindings["edit.undo"], "Mod+S");
+                Ok(())
+            })
         );
-        assert!(app.shortcut_bindings.read().unwrap().is_empty());
+        let active = app.shortcut_bindings.read().unwrap().clone();
+        assert_eq!(active["edit.undo"], "Mod+S");
+        assert!(commands::binding_for_id("file.save-project", &active).contains("Mod+S"));
+        assert_eq!(
+            commands::from_shortcut(&Key::Character("s"), Modifiers::COMMAND, &active, &[]),
+            Some(commands::CommandId::Undo),
+            "explicit action binding takes precedence over a colliding factory default"
+        );
         let values = shortcut::parse_bindings("Mod+Z; Alt+F12").unwrap();
         assert!(
             !app.commit_action_list_bindings("edit.undo", &values, |_| Err("disk full".into()))
         );
-        assert!(app.shortcut_bindings.read().unwrap().is_empty());
+        assert_eq!(app.shortcut_bindings.read().unwrap()["edit.undo"], "Mod+S");
         assert!(app.action_list.feedback.contains("disk full"));
         assert!(
             app.commit_action_list_bindings("edit.undo", &values, |bindings| {
