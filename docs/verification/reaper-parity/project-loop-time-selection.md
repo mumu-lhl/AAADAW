@@ -10,12 +10,16 @@
 
 未链接时的原厂画面见[Arrange 截图](fixtures/loop-time-selection-unlinked-native.png)：Time Selection 仍以 Arrange 区域色带显示；独立 Loop points 在标尺下方以窄横向括线和两端手柄显示，不在轨道区画两条全高边线或给循环区间着色。
 
+用原厂鼠标在底栏拖动单独端点：未链接时把 Loop start 从 3 秒拖到 2.5 秒，只改变 Loop points，Time Selection 仍为 `[1,2]`；重新建立基线后把 Loop end 从 4 秒拖到 4.5 秒，同样只改变 Loop points。逐阶段结果和可复现的手动探针见[端点拖动 TSV](fixtures/loop-point-drag-native.tsv)与[拖动探针](../../../scripts/reaper_parity/probe-loop-point-drag.lua)。
+
 ## AAADAW 当前实现
 
 Timeline 维护单独的 `time_selection`、`loop_points` 与 `loop_points_linked` 状态。Loop points 允许零长度，以保留原厂在编辑光标越过另一端后的折叠结果。默认链接开启；通过现有选区手势更新 Time Selection 时，链接状态会同步 Loop points；设置端点或代码层设置 Loop points 时也按相同规则同步 Time Selection。Action List 加入 40222/40223、40621/40622/40623/40624/40634/40635、40020 对应操作，40222/40223 分别默认绑定 `{`/`}`，40020 的 Escape 行为通过全局取消路径清除两种范围。
 
-这只是状态与动作基础，尚不构成完整 loop 功能：当前没有独立 loop-point 标尺绘制/拖动、Action List 的链接勾选状态、播放循环、Repeat 与 Transport 联动、配置持久化、工程保存恢复、Ruler/Edit cursor/Tempo/Meter/timebase 边界测试或 REAPER 原厂窗口视觉对照。项目加载时按现有 Time Selection 生命周期清空两个范围；保存语义尚待单独对照。
+Ruler 现在按 Default 7 底栏绘制窄括线与两端手柄；拖动任一端点时显示预览，释放时一次性提交新范围，按链接状态同步 Time Selection。实窗截图[AAADAW Loop/Time Selection](fixtures/loop-time-selection-aaadaw.png)在未链接的 `[1,2]` Time Selection 与 `[3,4]` Loop points 下显示该底栏；它与原厂截图的窗口尺寸/缩放不同，不作为完整窗口几何验收。
+
+这仍不构成完整 loop 功能：空白底栏创建范围、整段移动、鼠标修饰键与所有 Snap 边界尚未确认/实现；Action List 的链接勾选状态、播放循环、Repeat 与 Transport 联动、配置持久化、工程保存恢复、Tempo/Meter/timebase 边界及完整 REAPER 原厂窗口视觉对照仍待完成。项目加载时按现有 Time Selection 生命周期清空两个范围；保存语义尚待单独对照。
 
 ## 验证
 
-`loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions` 覆盖默认链接、链接建立/解除、解除后的独立编辑、双向复制、条件清除与链接清除、Escape 和端点设置，以及 Action List 稳定 ID。最终全 workspace 验证结果记录在 [`progress.md`](../../reaper-parity/progress.md)；本功能没有创建/修改实时音频数据路径。
+`loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions` 覆盖链接/复制/清除动作，`loop_point_handles_only_hit_the_bottom_ruler_lane_and_keep_endpoint_order` 覆盖手柄命中及交越折叠，`ruler_loop_start_handle_previews_and_publishes_a_loop_endpoint_drag` 覆盖 Canvas 拖动预览与释放提交。针对新手势用例 2/2 通过；最终全 workspace 验证结果记录在 [`progress.md`](../../reaper-parity/progress.md)。该功能没有创建/修改实时音频数据路径。
