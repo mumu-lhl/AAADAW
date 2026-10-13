@@ -2,7 +2,7 @@
 
 ## 判定与证据
 
-对齐矩阵的原子条目状态为：`uninvestigated`、`unimplemented`、`partial`、`verification_pending`、`passed`。`blocked` 字段独立表达依赖阻断，不使未完成条目离开分母。
+对齐矩阵的原子条目状态为：`uninvestigated`、`in_progress`、`unimplemented`、`partial`、`verification_pending`、`passed`。`in_progress` 表示正在实施或核验；`uninvestigated` 表示尚未形成可复核的参照/实现结论；`unimplemented` 表示已确认缺少功能；`partial` 表示已有实现但已知行为范围不完整；`verification_pending` 表示实现候选已完成、仍缺验收证据；`passed` 仅用于全部适用维度通过。`blocked` 字段独立表达依赖阻断，不使未完成条目离开分母。
 
 每项至少有参照证据、AAADAW 证据、明确断言、适用平台和执行结果。类别行只作索引，不计算覆盖率。P0 未封闭前不发布总体百分比；Linux、Windows、macOS 分别报告适用分母和结果，不以某一平台代替其他平台。
 

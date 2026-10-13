@@ -4200,6 +4200,80 @@ fn shortcut_named_key_events_reach_project_actions_without_losing_focus_guards()
 }
 
 #[test]
+fn focused_track_name_editor_routes_native_text_escape_and_undo_keys() {
+    let window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let first_track = app.project.tracks()[0].id();
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SetTimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        });
+    let selected_ranges = (app.timeline.time_selection, app.timeline.loop_points);
+    app.begin_track_draft(first_track, super::TrackDraftField::Name);
+    app.track_name_edits.insert(first_track, "draft".to_owned());
+
+    let space = test_input_event(test_shortcut_input(
+        Key::Character(" ".into()),
+        Modifiers::NONE,
+    ));
+    assert!(
+        keyboard_shortcut_event(
+            space.clone(),
+            iced::event::Status::Captured,
+            window,
+            Some(window),
+            None,
+            None,
+        )
+        .is_none()
+    );
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        space,
+        iced::event::Status::Captured,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.timeline.time_selection, selected_ranges.0);
+
+    let escape = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Escape),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        escape,
+        iced::event::Status::Captured,
+        window,
+    ));
+    assert!(app.active_track_draft.is_none());
+    assert_eq!(app.timeline.time_selection, selected_ranges.0);
+    assert_eq!(app.timeline.loop_points, selected_ranges.1);
+
+    let _ = app.update(Message::AddTrack);
+    let second_track = app.project.tracks()[1].id();
+    app.begin_track_draft(second_track, super::TrackDraftField::Name);
+    app.track_name_edits
+        .insert(second_track, "draft".to_owned());
+    let undo = test_input_event(test_shortcut_input(
+        Key::Character("z".into()),
+        Modifiers::CTRL,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        undo,
+        iced::event::Status::Ignored,
+        window,
+    ));
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].id(), first_track);
+    assert_eq!(app.timeline.time_selection, selected_ranges.0);
+    assert_eq!(app.timeline.loop_points, selected_ranges.1);
+}
+
+#[test]
 fn shortcut_add_capture_preserves_existing_bindings_and_rejected_candidates() {
     let mut app = App::default();
     let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));

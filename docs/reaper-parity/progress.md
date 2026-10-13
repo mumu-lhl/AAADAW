@@ -491,3 +491,9 @@ Loop 链接状态专项 1/1 通过；映射后 workspace nightly+Cranelift nexte
 动作目录确认 REAPER 7.82 Main section 有 `Go to start of loop` 40632 和 `Go to end of loop` 40633。隔离 Default 7 ReaScript 从 4 秒光标开始验证：无 Loop points 时两项均保持 4 秒；Loop 为 `[1,2]` 秒时分别移至 1 秒与 2 秒。原始值见[Loop 导航 TSV](../verification/reaper-parity/fixtures/loop-navigation-native.tsv)，探针见[脚本](../../scripts/reaper_parity/probe-loop-navigation.lua)。AAADAW 将二者加入 Action List；有范围时定位到起点/终点，无范围时保持编辑光标不变，不改 Loop 范围或工程修订。播放期间导航行为仍待实测。
 
 专项 `loop_cursor_actions_jump_to_existing_boundaries_and_noop_without_a_loop` 已通过，覆盖范围存在/缺失和无工程修改；原厂已验证停止状态下无范围保持光标不变、有范围时定位对应端点。nightly+Cranelift workspace nextest 为 964/964 passed、0 skipped（66 个测试二进制），Stable all-target check、strict Clippy `-D warnings`、71 项/15 列 parity CSV 和 diff 检查通过。Cranelift 显示既有 iced/wgpu 递归深度 warning，Stable Clippy 无警告。PROJECT-LOOP-001、P4 和 P6 继续 `in_progress`；播放期间导航及安全的 Repeat 播放仍待验证/实现。
+
+### 2026-10-13 主窗口文本焦点与全局快捷键分流
+
+Linux REAPER 7.82 / Default 7 原厂界面验证轨道名称编辑焦点：Space 和普通字符进入名称框且不启动播放；Ctrl+Z 穿透并撤销最近插入的轨道；Escape 关闭名称编辑器且保留标尺范围。逐步结果与三张原厂截图见[焦点验收记录](../verification/reaper-parity/input-focus.md)；40696/40001 的动作名和编号来自固定版导出。
+
+AAADAW 已按控件事件状态分流文本与全局按键。本切片增加 `focused_track_name_editor_routes_native_text_escape_and_undo_keys`，覆盖被输入控件消费的 Space、Escape 的草稿取消及范围保留、未消费 Ctrl+Z 对应全局 Undo。nightly+Cranelift 定向 nextest 1/1 passed；stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、71 项/15 列矩阵、证据链接和 `git diff --check` 通过。该结果只覆盖 Arrange 轨道名称编辑；Action List/脚本编辑、其它文本字段、AltGr/键盘布局、插件和子窗口焦点仍待逐项核验，INPUT-FOCUS-001 继续 `in_progress`。
