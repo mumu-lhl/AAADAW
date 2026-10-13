@@ -3527,7 +3527,7 @@ impl App {
                             self.navigate_back_mobile_panel();
                         } else {
                             self.timeline
-                                .handle(timeline::TimelineEvent::ClearTimeSelection);
+                                .handle(timeline::TimelineEvent::ClearTimeSelectionAndLoopPoints);
                         }
                     }
                 }
@@ -4566,6 +4566,7 @@ impl App {
                         self.timeline.selected_track = None;
                         self.timeline.selected_tracks.clear();
                         self.timeline.time_selection = None;
+                        self.timeline.loop_points = None;
                         self.timeline.origin_tick = 0;
                         self.timeline.edit_cursor_tick = 0;
                         self.timeline.vertical_scroll = 0.0;
@@ -5324,6 +5325,7 @@ impl App {
         self.timeline.selected_item = None;
         self.timeline.selected_items.clear();
         self.timeline.time_selection = None;
+        self.timeline.loop_points = None;
         self.timeline.origin_tick = 0;
         self.timeline.edit_cursor_tick = 0;
         self.timeline.vertical_scroll = 0.0;

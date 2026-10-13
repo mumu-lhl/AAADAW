@@ -438,6 +438,188 @@ fn region_cursor_actions_edit_delete_and_undo_with_project_busy_guard() {
 }
 
 #[test]
+fn loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions() {
+    let mut app = App::default();
+    let range = |start_tick, end_tick| crate::timeline::TimeSelection {
+        start_tick,
+        end_tick,
+    };
+    let loop_range = |start_tick, end_tick| crate::timeline::LoopPoints {
+        start_tick,
+        end_tick,
+    };
+    assert!(app.timeline.loop_points_linked);
+    assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.loop_points, None);
+
+    let commands_to_check = [
+        ("set loop start point", "loop-time.set-start"),
+        ("set loop end point", "loop-time.set-end"),
+        (
+            "toggle loop points linked to time selection",
+            "loop-time.toggle-link",
+        ),
+        (
+            "move loop points to time selection",
+            "loop-time.loop-to-time-selection",
+        ),
+        (
+            "move time selection to loop points",
+            "loop-time.time-selection-to-loop",
+        ),
+        (
+            "remove loop points if unlinked",
+            "loop-time.remove-loop-if-unlinked",
+        ),
+        ("remove loop points", "loop-time.remove-loop"),
+        ("remove time selection", "loop-time.remove-time-selection"),
+        (
+            "remove time selection and loop points",
+            "loop-time.remove-time-selection-and-loop",
+        ),
+    ];
+    for (query, stable_id) in commands_to_check {
+        let command = commands::find(&app, query).expect("loop/time action should be searchable");
+        assert_eq!(commands::stable_id(command).as_deref(), Some(stable_id));
+    }
+    for (command, shortcut) in [
+        (
+            CommandId::LoopTime(super::commands::LoopTimeCommand::SetStartAtCursor),
+            "Shift+{",
+        ),
+        (
+            CommandId::LoopTime(super::commands::LoopTimeCommand::SetEndAtCursor),
+            "Shift+}",
+        ),
+    ] {
+        let entry = commands::for_actions_menu(&app)
+            .into_iter()
+            .find(|entry| entry.id == command)
+            .expect("loop endpoint action should be in the Actions list");
+        assert_eq!(entry.shortcut.as_deref(), Some(shortcut));
+    }
+    let clear_both = commands::for_actions_menu(&app)
+        .into_iter()
+        .find(|entry| {
+            entry.id
+                == CommandId::LoopTime(super::commands::LoopTimeCommand::RemoveTimeSelectionAndLoop)
+        })
+        .expect("Escape action should remain visible in the Actions list");
+    assert_eq!(clear_both.shortcut.as_deref(), Some("Escape"));
+    assert!(matches!(
+        shortcut_message(Key::Character("{"), Modifiers::SHIFT, &HashMap::new(),),
+        Some(Message::ExecuteCommand(CommandId::LoopTime(
+            super::commands::LoopTimeCommand::SetStartAtCursor
+        )))
+    ));
+    let run_action = |app: &mut App, query: &str| {
+        let command = commands::find(app, query).expect("loop/time action should be registered");
+        let _ = commands::dispatch(app, command);
+    };
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 100,
+        end_tick: 200,
+    }));
+    assert_eq!(app.timeline.time_selection, Some(range(100, 200)));
+    assert_eq!(app.timeline.loop_points, Some(loop_range(100, 200)));
+
+    run_action(&mut app, "toggle loop points linked to time selection");
+    assert!(!app.timeline.loop_points_linked);
+    assert_eq!(app.timeline.loop_points, Some(loop_range(100, 200)));
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 300,
+        end_tick: 400,
+    }));
+    assert_eq!(app.timeline.time_selection, Some(range(300, 400)));
+    assert_eq!(app.timeline.loop_points, Some(loop_range(100, 200)));
+    run_action(&mut app, "move loop points to time selection");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(300, 400)));
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetLoopPoints {
+        start_tick: 500,
+        end_tick: 600,
+    }));
+    run_action(&mut app, "move time selection to loop points");
+    assert_eq!(app.timeline.time_selection, Some(range(500, 600)));
+
+    run_action(&mut app, "remove loop points if unlinked");
+    assert_eq!(app.timeline.loop_points, None);
+    assert_eq!(app.timeline.time_selection, Some(range(500, 600)));
+
+    run_action(&mut app, "toggle loop points linked to time selection");
+    assert!(app.timeline.loop_points_linked);
+    assert_eq!(app.timeline.loop_points, Some(loop_range(500, 600)));
+    run_action(&mut app, "remove loop points if unlinked");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(500, 600)));
+    run_action(&mut app, "remove loop points");
+    assert_eq!(app.timeline.loop_points, None);
+    assert_eq!(app.timeline.time_selection, None);
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetLoopPoints {
+        start_tick: 700,
+        end_tick: 800,
+    }));
+    assert_eq!(app.timeline.time_selection, Some(range(700, 800)));
+    run_action(&mut app, "remove time selection");
+    assert_eq!(app.timeline.loop_points, None);
+    assert_eq!(app.timeline.time_selection, None);
+
+    run_action(&mut app, "toggle loop points linked to time selection");
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 900,
+        end_tick: 1_000,
+    }));
+    let _ = app.update(Message::Timeline(TimelineEvent::ToggleLoopPointsLinked));
+    let _ = app.update(Message::Timeline(TimelineEvent::SetLoopPoints {
+        start_tick: 1_100,
+        end_tick: 1_200,
+    }));
+    run_action(&mut app, "remove time selection and loop points");
+    assert_eq!(app.timeline.loop_points, None);
+    assert_eq!(app.timeline.time_selection, None);
+
+    run_action(&mut app, "toggle loop points linked to time selection");
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 1_300,
+        end_tick: 1_400,
+    }));
+    let _ = app.update(Message::Timeline(TimelineEvent::SetLoopPoints {
+        start_tick: 1_500,
+        end_tick: 1_600,
+    }));
+    let _ = app.update(Message::Escape);
+    assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.loop_points, None);
+
+    app.timeline.edit_cursor_tick = 500;
+    run_action(&mut app, "set loop start point");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(500, 500)));
+    assert_eq!(app.timeline.time_selection, None);
+    app.timeline.edit_cursor_tick = 700;
+    run_action(&mut app, "set loop end point");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(500, 700)));
+    let _ = app.update(Message::Timeline(TimelineEvent::ClearLoopPoints));
+    run_action(&mut app, "set loop end point");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(0, 700)));
+
+    run_action(&mut app, "toggle loop points linked to time selection");
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 100,
+        end_tick: 200,
+    }));
+    app.timeline.edit_cursor_tick = 150;
+    run_action(&mut app, "set loop start point");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(150, 200)));
+    assert_eq!(app.timeline.time_selection, Some(range(150, 200)));
+    app.timeline.edit_cursor_tick = 175;
+    run_action(&mut app, "set loop end point");
+    assert_eq!(app.timeline.loop_points, Some(loop_range(150, 175)));
+    assert_eq!(app.timeline.time_selection, Some(range(150, 175)));
+}
+
+#[test]
 fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() {
     let mut app = App::default();
     app.project
@@ -2164,6 +2346,13 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
             end_tick: 960,
         },
     ));
+    assert_eq!(
+        app.timeline.loop_points,
+        Some(crate::timeline::LoopPoints {
+            start_tick: 240,
+            end_tick: 960,
+        })
+    );
     app.timeline.edit_cursor_tick = 720;
     let _ = app.update(Message::ToggleMainMenu(MainMenu::Item));
     let _ = app.update(Message::Escape);
@@ -2172,6 +2361,7 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
 
     let _ = app.update(Message::Escape);
     assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.loop_points, None);
     assert_eq!(app.timeline.edit_cursor_tick, 720);
     assert_eq!(app.timeline.selected_track, Some(track_id));
 }
@@ -2223,6 +2413,8 @@ fn loading_a_project_clears_the_previous_time_selection() {
     ));
 
     assert_eq!(app.timeline.time_selection, None);
+    assert_eq!(app.timeline.loop_points, None);
+    assert!(app.timeline.loop_points_linked);
 }
 
 #[test]

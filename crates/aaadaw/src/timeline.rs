@@ -263,6 +263,17 @@ pub(crate) enum TimelineEvent {
         end_tick: u64,
     },
     ClearTimeSelection,
+    SetLoopPoints {
+        start_tick: u64,
+        end_tick: u64,
+    },
+    SetLoopPointStartAtCursor,
+    SetLoopPointEndAtCursor,
+    ToggleLoopPointsLinked,
+    MoveLoopPointsToTimeSelection,
+    ClearLoopPointsIfUnlinked,
+    ClearLoopPoints,
+    ClearTimeSelectionAndLoopPoints,
     ToggleSnap,
     SetSnapGrid(SnapGrid),
     ToggleMidiEditorSnap,
@@ -323,6 +334,12 @@ pub(crate) enum ItemKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TimeSelection {
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoopPoints {
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
 }
@@ -770,6 +787,8 @@ pub(crate) struct TimelineState {
     pub(crate) selected_items: HashSet<ItemId>,
     pub(crate) selected_project_marker: Option<MarkerId>,
     pub(crate) time_selection: Option<TimeSelection>,
+    pub(crate) loop_points: Option<LoopPoints>,
+    pub(crate) loop_points_linked: bool,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
     pub(crate) context_fade: Option<FadeMenuContext>,
@@ -966,6 +985,8 @@ impl Default for TimelineState {
             selected_items: HashSet::new(),
             selected_project_marker: None,
             time_selection: None,
+            loop_points: None,
+            loop_points_linked: true,
             context_track: None,
             context_item: None,
             context_fade: None,
@@ -1497,6 +1518,24 @@ impl TimelineState {
         self.cache.generation = self.cache.generation.wrapping_add(1);
     }
 
+    fn set_time_selection(&mut self, selection: Option<TimeSelection>) {
+        self.time_selection = selection;
+        if self.loop_points_linked {
+            self.loop_points = selection.map(|selection| LoopPoints {
+                start_tick: selection.start_tick,
+                end_tick: selection.end_tick,
+            });
+        }
+    }
+
+    fn set_loop_points(&mut self, loop_points: Option<LoopPoints>) {
+        self.loop_points = loop_points;
+        if self.loop_points_linked {
+            self.time_selection = loop_points
+                .and_then(|range| TimeSelection::normalized(range.start_tick, range.end_tick));
+        }
+    }
+
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
         if !matches!(event, TimelineEvent::OpenFadeMenu { .. }) {
             self.context_fade = None;
@@ -1726,7 +1765,7 @@ impl TimelineState {
                 end_ticks,
                 ..
             } => {
-                self.time_selection = TimeSelection::normalized(start_ticks, end_ticks);
+                self.set_time_selection(TimeSelection::normalized(start_ticks, end_ticks));
                 self.edit_cursor_tick = start_ticks;
             }
             TimelineEvent::EditProjectMarker { .. } => {}
@@ -1737,8 +1776,84 @@ impl TimelineState {
             TimelineEvent::SetTimeSelection {
                 start_tick,
                 end_tick,
-            } => self.time_selection = TimeSelection::normalized(start_tick, end_tick),
-            TimelineEvent::ClearTimeSelection => self.time_selection = None,
+            } => self.set_time_selection(TimeSelection::normalized(start_tick, end_tick)),
+            TimelineEvent::ClearTimeSelection => self.set_time_selection(None),
+            TimelineEvent::SetLoopPoints {
+                start_tick,
+                end_tick,
+            } => self.set_loop_points(Some(LoopPoints {
+                start_tick: start_tick.min(end_tick),
+                end_tick: start_tick.max(end_tick),
+            })),
+            TimelineEvent::SetLoopPointStartAtCursor => {
+                let cursor = self.edit_cursor_tick;
+                let current = self.loop_points.unwrap_or(LoopPoints {
+                    start_tick: cursor,
+                    end_tick: cursor,
+                });
+                let range = if cursor <= current.end_tick {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: current.end_tick,
+                    }
+                } else {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: cursor,
+                    }
+                };
+                self.set_loop_points(Some(range));
+            }
+            TimelineEvent::SetLoopPointEndAtCursor => {
+                let cursor = self.edit_cursor_tick;
+                let current = self.loop_points.unwrap_or(LoopPoints {
+                    start_tick: 0,
+                    end_tick: cursor,
+                });
+                let range = if cursor >= current.start_tick {
+                    LoopPoints {
+                        start_tick: current.start_tick,
+                        end_tick: cursor,
+                    }
+                } else {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: cursor,
+                    }
+                };
+                self.set_loop_points(Some(range));
+            }
+            TimelineEvent::ToggleLoopPointsLinked => {
+                self.loop_points_linked = !self.loop_points_linked;
+                if self.loop_points_linked {
+                    self.loop_points = self.time_selection.map(|selection| LoopPoints {
+                        start_tick: selection.start_tick,
+                        end_tick: selection.end_tick,
+                    });
+                }
+            }
+            TimelineEvent::MoveLoopPointsToTimeSelection => {
+                self.set_time_selection(
+                    self.loop_points.and_then(|range| {
+                        TimeSelection::normalized(range.start_tick, range.end_tick)
+                    }),
+                );
+            }
+            TimelineEvent::ClearLoopPointsIfUnlinked => {
+                if !self.loop_points_linked {
+                    self.loop_points = None;
+                }
+            }
+            TimelineEvent::ClearLoopPoints => {
+                self.loop_points = None;
+                if self.loop_points_linked {
+                    self.time_selection = None;
+                }
+            }
+            TimelineEvent::ClearTimeSelectionAndLoopPoints => {
+                self.time_selection = None;
+                self.loop_points = None;
+            }
             TimelineEvent::ToggleSnap => {
                 if self.cache.snap_grid_ticks.is_some() {
                     self.snap_enabled = !self.snap_enabled;

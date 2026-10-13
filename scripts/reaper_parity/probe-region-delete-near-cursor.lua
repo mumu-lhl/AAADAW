@@ -85,8 +85,6 @@ local function next_trial()
   if not case then
     clear()
     log:close()
-    assert(reaper.Main_SaveProjectEx(0, root .. "region-delete-near-cursor-probe.rpp", 0))
-    reaper.defer(function() reaper.Main_OnCommand(40004, 0) end)
     return
   end
 

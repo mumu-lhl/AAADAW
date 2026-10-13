@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action_40222	Loop points: Set start point
+action_40223	Loop points: Set end point
+case	link_before	time_selection_before	loop_points_before	cursor	action_id	link_after	time_selection_after	loop_points_after
+set_start_without_existing_range	unlinked	-	-	5.000	40222	unlinked	-	5.000,5.000
+set_end_without_existing_range	unlinked	-	-	5.000	40223	unlinked	-	0.000,5.000
+set_start_inside_range	unlinked	10.000,20.000	10.000,20.000	15.000	40222	unlinked	10.000,20.000	15.000,20.000
+set_end_inside_range	unlinked	10.000,20.000	10.000,20.000	15.000	40223	unlinked	10.000,20.000	10.000,15.000
+set_start_after_end	unlinked	10.000,20.000	10.000,20.000	25.000	40222	unlinked	10.000,20.000	25.000,25.000
+set_end_before_start	unlinked	10.000,20.000	10.000,20.000	5.000	40223	unlinked	10.000,20.000	5.000,5.000
+set_start_linked	linked	10.000,20.000	10.000,20.000	15.000	40222	linked	15.000,20.000	15.000,20.000
+set_end_linked	linked	10.000,20.000	10.000,20.000	15.000	40223	linked	10.000,15.000	10.000,15.000
+set_start_unlinked_with_different_ranges	unlinked	30.000,40.000	10.000,20.000	15.000	40222	unlinked	30.000,40.000	15.000,20.000
+set_end_unlinked_with_different_ranges	unlinked	30.000,40.000	10.000,20.000	15.000	40223	unlinked	30.000,40.000	10.000,15.000

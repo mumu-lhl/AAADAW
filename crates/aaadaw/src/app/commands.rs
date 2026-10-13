@@ -1,6 +1,7 @@
 use super::action_macros::ActionMacro;
 use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
+use crate::timeline::TimelineEvent;
 use aaadaw_core::TrackId;
 use iced::Task;
 use iced::keyboard::key::Named;
@@ -33,6 +34,7 @@ pub(crate) enum CommandId {
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
     EditProjectRegionNearCursor,
+    LoopTime(LoopTimeCommand),
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -79,6 +81,19 @@ pub(crate) enum TrackCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoopTimeCommand {
+    SetStartAtCursor,
+    SetEndAtCursor,
+    ToggleLinked,
+    MoveLoopToTimeSelection,
+    MoveTimeSelectionToLoop,
+    RemoveLoopIfUnlinked,
+    RemoveLoop,
+    RemoveTimeSelection,
+    RemoveTimeSelectionAndLoop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {
     NewProject,
     OpenProject,
@@ -102,6 +117,7 @@ enum CommandKind {
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
     EditProjectRegionNearCursor,
+    LoopTime(LoopTimeCommand),
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -155,6 +171,10 @@ const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::
 const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
 const INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT: &[Shortcut] =
     &[Shortcut::character('r', Modifiers::SHIFT)];
+const REMOVE_TIME_SELECTION_AND_LOOP_SHORTCUT: &[Shortcut] =
+    &[Shortcut::named(Named::Escape, Modifiers::NONE)];
+const SET_LOOP_START_SHORTCUT: &[Shortcut] = &[Shortcut::character('{', Modifiers::SHIFT)];
+const SET_LOOP_END_SHORTCUT: &[Shortcut] = &[Shortcut::character('}', Modifiers::SHIFT)];
 const PREVIOUS_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('[', Modifiers::NONE)];
 const NEXT_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character(']', Modifiers::NONE)];
 const PROJECT_MARKER_DELETE_RADIUS_SECONDS: f64 = 1.0;
@@ -420,6 +440,105 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Edit region near cursor",
         aliases: &["edit region near cursor", "edit nearby region"],
         shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::SetStartAtCursor),
+        menu: None,
+        category: "Loop points",
+        label: "Set loop start point at edit cursor",
+        aliases: &["set loop start point", "set loop start at cursor"],
+        shortcuts: SET_LOOP_START_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::SetEndAtCursor),
+        menu: None,
+        category: "Loop points",
+        label: "Set loop end point at edit cursor",
+        aliases: &["set loop end point", "set loop end at cursor"],
+        shortcuts: SET_LOOP_END_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::ToggleLinked),
+        menu: None,
+        category: "Loop points",
+        label: "Toggle loop points linked to time selection",
+        aliases: &[
+            "toggle loop points linked",
+            "link loop points to time selection",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::MoveLoopToTimeSelection),
+        menu: None,
+        category: "Loop points",
+        label: "Move loop points to time selection",
+        aliases: &[
+            "copy time selection to loop points",
+            "set loop points from time selection",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::MoveTimeSelectionToLoop),
+        menu: None,
+        category: "Time selection",
+        label: "Move time selection to loop points",
+        aliases: &[
+            "copy loop points to time selection",
+            "set time selection from loop points",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::RemoveLoopIfUnlinked),
+        menu: None,
+        category: "Loop points",
+        label: "Remove loop points if unlinked",
+        aliases: &["clear loop points if unlinked"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::RemoveLoop),
+        menu: None,
+        category: "Loop points",
+        label: "Remove loop points",
+        aliases: &["clear loop points", "unselect loop points"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::RemoveTimeSelection),
+        menu: None,
+        category: "Time selection",
+        label: "Remove time selection",
+        aliases: &["clear time selection", "unselect time selection"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::RemoveTimeSelectionAndLoop),
+        menu: None,
+        category: "Time selection",
+        label: "Remove time selection and loop points",
+        aliases: &["clear time selection and loop points"],
+        shortcuts: REMOVE_TIME_SELECTION_AND_LOOP_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -1167,7 +1286,11 @@ pub(super) fn validate_bindings_with_macros(
             {
                 continue;
             }
-            register_shortcut(*shortcut, id, &mut resolved)?;
+            let allow_reserved_default = matches!(
+                definition.kind,
+                CommandKind::LoopTime(LoopTimeCommand::RemoveTimeSelectionAndLoop)
+            );
+            register_shortcut(*shortcut, id, &mut resolved, allow_reserved_default)?;
         }
     }
     Ok(normalized_bindings)
@@ -1177,8 +1300,9 @@ fn register_shortcut(
     shortcut: Shortcut,
     id: &str,
     resolved: &mut Vec<(Shortcut, String)>,
+    allow_reserved_default: bool,
 ) -> Result<(), String> {
-    if shortcut.is_reserved() {
+    if shortcut.is_reserved() && !allow_reserved_default {
         return Err("Escape is reserved for cancelling the current operation".to_owned());
     }
     if let Some((_, other_id)) = resolved
@@ -1202,7 +1326,7 @@ fn insert_normalized_binding(
 ) -> Result<(), String> {
     let shortcuts = parse_bindings(value)?;
     for shortcut in &shortcuts {
-        register_shortcut(*shortcut, id, resolved)?;
+        register_shortcut(*shortcut, id, resolved, false)?;
     }
     normalized_bindings.insert(id.to_owned(), serialize_bindings(&shortcuts));
     Ok(())
@@ -1402,6 +1526,25 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
         CommandKind::EditProjectRegionNearCursor => "regions.edit-near-cursor",
+        CommandKind::LoopTime(LoopTimeCommand::ToggleLinked) => "loop-time.toggle-link",
+        CommandKind::LoopTime(LoopTimeCommand::SetStartAtCursor) => "loop-time.set-start",
+        CommandKind::LoopTime(LoopTimeCommand::SetEndAtCursor) => "loop-time.set-end",
+        CommandKind::LoopTime(LoopTimeCommand::MoveLoopToTimeSelection) => {
+            "loop-time.loop-to-time-selection"
+        }
+        CommandKind::LoopTime(LoopTimeCommand::MoveTimeSelectionToLoop) => {
+            "loop-time.time-selection-to-loop"
+        }
+        CommandKind::LoopTime(LoopTimeCommand::RemoveLoopIfUnlinked) => {
+            "loop-time.remove-loop-if-unlinked"
+        }
+        CommandKind::LoopTime(LoopTimeCommand::RemoveLoop) => "loop-time.remove-loop",
+        CommandKind::LoopTime(LoopTimeCommand::RemoveTimeSelection) => {
+            "loop-time.remove-time-selection"
+        }
+        CommandKind::LoopTime(LoopTimeCommand::RemoveTimeSelectionAndLoop) => {
+            "loop-time.remove-time-selection-and-loop"
+        }
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
@@ -1490,6 +1633,27 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
         CommandId::DeleteProjectRegionNearCursor => Message::DeleteProjectRegionNearCursor,
         CommandId::EditProjectRegionNearCursor => Message::EditProjectRegionNearCursor,
+        CommandId::LoopTime(command) => Message::Timeline(match command {
+            LoopTimeCommand::SetStartAtCursor => TimelineEvent::SetLoopPointStartAtCursor,
+            LoopTimeCommand::SetEndAtCursor => TimelineEvent::SetLoopPointEndAtCursor,
+            LoopTimeCommand::ToggleLinked => TimelineEvent::ToggleLoopPointsLinked,
+            LoopTimeCommand::MoveLoopToTimeSelection => match app.timeline.time_selection {
+                Some(selection) => TimelineEvent::SetLoopPoints {
+                    start_tick: selection.start_tick,
+                    end_tick: selection.end_tick,
+                },
+                None => TimelineEvent::ClearLoopPoints,
+            },
+            LoopTimeCommand::MoveTimeSelectionToLoop => {
+                TimelineEvent::MoveLoopPointsToTimeSelection
+            }
+            LoopTimeCommand::RemoveLoopIfUnlinked => TimelineEvent::ClearLoopPointsIfUnlinked,
+            LoopTimeCommand::RemoveLoop => TimelineEvent::ClearLoopPoints,
+            LoopTimeCommand::RemoveTimeSelection => TimelineEvent::ClearTimeSelection,
+            LoopTimeCommand::RemoveTimeSelectionAndLoop => {
+                TimelineEvent::ClearTimeSelectionAndLoopPoints
+            }
+        }),
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
@@ -1749,6 +1913,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteProjectRegionNearCursor | CommandKind::EditProjectRegionNearCursor => {
             !project_edit_busy(app) && project_region_at_cursor(app).is_some()
         }
+        CommandKind::LoopTime(_) => true,
         CommandKind::PreviousProjectMarker | CommandKind::NextProjectMarker => true,
         CommandKind::DeleteProjectMarkerNearCursor => {
             !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
@@ -1911,6 +2076,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,
         CommandKind::EditProjectRegionNearCursor => CommandId::EditProjectRegionNearCursor,
+        CommandKind::LoopTime(command) => CommandId::LoopTime(command),
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
