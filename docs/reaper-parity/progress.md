@@ -539,3 +539,9 @@ Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cran
 提交 `6b6b53b` 注册 REAPER Main action 40289 `Item: Unselect (clear selection of) all items`，无默认快捷键。Action List Run 清除 item 集合、active item 与 item selection anchor；保留轨道/时间/automation point 选择，不写入工程或 Undo/Redo。没有 item 选择时禁用。点击 Arrange 空白处的既有 item 清除路径也改为复用同一 timeline helper。
 
 Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨道选择保留和工程历史不变；timeline 单元测试覆盖 automation point 选择保留。`aaadaw` nightly+Cranelift nextest 为 508/508 passed、0 skipped；Stable all-target strict Clippy、fmt、diff 和矩阵 77 项/15 列唯一 ID/新增证据路径检查通过。Cranelift 显示既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning，Stable Clippy 无警告。`ITEM-SELECT-005` 继续 `in_progress`：原厂动作启用条件和对 automation point 选择的影响尚未探测，完整 Item actions 与 100% REAPER 对齐仍未完成。
+
+### 2026-10-13 Main action 40528：Select item under mouse cursor
+
+提交 `942c3c5` 为 Arrange 增加 item hover hit state，并注册 Main action 40528 `Item: Select item under mouse cursor`，默认无快捷键。Timeline shader 的鼠标移动/离开事件更新或清除 target；工程重建、行布局变化、平移和缩放会清掉 hover，以免操作使用旧几何位置，之后需鼠标再次移动命中。Action List Run 选择当前 target 并替换 item selection；不改变工程/Undo。无有效 target 时禁用。
+
+`arrange_cursor_motion_tracks_and_clears_the_hovered_item` 覆盖真实 shader 指针事件命中与清除；`select_item_under_mouse_action_uses_current_hover_and_replaces_selection` 覆盖 Action List 搜索/Run、替换选择和工程历史不变。`aaadaw` nightly+Cranelift nextest 为 510/510 passed、0 skipped；Stable all-target strict Clippy、fmt、diff 和矩阵 78 项/15 列唯一 ID/证据路径检查通过。Cranelift 有既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning；Stable Clippy 无警告。`ITEM-SELECT-006` 保持 `in_progress`：REAPER 原厂 Action List 焦点、启用状态、实窗指针 target 和视图变换后重新命中行为尚未实测。
