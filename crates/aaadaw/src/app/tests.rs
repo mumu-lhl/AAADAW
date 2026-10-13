@@ -7822,8 +7822,15 @@ fn adjacent_non_overlapping_item_actions_navigate_within_the_active_track() {
     app.project
         .apply(DawAction::InsertMidiItem {
             track_id: tracks[0],
-            start_tick: 2_400,
+            start_tick: 2_500,
             length_ticks: 960,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 1_920,
+            length_ticks: 480,
         })
         .unwrap();
     app.project
@@ -7834,8 +7841,20 @@ fn adjacent_non_overlapping_item_actions_navigate_within_the_active_track() {
         })
         .unwrap();
     let active_id = app.project.audio_items()[0].id();
-    let previous_id = app.project.midi_items()[0].id();
-    let next_id = app.project.midi_items()[2].id();
+    let previous_id = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.track_id() == tracks[0] && item.start_tick() == 0)
+        .unwrap()
+        .id();
+    let next_id = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.track_id() == tracks[0] && item.start_tick() == 1_920)
+        .unwrap()
+        .id();
     app.timeline.rebuild(&app.project);
     app.timeline.select_items(vec![(active_id, tracks[0])]);
     let revision_before = app.revision;
@@ -7850,7 +7869,7 @@ fn adjacent_non_overlapping_item_actions_navigate_within_the_active_track() {
     let _ = app.update(Message::ActionListRun(false));
     assert_eq!(app.timeline.selected_items, HashSet::from([next_id]));
     assert_eq!(app.timeline.selected_item, Some(next_id));
-    assert!(!commands::is_enabled(&app, next));
+    assert!(commands::is_enabled(&app, next));
 
     app.timeline.select_items(vec![(active_id, tracks[0])]);
     let previous = CommandId::SelectPreviousAdjacentNonOverlappingItem;
@@ -7862,7 +7881,257 @@ fn adjacent_non_overlapping_item_actions_navigate_within_the_active_track() {
     let _ = app.update(Message::ActionListRun(false));
     assert_eq!(app.timeline.selected_items, HashSet::from([previous_id]));
     assert_eq!(app.timeline.selected_item, Some(previous_id));
-    assert!(!commands::is_enabled(&app, previous));
+    assert!(commands::is_enabled(&app, previous));
+
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
+fn adjacent_item_actions_require_touching_boundaries_and_map_each_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let audio_start = app.project.sample_at_tick(960).unwrap();
+    let audio_end = app.project.sample_at_tick(1_920).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://touching-boundary-selection".to_owned(),
+            start_sample: audio_start,
+            source_offset_samples: 0,
+            length_samples: audio_end - audio_start,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 1_920,
+            length_ticks: 480,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 2_400,
+            length_ticks: 480,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let touching_id = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.start_tick() == 1_920)
+        .unwrap()
+        .id();
+    let gap_id = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.start_tick() == 2_400)
+        .unwrap()
+        .id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, tracks[0]), (gap_id, tracks[0])]);
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let next = CommandId::SelectNextAdjacentNonOverlappingItem;
+    assert!(commands::is_enabled(&app, next));
+    let _ = app.update(Message::ExecuteCommand(next));
+    assert_eq!(app.timeline.selected_items, HashSet::from([touching_id]));
+    assert_eq!(app.timeline.selected_item, Some(touching_id));
+
+    app.timeline.select_items(vec![(audio_id, tracks[0])]);
+    let _ = app.update(Message::ExecuteCommand(next));
+    assert_eq!(app.timeline.selected_items, HashSet::from([touching_id]));
+
+    app.timeline.select_items(vec![(gap_id, tracks[0])]);
+    assert!(commands::is_enabled(&app, next));
+    let _ = app.update(Message::ExecuteCommand(next));
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.selected_item, None);
+
+    app.timeline.select_items(vec![(touching_id, tracks[0])]);
+    let previous = CommandId::SelectPreviousAdjacentNonOverlappingItem;
+    assert!(commands::is_enabled(&app, previous));
+    let _ = app.update(Message::ExecuteCommand(previous));
+    assert_eq!(app.timeline.selected_items, HashSet::from([audio_id]));
+
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
+fn adjacent_track_navigation_uses_first_overlapping_item_and_preserves_track_selection() {
+    let mut app = App::default();
+    for _ in 0..4 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let audio_start = app.project.sample_at_tick(960).unwrap();
+    let audio_end = app.project.sample_at_tick(1_920).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://adjacent-track-previous-distractor".to_owned(),
+            start_sample: audio_start,
+            source_offset_samples: 0,
+            length_samples: audio_end - audio_start,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[2],
+            media_ref: "asset://adjacent-track-source".to_owned(),
+            start_sample: audio_start,
+            source_offset_samples: 0,
+            length_samples: audio_end - audio_start,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[2],
+            start_tick: 2_880,
+            length_ticks: 480,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[3],
+            start_tick: 960,
+            length_ticks: 240,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[3],
+            media_ref: "asset://adjacent-track-later-overlap".to_owned(),
+            start_sample: app.project.sample_at_tick(1_440).unwrap(),
+            source_offset_samples: 0,
+            length_samples: app.project.sample_at_tick(2_400).unwrap()
+                - app.project.sample_at_tick(1_440).unwrap(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[3],
+            start_tick: 2_880,
+            length_ticks: 240,
+        })
+        .unwrap();
+    let source_audio = app.project.audio_items()[1].id();
+    let source_midi = app.project.midi_items()[0].id();
+    let previous_track_distractor = app.project.audio_items()[0].id();
+    let next_track_first = app.project.midi_items()[1].id();
+    let next_track_later = app.project.audio_items()[2].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_tracks = HashSet::from([tracks[2]]);
+    app.timeline
+        .select_items(vec![(source_midi, tracks[2]), (source_audio, tracks[2])]);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_tracks = HashSet::from([tracks[2]]);
+    app.timeline.edit_cursor_tick = 777;
+    let previous = CommandId::SelectItemOnPreviousTrack;
+    assert!(commands::is_enabled(&app, previous));
+    app.action_list
+        .select("item.select-previous-track".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.edit_cursor_tick, 777);
+    assert_eq!(app.timeline.selected_track, Some(tracks[2]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[2]]));
+
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 240,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 1_440,
+            length_ticks: 480,
+        })
+        .unwrap();
+    let previous_track_first = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.track_id() == tracks[1] && item.start_tick() == 960)
+        .unwrap()
+        .id();
+    let next_track_midi = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.track_id() == tracks[3] && item.start_tick() == 2_880)
+        .unwrap()
+        .id();
+    app.timeline.rebuild(&app.project);
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+    app.timeline
+        .select_items(vec![(source_midi, tracks[2]), (source_audio, tracks[2])]);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_tracks = HashSet::from([tracks[2]]);
+    let _ = app.update(Message::ExecuteCommand(previous));
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([previous_track_first])
+    );
+    assert_eq!(app.timeline.edit_cursor_tick, 960);
+    assert_eq!(app.timeline.selected_track, Some(tracks[2]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[2]]));
+    assert_ne!(previous_track_first, previous_track_distractor);
+
+    app.timeline.select_items(vec![(source_audio, tracks[2])]);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_tracks = HashSet::from([tracks[2]]);
+    let next = CommandId::SelectItemOnNextTrack;
+    assert!(commands::is_enabled(&app, next));
+    app.action_list.select("item.select-next-track".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([next_track_first])
+    );
+    assert_eq!(app.timeline.edit_cursor_tick, 960);
+    assert_eq!(app.timeline.selected_track, Some(tracks[2]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[2]]));
+    assert_ne!(next_track_first, next_track_later);
+
+    app.timeline.select_items(vec![(source_midi, tracks[2])]);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_tracks = HashSet::from([tracks[2]]);
+    let _ = app.update(Message::ExecuteCommand(next));
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([next_track_midi])
+    );
+    assert_eq!(app.timeline.edit_cursor_tick, 2_880);
+    assert_eq!(app.timeline.selected_track, Some(tracks[2]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[2]]));
 
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);

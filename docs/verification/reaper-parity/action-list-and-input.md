@@ -81,15 +81,23 @@ Main Section 动作导出确认 41115 的描述为 `Item: Invert selection`，�
 
 ## 2026-10-13 Main actions 41127/41128：相邻非重叠 item 选择
 
-Main Section 动作导出列出 41127 `Item: Select next adjacent non-overlapping item` 和 41128 `Item: Select previous adjacent non-overlapping item`，均无默认快捷键。AAADAW 以当前活动且已选中的 item 为基准，只在该 item 所属轨道内查找边界之后/之前最近的非重叠 Audio 或 MIDI item，并替换为单项选择；重叠项和其它轨道上的 item 不会成为目标。没有合格目标时动作禁用。Audio 的 sample 边界先换算到项目 tick，与 MIDI item 在同一时基比较。
+Main Section 动作导出列出 41127 `Item: Select next adjacent non-overlapping item` 和 41128 `Item: Select previous adjacent non-overlapping item`，均无默认快捷键。隔离 REAPER 7.82 的真实 item 点击探针显示，目标边界必须与源边界精确相接；存在时间空隙时不算 adjacent。多选时每个源 item 独立映射到同轨相邻 item，没有目标的源项会从结果里移除；整个集合没有目标时，原厂仍执行动作并清空 item 选择。原厂动作不移动 edit cursor。AAADAW 已按 Audio sample 到项目 tick、MIDI tick 统一比较，并保留轨道选择和项目/Undo 历史。
 
-`adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 覆盖跨类型导航、越过重叠项、排除其它轨道、首尾无目标禁用，以及工程/Undo 历史不变。当前允许相邻目标之间存在空隙；原厂是否会越过空隙、多个选中 item 的锚点规则与 active item 变更尚待运行探针，`ITEM-SELECT-010/011` 保持 `in_progress`。
+`adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 与 `adjacent_item_actions_require_touching_boundaries_and_map_each_selection` 覆盖边界相接、跨类型、重叠/空隙过滤、多选逐项映射、无目标清空及工程/Undo 历史不变。原厂运行记录见 [item navigation TSV](fixtures/item-navigation-native.tsv)；空选择时动作可用性、完整 Mouse/Action List 焦点及 7.82 实窗视觉验收仍未关闭，`ITEM-SELECT-010/011` 保持 `in_progress`。
 
 ## 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
 
-Main Section 动作导出列出 41167 `Item navigation: Move cursor left to nearest item edge` 与 41168 `Item navigation: Move cursor right to nearest item edge`，均无默认快捷键。AAADAW 在整个工程的 Audio/MIDI item 起止边界中，以当前 edit cursor 为基准寻找严格左侧/右侧最近边缘；执行只移动 edit cursor，保留 item 选择，不修改工程或 Undo/Redo。没有对应方向的边缘时动作禁用；相等于当前光标的边缘不会导致原地重复。
+Main Section 动作导出列出 41167 `Item navigation: Move cursor left to nearest item edge` 与 41168 `Item navigation: Move cursor right to nearest item edge`，均无默认快捷键。原厂 7.82 探针确认两项搜索整个工程的 Audio 与 MIDI item 起止边缘，不依赖 item 选择；边缘必须严格位于当前 edit cursor 的左侧或右侧。光标正好位于一个边缘时会跳过该点，继续寻找下一个边缘。AAADAW 逻辑和无方向目标时的禁用条件与这些观察一致；执行只移动光标，保留 item 选择和项目/Undo 历史。
 
-`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合类型的最近边缘、Action List Run、双向边界禁用、item 选择保留和工程历史不变。原厂是否仅搜索 selected items、端点相等时的跳转与实窗行为尚待探测，`ITEM-SELECT-012/013` 保持 `in_progress`。
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合类型、Action List Run、双向无目标、item 选择保留和工程历史不变；原厂音频边缘、MIDI 边缘、无选择及相等端点输出见 [item navigation TSV](fixtures/item-navigation-native.tsv)。Action List 焦点和整套 Arrange 实窗对照仍待完成，`ITEM-SELECT-012/013` 保持 `in_progress`。
+
+## 2026-10-13 Main actions 41139/41140：相邻轨道 item 导航
+
+Main Section 动作 41139 `Item navigation: Select and move to item in previous track without changing track selection` 和 41140 `Item navigation: Select and move to item in next track without changing track selection` 已由隔离官方 7.82 / Default 7 运行探针验证。动作以按轨道、时间排序后的首个所选 item 为源，只查找项目顺序中紧邻的上一/下一轨；目标是该轨上第一个与源 item 时间区间有正长度重叠的 item。成功后只选中目标、把 edit cursor 移到目标起点，并保留轨道选择。邻轨没有重叠 item 时不会跳过空轨寻找更远轨道，而是清空 item 选择且不移动光标。多选时只使用首个所选源 item。
+
+AAADAW 注册稳定 ID `item.select-previous-track` 与 `item.select-next-track`。`adjacent_track_navigation_uses_first_overlapping_item_and_preserves_track_selection` 覆盖紧邻空轨、相邻轨多个重叠目标、多选首项、光标、Action List Run、轨道选择与项目/Undo 状态。原厂点击驱动记录与可复现脚本见 [item navigation TSV](fixtures/item-navigation-native.tsv) 和 [probe](../../scripts/reaper_parity/probe-item-navigation.lua)。空选择时动作可用性、完整 Action List 键盘焦点与 Arrange 视觉验收仍在进行，`ITEM-SELECT-014/015` 不标记完成。
+
+复现时需在独立 REAPER 7.82 / Default 7 配置的空白、未保存工程中运行脚本；它会创建自有轨道/item 并写入 `/tmp/aaadaw-item-navigation-ready`。在 Arrange 中点击源 item 后，向 `/tmp/aaadaw-item-navigation-request` 写入 `测试名<TAB>动作编号`；可选第三列传入要先设置的 edit-cursor 秒数。结果追加到 `/tmp/aaadaw-item-navigation-native.tsv`，写入 `done<TAB>0` 结束采样。脚本对版本、主题、播放状态及空工程作断言，不保存该项目。
 
 ## 未完成项
 

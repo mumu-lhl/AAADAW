@@ -1,0 +1,26 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+fixture	probe-item-navigation.lua creates four tracks: U, EMPTY, M, L; item ranges are seconds; a MIDI source occupies M[5,6]
+case	action_id	selected_items_before	selected_items_after	selected_tracks_after	cursor_after_seconds	project_state_change_delta	fixture_note
+vertical_previous_to_empty_target	41139	MD		M	1.000000	1	Separate no-target run with EMPTY track containing no items
+vertical_previous_overlapping_item	41139	MD	EA	M	0.000000	1	MD[0.5,1.5] overlaps EA[0,1]
+vertical_next_overlapping_item	41140	ME	LB	M	2.000000	1	ME[2,3] overlaps item LB[2,3] on immediately next track
+vertical_previous_item_anchor_ignores_edit_cursor	41139	MD	EA	M	0.000000	1	Edit cursor was moved to 4.5 before action; mouse was moved over MF
+vertical_previous_multiselection_uses_first_item	41139	MD,ME	EA	M	0.000000	1	The earlier selected item MD determines the single target
+vertical_next_multiselection_uses_first_item	41140	MD,ME	LA	M	0.000000	1	The earlier selected item MD determines the single target
+vertical_previous_first_overlapping_target	41139	MX	EASTART	M	3.000000	1	EASTART[3,3.25] precedes EALATE[3.5,4.5] among overlapping targets
+adjacent_next_boundary_touch	41127	MD	MN	M	1.000000	1	MD ends at 1.5; MN starts at 1.5; cursor stays at click position
+adjacent_next_boundary_touch_after_overlap	41127	ME	MX	M	2.000000	1	ME ends at 3; MX starts at 3 despite MO overlapping ME
+adjacent_previous_boundary_touch	41128	MF	MX	M	4.500000	1	MF starts at 4; MX ends at 4
+adjacent_next_multiselection_maps_each_item	41127	MD,ME	MN,MX	M	1.000000	1	Each selected item maps independently
+adjacent_next_multiselection_drops_item_without_target	41127	MD,UC	MN	U	1.000000	1	UC has no exactly touching next item; MN remains
+adjacent_next_gap_has_no_target	41127	MD		M	1.000000	1	Separate gap run without MN: next item ME starts at 2 while MD ends at 1.5
+adjacent_previous_gap_has_no_target	41128	MF		M	4.500000	1	Separate gap run without MX: previous non-overlapping items end before 4
+edge_right_moves_to_unselected_audio_edge	41168	MD	MD	M	5.000000	0	Cursor override 4.5; nearest later Audio edge is 5
+edge_left_moves_to_unselected_audio_edge	41167	MD	MD	M	4.000000	0	Cursor override 4.5; nearest earlier Audio edge is 4
+edge_right_skips_equal_boundary	41168	MD	MD	M	2.500000	0	Cursor override 2; edge at 2 is skipped
+edge_left_skips_equal_boundary	41167	MD	MD	M	1.500000	0	Cursor override 2; edge at 2 is skipped
+edge_left_with_no_item_selection	41167			M	4.000000	0	Cursor override 4.5; item selection is empty
+edge_right_from_midi_start	41168			M	6.000000	0	Cursor override 5; MIDI item ends at 6
+edge_left_from_midi_end	41167			M	5.000000	0	Cursor override 6; MIDI item starts at 5

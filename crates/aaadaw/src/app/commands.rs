@@ -51,6 +51,8 @@ pub(crate) enum CommandId {
     InvertItemSelection,
     SelectNextAdjacentNonOverlappingItem,
     SelectPreviousAdjacentNonOverlappingItem,
+    SelectItemOnPreviousTrack,
+    SelectItemOnNextTrack,
     MoveEditCursorToPreviousItemEdge,
     MoveEditCursorToNextItemEdge,
     SelectItemUnderMouseCursor,
@@ -150,6 +152,8 @@ enum CommandKind {
     InvertItemSelection,
     SelectNextAdjacentNonOverlappingItem,
     SelectPreviousAdjacentNonOverlappingItem,
+    SelectItemOnPreviousTrack,
+    SelectItemOnNextTrack,
     MoveEditCursorToPreviousItemEdge,
     MoveEditCursorToNextItemEdge,
     SelectItemUnderMouseCursor,
@@ -850,6 +854,26 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SelectItemOnPreviousTrack,
+        menu: None,
+        category: "Item navigation",
+        label: "Select and move to item in previous track without changing track selection",
+        aliases: &["select item in previous track", "previous track item"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SelectItemOnNextTrack,
+        menu: None,
+        category: "Item navigation",
+        label: "Select and move to item in next track without changing track selection",
+        aliases: &["select item in next track", "next track item"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::MoveEditCursorToPreviousItemEdge,
         menu: None,
         category: "Item navigation",
@@ -1257,6 +1281,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::InvertItemSelection
             | CommandKind::SelectNextAdjacentNonOverlappingItem
             | CommandKind::SelectPreviousAdjacentNonOverlappingItem
+            | CommandKind::SelectItemOnPreviousTrack
+            | CommandKind::SelectItemOnNextTrack
             | CommandKind::MoveEditCursorToPreviousItemEdge
             | CommandKind::MoveEditCursorToNextItemEdge
             | CommandKind::SelectItemUnderMouseCursor
@@ -1804,6 +1830,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::InvertItemSelection => "item.invert-selection",
         CommandKind::SelectNextAdjacentNonOverlappingItem => "item.select-next-adjacent",
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => "item.select-previous-adjacent",
+        CommandKind::SelectItemOnPreviousTrack => "item.select-previous-track",
+        CommandKind::SelectItemOnNextTrack => "item.select-next-track",
         CommandKind::MoveEditCursorToPreviousItemEdge => "item.navigate-cursor-left-edge",
         CommandKind::MoveEditCursorToNextItemEdge => "item.navigate-cursor-right-edge",
         CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
@@ -1937,6 +1965,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::InvertItemSelection => Message::InvertItemSelection,
         CommandId::SelectNextAdjacentNonOverlappingItem => Message::SelectNextAdjacentItem,
         CommandId::SelectPreviousAdjacentNonOverlappingItem => Message::SelectPreviousAdjacentItem,
+        CommandId::SelectItemOnPreviousTrack => Message::SelectItemOnAdjacentTrack(false),
+        CommandId::SelectItemOnNextTrack => Message::SelectItemOnAdjacentTrack(true),
         CommandId::MoveEditCursorToPreviousItemEdge => {
             Message::MoveEditCursorToNearestItemEdge(false)
         }
@@ -2290,10 +2320,13 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty()
         }
         CommandKind::SelectNextAdjacentNonOverlappingItem => {
-            app.adjacent_non_overlapping_item(true).is_some()
+            !app.timeline.selected_items.is_empty()
         }
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => {
-            app.adjacent_non_overlapping_item(false).is_some()
+            !app.timeline.selected_items.is_empty()
+        }
+        CommandKind::SelectItemOnPreviousTrack | CommandKind::SelectItemOnNextTrack => {
+            !app.timeline.selected_items.is_empty()
         }
         CommandKind::MoveEditCursorToPreviousItemEdge => app.nearest_item_edge(false).is_some(),
         CommandKind::MoveEditCursorToNextItemEdge => app.nearest_item_edge(true).is_some(),
@@ -2432,6 +2465,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => {
             CommandId::SelectPreviousAdjacentNonOverlappingItem
         }
+        CommandKind::SelectItemOnPreviousTrack => CommandId::SelectItemOnPreviousTrack,
+        CommandKind::SelectItemOnNextTrack => CommandId::SelectItemOnNextTrack,
         CommandKind::MoveEditCursorToPreviousItemEdge => {
             CommandId::MoveEditCursorToPreviousItemEdge
         }

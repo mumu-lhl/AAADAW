@@ -560,12 +560,18 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 
 ### 2026-10-13 Main actions 41127/41128：相邻非重叠 item 选择
 
-动作目录确认 41127 `Item: Select next adjacent non-overlapping item` 与 41128 `Item: Select previous adjacent non-overlapping item` 无默认快捷键。AAADAW 按活动选中 item 的 Audio sample/MIDI tick 边界，只在同一轨道查找最近的非重叠目标并替换 item 选择；没有目标时 Action List 禁用。实现允许目标之间有空隙，未据此声称与原厂边界已一致。
+官方 7.82 / Default 7 的真实点击探针确认 41127/41128 只在边界精确相接时选中同轨目标；有间隙时无目标。多选逐项映射，映射不到的源项会从结果移除，全部无目标时清空选择，光标不动。实现现在将 Audio sample 与 MIDI tick 转换到共同项目 tick，比对精确边界，并按原厂清除/多选行为替换旧的“允许间隙、单项锚点”假设。
 
-新增 `adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 覆盖 Audio/MIDI 混排、重叠目标跳过、其它轨道隔离、前后边界禁用和工程历史不变。专项 nightly+Cranelift nextest 1/1、应用全套 514/514 passed / 0 skipped；Stable strict Clippy `-D warnings`、fmt、diff 和 parity CSV 83 项/15 列唯一 ID/证据路径检查均通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning。`ITEM-SELECT-010/011` 保持 `in_progress`：原厂是否越过间隙、多个 selected item 的 active/anchor 规则及焦点行为尚待探测。
+`adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 和 `adjacent_item_actions_require_touching_boundaries_and_map_each_selection` 覆盖精确边界、跨媒体类型、多选逐项映射、无目标清空、Action List Run 及项目/Undo 不变；原厂点击记录见 [item-navigation fixture](../verification/reaper-parity/fixtures/item-navigation-native.tsv)。`ITEM-SELECT-010/011` 保持 `in_progress`：空选择的动作可用性、Action List 键盘焦点、完整实窗布局与全部 item-selection 交互仍未验收。
 
 ### 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
 
-动作目录确认 41167/41168 左右最近 item edge 导航无默认快捷键。AAADAW 比较全工程 Audio sample 和 MIDI tick 起止边界，按当前 edit cursor 查找严格更左/更右的最近边缘；只更新时间线 edit cursor、保留 item selection，不修改工程历史。方向上没有边缘时 Action List 禁用。
+动作目录确认 41167/41168 左右最近 item edge 导航无默认快捷键。原厂运行探针确认范围为整个工程的 Audio 与 MIDI items，即使没有 item 选择也可运行；等于当前光标的边缘会跳过。AAADAW 比较全工程 Audio sample 和 MIDI tick 起止边界，按当前 edit cursor 查找严格更左/更右的最近边缘；只更新时间线 edit cursor、保留 item selection，不修改工程历史。方向上没有边缘时禁用。
 
-新增 `item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖 Audio/MIDI 混合边缘、Action List Run、方向端点禁用、选择保留及工程/Undo 不变；专项 nightly+Cranelift nextest 1/1、应用全套 515/515 passed / 0 skipped，Stable strict Clippy `-D warnings`、fmt、diff 和 parity CSV 85 项/15 列唯一 ID/证据路径检查通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning。`ITEM-SELECT-012/013` 保持 `in_progress`：全工程/selected items 搜索范围、相等端点规则和原厂焦点仍待探测。
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合边缘、无选择、方向无目标、相等端点、选择保留及工程/Undo 不变；原厂结果见 [item-navigation fixture](../verification/reaper-parity/fixtures/item-navigation-native.tsv)。`ITEM-SELECT-012/013` 保持 `in_progress`：完整 Action List 焦点和 Arrange 实窗外观还未验收。
+
+### 2026-10-13 Main actions 41139/41140：相邻轨道 item 导航及原厂边界修正
+
+隔离官方 Linux REAPER 7.82 / Default 7 / Dummy Audio 探针实测 41139/41140：只检查项目顺序紧邻的上一/下一轨；源为首个按轨道和时间排列的 selected item；目标为该轨上第一个与源时间区间正长度重叠的 item。成功时只选择目标、光标移至目标起点并保持轨道选择；无重叠目标时清空 item 选择、不跳过空轨且不移动光标。探针通过真实 item 点击驱动，避免仅用 API 修改选择时丢失原厂活动 item 状态。
+
+AAADAW 新增稳定动作 `item.select-previous-track` / `item.select-next-track`。同时按原厂输出修正 41127/41128 的严格边界、多选映射及无目标清空行为。`adjacent_track_navigation_uses_first_overlapping_item_and_preserves_track_selection` 与相邻选择回归覆盖紧邻空轨、多个重叠候选、多选锚点、光标、轨道选择、边界和 Undo；native TSV 与复现脚本已落档。Stable `aaadaw` 全量测试 496/496 通过，all-target strict Clippy `-D warnings`、fmt、diff 检查及 parity CSV 87 项/15 列结构和证据路径检查通过。本切片的 nightly+Cranelift 冷构建未产出可运行测试二进制，因此不计作通过；隔离 target 已清理。当前仅覆盖动作核心语义；空选择可用性、Action List 键盘焦点、实窗视觉和整套 Item 行为仍待验收，`ITEM-SELECT-010` 至 `ITEM-SELECT-015` 均保持 `in_progress`。
