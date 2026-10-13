@@ -4670,7 +4670,7 @@ fn action_search_dispatches_supported_commands() {
 }
 
 #[test]
-fn menu_keyboard_opens_from_f10_and_accepts_enter_while_actions_search_has_focus() {
+fn menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_search_has_focus() {
     let window_id = iced::window::Id::unique();
     let f10 = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::F10),
@@ -4681,16 +4681,88 @@ fn menu_keyboard_opens_from_f10_and_accepts_enter_while_actions_search_has_focus
         text: None,
         repeat: false,
     });
-    assert!(matches!(
+    assert!(
         menu_navigation_event(
             &f10,
             iced::event::Status::Ignored,
             window_id,
             Some(window_id),
             None,
+        )
+        .is_none()
+    );
+
+    let mut app = App {
+        main_window_id: Some(window_id),
+        ..App::default()
+    };
+    for (key, expected) in [
+        ("a", MainMenu::Actions),
+        ("e", MainMenu::Edit),
+        ("f", MainMenu::File),
+        ("i", MainMenu::Insert),
+        ("v", MainMenu::View),
+    ] {
+        let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character(key.into()),
+            modified_key: Key::Character(key.into()),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::ALT,
+            text: None,
+            repeat: false,
+        });
+        let message = menu_navigation_event(
+            &event,
+            iced::event::Status::Ignored,
+            window_id,
+            Some(window_id),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            message,
+            Message::MenuKeyboard(MenuNavigation::OpenMenu(menu)) if menu == expected
+        ));
+        let _ = app.update(message);
+        assert_eq!(app.active_menu, Some(expected));
+    }
+
+    let file = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: Key::Character("f".into()),
+        modified_key: Key::Character("f".into()),
+        physical_key: iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
         ),
-        Some(Message::MenuKeyboard(MenuNavigation::Open))
-    ));
+        location: iced::keyboard::Location::Standard,
+        modifiers: Modifiers::ALT,
+        text: None,
+        repeat: false,
+    });
+    let _ = app.update(
+        menu_navigation_event(
+            &file,
+            iced::event::Status::Ignored,
+            window_id,
+            Some(window_id),
+            app.active_menu,
+        )
+        .unwrap(),
+    );
+    assert_eq!(app.active_menu, Some(MainMenu::File));
+
+    assert!(
+        menu_navigation_event(
+            &file,
+            iced::event::Status::Captured,
+            window_id,
+            Some(window_id),
+            None,
+        )
+        .is_none()
+    );
 
     let right = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::ArrowRight),
@@ -4764,7 +4836,9 @@ fn action_search_enter_executes_the_selected_visible_match() {
 #[test]
 fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
     let mut app = App::default();
-    let _ = app.update(Message::MenuKeyboard(MenuNavigation::Open));
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::OpenMenu(
+        MainMenu::File,
+    )));
     assert_eq!(app.active_menu, Some(MainMenu::File));
     let first = app.menu_selected_command;
     assert!(first.is_some());

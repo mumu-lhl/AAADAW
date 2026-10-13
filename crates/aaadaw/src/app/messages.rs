@@ -56,7 +56,7 @@ pub(crate) enum MainMenu {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuNavigation {
-    Open,
+    OpenMenu(MainMenu),
     NextMenu,
     PreviousMenu,
     NextCommand,

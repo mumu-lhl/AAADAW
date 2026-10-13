@@ -497,3 +497,9 @@ Loop 链接状态专项 1/1 通过；映射后 workspace nightly+Cranelift nexte
 Linux REAPER 7.82 / Default 7 原厂界面验证轨道名称编辑焦点：Space 和普通字符进入名称框且不启动播放；Ctrl+Z 穿透并撤销最近插入的轨道；Escape 关闭名称编辑器且保留标尺范围。逐步结果与三张原厂截图见[焦点验收记录](../verification/reaper-parity/input-focus.md)；40696/40001 的动作名和编号来自固定版导出。
 
 AAADAW 已按控件事件状态分流文本与全局按键。本切片增加 `focused_track_name_editor_routes_native_text_escape_and_undo_keys`，覆盖被输入控件消费的 Space、Escape 的草稿取消及范围保留、未消费 Ctrl+Z 对应全局 Undo。nightly+Cranelift 定向 nextest 1/1 passed；stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、71 项/15 列矩阵、证据链接和 `git diff --check` 通过。该结果只覆盖 Arrange 轨道名称编辑；Action List/脚本编辑、其它文本字段、AltGr/键盘布局、插件和子窗口焦点仍待逐项核验，INPUT-FOCUS-001 继续 `in_progress`。
+
+### 2026-10-13 REAPER 主菜单访问键
+
+Linux REAPER 7.82 / Default 7 键盘探针确认 F10 不打开菜单；Enter 随后仍执行 Play。原厂 `Alt+F/E/V/I/O/A/H` 分别打开 File/Edit/View/Insert/Options/Actions/Help，同一 `Alt+F` 再次按下仍保持 File 菜单打开；Alt+T/M 在该配置下未打开菜单。原厂逐项结果和七张菜单截图见[Menu keyboard 验收记录](../verification/reaper-parity/menu-navigation.md)。
+
+AAADAW 已移除不匹配的 F10 菜单行为，为当前已有的 File/Edit/View/Insert/Actions 菜单接入经原厂验证的 Alt+F/E/V/I/A，并让同一访问键重新聚焦菜单。新增 `menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_search_has_focus`，与既有箭头/命令选择回归合计定向 nextest 2/2 passed；stable aaadaw strict Clippy、fmt 和 diff 检查通过。新增 `SHELL-MENU-KEYBOARD-001` 后矩阵为 72 项/15 列，仍保持 `in_progress`：AAADAW 尚缺 Options/Help 两个菜单，完整九项导航、Item/Track 命令和所有焦点例外仍未验收。

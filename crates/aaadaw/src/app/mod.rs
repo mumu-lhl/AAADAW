@@ -1655,7 +1655,7 @@ impl App {
                 | Message::ShortcutPressed(_)
                 | Message::ActionMenuScrolled(_)
                 | Message::MenuKeyboard(
-                    MenuNavigation::Open
+                    MenuNavigation::OpenMenu(_)
                         | MenuNavigation::NextMenu
                         | MenuNavigation::PreviousMenu
                         | MenuNavigation::NextCommand
@@ -8517,15 +8517,7 @@ impl App {
             MainMenu::Actions,
         ];
         match navigation {
-            MenuNavigation::Open => {
-                if self.active_menu.is_some() {
-                    self.active_menu = None;
-                    self.menu_selected_command = None;
-                    Task::none()
-                } else {
-                    self.open_main_menu(MENUS[0])
-                }
-            }
+            MenuNavigation::OpenMenu(menu) => self.open_main_menu(menu),
             MenuNavigation::NextMenu | MenuNavigation::PreviousMenu => {
                 let direction = if navigation == MenuNavigation::NextMenu {
                     1_isize
@@ -9674,13 +9666,30 @@ fn menu_navigation_event(
     else {
         return None;
     };
-    let navigation = match key.as_ref() {
-        iced::keyboard::Key::Named(iced::keyboard::key::Named::F10)
-            if status == iced::event::Status::Ignored
-                && *modifiers == iced::keyboard::Modifiers::NONE =>
-        {
-            MenuNavigation::Open
+    if status == iced::event::Status::Ignored && *modifiers == iced::keyboard::Modifiers::ALT {
+        let menu = match key.as_ref() {
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("a") => {
+                Some(MainMenu::Actions)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("e") => {
+                Some(MainMenu::Edit)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("f") => {
+                Some(MainMenu::File)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("i") => {
+                Some(MainMenu::Insert)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("v") => {
+                Some(MainMenu::View)
+            }
+            _ => None,
+        };
+        if let Some(menu) = menu {
+            return Some(Message::MenuKeyboard(MenuNavigation::OpenMenu(menu)));
         }
+    }
+    let navigation = match key.as_ref() {
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) if active_menu.is_some() => {
             return Some(Message::Escape);
         }
