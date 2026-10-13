@@ -48,6 +48,7 @@ pub(crate) enum CommandId {
     SelectAllItemsInTimeSelection,
     SelectAllItemsOnSelectedTracksInTimeSelection,
     UnselectAllItems,
+    InvertItemSelection,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -142,6 +143,7 @@ enum CommandKind {
     SelectAllItemsInTimeSelection,
     SelectAllItemsOnSelectedTracksInTimeSelection,
     UnselectAllItems,
+    InvertItemSelection,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -810,6 +812,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::InvertItemSelection,
+        menu: None,
+        category: "Item",
+        label: "Invert selection",
+        aliases: &["invert selection", "invert item selection"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SelectItemUnderMouseCursor,
         menu: None,
         category: "Item",
@@ -1194,6 +1206,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SelectAllItemsInTimeSelection
             | CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection
             | CommandKind::UnselectAllItems
+            | CommandKind::InvertItemSelection
             | CommandKind::SelectItemUnderMouseCursor
             | CommandKind::AddItemUnderMouseToSelection
             | CommandKind::ToggleSelectionOfItemUnderMouse
@@ -1736,6 +1749,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
             "item.select-all-on-selected-tracks-in-time-selection"
         }
         CommandKind::UnselectAllItems => "item.unselect-all",
+        CommandKind::InvertItemSelection => "item.invert-selection",
         CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
         CommandKind::AddItemUnderMouseToSelection => "item.add-under-mouse-to-selection",
         CommandKind::ToggleSelectionOfItemUnderMouse => "item.toggle-under-mouse-selection",
@@ -1864,6 +1878,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::SelectAllItemsOnSelectedTracksInTimeSelection
         }
         CommandId::UnselectAllItems => Message::UnselectAllItems,
+        CommandId::InvertItemSelection => Message::InvertItemSelection,
         CommandId::SelectItemUnderMouseCursor => Message::Timeline(
             TimelineEvent::SelectHoveredItem(HoveredItemSelectionMode::Replace),
         ),
@@ -2209,6 +2224,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             })
         }
         CommandKind::UnselectAllItems => !app.timeline.selected_items.is_empty(),
+        CommandKind::InvertItemSelection => {
+            !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty()
+        }
         CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
@@ -2337,6 +2355,7 @@ fn command_id(kind: CommandKind) -> CommandId {
             CommandId::SelectAllItemsOnSelectedTracksInTimeSelection
         }
         CommandKind::UnselectAllItems => CommandId::UnselectAllItems,
+        CommandKind::InvertItemSelection => CommandId::InvertItemSelection,
         CommandKind::SelectItemUnderMouseCursor => CommandId::SelectItemUnderMouseCursor,
         CommandKind::AddItemUnderMouseToSelection => CommandId::AddItemUnderMouseToSelection,
         CommandKind::ToggleSelectionOfItemUnderMouse => CommandId::ToggleSelectionOfItemUnderMouse,

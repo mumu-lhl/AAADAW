@@ -4258,6 +4258,7 @@ impl App {
                 self.select_all_items_on_selected_tracks_in_time_selection()
             }
             Message::UnselectAllItems => self.timeline.clear_selected_items(),
+            Message::InvertItemSelection => self.invert_item_selection(),
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9201,6 +9202,16 @@ impl App {
             .map(|track| track.id())
             .collect::<Vec<_>>();
         let selected = self.items_for_tracks(track_ids);
+        self.timeline.select_items(selected);
+    }
+
+    fn invert_item_selection(&mut self) {
+        let track_ids = self.project.tracks().iter().map(|track| track.id());
+        let selected = self
+            .items_for_tracks(track_ids)
+            .into_iter()
+            .filter(|(item_id, _)| !self.timeline.selected_items.contains(item_id))
+            .collect();
         self.timeline.select_items(selected);
     }
 

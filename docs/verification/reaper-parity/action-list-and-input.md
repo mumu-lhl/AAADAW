@@ -73,6 +73,12 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 验证添加和对已选 target 的保留；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 验证 toggle 两个方向。原厂对多选后活动 item/anchor、Action List 焦点和视图变换后 hover 的运行时行为尚未核实；这两项及 40528 一样保持 `in_progress`。
 
+## 2026-10-13 Main action 41115：Invert selection
+
+Main Section 动作导出确认 41115 的描述为 `Item: Invert selection`，没有默认快捷键。AAADAW 将其注册为 `item.invert-selection`，Action List Run 会在整个工程的 Audio 与 MIDI items 中选择当前未选中的项，并清除当前已选项；结果沿用工程轨道和 item 顺序，最后一项成为活动 item。它只改变时间线选择，不改变工程修订或 Undo/Redo 历史；没有媒体 items 时禁用。
+
+`invert_item_selection_action_selects_the_complement_of_audio_and_midi_items` 覆盖 Action List 搜索/Run、混合 item 类型、多轨结果、再次执行恢复原集合，以及工程/撤销历史不变。REAPER 原厂的空选择/部分选择运行时启用边界、活动 item 规则与实际窗口焦点尚未单独探测，`ITEM-SELECT-009` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

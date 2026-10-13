@@ -551,3 +551,9 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 提交 `682c199` 注册 40529 `Item: Select item under mouse cursor (leaving other items selected)` 与 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。它们复用同一 Arrangement hover target：40529 永远保持目标选中并保留已有选择，40530 对目标增删选择；二者不改工程/Undo，无有效 hover target 时禁用。
 
 `select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 覆盖两次添加仍不取消已有/目标项；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 覆盖移除和重新加入。完整 `aaadaw` nightly+Cranelift nextest 为 512/512 passed、0 skipped；Stable all-target strict Clippy、fmt、diff 和矩阵 80 项/15 列唯一 ID/证据路径检查通过。Cranelift 显示既有 iced/wgpu recursion-depth warning；Stable Clippy 无警告。`ITEM-SELECT-007/008` 保持 `in_progress`：多选后的原厂 active item/anchor 及 Action List 焦点/hover 边界尚未探测；100% 复刻仍未完成。
+
+### 2026-10-13 Main action 41115：Invert selection
+
+动作目录确认 Main 41115 `Item: Invert selection` 无默认快捷键。AAADAW 注册 `item.invert-selection`，Action List Run 反转整个工程的 Audio/MIDI item 选择集合，按轨道及 item 顺序更新活动项，不改变工程修订或 Undo/Redo。没有 items 时禁用。
+
+新增 `invert_item_selection_action_selects_the_complement_of_audio_and_midi_items` 覆盖 Action List 搜索/Run、跨轨 Audio/MIDI 混合集合、重复执行恢复原选择和工程历史不变；Stable `aaadaw` 全套及 nightly+Cranelift nextest 均为 513/513 通过，strict Clippy `-D warnings`、fmt、diff 和 parity CSV 81 项/15 列唯一 ID/证据路径检查均通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning，Stable Clippy 无警告。`ITEM-SELECT-009` 保持 `in_progress`：原厂空/部分选择启用边界、活动 item 细节和实窗焦点尚未探测。

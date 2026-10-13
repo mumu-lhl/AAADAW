@@ -7685,6 +7685,105 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
 }
 
 #[test]
+fn invert_item_selection_action_selects_the_complement_of_audio_and_midi_items() {
+    assert!(!commands::is_enabled(
+        &App::default(),
+        CommandId::InvertItemSelection
+    ));
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://invert-selection".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_ids = app
+        .project
+        .midi_items()
+        .iter()
+        .map(|item| item.id())
+        .collect::<Vec<_>>();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(audio_id);
+    app.timeline.selected_items.insert(audio_id);
+
+    let command = CommandId::InvertItemSelection;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(commands::find(&app, "invert selection"), Some(command));
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.invert-selection")
+    );
+    app.action_list.set_query("invert selection".to_owned());
+    app.action_list.select("item.invert-selection".to_owned());
+    assert_eq!(
+        app.action_list_entries()
+            .iter()
+            .filter_map(|entry| commands::stable_id(entry.id))
+            .collect::<Vec<_>>(),
+        vec!["item.invert-selection".to_owned()]
+    );
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let _ = app.update(Message::ExecuteCommand(command));
+
+    assert_eq!(
+        app.timeline.selected_items,
+        midi_ids.iter().copied().collect::<HashSet<_>>()
+    );
+    assert_eq!(app.timeline.selected_item, midi_ids.last().copied());
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.selected_items.clear();
+    app.timeline.selected_items.insert(audio_id);
+    app.timeline.selected_item = Some(audio_id);
+    app.action_list.select("item.invert-selection".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(
+        app.timeline.selected_items,
+        midi_ids.iter().copied().collect::<HashSet<_>>()
+    );
+    assert_eq!(
+        app.timeline.selected_item,
+        Some(midi_ids.last().copied().unwrap())
+    );
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert_eq!(app.timeline.selected_items, HashSet::from([audio_id]));
+    assert_eq!(app.timeline.selected_item, Some(audio_id));
+    assert_eq!(app.revision, revision_before);
+}
+
+#[test]
 fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
