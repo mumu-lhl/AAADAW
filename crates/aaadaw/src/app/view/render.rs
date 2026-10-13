@@ -5,7 +5,9 @@ use super::super::audio_export::{
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
 use aaadaw_app::{WavChannelCount, WavSampleFormat};
-use iced::widget::{button, checkbox, column, container, pick_list, row, rule, text, text_input};
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -17,10 +19,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     } else {
         "Choose the render range and audio format, then select an output filename."
     };
-    let form_hint = if parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text)
-        .is_err()
+    let form_hint = if app.render_dialog.tail_enabled
+        && parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err()
     {
-        Some("Tail must be a non-negative number with up to 3 decimal places.")
+        Some("Tail must be a non-negative whole number of milliseconds.")
     } else if bounds == RenderBounds::CustomTimeRange
         && crate::project_time::parse_project_time(&app.render_dialog.custom_start_text).is_err()
     {
@@ -135,13 +137,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             fields
         },
         row![
-            text("Tail (seconds)").size(13),
-            iced::widget::Space::new().width(Length::Fill),
-            text_input("2", &app.render_dialog.tail_duration_text)
-                .on_input(Message::SetRenderTailDuration)
+            checkbox(app.render_dialog.tail_enabled)
+                .label("Tail")
+                .on_toggle(Message::SetRenderTailEnabled),
+            text_input("1000", &app.render_dialog.tail_duration_text)
+                .on_input_maybe(
+                    app.render_dialog
+                        .tail_enabled
+                        .then_some(Message::SetRenderTailDuration)
+                )
                 .size(13)
                 .padding([4, 8])
                 .width(Length::Fixed(88.0)),
+            text("ms").size(13),
+            iced::widget::Space::new().width(Length::Fill),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
@@ -324,7 +333,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ),
     );
 
-    container(contents)
+    container(scrollable(contents))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

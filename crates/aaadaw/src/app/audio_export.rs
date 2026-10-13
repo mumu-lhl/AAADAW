@@ -66,41 +66,10 @@ enum SelectedTrackStemMode {
 
 pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'static str> {
     let value = value.trim();
-    if value.is_empty() {
-        return Err("Render tail must be a non-negative number with up to 3 decimal places");
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("Render tail must be a non-negative whole number of milliseconds");
     }
-    let mut parts = value.split('.');
-    let whole_text = parts.next().unwrap_or_default();
-    let fractional_text = parts.next();
-    if parts.next().is_some() {
-        return Err("Render tail must be a non-negative number with up to 3 decimal places");
-    }
-    let whole_seconds = if whole_text.is_empty() {
-        0
-    } else {
-        whole_text
-            .parse::<u32>()
-            .map_err(|_| "Render tail must be a non-negative number with up to 3 decimal places")?
-    };
-    let fractional = fractional_text.unwrap_or_default();
-    if (whole_text.is_empty() && fractional.is_empty())
-        || fractional.len() > 3
-        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return Err("Render tail must be a non-negative number with up to 3 decimal places");
-    }
-    let fractional_milliseconds = if fractional.is_empty() {
-        0
-    } else {
-        fractional
-            .parse::<u32>()
-            .map_err(|_| "Render tail must be a non-negative number with up to 3 decimal places")?
-            * 10_u32.pow((3 - fractional.len()) as u32)
-    };
-    whole_seconds
-        .checked_mul(1_000)
-        .and_then(|whole_milliseconds| whole_milliseconds.checked_add(fractional_milliseconds))
-        .ok_or("Render tail is too large")
+    value.parse::<u32>().map_err(|_| "Render tail is too large")
 }
 
 pub(super) fn parse_render_peak_target_centi_dbfs(value: &str) -> Result<i32, &'static str> {
@@ -508,6 +477,7 @@ pub(super) struct RenderDialogState {
     pub(super) channels: WavChannelCount,
     pub(super) normalize_peak: bool,
     pub(super) normalize_peak_target_text: String,
+    pub(super) tail_enabled: bool,
     pub(super) tail_duration_text: String,
     pub(super) stems_pre_fader: bool,
 }
@@ -534,7 +504,8 @@ impl Default for RenderDialogState {
             channels: WavChannelCount::Stereo,
             normalize_peak: false,
             normalize_peak_target_text: "0".to_owned(),
-            tail_duration_text: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS.to_string(),
+            tail_enabled: false,
+            tail_duration_text: "1000".to_owned(),
             stems_pre_fader: false,
         }
     }
@@ -963,9 +934,12 @@ impl App {
     }
 
     fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
-        let tail_milliseconds =
+        let tail_milliseconds = if self.render_dialog.tail_enabled {
             parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
-                .map_err(str::to_owned)?;
+                .map_err(str::to_owned)?
+        } else {
+            0
+        };
         let (start_sample, end_sample) = self.selected_render_bounds()?;
         aaadaw_app::render_range_length_samples_with_tail_milliseconds(
             self.project.settings().sample_rate(),
@@ -1676,6 +1650,50 @@ mod tests {
     }
 
     #[test]
+    fn render_tail_is_opt_in_and_freezes_its_enabled_duration() {
+        let mut app = App {
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-render-tail-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_start_text: "0:00.000".to_owned(),
+                custom_end_text: "0:02.000".to_owned(),
+                custom_range_initialized: true,
+                tail_duration_text: "invalid while disabled".to_owned(),
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+
+        assert!(!app.render_dialog.tail_enabled);
+        assert_eq!(app.selected_render_settings().unwrap().tail_milliseconds, 0);
+        assert!(app.can_submit_render(), "disabled tail input is ignored");
+
+        app.render_dialog.tail_enabled = true;
+        assert!(!app.can_submit_render(), "enabled tail input must validate");
+        app.render_dialog.tail_duration_text = "1250".to_owned();
+        assert!(app.can_submit_render());
+
+        let output =
+            std::env::temp_dir().join(format!("aaadaw-render-tail-{}.wav", std::process::id()));
+        let _task = app.start_offline_render(output);
+        app.render_dialog.tail_enabled = false;
+        app.render_dialog.tail_duration_text = "0".to_owned();
+
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("the enabled tail render should queue");
+        let OfflineRenderKind::ProjectWav { settings, .. } = queued.job.kind else {
+            panic!("custom time range should queue one WAV render")
+        };
+        assert_eq!(settings.tail_milliseconds, 1_250);
+    }
+
+    #[test]
     fn custom_render_range_initializes_from_project_clock_and_content_end_once() {
         let mut project = Project::default();
         project
@@ -1804,6 +1822,7 @@ mod tests {
             "fixed render rate should be resolved independently of the project rate"
         );
 
+        app.render_dialog.tail_enabled = true;
         app.render_dialog.tail_duration_text = "two".to_owned();
         assert!(!app.can_submit_render());
 
@@ -2210,18 +2229,17 @@ mod tests {
     }
 
     #[test]
-    fn render_tail_parses_decimal_seconds_to_exact_milliseconds() {
+    fn render_tail_parses_integer_milliseconds_exactly() {
         for (input, expected) in [
-            ("2", 2_000),
-            ("1.2", 1_200),
-            ("0.125", 125),
-            (".5", 500),
-            ("1.", 1_000),
-            (" 3.125 ", 3_125),
+            ("2000", 2_000),
+            ("1200", 1_200),
+            ("125", 125),
+            ("500", 500),
+            (" 3125 ", 3_125),
         ] {
             assert_eq!(parse_render_tail_milliseconds(input), Ok(expected));
         }
-        for invalid in ["", ".", "-1", "1.0001", "1..2", "1,5", "4294967.296"] {
+        for invalid in ["", ".", "-1", "+1", "1.0001", "1..2", "1,5", "4294967296"] {
             assert!(
                 parse_render_tail_milliseconds(invalid).is_err(),
                 "{invalid:?} must be rejected"
@@ -2272,7 +2290,8 @@ mod tests {
         app.render_dialog.channels = WavChannelCount::Mono;
         app.render_dialog.normalize_peak = true;
         app.render_dialog.normalize_peak_target_text = " -6.02 ".to_owned();
-        app.render_dialog.tail_duration_text = "3.125".to_owned();
+        app.render_dialog.tail_enabled = true;
+        app.render_dialog.tail_duration_text = "3125".to_owned();
         app.timeline.time_selection = Some(crate::timeline::TimeSelection {
             start_tick: 960,
             end_tick: 2_880,

@@ -626,9 +626,14 @@ fn render_prepared_inner(
         },
         || {
             for feeder in feeders.borrow_mut().iter_mut().filter_map(Option::take) {
-                feeder
-                    .join()
-                    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+                let result = if feeder.is_finished() {
+                    feeder.join()
+                } else {
+                    // A bounded render range may stop before a feeder reaches EOF. Cancel its
+                    // unused remainder; joining it while its queue is full would wait forever.
+                    feeder.cancel()
+                };
+                result.map_err(|error| OfflineRenderError::Media(error.to_string()))?;
             }
             Ok(())
         },

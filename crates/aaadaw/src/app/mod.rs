@@ -3176,6 +3176,9 @@ impl App {
             Message::SetRenderPeakTarget(value) => {
                 self.render_dialog.normalize_peak_target_text = value;
             }
+            Message::SetRenderTailEnabled(enabled) => {
+                self.render_dialog.tail_enabled = enabled;
+            }
             Message::SetRenderTailDuration(value) => {
                 self.render_dialog.tail_duration_text = value;
             }
@@ -5662,7 +5665,7 @@ impl App {
             return iced::window::gain_focus(window_id);
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(540.0, 480.0),
+            size: iced::Size::new(640.0, 720.0),
             min_size: Some(iced::Size::new(420.0, 360.0)),
             ..iced::window::Settings::default()
         });

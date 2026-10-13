@@ -521,7 +521,36 @@ fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tai
         "the appended timeline tail should contain the following project audio, got {tail_left}"
     );
 
+    let untailed_output_path = unique_path("wav");
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &untailed_output_path,
+        ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: aaadaw_app::WavChannelCount::Mono,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 24_000,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("disabled tail should render only the selected range");
+    let untailed_bytes =
+        std::fs::read(&untailed_output_path).expect("untailed range render should be published");
+    let untailed_data_bytes =
+        u32::from_le_bytes(untailed_bytes[40..44].try_into().expect("WAV data size"));
+    assert_eq!(untailed_data_bytes, 22_050 * 3);
+    assert_eq!(untailed_bytes.len(), 44 + untailed_data_bytes as usize);
+
     std::fs::remove_file(output_path).expect("rendered file should be removed");
+    std::fs::remove_file(untailed_output_path).expect("untailed render should be removed");
     remove_database(&database_path);
 }
 

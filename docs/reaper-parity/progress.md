@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection 范围、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection、毫秒精度尾音、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；cADPCM 编码尚未逐字节一致、其他范围、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master 与 Master mix and stems；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -609,3 +609,11 @@ Render Bounds 新增原厂菜单项 `Custom time range`。首次打开 Render �
 Linux REAPER 7.82 / Default 7 原厂实窗输入 `0:00.123` 到 `0:02.456` 后显示长度 `0:02.333`，以 PCM24 stereo 48 kHz 输出 111,984 帧，对应项目样本 `[5,904, 117,888)`。截图、WAV/SHA-256 事实及可复现工程 ReaScript 已归档在[Render 范围记录](../verification/reaper-parity/project-render-range.md)与[fixture](../verification/reaper-parity/fixtures/render-custom-range-native.tsv)。原厂捕获时 Tail checkbox 未勾选；AAADAW 当前仍始终应用独立的 Tail duration，故本切片验证 bounds 输入/边界而不声称未尾音输出帧数完全一致。`Selected regions`、`Selected markers`、完整 Tail toggle/default、Render 速率菜单、Wildcards/Presets/Metadata 与原厂完整窗口验收仍缺。
 
 `custom_render_range_initializes_from_project_clock_and_content_end_once`、`custom_render_range_maps_project_clock_values_to_sample_boundaries_and_freezes_them`、`custom_render_range_rejects_invalid_out_of_project_and_empty_ranges` nightly+Cranelift（测试调试符号关闭）定向 nextest 为 3/3 passed；marker 最终补零断言同一配置 1/1 passed。Stable all-target `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 与 parity CSV 92 个唯一 ID/15 列/Render 引用检查通过。Stable 默认调试符号的 `aaadaw` 测试链接运行约 60 分钟仍未进入测试，随后中止且不计作通过；nightly 测试构建保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning，Stable Clippy 无警告。`RENDER-BOUNDS-001`、`UI-028` 与 P10 保持 `in_progress`。
+
+### 2026-10-13 Render Tail 默认状态与有界渲染清理
+
+REAPER 7.82 Render 将 Tail 显示为未勾选的 checkbox，旁边是禁用的 `1000 ms` 输入。AAADAW 现复刻默认关闭状态，尾音时长改为整数毫秒；关闭时不校验禁用输入且将 0 ms 冻结进离线任务，打开时校验并冻结用户输入。真实 AAADAW Render 窗口截图记录默认和启用 `1250 ms` 两种状态；窗口增高以显示当前完整控件，并在较小窗口中使用滚动容器。[截图 fixture](../verification/reaper-parity/fixtures/render-tail-aaadaw.tsv)。
+
+扩展离线渲染回归验证 44.1 kHz 输出在 1.25 秒尾音和关闭尾音两种情况下的精确帧数。测试同时发现自定义范围早于媒体 EOF 时 feeder 会因队列满而在 join 阶段停住；渲染边界已经消费完毕后，现在会取消未读的 feeder 剩余段并等待线程结束，避免离线任务永久挂起。该清理仅在离线 worker 中执行，不触及实时音频回调。
+
+nightly+Cranelift `aaadaw` Render 定向 nextest 16/16 passed；`aaadaw-app` 的 `project_render_time_selection` 1/1 passed，覆盖有/无 Tail；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt 与 diff 检查通过。RENDER 范围行与 P10 继续 `in_progress`：Tail 最大值、键盘焦点、所选范围之后的时间线材料、原厂采样率列表、Selected regions/markers、多声道、Presets/Metadata 和整个对话框的原厂交互仍未完成。
