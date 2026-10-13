@@ -31,7 +31,7 @@ pub use midi::{
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
-pub use regions::{MAX_PROJECT_REGION_NUMBER, ProjectRegion, RegionId};
+pub use regions::{MAX_PROJECT_REGION_NUMBER, MAX_PROJECT_REGION_TICKS, ProjectRegion, RegionId};
 pub use snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot,
     ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSnapshot, SnapshotError,

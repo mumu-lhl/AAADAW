@@ -5079,6 +5079,7 @@ impl App {
             timeline::TimelineEvent::SelectProjectMarker { position_ticks, .. } => {
                 Some(*position_ticks)
             }
+            timeline::TimelineEvent::SelectProjectRegion { start_ticks, .. } => Some(*start_ticks),
             _ => None,
         };
         if let timeline::TimelineEvent::MoveProjectMarker {
@@ -5113,6 +5114,92 @@ impl App {
             );
             return;
         }
+        if let timeline::TimelineEvent::MoveProjectRegion {
+            region_id,
+            original_start_ticks,
+            original_end_ticks,
+            start_ticks,
+            end_ticks,
+        } = &event
+        {
+            if commands::project_edit_busy(self) {
+                self.status =
+                    "Stop playback or finish the current project operation before moving a region"
+                        .to_owned();
+                return;
+            }
+            let Some((number, name, current_start_ticks, current_end_ticks)) = self
+                .project
+                .regions()
+                .iter()
+                .find(|region| region.id() == *region_id)
+                .map(|region| {
+                    (
+                        region.number(),
+                        region.name().to_owned(),
+                        region.start_ticks(),
+                        region.end_ticks(),
+                    )
+                })
+            else {
+                self.status = "Project region no longer exists".to_owned();
+                return;
+            };
+            if current_start_ticks != *original_start_ticks
+                || current_end_ticks != *original_end_ticks
+            {
+                self.status = "Project region changed before the drag completed".to_owned();
+                return;
+            }
+            self.apply_action(
+                DawAction::UpdateProjectRegion {
+                    region_id: *region_id,
+                    number,
+                    start_ticks: *start_ticks,
+                    end_ticks: *end_ticks,
+                    name,
+                },
+                "Project region moved",
+            );
+            if self.project.regions().iter().any(|region| {
+                region.id() == *region_id
+                    && region.start_ticks() == *start_ticks
+                    && region.end_ticks() == *end_ticks
+            }) {
+                self.handle_timeline_view_event(timeline::TimelineEvent::SelectProjectRegion {
+                    region_id: *region_id,
+                    start_ticks: *start_ticks,
+                    end_ticks: *end_ticks,
+                });
+            }
+            return;
+        }
+        let event = match event {
+            timeline::TimelineEvent::SelectProjectRegion { region_id, .. } => {
+                let Some(region) = self
+                    .project
+                    .regions()
+                    .iter()
+                    .find(|region| region.id() == region_id)
+                else {
+                    self.status = "Project region no longer exists".to_owned();
+                    return;
+                };
+                let start_ticks = region.start_ticks();
+                let end_ticks = region.end_ticks();
+                self.timeline.selected_project_marker = None;
+                if let Some(manager) = &mut self.marker_manager {
+                    manager.selected_region = Some(region_id);
+                    manager.selected_marker = None;
+                }
+                timeline::TimelineEvent::SelectProjectRegion {
+                    region_id,
+                    start_ticks,
+                    end_ticks,
+                }
+            }
+            event => event,
+        };
         let previous_view_state = matches!(
             &event,
             timeline::TimelineEvent::ToggleVolumeAutomation(_)

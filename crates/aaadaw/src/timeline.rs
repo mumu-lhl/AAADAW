@@ -239,12 +239,24 @@ pub(crate) enum TimelineEvent {
         marker_id: MarkerId,
         position_ticks: u64,
     },
+    SelectProjectRegion {
+        region_id: aaadaw_core::RegionId,
+        start_ticks: u64,
+        end_ticks: u64,
+    },
     EditProjectMarker {
         marker_id: MarkerId,
     },
     MoveProjectMarker {
         marker_id: MarkerId,
         position_ticks: u64,
+    },
+    MoveProjectRegion {
+        region_id: aaadaw_core::RegionId,
+        original_start_ticks: u64,
+        original_end_ticks: u64,
+        start_ticks: u64,
+        end_ticks: u64,
     },
     SetTimeSelection {
         start_tick: u64,
@@ -1709,10 +1721,19 @@ impl TimelineState {
                 self.selected_project_marker = Some(marker_id);
                 self.edit_cursor_tick = position_ticks;
             }
+            TimelineEvent::SelectProjectRegion {
+                start_ticks,
+                end_ticks,
+                ..
+            } => {
+                self.time_selection = TimeSelection::normalized(start_ticks, end_ticks);
+                self.edit_cursor_tick = start_ticks;
+            }
             TimelineEvent::EditProjectMarker { .. } => {}
             TimelineEvent::MoveProjectMarker { marker_id, .. } => {
                 self.selected_project_marker = Some(marker_id);
             }
+            TimelineEvent::MoveProjectRegion { .. } => {}
             TimelineEvent::SetTimeSelection {
                 start_tick,
                 end_tick,
@@ -4133,6 +4154,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 if let Some(marker) = project_marker_hit(self.project, self.state, position) {
+                    state.region_drag = None;
                     let now = Instant::now();
                     let is_double_click =
                         state
@@ -4164,9 +4186,49 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     });
                     return Some(canvas::Action::capture());
                 }
+                if let Some((region, target)) =
+                    project_region_hit(self.project, self.state, position)
+                {
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    state.drag = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let (anchor_tick, start_ticks, end_ticks) = match target {
+                        ProjectRegionDragTarget::Start => (
+                            region.start_ticks(),
+                            region.start_ticks(),
+                            region.end_ticks(),
+                        ),
+                        ProjectRegionDragTarget::End => {
+                            (region.end_ticks(), region.start_ticks(), region.end_ticks())
+                        }
+                        ProjectRegionDragTarget::Move => (
+                            region.start_ticks(),
+                            region.start_ticks(),
+                            region.end_ticks(),
+                        ),
+                    };
+                    state.region_drag = Some(ProjectRegionDrag {
+                        region_id: region.id(),
+                        target,
+                        original_start_ticks: start_ticks,
+                        original_end_ticks: end_ticks,
+                        pointer_offset_ticks: i128::from(anchor_tick) - i128::from(pointer_tick),
+                        start_pointer: position,
+                        preview_start_ticks: start_ticks,
+                        preview_end_ticks: end_ticks,
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
                 state.last_click = None;
                 state.pending_double_click = None;
                 state.drag = None;
+                state.region_drag = None;
                 let tick = tick_at_x(
                     self.state.origin_tick,
                     self.state.pixels_per_tick,
@@ -4177,6 +4239,47 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 )))
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(drag) = state.region_drag.as_mut() {
+                    let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
+                    if !drag.moved && (position.x - drag.start_pointer.x).abs() < 3.0 {
+                        return Some(canvas::Action::capture());
+                    }
+                    drag.moved = true;
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let target_tick = (i128::from(pointer_tick) + drag.pointer_offset_ticks)
+                        .clamp(0, i128::from(aaadaw_core::MAX_PROJECT_REGION_TICKS))
+                        as u64;
+                    let target_tick = snap_tick_to_grid(
+                        target_tick,
+                        self.state.cache.snap_grid_ticks,
+                        self.state.snap_enabled,
+                        false,
+                    )
+                    .min(aaadaw_core::MAX_PROJECT_REGION_TICKS);
+                    (drag.preview_start_ticks, drag.preview_end_ticks) = match drag.target {
+                        ProjectRegionDragTarget::Start => (
+                            target_tick.min(drag.original_end_ticks.saturating_sub(1)),
+                            drag.original_end_ticks,
+                        ),
+                        ProjectRegionDragTarget::End => (
+                            drag.original_start_ticks,
+                            target_tick.max(drag.original_start_ticks.saturating_add(1)),
+                        ),
+                        ProjectRegionDragTarget::Move => {
+                            let length = drag.original_end_ticks - drag.original_start_ticks;
+                            let start_ticks = target_tick
+                                .min(aaadaw_core::MAX_PROJECT_REGION_TICKS.saturating_sub(length));
+                            (start_ticks, start_ticks + length)
+                        }
+                    };
+                    return Some(canvas::Action::request_redraw().and_capture());
+                }
                 let drag = state.drag.as_mut()?;
                 let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
                 if !drag.moved && (position.x - drag.start_pointer.x).abs() < 3.0 {
@@ -4201,6 +4304,37 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 Some(canvas::Action::request_redraw().and_capture())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(drag) = state.region_drag.take() {
+                    if drag.moved {
+                        if drag.preview_start_ticks != drag.original_start_ticks
+                            || drag.preview_end_ticks != drag.original_end_ticks
+                        {
+                            return Some(
+                                canvas::Action::publish(crate::app::Message::Timeline(
+                                    TimelineEvent::MoveProjectRegion {
+                                        region_id: drag.region_id,
+                                        original_start_ticks: drag.original_start_ticks,
+                                        original_end_ticks: drag.original_end_ticks,
+                                        start_ticks: drag.preview_start_ticks,
+                                        end_ticks: drag.preview_end_ticks,
+                                    },
+                                ))
+                                .and_capture(),
+                            );
+                        }
+                        return Some(canvas::Action::capture());
+                    }
+                    return Some(
+                        canvas::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectProjectRegion {
+                                region_id: drag.region_id,
+                                start_ticks: drag.original_start_ticks,
+                                end_ticks: drag.original_end_ticks,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let drag = state.drag.take()?;
                 if drag.moved {
                     (drag.preview_position_ticks != drag.original_position_ticks)
@@ -4320,13 +4454,18 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             }
         }
         for region in self.project.regions() {
+            let drag = state
+                .region_drag
+                .filter(|drag| drag.region_id == region.id() && drag.moved);
+            let start_ticks = drag.map_or(region.start_ticks(), |drag| drag.preview_start_ticks);
+            let end_ticks = drag.map_or(region.end_ticks(), |drag| drag.preview_end_ticks);
             let start_x = project_marker_x(
-                region.start_ticks(),
+                start_ticks,
                 self.state.origin_tick,
                 self.state.pixels_per_tick,
             );
             let end_x = project_marker_x(
-                region.end_ticks(),
+                end_ticks,
                 self.state.origin_tick,
                 self.state.pixels_per_tick,
             );
@@ -4338,7 +4477,11 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             frame.fill_rectangle(
                 Point::new(left, 1.0),
                 Size::new((right - left).max(0.0), bounds.height.min(6.0)),
-                Color::from_rgba8(135, 163, 105, 75.0 / 255.0),
+                if drag.is_some() {
+                    Color::from_rgba8(170, 205, 130, 0.48)
+                } else {
+                    Color::from_rgba8(135, 163, 105, 75.0 / 255.0)
+                },
             );
             for x in [start_x, end_x] {
                 if (0.0..=bounds.width).contains(&x) {
@@ -4420,9 +4563,30 @@ struct ProjectMarkerDrag {
     moved: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectRegionDragTarget {
+    Start,
+    End,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectRegionDrag {
+    region_id: aaadaw_core::RegionId,
+    target: ProjectRegionDragTarget,
+    original_start_ticks: u64,
+    original_end_ticks: u64,
+    pointer_offset_ticks: i128,
+    start_pointer: Point,
+    preview_start_ticks: u64,
+    preview_end_ticks: u64,
+    moved: bool,
+}
+
 #[derive(Debug, Default)]
 struct ProjectMarkerInteraction {
     drag: Option<ProjectMarkerDrag>,
+    region_drag: Option<ProjectRegionDrag>,
     last_click: Option<(MarkerId, Point, Instant)>,
     pending_double_click: Option<MarkerId>,
 }
@@ -4455,6 +4619,53 @@ fn project_marker_hit<'a>(
         })
         .min_by(|left, right| left.1.total_cmp(&right.1))
         .map(|(marker, _)| marker)
+}
+
+fn project_region_hit<'a>(
+    project: &'a Project,
+    state: &TimelineState,
+    position: Point,
+) -> Option<(&'a aaadaw_core::ProjectRegion, ProjectRegionDragTarget)> {
+    if position.y >= 14.0 {
+        project
+            .regions()
+            .iter()
+            .flat_map(|region| {
+                [
+                    (region, ProjectRegionDragTarget::Start, region.start_ticks()),
+                    (region, ProjectRegionDragTarget::End, region.end_ticks()),
+                ]
+            })
+            .filter_map(|(region, target, tick)| {
+                let x = project_marker_x(tick, state.origin_tick, state.pixels_per_tick);
+                let distance = (position.x - x).abs();
+                (x.is_finite() && distance <= 7.0).then_some((region, target, distance))
+            })
+            .min_by(|left, right| left.2.total_cmp(&right.2))
+            .map(|(region, target, _)| (region, target))
+    } else if (0.0..=7.0).contains(&position.y) {
+        project
+            .regions()
+            .iter()
+            .filter_map(|region| {
+                let start_x = project_marker_x(
+                    region.start_ticks(),
+                    state.origin_tick,
+                    state.pixels_per_tick,
+                );
+                let end_x =
+                    project_marker_x(region.end_ticks(), state.origin_tick, state.pixels_per_tick);
+                (start_x.is_finite()
+                    && end_x.is_finite()
+                    && position.x > start_x + 8.0
+                    && position.x < end_x - 8.0)
+                    .then_some((region, end_x - start_x))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(region, _)| (region, ProjectRegionDragTarget::Move))
+    } else {
+        None
+    }
 }
 
 fn project_marker_x(position_tick: u64, origin_tick: u64, pixels_per_tick: f32) -> f32 {
@@ -4933,6 +5144,322 @@ mod tests {
                 }
             )) if selected_id == marker_id
         ));
+    }
+
+    #[test]
+    fn ruler_region_click_selects_its_range_and_start_cursor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let cursor = mouse::Cursor::Available(Point::new(240.0, 4.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("region body press should capture the gesture");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("region click should select its range")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectRegion {
+                    region_id: selected,
+                    start_ticks: 960,
+                    end_ticks: 3_840,
+                }
+            )) if selected == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_start_edge_drag_updates_one_boundary() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(480.0, 24.0)),
+        )
+        .expect("region start line should begin an edge drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(680.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(680.0, 24.0)),
+        )
+        .expect("region start preview should update");
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((1_360, 3_840))
+        );
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(680.0, 24.0)),
+        )
+        .expect("region edge release should publish one range update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    start_ticks: 1_360,
+                    end_ticks: 3_840,
+                    ..
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_end_edge_drag_updates_one_boundary() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(384.0, 24.0)),
+        )
+        .expect("region end line should begin an edge drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(420.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(420.0, 24.0)),
+        )
+        .expect("region end preview should update");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(420.0, 24.0)),
+        )
+        .expect("region end release should publish one range update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    original_start_ticks: 960,
+                    original_end_ticks: 3_840,
+                    start_ticks: 960,
+                    end_ticks: 4_200,
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_body_drag_moves_range_without_changing_length() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(120.0, 4.0)),
+        )
+        .expect("region band should begin a move gesture");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(140.0, 4.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(140.0, 4.0)),
+        )
+        .expect("region band drag should update its preview");
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((1_160, 4_040))
+        );
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(140.0, 4.0)),
+        )
+        .expect("region move release should publish one update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    start_ticks: 1_160,
+                    end_ticks: 4_040,
+                    ..
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_edge_drag_snaps_to_arrange_grid() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 4_800,
+                end_ticks: 7_680,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: true,
+            snap_grid: SnapGrid::Quarter,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(480.0, 24.0)),
+        )
+        .expect("region boundary should begin a drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(555.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(555.0, 24.0)),
+        )
+        .expect("region boundary drag should snap");
+
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((5_760, 7_680))
+        );
     }
 
     #[test]

@@ -357,6 +357,113 @@ fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() 
 }
 
 #[test]
+fn ruler_region_edit_preserves_identity_and_is_one_undoable_action() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 960,
+            end_ticks: 3_840,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let region = &app.project.regions()[0];
+    let region_id = region.id();
+    let number = region.number();
+
+    let _ = app.update(Message::Timeline(TimelineEvent::MoveProjectRegion {
+        region_id,
+        original_start_ticks: 960,
+        original_end_ticks: 3_840,
+        start_ticks: 1_360,
+        end_ticks: 4_240,
+    }));
+
+    let updated = &app.project.regions()[0];
+    assert_eq!(updated.id(), region_id);
+    assert_eq!(updated.number(), number);
+    assert_eq!(updated.name(), "Verse");
+    assert_eq!(updated.start_ticks(), 1_360);
+    assert_eq!(updated.end_ticks(), 4_240);
+    assert_eq!(app.timeline.edit_cursor_tick, 1_360);
+    assert_eq!(
+        app.timeline.time_selection,
+        Some(crate::timeline::TimeSelection {
+            start_tick: 1_360,
+            end_tick: 4_240,
+        })
+    );
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.regions()[0].id(), region_id);
+    assert_eq!(app.project.regions()[0].start_ticks(), 960);
+    assert_eq!(app.project.regions()[0].end_ticks(), 3_840);
+}
+
+#[test]
+fn ruler_region_edit_obeys_project_busy_guard() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 960,
+            end_ticks: 3_840,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let region_id = app.project.regions()[0].id();
+    let revision = app.revision;
+    app.io_busy = true;
+
+    let _ = app.update(Message::Timeline(TimelineEvent::MoveProjectRegion {
+        region_id,
+        original_start_ticks: 960,
+        original_end_ticks: 3_840,
+        start_ticks: 1_360,
+        end_ticks: 4_240,
+    }));
+
+    assert_eq!(app.project.regions()[0].start_ticks(), 960);
+    assert_eq!(app.project.regions()[0].end_ticks(), 3_840);
+    assert_eq!(app.revision, revision);
+    assert!(app.status.contains("before moving a region"));
+}
+
+#[test]
+fn ruler_region_edit_rejects_a_stale_drag_after_another_edit() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 960,
+            end_ticks: 3_840,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let region_id = app.project.regions()[0].id();
+    app.project
+        .apply(DawAction::UpdateProjectRegion {
+            region_id,
+            number: 1,
+            start_ticks: 1_920,
+            end_ticks: 4_800,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    let revision = app.revision;
+
+    let _ = app.update(Message::Timeline(TimelineEvent::MoveProjectRegion {
+        region_id,
+        original_start_ticks: 960,
+        original_end_ticks: 3_840,
+        start_ticks: 1_360,
+        end_ticks: 4_240,
+    }));
+
+    assert_eq!(app.project.regions()[0].start_ticks(), 1_920);
+    assert_eq!(app.project.regions()[0].end_ticks(), 4_800);
+    assert_eq!(app.revision, revision);
+    assert!(app.status.contains("changed before the drag completed"));
+}
+
+#[test]
 fn marker_manager_keeps_global_undo_shortcut_available() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

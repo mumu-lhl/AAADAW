@@ -3,6 +3,9 @@ use crate::timebase::MAX_EXACT_FLOAT_POSITION;
 /// Largest positive project region number supported by the current storage model.
 pub const MAX_PROJECT_REGION_NUMBER: u32 = i32::MAX as u32;
 
+/// Largest exact tick position supported by project regions.
+pub const MAX_PROJECT_REGION_TICKS: u64 = MAX_EXACT_FLOAT_POSITION;
+
 /// The stable identity of a project region.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RegionId(u64);
@@ -39,7 +42,7 @@ impl ProjectRegion {
         (number > 0
             && number <= MAX_PROJECT_REGION_NUMBER
             && start_ticks < end_ticks
-            && end_ticks <= MAX_EXACT_FLOAT_POSITION
+            && end_ticks <= MAX_PROJECT_REGION_TICKS
             && crate::markers::valid_marker_name(&name))
         .then_some(Self {
             id,

@@ -64,7 +64,7 @@ fn valid_project_regions(regions: &[ProjectRegion]) -> bool {
     let mut ids = HashSet::with_capacity(regions.len());
     regions.iter().all(|region| {
         region.start_ticks < region.end_ticks
-            && region.end_ticks <= crate::timebase::MAX_EXACT_FLOAT_POSITION
+            && region.end_ticks <= crate::MAX_PROJECT_REGION_TICKS
             && (1..=crate::MAX_PROJECT_REGION_NUMBER).contains(&region.number)
             && crate::markers::valid_marker_name(&region.name)
             && ids.insert(region.id)
