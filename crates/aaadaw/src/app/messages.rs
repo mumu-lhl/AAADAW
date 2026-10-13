@@ -423,6 +423,8 @@ pub(crate) enum Message {
     DeleteSelectedItems,
     SelectAllItems,
     SelectAllItemsInTrack,
+    SelectAllItemsInTimeSelection,
+    SelectAllItemsOnSelectedTracksInTimeSelection,
     DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
     DuplicateMidiItem(ItemId),

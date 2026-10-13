@@ -49,6 +49,12 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 回归 `select_all_items_in_track_action_keeps_other_tracks_unselected` 覆盖跨轨工程、Audio/MIDI 混合、Action List 搜索/Run、空默认键和其它轨道取消选择。动作选择专项 nextest 2/2 通过；后续全量测试与静态检查记录于进度文档。
 
+## 2026-10-13 Main actions 40717/40718：时间选区内选择 items
+
+默认动作导出中的 Main Section 列有 40717 `Item: Select all items in current time selection` 和 40718 `Item: Select all items on selected tracks in current time selection`，均无默认快捷键。AAADAW 分别注册为 `item.select-all-in-time-selection` 与 `item.select-all-on-selected-tracks-in-time-selection`，可搜索并通过 Action List Run 执行。两者按 item 区间与时间选区的半开区间相交来筛选 Audio/MIDI items；第二项范围由多选轨道和活动轨道组成。结果按轨道及时间排列，替换原 item 选择并清除 automation point 选择；不修改工程修订或 Undo/Redo 历史。没有时间选区或范围内没有 item 时禁用。
+
+`select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi` 与 `select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_track_scope` 覆盖 Action List 搜索/Run、Audio/MIDI 混合、范围边界、轨道过滤、多轨范围和工程历史不变。Item 结束于时间选区起点或开始于选区终点时均排除，是目前采用的半开区间解释；REAPER 原厂对此边界及多选轨道运行时的实窗结果尚无独立探针，`ITEM-SELECT-003/004` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

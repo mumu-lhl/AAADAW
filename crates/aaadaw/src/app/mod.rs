@@ -4253,6 +4253,10 @@ impl App {
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::SelectAllItems => self.select_all_items(),
             Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
+            Message::SelectAllItemsInTimeSelection => self.select_all_items_in_time_selection(),
+            Message::SelectAllItemsOnSelectedTracksInTimeSelection => {
+                self.select_all_items_on_selected_tracks_in_time_selection()
+            }
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9205,6 +9209,77 @@ impl App {
             .map(|track_id| self.items_for_tracks([track_id]))
             .unwrap_or_default();
         self.timeline.select_items(selected);
+    }
+
+    fn select_all_items_in_time_selection(&mut self) {
+        let Some(selection) = self.timeline.time_selection else {
+            return;
+        };
+        let track_ids = self.project.tracks().iter().map(|track| track.id());
+        let selected = self.items_in_time_selection(track_ids, selection);
+        self.timeline.select_items(selected);
+    }
+
+    fn select_all_items_on_selected_tracks_in_time_selection(&mut self) {
+        let Some(selection) = self.timeline.time_selection else {
+            return;
+        };
+        let selected = self.items_in_time_selection(self.selected_track_ids(), selection);
+        self.timeline.select_items(selected);
+    }
+
+    fn selected_track_ids(&self) -> Vec<TrackId> {
+        let mut selected = self
+            .timeline
+            .selected_tracks
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        if let Some(active_track) = self.selected_track_id() {
+            selected.insert(active_track);
+        }
+        self.project
+            .tracks()
+            .iter()
+            .filter(|track| selected.contains(&track.id()))
+            .map(|track| track.id())
+            .collect()
+    }
+
+    fn items_in_time_selection(
+        &self,
+        track_ids: impl IntoIterator<Item = TrackId>,
+        selection: crate::timeline::TimeSelection,
+    ) -> Vec<(ItemId, TrackId)> {
+        let track_ids = track_ids.into_iter().collect::<Vec<_>>();
+        let track_id_set = track_ids.iter().copied().collect::<HashSet<_>>();
+        let matching_ids = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| track_id_set.contains(&item.track_id()))
+            .filter_map(|item| {
+                let start_tick = self.project.tick_at_sample(item.start_sample()).ok()?;
+                let end_tick = self.project.tick_at_sample(item.end_sample()).ok()?;
+                (start_tick < selection.end_tick && end_tick > selection.start_tick)
+                    .then_some(item.id())
+            })
+            .chain(
+                self.project
+                    .midi_items()
+                    .iter()
+                    .filter(|item| track_id_set.contains(&item.track_id()))
+                    .filter_map(|item| {
+                        let end_tick = item.start_tick().checked_add(item.length_ticks())?;
+                        (item.start_tick() < selection.end_tick && end_tick > selection.start_tick)
+                            .then_some(item.id())
+                    }),
+            )
+            .collect::<HashSet<_>>();
+        self.items_for_tracks(track_ids)
+            .into_iter()
+            .filter(|(item_id, _)| matching_ids.contains(item_id))
+            .collect()
     }
 
     fn items_for_tracks(

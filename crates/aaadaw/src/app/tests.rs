@@ -7651,7 +7651,6 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
     );
     app.action_list.set_query("select all items".to_owned());
     let entries = app.action_list_entries();
-    assert_eq!(entries.len(), 2);
     assert_eq!(
         entries
             .iter()
@@ -7659,7 +7658,9 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
             .collect::<HashSet<_>>(),
         HashSet::from([
             "item.select-all".to_owned(),
-            "item.select-all-in-track".to_owned()
+            "item.select-all-in-track".to_owned(),
+            "item.select-all-in-time-selection".to_owned(),
+            "item.select-all-on-selected-tracks-in-time-selection".to_owned(),
         ])
     );
     assert!(entries.iter().all(|entry| entry.shortcut.is_none()));
@@ -7737,8 +7738,11 @@ fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
     app.action_list
         .set_query("select all items in track".to_owned());
     let entries = app.action_list_entries();
-    assert_eq!(entries.len(), 1);
-    assert!(entries[0].shortcut.is_none());
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == command)
+        .expect("track action is searchable");
+    assert!(entry.shortcut.is_none());
     app.action_list
         .select("item.select-all-in-track".to_owned());
 
@@ -7749,6 +7753,217 @@ fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
         HashSet::from([first_audio, first_track_midi])
     );
     assert_eq!(app.timeline.selected_item, Some(first_track_midi));
+}
+
+#[test]
+fn select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://time-selection-overlap".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 2_700,
+            length_ticks: 300,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[1],
+            media_ref: "asset://time-selection-end-boundary".to_owned(),
+            start_sample: 72_000,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[2],
+            start_tick: 2_880,
+            length_ticks: 960,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[2],
+            media_ref: "asset://time-selection-start-boundary".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+
+    let overlapping_audio = app.project.audio_items()[0].id();
+    let end_boundary_audio = app.project.audio_items()[1].id();
+    let start_boundary_audio = app.project.audio_items()[2].id();
+    let overlapping_midi = app.project.midi_items()[0].id();
+    let end_boundary_midi = app.project.midi_items()[1].id();
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 960,
+        end_tick: 2_880,
+    });
+    app.timeline.selected_items = HashSet::from([
+        end_boundary_audio,
+        end_boundary_midi,
+        start_boundary_audio,
+    ]);
+    app.timeline.selected_item = Some(end_boundary_midi);
+
+    let command = CommandId::SelectAllItemsInTimeSelection;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "select all items in current time selection"),
+        Some(command)
+    );
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.select-all-in-time-selection")
+    );
+    app.action_list
+        .set_query("select all items in current time selection".to_owned());
+    let entries = app.action_list_entries();
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == command)
+        .expect("time-selection action is searchable");
+    assert!(entry.shortcut.is_none());
+    app.action_list
+        .select("item.select-all-in-time-selection".to_owned());
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([overlapping_audio, overlapping_midi])
+    );
+    assert_eq!(app.timeline.selected_item, Some(overlapping_midi));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.time_selection = None;
+    assert!(!commands::is_enabled(&app, command));
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 5_000,
+        end_tick: 6_000,
+    });
+    assert!(!commands::is_enabled(&app, command));
+}
+
+#[test]
+fn select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_track_scope() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://selected-track-first".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 1_200,
+            length_ticks: 600,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[2],
+            media_ref: "asset://selected-track-last".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 0,
+            length_samples: 12_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[2],
+            start_tick: 4_000,
+            length_ticks: 500,
+        })
+        .unwrap();
+
+    let first_audio = app.project.audio_items()[0].id();
+    let unselected_track_midi = app.project.midi_items()[0].id();
+    let selected_track_audio = app.project.audio_items()[1].id();
+    let out_of_range_midi = app.project.midi_items()[1].id();
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 1_000,
+        end_tick: 3_000,
+    });
+    app.timeline.selected_tracks = HashSet::from([tracks[0], tracks[2]]);
+    app.timeline.selected_track = Some(tracks[2]);
+    app.timeline.selected_items = HashSet::from([unselected_track_midi, out_of_range_midi]);
+
+    let command = CommandId::SelectAllItemsOnSelectedTracksInTimeSelection;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(
+            &app,
+            "select all items on selected tracks in current time selection"
+        ),
+        Some(command)
+    );
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.select-all-on-selected-tracks-in-time-selection")
+    );
+    app.action_list
+        .set_query("select all items on selected tracks in current time selection".to_owned());
+    let entries = app.action_list_entries();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].shortcut.is_none());
+    app.action_list
+        .select("item.select-all-on-selected-tracks-in-time-selection".to_owned());
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([first_audio, selected_track_audio])
+    );
+    assert_eq!(app.timeline.selected_item, Some(selected_track_audio));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.selected_tracks.clear();
+    app.timeline.selected_track = None;
+    assert!(!commands::is_enabled(&app, command));
 }
 
 #[test]

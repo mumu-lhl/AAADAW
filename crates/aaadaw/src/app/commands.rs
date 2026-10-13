@@ -45,6 +45,8 @@ pub(crate) enum CommandId {
     ToggleItemProperties,
     SelectAllItems,
     SelectAllItemsInTrack,
+    SelectAllItemsInTimeSelection,
+    SelectAllItemsOnSelectedTracksInTimeSelection,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -133,6 +135,8 @@ enum CommandKind {
     ToggleItemProperties,
     SelectAllItems,
     SelectAllItemsInTrack,
+    SelectAllItemsInTimeSelection,
+    SelectAllItemsOnSelectedTracksInTimeSelection,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -768,6 +772,26 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SelectAllItemsInTimeSelection,
+        menu: None,
+        category: "Item",
+        label: "Select all items in current time selection",
+        aliases: &["select items in time selection"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection,
+        menu: None,
+        category: "Item",
+        label: "Select all items on selected tracks in current time selection",
+        aliases: &["select items on selected tracks in time selection"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::DuplicateSelectedItem,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1119,6 +1143,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::DuplicateSelectedItem
             | CommandKind::SelectAllItems
             | CommandKind::SelectAllItemsInTrack
+            | CommandKind::SelectAllItemsInTimeSelection
+            | CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection
             | CommandKind::DuplicateSelectedAudioItem
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::SplitSelectedItemsAtCursor
@@ -1653,6 +1679,10 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleItemProperties => "item.properties.toggle",
         CommandKind::SelectAllItems => "item.select-all",
         CommandKind::SelectAllItemsInTrack => "item.select-all-in-track",
+        CommandKind::SelectAllItemsInTimeSelection => "item.select-all-in-time-selection",
+        CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection => {
+            "item.select-all-on-selected-tracks-in-time-selection"
+        }
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
@@ -1773,6 +1803,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
         CommandId::SelectAllItems => Message::SelectAllItems,
         CommandId::SelectAllItemsInTrack => Message::SelectAllItemsInTrack,
+        CommandId::SelectAllItemsInTimeSelection => Message::SelectAllItemsInTimeSelection,
+        CommandId::SelectAllItemsOnSelectedTracksInTimeSelection => {
+            Message::SelectAllItemsOnSelectedTracksInTimeSelection
+        }
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
@@ -2096,6 +2130,18 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     .iter()
                     .any(|item| item.track_id() == track_id)
         }),
+        CommandKind::SelectAllItemsInTimeSelection => {
+            app.timeline.time_selection.is_some_and(|selection| {
+                let track_ids = app.project.tracks().iter().map(|track| track.id());
+                !app.items_in_time_selection(track_ids, selection).is_empty()
+            })
+        }
+        CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection => {
+            app.timeline.time_selection.is_some_and(|selection| {
+                !app.items_in_time_selection(app.selected_track_ids(), selection)
+                    .is_empty()
+            })
+        }
         CommandKind::SplitSelectedItemsAtCursor => {
             !project_edit_busy(app) && app.can_split_selected_items_at_cursor()
         }
@@ -2216,6 +2262,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
         CommandKind::SelectAllItems => CommandId::SelectAllItems,
         CommandKind::SelectAllItemsInTrack => CommandId::SelectAllItemsInTrack,
+        CommandKind::SelectAllItemsInTimeSelection => CommandId::SelectAllItemsInTimeSelection,
+        CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection => {
+            CommandId::SelectAllItemsOnSelectedTracksInTimeSelection
+        }
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
