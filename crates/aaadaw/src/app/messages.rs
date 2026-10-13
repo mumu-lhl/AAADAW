@@ -51,6 +51,7 @@ pub(crate) enum MainMenu {
     Insert,
     Item,
     Track,
+    Options,
     Actions,
 }
 

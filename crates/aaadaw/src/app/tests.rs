@@ -2363,6 +2363,7 @@ fn full_menu_bar_switches_sections_and_escape_dismisses_it_before_time_selection
         MainMenu::Insert,
         MainMenu::Item,
         MainMenu::Track,
+        MainMenu::Options,
         MainMenu::Actions,
     ];
     for menu in menus {
@@ -3414,9 +3415,14 @@ fn shortcut_capture_formats_keys_and_supports_clear_and_cancel() {
 fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_binding() {
     let mut app = App::default();
     assert!(
-        commands::for_menu(&app, MainMenu::File)
+        commands::for_menu(&app, MainMenu::Options)
             .iter()
             .any(|entry| entry.id == CommandId::OpenSettings)
+    );
+    assert!(
+        commands::for_menu(&app, MainMenu::File)
+            .iter()
+            .all(|entry| entry.id != CommandId::OpenSettings)
     );
     assert_eq!(
         commands::find(&app, "settings"),
@@ -3475,6 +3481,45 @@ fn settings_menu_opens_one_settings_window_and_shortcut_conflicts_keep_previous_
             .binding,
         ""
     );
+}
+
+#[test]
+fn options_menu_exposes_preferences_and_updates_the_loop_link_checkmark() {
+    let mut app = App::default();
+    let options = commands::for_menu(&app, MainMenu::Options);
+    let preferences = options
+        .iter()
+        .find(|entry| entry.id == CommandId::OpenSettings)
+        .expect("Preferences should be available from Options");
+    assert_eq!(preferences.label, "Preferences...");
+    let expected_shortcut = commands::format_shortcut_label("Mod+P");
+    assert_eq!(
+        preferences.shortcut.as_deref(),
+        Some(expected_shortcut.as_str())
+    );
+    assert!(matches!(
+        shortcut_message(Key::Character("p"), Modifiers::COMMAND, &HashMap::new()),
+        Some(Message::ExecuteCommand(CommandId::OpenSettings))
+    ));
+
+    let link = CommandId::LoopTime(commands::LoopTimeCommand::ToggleLinked);
+    let link_entry = options
+        .iter()
+        .find(|entry| entry.id == link)
+        .expect("loop link setting should be available from Options");
+    assert_eq!(link_entry.label, "Loop points linked to time selection");
+    assert!(link_entry.checked);
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(link));
+    let link_entry = commands::for_menu(&app, MainMenu::Options)
+        .into_iter()
+        .find(|entry| entry.id == link)
+        .expect("loop link setting should remain available");
+    assert!(!link_entry.checked);
+    assert!(!app.timeline.loop_points_linked);
+    assert!(app.loop_time_preferences_save_at.is_some());
+    assert_eq!(app.revision, revision);
 }
 
 #[test]
@@ -4701,6 +4746,7 @@ fn menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_searc
         ("e", MainMenu::Edit),
         ("f", MainMenu::File),
         ("i", MainMenu::Insert),
+        ("o", MainMenu::Options),
         ("v", MainMenu::View),
     ] {
         let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -4852,6 +4898,18 @@ fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
     assert_eq!(app.active_menu, Some(MainMenu::Edit));
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
     assert_eq!(app.active_menu, Some(MainMenu::File));
+    for menu in [
+        MainMenu::Edit,
+        MainMenu::View,
+        MainMenu::Insert,
+        MainMenu::Item,
+        MainMenu::Track,
+        MainMenu::Options,
+        MainMenu::Actions,
+    ] {
+        let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
+        assert_eq!(app.active_menu, Some(menu));
+    }
     let _ = app.update(Message::Escape);
     assert_eq!(app.active_menu, None);
     assert_eq!(app.menu_selected_command, None);

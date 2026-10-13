@@ -162,6 +162,7 @@ const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::CO
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
 const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
+const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
 const REDO_SHORTCUT: &[Shortcut] = &[
     Shortcut::character('z', Modifiers::COMMAND.union(Modifiers::SHIFT)),
@@ -289,13 +290,13 @@ const COMMANDS: &[CommandDefinition] = &[
     },
     CommandDefinition {
         kind: CommandKind::OpenSettings,
-        menu: Some(MainMenu::File),
-        category: "File",
-        label: "Settings…",
+        menu: Some(MainMenu::Options),
+        category: "Options",
+        label: "Preferences...",
         aliases: &["settings", "preferences", "open settings"],
-        shortcuts: &[],
+        shortcuts: PREFERENCES_SHORTCUT,
         destructive: false,
-        separator_before: true,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::OpenActionList,
@@ -487,16 +488,16 @@ const COMMANDS: &[CommandDefinition] = &[
     },
     CommandDefinition {
         kind: CommandKind::LoopTime(LoopTimeCommand::ToggleLinked),
-        menu: None,
+        menu: Some(MainMenu::Options),
         category: "Loop points",
-        label: "Toggle loop points linked to time selection",
+        label: "Loop points linked to time selection",
         aliases: &[
             "toggle loop points linked",
             "link loop points to time selection",
         ],
         shortcuts: &[],
         destructive: false,
-        separator_before: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::LoopTime(LoopTimeCommand::MoveLoopToTimeSelection),
@@ -978,6 +979,7 @@ pub(super) struct CommandEntry {
     pub(super) label: String,
     pub(super) shortcut: Option<String>,
     pub(super) enabled: bool,
+    pub(super) checked: bool,
     pub(super) destructive: bool,
     pub(super) separator_before: bool,
     aliases: Vec<String>,
@@ -1836,6 +1838,7 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
                 label: action_macro.name.clone(),
                 shortcut: (!binding.is_empty()).then_some(binding),
                 enabled: true,
+                checked: false,
                 destructive: false,
                 separator_before: false,
                 aliases: vec![action_macro.name.clone()],
@@ -1882,6 +1885,7 @@ fn entry_for(
         label: label.to_owned(),
         shortcut: (!binding.is_empty()).then_some(binding),
         enabled: command_enabled(app, definition.kind, track),
+        checked: toggle_state(app, id).unwrap_or(false),
         destructive: definition.destructive,
         separator_before: definition.separator_before,
         aliases: definition

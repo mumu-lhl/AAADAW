@@ -8507,13 +8507,14 @@ impl App {
     }
 
     fn navigate_main_menu(&mut self, navigation: MenuNavigation) -> Task<Message> {
-        const MENUS: [MainMenu; 7] = [
+        const MENUS: [MainMenu; 8] = [
             MainMenu::File,
             MainMenu::Edit,
             MainMenu::View,
             MainMenu::Insert,
             MainMenu::Item,
             MainMenu::Track,
+            MainMenu::Options,
             MainMenu::Actions,
         ];
         match navigation {
@@ -9679,6 +9680,9 @@ fn menu_navigation_event(
             }
             iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("i") => {
                 Some(MainMenu::Insert)
+            }
+            iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("o") => {
+                Some(MainMenu::Options)
             }
             iced::keyboard::Key::Character(value) if value.eq_ignore_ascii_case("v") => {
                 Some(MainMenu::View)

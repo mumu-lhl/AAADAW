@@ -16,7 +16,7 @@ struct MenuLayout {
     popup_width: f32,
 }
 
-const MENU_LAYOUT: [MenuLayout; 7] = [
+const MENU_LAYOUT: [MenuLayout; 8] = [
     MenuLayout {
         menu: MainMenu::File,
         button_width: 48.0,
@@ -48,6 +48,11 @@ const MENU_LAYOUT: [MenuLayout; 7] = [
         popup_width: 284.0,
     },
     MenuLayout {
+        menu: MainMenu::Options,
+        button_width: 66.0,
+        popup_width: 340.0,
+    },
+    MenuLayout {
         menu: MainMenu::Actions,
         button_width: 68.0,
         popup_width: 400.0,
@@ -63,6 +68,7 @@ impl MainMenu {
             Self::Insert => "Insert",
             Self::Item => "Item",
             Self::Track => "Track",
+            Self::Options => "Options",
             Self::Actions => "Actions",
         }
     }
@@ -380,6 +386,7 @@ fn command<'a>(
     let destructive = entry.destructive;
     let button = button(
         row![
+            text(if entry.checked { "✓" } else { "" }).width(Length::Fixed(14.0)),
             text(entry.label.clone()).width(Length::Fill),
             text(entry.shortcut.unwrap_or_default()).size(11),
         ]
