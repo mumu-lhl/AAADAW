@@ -18,11 +18,11 @@
 
 ## AAADAW 当前实现
 
-Timeline 维护单独的 `time_selection`、`loop_points` 与 `loop_points_linked` 状态。Loop points 允许零长度，以保留原厂在编辑光标越过另一端后的折叠结果。默认链接开启；通过现有选区手势更新 Time Selection 时，链接状态会同步 Loop points；设置端点或代码层设置 Loop points 时也按相同规则同步 Time Selection。Action List 加入 40222/40223、40621/40622/40623/40624/40634/40635、40020 对应操作，40222/40223 分别默认绑定 `{`/`}`，40020 的 Escape 行为通过全局取消路径清除两种范围。
+Timeline 维护单独的 `time_selection`、`loop_points` 与 `loop_points_linked` 状态。Loop points 允许零长度，以保留原厂在编辑光标越过另一端后的折叠结果。默认链接开启；通过现有选区手势更新 Time Selection 时，链接状态会同步 Loop points；设置端点或代码层设置 Loop points 时也按相同规则同步 Time Selection。Action List 加入 40222/40223、40621/40622/40623/40624/40632/40633/40634/40635、40020 对应操作，40222/40223 分别默认绑定 `{`/`}`，40621 的 `State` 列显示当前链接状态，40632/40633 在 Loop points 存在时分别定位到范围起点/终点；40020 的 Escape 行为通过全局取消路径清除两种范围。
 
 Ruler 现在按 Default 7 底栏绘制窄括线与两端手柄；拖动任一端点时显示预览，释放时一次性提交。普通拖动底栏建立按下位置的零长度点；Shift+拖 bracket 主体会显示保留区间长度的预览，按当前 Snap 网格移动起点并一次提交，链接时同步 Time Selection。空白 lane 点击在释放时定位编辑光标，单击不创建范围。Time Selection 与 Loop points 现以相对工程采样原点的秒数随工程状态原子保存，重载后按该工程的 tempo map 还原到 timeline tick；时间范围编辑会标记工程未保存。40621 的链接偏好独立保存在平台全局配置目录下的 `loop-time-preferences.json`，默认开启，变更经 500 ms 防抖后原子写入，并在主窗口关闭前刷新；它不会标记工程为未保存。Action List 的 State 列也会按当前链接值显示 `on`/`off`。实窗截图[AAADAW Loop/Time Selection](fixtures/loop-time-selection-aaadaw.png)在未链接的 `[1,2]` Time Selection 与 `[3,4]` Loop points 下显示该底栏；它与原厂截图的窗口尺寸/缩放不同，不作为完整窗口几何验收。
 
-这仍不构成完整 loop 功能：原厂空白 lane 拖动只建立零长度点，尚未找到在该 lane 一次创建非零范围的手势；Ctrl/Alt/Super、拖动中更换修饰键、端点及空白点创建的 Snap 开关语义与整段移动边界仍待核验；当前只证明 Shift 整段移动的 Snap 行为，空白点按原始鼠标按下位置实现。Repeat 播放与 Transport 联动、Tempo/Meter/timebase 边界及完整 REAPER 原厂窗口视觉对照也未完成。播放引擎对媒体流只允许向前读取，不能据此声称 Repeat 已工作。
+这仍不构成完整 loop 功能：40632/40633 在无 Loop points 时的原厂结果尚待探针确认，AAADAW 当前保持编辑光标不变；原厂空白 lane 拖动只建立零长度点，尚未找到在该 lane 一次创建非零范围的手势；Ctrl/Alt/Super、拖动中更换修饰键、端点及空白点创建的 Snap 开关语义与整段移动边界仍待核验；当前只证明 Shift 整段移动的 Snap 行为，空白点按原始鼠标按下位置实现。Repeat 播放与 Transport 联动、Tempo/Meter/timebase 边界及完整 REAPER 原厂窗口视觉对照也未完成。播放引擎对媒体流只允许向前读取，不能据此声称 Repeat 已工作。
 
 ## 验证
 

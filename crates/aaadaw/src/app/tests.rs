@@ -640,6 +640,33 @@ fn toggling_loop_time_link_schedules_global_save_without_dirtying_project() {
 }
 
 #[test]
+fn loop_cursor_actions_jump_to_existing_boundaries_and_noop_without_a_loop() {
+    let mut app = App::default();
+    let go_to_start = CommandId::LoopTime(commands::LoopTimeCommand::GoToStart);
+    let go_to_end = CommandId::LoopTime(commands::LoopTimeCommand::GoToEnd);
+    app.timeline.edit_cursor_tick = 500;
+    let _ = app.update(Message::ExecuteCommand(go_to_start));
+    assert_eq!(app.timeline.edit_cursor_tick, 500);
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetLoopPoints {
+        start_tick: 120,
+        end_tick: 360,
+    }));
+    let range = app.timeline.loop_points;
+    let revision = app.revision;
+
+    let _ = app.update(Message::ExecuteCommand(go_to_start));
+    assert_eq!(app.timeline.edit_cursor_tick, 120);
+    assert_eq!(app.timeline.loop_points, range);
+    assert_eq!(app.revision, revision);
+
+    let _ = app.update(Message::ExecuteCommand(go_to_end));
+    assert_eq!(app.timeline.edit_cursor_tick, 360);
+    assert_eq!(app.timeline.loop_points, range);
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
 fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() {
     let mut app = App::default();
     app.project

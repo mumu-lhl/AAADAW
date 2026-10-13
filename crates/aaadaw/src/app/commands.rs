@@ -84,6 +84,8 @@ pub(crate) enum TrackCommand {
 pub(crate) enum LoopTimeCommand {
     SetStartAtCursor,
     SetEndAtCursor,
+    GoToStart,
+    GoToEnd,
     ToggleLinked,
     MoveLoopToTimeSelection,
     MoveTimeSelectionToLoop,
@@ -460,6 +462,26 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Set loop end point at edit cursor",
         aliases: &["set loop end point", "set loop end at cursor"],
         shortcuts: SET_LOOP_END_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::GoToStart),
+        menu: None,
+        category: "Loop points",
+        label: "Go to start of loop",
+        aliases: &["go to loop start", "loop start"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::LoopTime(LoopTimeCommand::GoToEnd),
+        menu: None,
+        category: "Loop points",
+        label: "Go to end of loop",
+        aliases: &["go to loop end", "loop end"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -1529,6 +1551,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::LoopTime(LoopTimeCommand::ToggleLinked) => "loop-time.toggle-link",
         CommandKind::LoopTime(LoopTimeCommand::SetStartAtCursor) => "loop-time.set-start",
         CommandKind::LoopTime(LoopTimeCommand::SetEndAtCursor) => "loop-time.set-end",
+        CommandKind::LoopTime(LoopTimeCommand::GoToStart) => "loop-time.go-to-start",
+        CommandKind::LoopTime(LoopTimeCommand::GoToEnd) => "loop-time.go-to-end",
         CommandKind::LoopTime(LoopTimeCommand::MoveLoopToTimeSelection) => {
             "loop-time.loop-to-time-selection"
         }
@@ -1636,6 +1660,14 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::LoopTime(command) => Message::Timeline(match command {
             LoopTimeCommand::SetStartAtCursor => TimelineEvent::SetLoopPointStartAtCursor,
             LoopTimeCommand::SetEndAtCursor => TimelineEvent::SetLoopPointEndAtCursor,
+            LoopTimeCommand::GoToStart => app.timeline.loop_points.map_or(
+                TimelineEvent::SetEditCursor(app.timeline.edit_cursor_tick),
+                |range| TimelineEvent::SetEditCursor(range.start_tick),
+            ),
+            LoopTimeCommand::GoToEnd => app.timeline.loop_points.map_or(
+                TimelineEvent::SetEditCursor(app.timeline.edit_cursor_tick),
+                |range| TimelineEvent::SetEditCursor(range.end_tick),
+            ),
             LoopTimeCommand::ToggleLinked => TimelineEvent::ToggleLoopPointsLinked,
             LoopTimeCommand::MoveLoopToTimeSelection => match app.timeline.time_selection {
                 Some(selection) => TimelineEvent::SetLoopPoints {
