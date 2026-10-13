@@ -527,3 +527,9 @@ Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cran
 默认动作目录给出 40182 `Item: Select all items`，快捷键导出为空。AAADAW 注册为稳定 action ID `item.select-all`；从 Action List 搜索/执行后按轨道和时间选择全部 Audio 与 MIDI items，并同步活动 item/轨道锚点，清除 automation point 选择。它不发送 Project/DSP 动作，也不改变工程修订或 Undo/Redo；无 items 时禁用。加入相邻 40421 动作后，完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。矩阵新增 `ITEM-SELECT-001` 且保持 `in_progress`：原厂完整运行时边界和实窗焦点验收未做；Main 仅注册这一小部分原厂动作，Item action 覆盖仍远未完成。
 
 同一 Main Section 的 40421 `Item: Select all items in track`（无默认快捷键）也已注册为 `item.select-all-in-track`。当前执行范围是活动所选轨道，混合选中该轨道的 Audio 与 MIDI items 并替换先前多轨选择，仍然不修改工程或历史。`select_all_items_in_track_action_keeps_other_tracks_unselected` 通过 Action List Run 覆盖该路径。完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。新增 `ITEM-SELECT-002` 保持 `in_progress`，等待原厂验证多轨选择和 active-track 边界。
+
+### 2026-10-13 Main Actions 40717/40718：时间选区 item 选择
+
+提交 `d5f3d1a` 注册 40717 `Item: Select all items in current time selection` 与 40718 `Item: Select all items on selected tracks in current time selection`，两者均无默认快捷键，可经 Action List 搜索和执行。Audio item 的采样区间先映射到项目 tick，MIDI item 使用其项目 tick；当前以半开区间相交筛选，再按轨道/时间顺序替换选择。40718 使用所有选中轨道及活动轨道。该 UI 状态操作不改变工程修订或 Undo/Redo 历史；缺少时间选区或选区内没有 item 时禁用。
+
+两个 Action List Run 回归覆盖 Audio/MIDI 混合、时间范围内外、起止边界、多轨过滤、活动轨道及工程历史不变；更新了通用全选搜索结果断言。`aaadaw` nightly+Cranelift nextest 为 506/506 passed、0 skipped；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 和矩阵 76 项/15 列唯一 ID 及新行证据路径检查通过。Cranelift 编译显示既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning，Stable Clippy 无警告。新增 `ITEM-SELECT-003/004` 均保持 `in_progress`：原厂端点相交、多轨选择运行时边界和实窗界面行为尚未探测；Item/Main 全量动作和整套 REAPER 复刻均未完成。
