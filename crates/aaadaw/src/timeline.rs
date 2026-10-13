@@ -1033,6 +1033,17 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
+    pub(crate) fn select_items(&mut self, items: Vec<(ItemId, TrackId)>) {
+        self.selected_items = items.iter().map(|(item_id, _)| *item_id).collect();
+        self.selected_item = items.last().map(|(item_id, _)| *item_id);
+        self.selection_anchor = self.selected_item;
+        if let Some((_, track_id)) = items.last() {
+            self.selected_track = Some(*track_id);
+        }
+        self.selected_volume_automation_point = None;
+        self.selected_fx_automation_point = None;
+    }
+
     pub(crate) fn replace_project(
         &mut self,
         project: &Project,

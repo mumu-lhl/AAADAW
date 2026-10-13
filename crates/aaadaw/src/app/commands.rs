@@ -43,6 +43,7 @@ pub(crate) enum CommandId {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    SelectAllItems,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -129,6 +130,7 @@ enum CommandKind {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    SelectAllItems,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -744,6 +746,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SelectAllItems,
+        menu: None,
+        category: "Item",
+        label: "Select all items",
+        aliases: &["select all media items"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::DuplicateSelectedItem,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1093,6 +1105,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::ToggleMixerPanel
             | CommandKind::AddMidiItem
             | CommandKind::DuplicateSelectedItem
+            | CommandKind::SelectAllItems
             | CommandKind::DuplicateSelectedAudioItem
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::SplitSelectedItemsAtCursor
@@ -1625,6 +1638,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
+        CommandKind::SelectAllItems => "item.select-all",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
@@ -1743,6 +1757,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
+        CommandId::SelectAllItems => Message::SelectAllItems,
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
@@ -2052,6 +2067,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
+        CommandKind::SelectAllItems => {
+            !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty()
+        }
         CommandKind::SplitSelectedItemsAtCursor => {
             !project_edit_busy(app) && app.can_split_selected_items_at_cursor()
         }
@@ -2170,6 +2188,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
+        CommandKind::SelectAllItems => CommandId::SelectAllItems,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,

@@ -4251,6 +4251,7 @@ impl App {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
+            Message::SelectAllItems => self.select_all_items(),
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9184,6 +9185,42 @@ impl App {
             .collect::<Vec<_>>();
         self.timeline.selected_items.extend(new_ids);
         self.audio_item_start_edits.clear();
+    }
+
+    fn select_all_items(&mut self) {
+        let mut selected =
+            Vec::with_capacity(self.project.audio_items().len() + self.project.midi_items().len());
+        for track in self.project.tracks() {
+            let track_id = track.id();
+            let mut track_items = self
+                .project
+                .audio_items()
+                .iter()
+                .filter(|item| item.track_id() == track_id)
+                .map(|item| {
+                    (
+                        self.project
+                            .tick_at_sample(item.start_sample())
+                            .unwrap_or(u64::MAX),
+                        item.id(),
+                    )
+                })
+                .chain(
+                    self.project
+                        .midi_items()
+                        .iter()
+                        .filter(|item| item.track_id() == track_id)
+                        .map(|item| (item.start_tick(), item.id())),
+                )
+                .collect::<Vec<_>>();
+            track_items.sort_unstable_by_key(|(tick, item_id)| (*tick, item_id.value()));
+            selected.extend(
+                track_items
+                    .into_iter()
+                    .map(|(_, item_id)| (item_id, track_id)),
+            );
+        }
+        self.timeline.select_items(selected);
     }
 
     fn delete_selected_items(&mut self) {
