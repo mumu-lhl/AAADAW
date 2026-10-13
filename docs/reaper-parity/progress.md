@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -479,3 +479,9 @@ AAADAW 新增 SQLite schema 38，以工程采样原点的秒数原子保存两�
 原厂验证表明 40621 随 REAPER 用户配置 `locklooptotime` 恢复，而不属于 `.rpp` 工程。AAADAW 将链接布尔值存入平台全局用户配置目录的 `loop-time-preferences.json`，缺失配置默认链接开启；启动时恢复，切换后 500 ms 防抖原子保存，主窗口关闭请求及关闭事件都会刷新待写值。此设置不会单独增加工程未保存修订；如果切换时按原厂语义同步了实际范围，范围变化仍由既有工程修订逻辑处理。设置文件使用版本 1，未知版本拒绝加载且不覆盖原文件。
 
 回归覆盖配置默认值、未链接 round-trip、未知版本保留，以及 40621 切换后安排全局写入且不误标工程修改。全 workspace nightly+Cranelift nextest 为 963/963 passed、0 skipped（66 个测试二进制）；Stable `cargo check --workspace --all-targets`、strict Clippy `-D warnings`、fmt 与 `git diff --check` 通过。Cranelift 构建仍报告此前已记录的 iced/wgpu `TimelinePipeline: MaybeSync` 递归深度 warning；Stable Clippy 无警告。PROJECT-LOOP-001、P4 和 P6 保持 `in_progress`：Repeat 播放及实时边界安全、其它修饰键/Snap/边界、Action List 40621 勾选状态、Tempo/Meter/timebase 和完整 Default 7 交互/视觉尚未验收。
+
+### 2026-10-13 Action List 40621 链接状态反馈
+
+REAPER 7.82 Action List 的 `State` 列显示 toggle action 当前 `on`/`off`。AAADAW 已有同列及其他 toggle action 状态映射；补充 `loop-time.toggle-link` 到当前 `TimelineState.loop_points_linked` 的映射后，40621 行会反映当前链接值。回归通过真实 Action List command dispatch 分别断言默认 `on` 与执行后的 `off`，同时保留上一切片对全局偏好防抖保存、工程修订不变的断言。
+
+Loop 链接状态专项 1/1 通过；映射后 workspace nightly+Cranelift nextest 为 963/963 passed、0 skipped（66 个测试二进制），Stable all-target check、strict Clippy `-D warnings`、fmt、71 项/15 列 parity CSV 与 `git diff --check` 均通过。Cranelift 保留 iced/wgpu `TimelinePipeline: MaybeSync` 既有递归深度 warning，Stable Clippy 无警告。PROJECT-LOOP-001、P4 和 P6 仍为 `in_progress`：Repeat 播放安全、其它修饰键/Snap/边界、Tempo/Meter/timebase 和完整 Default 7 交互/视觉尚未验收。

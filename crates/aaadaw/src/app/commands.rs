@@ -2389,6 +2389,7 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
         } else {
             app.media_panel_dock.mixer_open
         }),
+        CommandId::LoopTime(LoopTimeCommand::ToggleLinked) => Some(app.timeline.loop_points_linked),
         CommandId::SelectedTrack(TrackCommand::ToggleFolder) => app
             .selected_track_id()
             .and_then(|id| track_state(app, id))

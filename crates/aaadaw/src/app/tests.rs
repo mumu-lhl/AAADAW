@@ -625,11 +625,14 @@ fn loop_points_and_time_selection_follow_reaper_link_copy_and_clear_actions() {
 #[test]
 fn toggling_loop_time_link_schedules_global_save_without_dirtying_project() {
     let mut app = App::default();
+    let command = CommandId::LoopTime(commands::LoopTimeCommand::ToggleLinked);
     let revision = app.revision;
 
-    let _ = app.update(Message::Timeline(TimelineEvent::ToggleLoopPointsLinked));
+    assert_eq!(commands::toggle_state(&app, command), Some(true));
+    let _ = app.update(Message::ExecuteCommand(command));
 
     assert!(!app.timeline.loop_points_linked);
+    assert_eq!(commands::toggle_state(&app, command), Some(false));
     assert!(app.loop_time_preferences_save_at.is_some());
     assert_eq!(app.revision, revision);
     assert_eq!(app.timeline.time_selection, None);
