@@ -11,11 +11,19 @@ use iced::{Alignment, Element, Length};
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     let bounds = app.render_dialog.bounds;
+    let multiple_files = app.render_requires_multiple_files();
+    let output_description = if multiple_files {
+        "Choose the render range and audio format, then select a filename prefix for the output set."
+    } else {
+        "Choose the render range and audio format, then select an output filename."
+    };
     let form_hint =
         if parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err() {
             Some("Tail must be a non-negative number with up to 3 decimal places.")
         } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
             Some("Create a time selection in Arrange to render that range.")
+        } else if bounds == RenderBounds::AllProjectRegions && app.project.regions().is_empty() {
+            Some("Add at least one project region in Arrange to render all regions.")
         } else if !app.has_valid_render_source() {
             Some("Select one or more tracks in Arrange to render them via the master.")
         } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
@@ -34,7 +42,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         form_hint.map(|message| text(message).size(11).into());
     let mut contents = column![
         text("Render project to WAV").size(20),
-        text("Choose the render range and audio format, then select an output file.").size(12),
+        text(output_description).size(12),
         rule::horizontal(1),
         row![
             text("Source").size(13),
@@ -243,7 +251,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     contents = contents.push(
         button(if app.path_picker_busy {
-            "Choose output file…"
+            if multiple_files {
+                "Choose output prefix…"
+            } else {
+                "Choose output file…"
+            }
         } else if app.offline_render_busy
             && app.offline_job_queue.len()
                 >= super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS

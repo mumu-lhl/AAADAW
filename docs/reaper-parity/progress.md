@@ -589,3 +589,9 @@ REAPER 7.82 / Default 7 点击探针确认 41182、41183、41184 分别将每个
 AAADAW 新增稳定 Action List ID `item.snap-left`、`item.snap-right`、`item.snap-nearest`。MIDI 使用 PPQ 网格点；Audio 先将网格 tick 映射至项目 sample，再按精确 sample 边界决定方向和最近点；所有移动组成单个 `BatchTransaction`，保留 item 时长及 Audio source offset。三个回归覆盖 Action List 搜索/Run、Audio/MIDI 分别对齐、最近点平局、跨媒体多选单步 Undo/Redo、Snap toggle 关闭、精确网格 no-op、空选择和 project-edit busy 守卫。
 
 Stable `aaadaw` 全量测试 500/500 通过，strict all-target Clippy `-D warnings`、fmt、diff 和 parity CSV 92 项/15 列唯一 ID/新增证据路径检查通过。此原厂采样使用四分音符直网格；Swing 网格、播放期间原厂动作可用性与完整 Action List/Arrange 视觉和焦点尚未验收，`ITEM-SELECT-018/019/020` 保持 `in_progress`。AAADAW 目前遵循 `project_edit_busy` 在 playback active 时阻止这些工程编辑，须由后续原厂探针确认这项安全守卫与默认行为的差异范围。
+
+### 2026-10-13 Render Bounds：All project regions 批量输出
+
+依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。
+
+`render_all_regions_freezes_each_region_range_and_output_name` 覆盖逐区域冻结范围、重名文件名、批次参数与无区域错误；`grouped_render_jobs_keep_each_region_range_and_publish_the_complete_set` 覆盖不同范围的输出帧数和完整批次发布。新 UI 测试与 generic offline batch 测试通过，workspace nextest 为 987 passed、1 skipped；跳过项 `selected_track_stems_stage_as_a_set_and_publish_only_after_all_tracks_finish` 在此环境执行时停滞于媒体驱动的 via-Master 渲染，已记录为未解决验证限制，不能据此视为该音频路径验收完成。Stable workspace strict Clippy、fmt 与 diff 检查通过。`RENDER-BOUNDS-001` 仍为 `in_progress`：目前只实现 All project regions；Custom time range、Selected regions、All project markers、Selected markers、原厂输出命名/编码完整映射及 UI 焦点/禁用状态仍待实现和验收。

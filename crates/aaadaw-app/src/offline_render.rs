@@ -977,6 +977,29 @@ pub fn render_project_wav_sources_to_wavs(
     outputs: &[(ProjectWavRenderSource, PathBuf)],
     settings: ProjectWavRenderSettings,
     cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let jobs = outputs
+        .iter()
+        .map(|(source, destination)| {
+            let mut settings = settings;
+            settings.source = *source;
+            (settings, destination.clone())
+        })
+        .collect::<Vec<_>>();
+    render_project_wav_jobs_to_wavs(project_path, project, &jobs, cancelled, report_progress)
+}
+
+/// Renders a bounded set of WAV jobs and publishes the complete output set atomically.
+///
+/// Each output may use different project-sample bounds or source while sharing a destination
+/// directory. Rendering uses private sibling staging files; no destination is replaced, and
+/// cancellation or failure rolls back every file already published by this batch.
+pub fn render_project_wav_jobs_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    outputs: &[(ProjectWavRenderSettings, PathBuf)],
+    cancelled: &AtomicBool,
     mut report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     if outputs.is_empty() {
@@ -1001,11 +1024,12 @@ pub fn render_project_wav_sources_to_wavs(
     }
 
     let mut unique_destinations = HashSet::with_capacity(outputs.len());
-    for (source, destination) in outputs {
+    for (settings, destination) in outputs {
+        let source = settings.source;
         if let ProjectWavRenderSource::SelectedTrackStem(track_id)
         | ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
         | ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
-            && !project.tracks().iter().any(|track| track.id() == *track_id)
+            && !project.tracks().iter().any(|track| track.id() == track_id)
         {
             return Err(OfflineRenderError::Media(format!(
                 "selected render track {} no longer exists",
@@ -1044,33 +1068,38 @@ pub fn render_project_wav_sources_to_wavs(
         }
     }
 
-    let total_frames = render_range_length_samples_with_tail_milliseconds(
-        project.settings().sample_rate(),
-        settings.start_sample,
-        settings.end_sample,
-        settings.tail_milliseconds,
-    )?;
-    let total_work = total_frames
-        .checked_mul(outputs.len() as u64)
-        .ok_or(OfflineRenderError::TimelineRange)?;
+    let frame_counts = outputs
+        .iter()
+        .map(|(settings, _)| {
+            render_range_length_samples_with_tail_milliseconds(
+                project.settings().sample_rate(),
+                settings.start_sample,
+                settings.end_sample,
+                settings.tail_milliseconds,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let total_work = frame_counts.iter().try_fold(0_u64, |total, frames| {
+        total
+            .checked_add(*frames)
+            .ok_or(OfflineRenderError::TimelineRange)
+    })?;
     let staging_directory = StemStagingDirectory::create(destination_directory)?;
     let mut staged = Vec::with_capacity(outputs.len());
+    let mut work_offset = 0_u64;
 
-    for (index, (source, destination)) in outputs.iter().enumerate() {
+    for (index, ((settings, destination), total_frames)) in
+        outputs.iter().zip(frame_counts).enumerate()
+    {
         if cancelled.load(Ordering::Acquire) {
             return Err(OfflineRenderError::Cancelled);
         }
         let staging_path = staging_directory.0.join(format!("stem-{index:04}.wav"));
-        let mut track_settings = settings;
-        track_settings.source = *source;
-        let work_offset = total_frames
-            .checked_mul(index as u64)
-            .ok_or(OfflineRenderError::TimelineRange)?;
         render_project_file_to_wav_with_settings(
             project_path.as_ref(),
             project,
             &staging_path,
-            track_settings,
+            *settings,
             cancelled,
             |done, _| {
                 report_progress(
@@ -1080,6 +1109,9 @@ pub fn render_project_wav_sources_to_wavs(
             },
         )?;
         staged.push((staging_path, destination));
+        work_offset = work_offset
+            .checked_add(total_frames)
+            .ok_or(OfflineRenderError::TimelineRange)?;
     }
 
     if cancelled.load(Ordering::Acquire) {
@@ -1917,6 +1949,47 @@ mod tests {
         fs::remove_file(&first).expect("first stem should be removed");
         fs::remove_file(&second).expect("second stem should be removed");
 
+        let first_region = base.with_file_name(format!("{unique}-region-one.wav"));
+        let second_region = base.with_file_name(format!("{unique}-region-two.wav"));
+        let region_jobs = [
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 24_000,
+                    ..settings
+                },
+                first_region.clone(),
+            ),
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 24_000,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                second_region.clone(),
+            ),
+        ];
+        let mut region_progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &region_jobs,
+            &cancelled,
+            |done, total| region_progress.push((done, total)),
+        )
+        .expect("different bounded ranges should render into one output batch");
+        assert_eq!(region_progress.last(), Some(&(48_000, 48_000)));
+        for path in [&first_region, &second_region] {
+            let bytes = fs::read(path).expect("region output should be readable");
+            assert_eq!(bytes.len(), 44 + 24_000 * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                24_000 * 6
+            );
+        }
+        fs::remove_file(&first_region).expect("first region render should be removed");
+        fs::remove_file(&second_region).expect("second region render should be removed");
+
         let mix = base.with_file_name(format!("{unique}-mix.wav"));
         let mixed_first = base.with_file_name(format!("{unique}-mix-first.wav"));
         let mixed_second = base.with_file_name(format!("{unique}-mix-second.wav"));
@@ -2201,6 +2274,83 @@ mod tests {
             render_range_length_samples(48_000, 24_000, 24_000, 0),
             Err(OfflineRenderError::TimelineRange)
         ));
+    }
+
+    #[test]
+    fn grouped_render_jobs_keep_each_region_range_and_publish_the_complete_set() {
+        let first_output = destination();
+        let second_output = first_output.with_file_name(format!(
+            "{}-second.wav",
+            first_output
+                .file_stem()
+                .expect("render path should have a stem")
+                .to_string_lossy()
+        ));
+        let project_path = first_output.with_extension("aaadaw");
+        let project = project_with_one_track();
+        ProjectStore::open(&project_path)
+            .expect("empty project store should be created")
+            .close()
+            .expect("project store should close before rendering");
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let jobs = [
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 1_024,
+                    ..settings
+                },
+                first_output.clone(),
+            ),
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 2_048,
+                    end_sample: 4_096,
+                    ..settings
+                },
+                second_output.clone(),
+            ),
+        ];
+        let cancelled = AtomicBool::new(false);
+        let mut progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &jobs,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("all bounded jobs should finish and publish together");
+
+        assert_eq!(progress.last(), Some(&(3_072, 3_072)));
+        for (path, frames) in [(&first_output, 1_024_u32), (&second_output, 2_048_u32)] {
+            let bytes = fs::read(path).expect("rendered region should be readable");
+            assert_eq!(bytes.len(), 44 + frames as usize * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                frames * 6
+            );
+            assert!(bytes[44..].iter().all(|byte| *byte == 0));
+        }
+
+        fs::remove_file(first_output).expect("first region output should be removed");
+        fs::remove_file(second_output).expect("second region output should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
     }
 
     #[test]

@@ -1,0 +1,12 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+fixture	Three one-second Audio items and same-span regions at [0,1], [2,3], [4,5]; item 2 selected; time selection [1.5,4.5]; razor [1.5,2.5]
+case	bounds_flag	selection	region_ranges	time_selection	razor_edit	output_files	output_notes
+native_bounds_0	0	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-0.wav	1 output file(s)
+native_bounds_1	1	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-1.wav	1 output file(s)
+native_bounds_2	2	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-2.wav	1 output file(s)
+native_bounds_3	3	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-3-Region 1.wav;bounds-3-Region 2.wav;bounds-3-Region 3.wav	3 output file(s)
+native_bounds_4	4	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-4.wav	1 output file(s)
+native_bounds_5	5	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-5-Region 1.wav;bounds-5-Region 2.wav;bounds-5-Region 3.wav	3 output file(s)
+native_bounds_6	6	selected_items=1	regions=3	1.5..4.5	1.5..2.5	bounds-6.wav	1 output file(s)

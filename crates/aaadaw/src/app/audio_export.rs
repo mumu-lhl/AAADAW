@@ -17,6 +17,7 @@ pub(crate) enum RenderBounds {
     #[default]
     EntireProject,
     TimeSelection,
+    AllProjectRegions,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -222,6 +223,102 @@ fn selected_track_stem_destinations(
     Ok(outputs)
 }
 
+fn project_region_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    source: RenderSource,
+    selected_tracks: &[TrackId],
+    stems_pre_fader: bool,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the region prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    if project.regions().is_empty() {
+        return Err("Add at least one project region before rendering all regions".to_owned());
+    }
+
+    let stem_mode = match source {
+        RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+            if stems_pre_fader =>
+        {
+            SelectedTrackStemMode::PreFader
+        }
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks => {
+            SelectedTrackStemMode::PostFader
+        }
+        RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+    };
+    let mut used_region_names = HashSet::with_capacity(project.regions().len());
+    let mut jobs = Vec::new();
+    for (index, region) in project.regions().iter().enumerate() {
+        let start_sample = project
+            .sample_at_tick(region.start_ticks())
+            .map_err(|error| format!("Could not convert region start: {error}"))?;
+        let end_sample = project
+            .sample_at_tick(region.end_ticks())
+            .map_err(|error| format!("Could not convert region end: {error}"))?;
+        if end_sample <= start_sample {
+            return Err(format!(
+                "Project region {} must span at least one sample to render",
+                region.number()
+            ));
+        }
+        let mut region_name = safe_stem_component(region.name());
+        if region_name.is_empty() {
+            region_name = format!("Region-{}", region.number());
+        }
+        let initial_name = region_name.clone();
+        let mut suffix = index + 1;
+        while !used_region_names.insert(region_name.to_lowercase()) {
+            region_name = format!("{initial_name}-{}", suffix);
+            suffix += 1;
+        }
+        let region_base = parent.join(format!("{base_name}-{region_name}.{extension}"));
+        let destinations = match source {
+            RenderSource::MasterMix => {
+                vec![(aaadaw_app::ProjectWavRenderSource::MasterMix, region_base)]
+            }
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                selected_track_stem_destinations(
+                    &region_base,
+                    project,
+                    selected_tracks,
+                    false,
+                    stem_mode,
+                )?
+            }
+            RenderSource::MasterMixAndSelectedTracks => selected_track_stem_destinations(
+                &region_base,
+                project,
+                selected_tracks,
+                true,
+                stem_mode,
+            )?,
+        };
+        for (render_source, destination) in destinations {
+            let mut region_settings = settings;
+            region_settings.source = render_source;
+            region_settings.start_sample = start_sample;
+            region_settings.end_sample = end_sample;
+            jobs.push((region_settings, destination));
+        }
+    }
+    Ok(jobs)
+}
+
 fn safe_stem_component(name: &str) -> String {
     name.trim()
         .chars()
@@ -269,7 +366,11 @@ impl std::fmt::Display for RenderSampleRate {
 }
 
 impl RenderBounds {
-    pub(crate) const ALL: [Self; 2] = [Self::EntireProject, Self::TimeSelection];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::EntireProject,
+        Self::TimeSelection,
+        Self::AllProjectRegions,
+    ];
 }
 
 impl std::fmt::Display for RenderBounds {
@@ -277,6 +378,7 @@ impl std::fmt::Display for RenderBounds {
         formatter.write_str(match self {
             Self::EntireProject => "Entire project",
             Self::TimeSelection => "Time selection",
+            Self::AllProjectRegions => "All project regions",
         })
     }
 }
@@ -336,6 +438,9 @@ enum OfflineRenderKind {
     ProjectWavStems {
         outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
         settings: aaadaw_app::ProjectWavRenderSettings,
+    },
+    ProjectWavRegions {
+        outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     },
     FreezeTrack {
         track_id: TrackId,
@@ -461,6 +566,56 @@ impl App {
             tail_milliseconds,
             normalize_peak: self.render_dialog.normalize_peak,
         };
+        if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
+            if cfg!(target_os = "android") {
+                self.status =
+                    "Rendering project regions to multiple files requires a desktop build"
+                        .to_owned();
+                return Task::none();
+            }
+            let outputs = match project_region_render_jobs(
+                &destination,
+                &self.project,
+                self.render_dialog.source,
+                &selected_tracks,
+                self.render_dialog.stems_pre_fader,
+                settings,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            if let Some((_, existing)) =
+                outputs
+                    .iter()
+                    .find(|(_, path)| match std::fs::symlink_metadata(path) {
+                        Ok(_) => true,
+                        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                    })
+            {
+                self.status = format!(
+                    "Choose a new render prefix; region output already exists: {}",
+                    existing.display()
+                );
+                return Task::none();
+            }
+            if outputs.iter().any(|(_, path)| path == &project_path) {
+                self.status =
+                    "Choose region output names separate from the project file".to_owned();
+                return Task::none();
+            }
+            let label = format!("Render {} project regions", self.project.regions().len());
+            let job = OfflineRenderJob {
+                kind: OfflineRenderKind::ProjectWavRegions { outputs },
+                snapshot: Arc::new(self.project.snapshot()),
+                project_path,
+                project_generation: self.project_generation,
+                label,
+            };
+            return self.enqueue_offline_job(job);
+        }
         let requires_multiple_files = self.render_requires_multiple_files();
         let (kind, label) = if requires_multiple_files {
             if cfg!(target_os = "android") {
@@ -571,6 +726,11 @@ impl App {
         if cfg!(target_os = "android") && self.render_requires_multiple_files() {
             return false;
         }
+        if cfg!(target_os = "android")
+            && self.render_dialog.bounds == RenderBounds::AllProjectRegions
+        {
+            return false;
+        }
         self.selected_render_settings().is_ok()
     }
 
@@ -586,13 +746,24 @@ impl App {
     }
 
     pub(super) fn render_requires_multiple_files(&self) -> bool {
-        match self.render_dialog.source {
-            RenderSource::MasterMix => false,
-            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
-                self.selected_render_track_count() > 1
-            }
-            RenderSource::MasterMixAndSelectedTracks => true,
+        if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
+            return true;
         }
+        let outputs_per_range = match self.render_dialog.source {
+            RenderSource::MasterMix => 1,
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                self.selected_render_track_count()
+            }
+            RenderSource::MasterMixAndSelectedTracks => {
+                self.selected_render_track_count().saturating_add(1)
+            }
+        };
+        let region_count = if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
+            self.project.regions().len()
+        } else {
+            1
+        };
+        region_count.saturating_mul(outputs_per_range) > 1
     }
 
     pub(super) fn selected_render_track_count(&self) -> usize {
@@ -712,6 +883,30 @@ impl App {
                 }
                 Ok((start_sample, end_sample))
             }
+            RenderBounds::AllProjectRegions => {
+                let Some(first) = self.project.regions().first() else {
+                    return Err(
+                        "Add at least one project region before rendering all regions".to_owned(),
+                    );
+                };
+                let last = self
+                    .project
+                    .regions()
+                    .last()
+                    .expect("a first region guarantees a last region");
+                let start_sample = self
+                    .project
+                    .sample_at_tick(first.start_ticks())
+                    .map_err(|error| format!("Could not convert first region start: {error}"))?;
+                let end_sample = self
+                    .project
+                    .sample_at_tick(last.end_ticks())
+                    .map_err(|error| format!("Could not convert last region end: {error}"))?;
+                if end_sample <= start_sample {
+                    return Err("Project regions must span at least one project sample".to_owned());
+                }
+                Ok((start_sample, end_sample))
+            }
         }
     }
 
@@ -726,6 +921,9 @@ impl App {
                     destination == &queued.job.project_path
                 }
                 OfflineRenderKind::ProjectWavStems { outputs, .. } => outputs
+                    .iter()
+                    .any(|(_, destination)| destination == &queued.job.project_path),
+                OfflineRenderKind::ProjectWavRegions { outputs } => outputs
                     .iter()
                     .any(|(_, destination)| destination == &queued.job.project_path),
                 OfflineRenderKind::FreezeTrack { .. } => false,
@@ -801,6 +999,34 @@ impl App {
                                 &project,
                                 &outputs,
                                 settings,
+                                &worker_cancel,
+                                |done, total| {
+                                    *worker_progress
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                        (done, total);
+                                },
+                            )
+                            .map_err(|error| error.to_string())?;
+                            Ok(result_path)
+                        }),
+                        Message::OfflineRenderFinished,
+                    )
+                }
+                OfflineRenderKind::ProjectWavRegions { outputs } => {
+                    let outputs = outputs.clone();
+                    let result_path = outputs
+                        .first()
+                        .map(|(_, path)| path.clone())
+                        .unwrap_or_default();
+                    Task::perform(
+                        run_blocking("aaadaw-offline-regions", move || {
+                            let project = Project::from_snapshot((*snapshot).clone())
+                                .map_err(|error| error.to_string())?;
+                            aaadaw_app::render_project_wav_jobs_to_wavs(
+                                project_path,
+                                &project,
+                                &outputs,
                                 &worker_cancel,
                                 |done, total| {
                                     *worker_progress
@@ -1237,6 +1463,134 @@ mod tests {
     }
 
     #[test]
+    fn render_all_regions_freezes_each_region_range_and_output_name() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 2_880,
+                name: "Verse/Part".to_owned(),
+            })
+            .expect("first region should be inserted");
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 3_840,
+                end_ticks: 4_800,
+                name: "Verse/Part".to_owned(),
+            })
+            .expect("second region should be inserted");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .expect("render source track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: true,
+            normalize_peak_target_centi_dbfs: -602,
+        };
+        let base = std::env::temp_dir().join("aaadaw-region-prefix.wav");
+
+        let outputs = project_region_render_jobs(
+            &base,
+            &project,
+            RenderSource::SelectedTracksViaMaster,
+            &[track_id],
+            false,
+            settings,
+        )
+        .expect("each project region should make a stem render job");
+
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(
+            outputs[0],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id),
+                    start_sample: 24_000,
+                    end_sample: 72_000,
+                    ..settings
+                },
+                std::env::temp_dir().join("aaadaw-region-prefix-Verse_Part-Lead.wav")
+            )
+        );
+        assert_eq!(
+            outputs[1],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id),
+                    start_sample: 96_000,
+                    end_sample: 120_000,
+                    ..settings
+                },
+                std::env::temp_dir().join("aaadaw-region-prefix-Verse_Part-2-Lead.wav")
+            )
+        );
+        assert!(outputs.iter().all(|(settings, _)| {
+            settings.tail_milliseconds == 250
+                && settings.normalize_peak
+                && settings.normalize_peak_target_centi_dbfs == -602
+        }));
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-region-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::AllProjectRegions,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        app.timeline.selected_track = Some(track_id);
+        app.timeline.selected_tracks.insert(track_id);
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-queued-region-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("all project regions should queue as one grouped job");
+        let OfflineRenderKind::ProjectWavRegions { outputs } = queued.job.kind else {
+            panic!("All project regions should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].0.start_sample, 24_000);
+        assert_eq!(outputs[0].0.end_sample, 72_000);
+        assert_eq!(outputs[1].0.start_sample, 96_000);
+        assert_eq!(outputs[1].0.end_sample, 120_000);
+        assert!(outputs.iter().all(|(settings, _)| {
+            settings.source == aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id)
+        }));
+
+        app.project = Project::default();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("rendering regions requires at least one region")
+                .contains("Add at least one project region")
+        );
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
     fn selected_track_render_accepts_one_or_more_valid_track_selections_in_track_order() {
         let mut app = App::default();
         app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
@@ -1480,6 +1834,9 @@ mod tests {
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected track should keep the single-file render path")
             }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should keep the single-file render path")
+            }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
         }
     }
@@ -1516,6 +1873,9 @@ mod tests {
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected stem should keep the single-file path")
             }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should keep the single-file path")
+            }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
         }
 
@@ -1532,6 +1892,9 @@ mod tests {
             ),
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected stem should keep the single-file path")
+            }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should keep the single-file path")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
         }
@@ -1597,6 +1960,9 @@ mod tests {
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("multiple selected tracks should create a stem job")
             }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should create a track stem job")
+            }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a stem render job"),
         }
 
@@ -1647,6 +2013,9 @@ mod tests {
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("Master mix plus stems should make a grouped output job")
             }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should create a track stem job")
+            }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
         }
 
@@ -1679,6 +2048,9 @@ mod tests {
             }
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("pre-fader Master mix plus stems should make a grouped output job")
+            }
+            OfflineRenderKind::ProjectWavRegions { .. } => {
+                panic!("entire-project bounds should create a track stem job")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
         }
