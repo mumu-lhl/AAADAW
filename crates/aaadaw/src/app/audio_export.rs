@@ -18,6 +18,7 @@ pub(crate) enum RenderBounds {
     EntireProject,
     TimeSelection,
     AllProjectRegions,
+    AllProjectMarkers,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -319,6 +320,114 @@ fn project_region_render_jobs(
     Ok(jobs)
 }
 
+fn project_marker_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    source: RenderSource,
+    selected_tracks: &[TrackId],
+    stems_pre_fader: bool,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the marker prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    if project.markers().is_empty() {
+        return Err("Add at least one project marker before rendering all markers".to_owned());
+    }
+    let project_end_sample = aaadaw_app::project_content_end_sample(project)
+        .map_err(|error| format!("Could not determine project render end: {error}"))?;
+
+    let stem_mode = match source {
+        RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+            if stems_pre_fader =>
+        {
+            SelectedTrackStemMode::PreFader
+        }
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks => {
+            SelectedTrackStemMode::PostFader
+        }
+        RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+    };
+    let mut used_marker_names = HashSet::with_capacity(project.markers().len());
+    let mut jobs = Vec::new();
+    for (index, marker) in project.markers().iter().enumerate() {
+        let start_sample = project
+            .sample_at_tick(marker.position_ticks())
+            .map_err(|error| format!("Could not convert marker position: {error}"))?;
+        let end_sample = match project.markers().get(index + 1) {
+            Some(next_marker) => project
+                .sample_at_tick(next_marker.position_ticks())
+                .map_err(|error| format!("Could not convert next marker position: {error}"))?,
+            None => project_end_sample,
+        };
+        aaadaw_app::render_range_length_samples_with_tail_milliseconds(
+            project.settings().sample_rate(),
+            start_sample,
+            end_sample,
+            settings.tail_milliseconds,
+        )
+        .map_err(|error| {
+            format!(
+                "Project marker {} has an invalid render range: {error}",
+                marker.number()
+            )
+        })?;
+
+        let mut marker_name = safe_stem_component(marker.name());
+        if marker_name.is_empty() {
+            marker_name = format!("{:02}", marker.number());
+        }
+        let initial_name = marker_name.clone();
+        let mut suffix = index + 1;
+        while !used_marker_names.insert(marker_name.to_lowercase()) {
+            marker_name = format!("{initial_name}-{suffix}");
+            suffix += 1;
+        }
+        let marker_base = parent.join(format!("{base_name}-{marker_name}.{extension}"));
+        let destinations = match source {
+            RenderSource::MasterMix => {
+                vec![(aaadaw_app::ProjectWavRenderSource::MasterMix, marker_base)]
+            }
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                selected_track_stem_destinations(
+                    &marker_base,
+                    project,
+                    selected_tracks,
+                    false,
+                    stem_mode,
+                )?
+            }
+            RenderSource::MasterMixAndSelectedTracks => selected_track_stem_destinations(
+                &marker_base,
+                project,
+                selected_tracks,
+                true,
+                stem_mode,
+            )?,
+        };
+        for (render_source, destination) in destinations {
+            let mut marker_settings = settings;
+            marker_settings.source = render_source;
+            marker_settings.start_sample = start_sample;
+            marker_settings.end_sample = end_sample;
+            jobs.push((marker_settings, destination));
+        }
+    }
+    Ok(jobs)
+}
+
 fn safe_stem_component(name: &str) -> String {
     name.trim()
         .chars()
@@ -366,10 +475,11 @@ impl std::fmt::Display for RenderSampleRate {
 }
 
 impl RenderBounds {
-    pub(crate) const ALL: [Self; 3] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::EntireProject,
         Self::TimeSelection,
         Self::AllProjectRegions,
+        Self::AllProjectMarkers,
     ];
 }
 
@@ -379,6 +489,7 @@ impl std::fmt::Display for RenderBounds {
             Self::EntireProject => "Entire project",
             Self::TimeSelection => "Time selection",
             Self::AllProjectRegions => "All project regions",
+            Self::AllProjectMarkers => "All project markers",
         })
     }
 }
@@ -439,7 +550,7 @@ enum OfflineRenderKind {
         outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
         settings: aaadaw_app::ProjectWavRenderSettings,
     },
-    ProjectWavRegions {
+    ProjectWavBatch {
         outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     },
     FreezeTrack {
@@ -566,21 +677,34 @@ impl App {
             tail_milliseconds,
             normalize_peak: self.render_dialog.normalize_peak,
         };
-        if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
+        if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+        ) {
             if cfg!(target_os = "android") {
-                self.status =
-                    "Rendering project regions to multiple files requires a desktop build"
-                        .to_owned();
+                self.status = "Rendering project regions or markers to multiple files requires a desktop build".to_owned();
                 return Task::none();
             }
-            let outputs = match project_region_render_jobs(
-                &destination,
-                &self.project,
-                self.render_dialog.source,
-                &selected_tracks,
-                self.render_dialog.stems_pre_fader,
-                settings,
-            ) {
+            let output_result = match self.render_dialog.bounds {
+                RenderBounds::AllProjectRegions => project_region_render_jobs(
+                    &destination,
+                    &self.project,
+                    self.render_dialog.source,
+                    &selected_tracks,
+                    self.render_dialog.stems_pre_fader,
+                    settings,
+                ),
+                RenderBounds::AllProjectMarkers => project_marker_render_jobs(
+                    &destination,
+                    &self.project,
+                    self.render_dialog.source,
+                    &selected_tracks,
+                    self.render_dialog.stems_pre_fader,
+                    settings,
+                ),
+                _ => unreachable!("only region and marker bounds create render batches"),
+            };
+            let outputs = match output_result {
                 Ok(outputs) => outputs,
                 Err(error) => {
                     self.status = error;
@@ -596,19 +720,26 @@ impl App {
                     })
             {
                 self.status = format!(
-                    "Choose a new render prefix; region output already exists: {}",
+                    "Choose a new render prefix; batch output already exists: {}",
                     existing.display()
                 );
                 return Task::none();
             }
             if outputs.iter().any(|(_, path)| path == &project_path) {
-                self.status =
-                    "Choose region output names separate from the project file".to_owned();
+                self.status = "Choose batch output names separate from the project file".to_owned();
                 return Task::none();
             }
-            let label = format!("Render {} project regions", self.project.regions().len());
+            let label = match self.render_dialog.bounds {
+                RenderBounds::AllProjectRegions => {
+                    format!("Render {} project regions", self.project.regions().len())
+                }
+                RenderBounds::AllProjectMarkers => {
+                    format!("Render {} project markers", self.project.markers().len())
+                }
+                _ => unreachable!("only region and marker bounds create render batches"),
+            };
             let job = OfflineRenderJob {
-                kind: OfflineRenderKind::ProjectWavRegions { outputs },
+                kind: OfflineRenderKind::ProjectWavBatch { outputs },
                 snapshot: Arc::new(self.project.snapshot()),
                 project_path,
                 project_generation: self.project_generation,
@@ -727,7 +858,10 @@ impl App {
             return false;
         }
         if cfg!(target_os = "android")
-            && self.render_dialog.bounds == RenderBounds::AllProjectRegions
+            && matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+            )
         {
             return false;
         }
@@ -746,7 +880,10 @@ impl App {
     }
 
     pub(super) fn render_requires_multiple_files(&self) -> bool {
-        if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
+        if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::AllProjectMarkers
+        ) {
             return true;
         }
         let outputs_per_range = match self.render_dialog.source {
@@ -758,12 +895,7 @@ impl App {
                 self.selected_render_track_count().saturating_add(1)
             }
         };
-        let region_count = if self.render_dialog.bounds == RenderBounds::AllProjectRegions {
-            self.project.regions().len()
-        } else {
-            1
-        };
-        region_count.saturating_mul(outputs_per_range) > 1
+        outputs_per_range > 1
     }
 
     pub(super) fn selected_render_track_count(&self) -> usize {
@@ -829,6 +961,29 @@ impl App {
         } else {
             0
         };
+        let output_sample_rate = self.render_output_sample_rate();
+        if self.render_dialog.bounds == RenderBounds::AllProjectMarkers {
+            let validation_settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: self.audio_settings.master_output_ceiling,
+                export_options: self.wav_export_options,
+                output_sample_rate,
+                output_channels: self.render_dialog.channels,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                normalize_peak_target_centi_dbfs,
+                start_sample,
+                end_sample,
+                tail_milliseconds,
+                normalize_peak: self.render_dialog.normalize_peak,
+            };
+            project_marker_render_jobs(
+                Path::new("marker-range-validation.wav"),
+                &self.project,
+                RenderSource::MasterMix,
+                &[],
+                false,
+                validation_settings,
+            )?;
+        }
         Ok(ResolvedRenderSettings {
             start_sample,
             end_sample,
@@ -907,6 +1062,25 @@ impl App {
                 }
                 Ok((start_sample, end_sample))
             }
+            RenderBounds::AllProjectMarkers => {
+                let Some(first) = self.project.markers().first() else {
+                    return Err(
+                        "Add at least one project marker before rendering all markers".to_owned(),
+                    );
+                };
+                let start_sample = self
+                    .project
+                    .sample_at_tick(first.position_ticks())
+                    .map_err(|error| format!("Could not convert first marker position: {error}"))?;
+                let end_sample = aaadaw_app::project_content_end_sample(&self.project)
+                    .map_err(|error| format!("Could not determine project render end: {error}"))?;
+                if end_sample < start_sample {
+                    return Err(
+                        "Project markers must not start after the project render end".to_owned(),
+                    );
+                }
+                Ok((start_sample, end_sample))
+            }
         }
     }
 
@@ -923,7 +1097,7 @@ impl App {
                 OfflineRenderKind::ProjectWavStems { outputs, .. } => outputs
                     .iter()
                     .any(|(_, destination)| destination == &queued.job.project_path),
-                OfflineRenderKind::ProjectWavRegions { outputs } => outputs
+                OfflineRenderKind::ProjectWavBatch { outputs } => outputs
                     .iter()
                     .any(|(_, destination)| destination == &queued.job.project_path),
                 OfflineRenderKind::FreezeTrack { .. } => false,
@@ -1013,14 +1187,14 @@ impl App {
                         Message::OfflineRenderFinished,
                     )
                 }
-                OfflineRenderKind::ProjectWavRegions { outputs } => {
+                OfflineRenderKind::ProjectWavBatch { outputs } => {
                     let outputs = outputs.clone();
                     let result_path = outputs
                         .first()
                         .map(|(_, path)| path.clone())
                         .unwrap_or_default();
                     Task::perform(
-                        run_blocking("aaadaw-offline-regions", move || {
+                        run_blocking("aaadaw-offline-batch", move || {
                             let project = Project::from_snapshot((*snapshot).clone())
                                 .map_err(|error| error.to_string())?;
                             aaadaw_app::render_project_wav_jobs_to_wavs(
@@ -1569,7 +1743,7 @@ mod tests {
             .offline_job_queue
             .pop_front()
             .expect("all project regions should queue as one grouped job");
-        let OfflineRenderKind::ProjectWavRegions { outputs } = queued.job.kind else {
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
             panic!("All project regions should use the bounded multi-file worker")
         };
         assert_eq!(outputs.len(), 2);
@@ -1586,6 +1760,135 @@ mod tests {
             app.selected_render_bounds()
                 .expect_err("rendering regions requires at least one region")
                 .contains("Add at least one project region")
+        );
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn render_all_markers_freezes_next_marker_ranges_and_output_names() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .expect("marker render track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 4_800,
+            })
+            .expect("project content should extend past the last marker");
+        for (position_ticks, name) in [(960, "Verse/Part"), (2_880, "Verse/Part"), (3_840, "")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("project marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix = std::env::temp_dir().join("aaadaw-marker-prefix.wav");
+        let outputs = project_marker_render_jobs(
+            &prefix,
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+        )
+        .expect("every marker should create a bounded render job");
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(
+            outputs,
+            [
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                        start_sample: 24_000,
+                        end_sample: 72_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-Verse_Part.wav")
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        start_sample: 72_000,
+                        end_sample: 96_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-Verse_Part-2.wav")
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        start_sample: 96_000,
+                        end_sample: 120_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-03.wav")
+                ),
+            ]
+        );
+        assert!(
+            outputs
+                .iter()
+                .all(|(job_settings, _)| job_settings.tail_milliseconds == 250)
+        );
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-marker-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::AllProjectMarkers,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-queued-marker-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("all project markers should queue as one grouped job");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("All project markers should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(outputs[0].0.start_sample, 24_000);
+        assert_eq!(outputs[0].0.end_sample, 72_000);
+        assert_eq!(outputs[1].0.start_sample, 72_000);
+        assert_eq!(outputs[1].0.end_sample, 96_000);
+        assert_eq!(outputs[2].0.start_sample, 96_000);
+        assert_eq!(outputs[2].0.end_sample, 120_000);
+
+        app.project = Project::default();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("rendering markers requires at least one marker")
+                .contains("Add at least one project marker")
         );
         assert!(!app.can_submit_render());
     }
@@ -1834,7 +2137,7 @@ mod tests {
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected track should keep the single-file render path")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should keep the single-file render path")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
@@ -1873,7 +2176,7 @@ mod tests {
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected stem should keep the single-file path")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should keep the single-file path")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
@@ -1893,7 +2196,7 @@ mod tests {
             OfflineRenderKind::ProjectWavStems { .. } => {
                 panic!("one selected stem should keep the single-file path")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should keep the single-file path")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
@@ -1960,7 +2263,7 @@ mod tests {
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("multiple selected tracks should create a stem job")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should create a track stem job")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected a stem render job"),
@@ -2013,7 +2316,7 @@ mod tests {
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("Master mix plus stems should make a grouped output job")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should create a track stem job")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
@@ -2049,7 +2352,7 @@ mod tests {
             OfflineRenderKind::ProjectWav { .. } => {
                 panic!("pre-fader Master mix plus stems should make a grouped output job")
             }
-            OfflineRenderKind::ProjectWavRegions { .. } => {
+            OfflineRenderKind::ProjectWavBatch { .. } => {
                 panic!("entire-project bounds should create a track stem job")
             }
             OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),

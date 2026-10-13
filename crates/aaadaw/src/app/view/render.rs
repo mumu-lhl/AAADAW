@@ -17,27 +17,34 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     } else {
         "Choose the render range and audio format, then select an output filename."
     };
-    let form_hint =
-        if parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err() {
-            Some("Tail must be a non-negative number with up to 3 decimal places.")
-        } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
-            Some("Create a time selection in Arrange to render that range.")
-        } else if bounds == RenderBounds::AllProjectRegions && app.project.regions().is_empty() {
-            Some("Add at least one project region in Arrange to render all regions.")
-        } else if !app.has_valid_render_source() {
-            Some("Select one or more tracks in Arrange to render them via the master.")
-        } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
-            Some("The Android document picker supports one output file at a time.")
-        } else if app.render_dialog.normalize_peak
-            && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
-                .is_err()
-        {
-            Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
-        } else if !app.can_submit_render() {
-            Some("Render range plus tail must contain at least one frame.")
-        } else {
-            None
-        };
+    let form_hint = if parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text)
+        .is_err()
+    {
+        Some("Tail must be a non-negative number with up to 3 decimal places.")
+    } else if bounds == RenderBounds::TimeSelection && app.timeline.time_selection.is_none() {
+        Some("Create a time selection in Arrange to render that range.")
+    } else if bounds == RenderBounds::AllProjectRegions && app.project.regions().is_empty() {
+        Some("Add at least one project region in Arrange to render all regions.")
+    } else if bounds == RenderBounds::AllProjectMarkers && app.project.markers().is_empty() {
+        Some("Add at least one project marker in Arrange to render all markers.")
+    } else if !app.has_valid_render_source() {
+        Some("Select one or more tracks in Arrange to render them via the master.")
+    } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
+        Some("The Android document picker supports one output file at a time.")
+    } else if app.render_dialog.normalize_peak
+        && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
+            .is_err()
+    {
+        Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
+    } else if bounds == RenderBounds::AllProjectMarkers && !app.can_submit_render() {
+        Some(
+            "Each project marker must have a non-empty range up to the next marker or project end.",
+        )
+    } else if !app.can_submit_render() {
+        Some("Render range plus tail must contain at least one frame.")
+    } else {
+        None
+    };
     let form_hint: Option<Element<'_, Message>> =
         form_hint.map(|message| text(message).size(11).into());
     let mut contents = column![
