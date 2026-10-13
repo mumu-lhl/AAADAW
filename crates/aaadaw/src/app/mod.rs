@@ -3878,6 +3878,31 @@ impl App {
                     self.status = "Create a time selection before inserting a region".to_owned();
                 }
             }
+            Message::DeleteProjectRegionNearCursor => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before deleting a region"
+                            .to_owned();
+                } else if let Some(region_id) = commands::project_region_at_cursor(self) {
+                    self.apply_action(
+                        DawAction::DeleteProjectRegion { region_id },
+                        "Project region deleted",
+                    );
+                } else {
+                    self.status = "No project region contains the edit cursor".to_owned();
+                }
+            }
+            Message::EditProjectRegionNearCursor => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before editing a region"
+                            .to_owned();
+                } else if let Some(region_id) = commands::project_region_at_cursor(self) {
+                    task = self.open_region_properties(region_id);
+                } else {
+                    self.status = "No project region contains the edit cursor".to_owned();
+                }
+            }
             Message::PreviousProjectMarker => {
                 let cursor = self.timeline.edit_cursor_tick;
                 let target = self

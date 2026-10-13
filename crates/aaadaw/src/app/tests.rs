@@ -331,6 +331,113 @@ fn region_manager_selects_edits_filters_and_deletes_with_undo() {
 }
 
 #[test]
+fn region_cursor_target_matches_native_half_open_and_overlap_rules() {
+    let mut app = App::default();
+    for (start_ticks, end_ticks, name) in [
+        (100, 300, "Earlier wide"),
+        (140, 350, "Later but longer"),
+        (400, 500, "Same start long"),
+        (400, 450, "Same start short"),
+        (600, 700, "Identical first"),
+        (600, 700, "Identical second"),
+    ] {
+        app.project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks,
+                end_ticks,
+                name: name.to_owned(),
+            })
+            .unwrap();
+    }
+    let regions = app.project.regions();
+
+    // The latest start wins even when that Region is longer overall.
+    app.timeline.edit_cursor_tick = 140;
+    assert_eq!(
+        commands::project_region_at_cursor(&app),
+        Some(regions[1].id())
+    );
+    // Region bounds are inclusive at Start and exclusive at End.
+    app.timeline.edit_cursor_tick = 350;
+    assert_eq!(commands::project_region_at_cursor(&app), None);
+    app.timeline.edit_cursor_tick = 100;
+    assert_eq!(
+        commands::project_region_at_cursor(&app),
+        Some(regions[0].id())
+    );
+    // Equal starts prefer the shorter interval; identical intervals retain
+    // the earlier stable identity.
+    app.timeline.edit_cursor_tick = 420;
+    assert_eq!(
+        commands::project_region_at_cursor(&app),
+        Some(regions[3].id())
+    );
+    app.timeline.edit_cursor_tick = 650;
+    assert_eq!(
+        commands::project_region_at_cursor(&app),
+        Some(regions[4].id())
+    );
+    app.timeline.edit_cursor_tick = 800;
+    assert_eq!(commands::project_region_at_cursor(&app), None);
+}
+
+#[test]
+fn region_cursor_actions_edit_delete_and_undo_with_project_busy_guard() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 100,
+            end_ticks: 300,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 150,
+            name: "Cue".to_owned(),
+        })
+        .unwrap();
+    let region_id = app.project.regions()[0].id();
+    app.timeline.edit_cursor_tick = 150;
+
+    let delete = CommandId::DeleteProjectRegionNearCursor;
+    let edit = CommandId::EditProjectRegionNearCursor;
+    assert_eq!(
+        commands::find(&app, "delete region near cursor"),
+        Some(delete)
+    );
+    assert_eq!(commands::find(&app, "edit nearby region"), Some(edit));
+    assert_eq!(
+        commands::stable_id(delete).as_deref(),
+        Some("regions.delete-near-cursor")
+    );
+    assert_eq!(
+        commands::stable_id(edit).as_deref(),
+        Some("regions.edit-near-cursor")
+    );
+    assert!(commands::is_enabled(&app, delete));
+    assert!(commands::is_enabled(&app, edit));
+
+    let _ = app.update(Message::EditProjectRegionNearCursor);
+    assert_eq!(app.region_properties.as_ref().unwrap().region_id, region_id);
+    assert_eq!(app.region_properties.as_ref().unwrap().name, "Verse");
+    let _ = app.update(Message::CloseRegionProperties);
+
+    let _ = app.update(Message::DeleteProjectRegionNearCursor);
+    assert!(app.project.regions().is_empty());
+    assert_eq!(app.project.markers().len(), 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.regions()[0].id(), region_id);
+    assert_eq!(app.project.markers().len(), 1);
+
+    app.io_busy = true;
+    assert!(!commands::is_enabled(&app, delete));
+    assert!(!commands::is_enabled(&app, edit));
+    let _ = app.update(Message::DeleteProjectRegionNearCursor);
+    assert_eq!(app.project.regions()[0].id(), region_id);
+}
+
+#[test]
 fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() {
     let mut app = App::default();
     app.project

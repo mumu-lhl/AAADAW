@@ -31,6 +31,8 @@ pub(crate) enum CommandId {
     AddMidiItem,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
+    DeleteProjectRegionNearCursor,
+    EditProjectRegionNearCursor,
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -98,6 +100,8 @@ enum CommandKind {
     AddMidiItem,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
+    DeleteProjectRegionNearCursor,
+    EditProjectRegionNearCursor,
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
@@ -396,6 +400,26 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Region from time selection",
         aliases: &["insert region", "create region from selection"],
         shortcuts: INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DeleteProjectRegionNearCursor,
+        menu: None,
+        category: "Regions",
+        label: "Delete region near cursor",
+        aliases: &["delete region near cursor", "delete nearby region"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::EditProjectRegionNearCursor,
+        menu: None,
+        category: "Regions",
+        label: "Edit region near cursor",
+        aliases: &["edit region near cursor", "edit nearby region"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -1376,6 +1400,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
+        CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
+        CommandKind::EditProjectRegionNearCursor => "regions.edit-near-cursor",
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
@@ -1462,6 +1488,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
+        CommandId::DeleteProjectRegionNearCursor => Message::DeleteProjectRegionNearCursor,
+        CommandId::EditProjectRegionNearCursor => Message::EditProjectRegionNearCursor,
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
@@ -1718,6 +1746,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::InsertRegionFromTimeSelection => {
             !project_edit_busy(app) && app.timeline.time_selection.is_some()
         }
+        CommandKind::DeleteProjectRegionNearCursor | CommandKind::EditProjectRegionNearCursor => {
+            !project_edit_busy(app) && project_region_at_cursor(app).is_some()
+        }
         CommandKind::PreviousProjectMarker | CommandKind::NextProjectMarker => true,
         CommandKind::DeleteProjectMarkerNearCursor => {
             !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
@@ -1878,6 +1909,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
+        CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,
+        CommandKind::EditProjectRegionNearCursor => CommandId::EditProjectRegionNearCursor,
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
@@ -1940,6 +1973,25 @@ pub(super) fn nearest_project_marker_to_delete(app: &App) -> Option<aaadaw_core:
                 .then_with(|| left.2.value().cmp(&right.2.value()))
         })
         .map(|(_, _, marker_id)| marker_id)
+}
+
+/// REAPER 40615/40616 target the Region containing the edit cursor. In an
+/// overlap the most recently started Region wins; equal starts prefer the
+/// shorter Region, and identical bounds retain the earlier Region identity.
+pub(super) fn project_region_at_cursor(app: &App) -> Option<aaadaw_core::RegionId> {
+    let cursor = app.timeline.edit_cursor_tick;
+    app.project
+        .regions()
+        .iter()
+        .filter(|region| region.start_ticks() <= cursor && cursor < region.end_ticks())
+        .min_by(|left, right| {
+            right
+                .start_ticks()
+                .cmp(&left.start_ticks())
+                .then_with(|| left.end_ticks().cmp(&right.end_ticks()))
+                .then_with(|| left.id().value().cmp(&right.id().value()))
+        })
+        .map(|region| region.id())
 }
 
 fn project_file_busy(app: &App) -> bool {

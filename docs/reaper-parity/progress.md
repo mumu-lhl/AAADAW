@@ -439,3 +439,9 @@ AAADAW 现在将内部稳定 `MarkerId` 与可编辑可见编号分开，新增�
 Region 标尺现在可以在色带内单击设置整个 Time Selection 和编辑光标，在色带内拖动整段并保持长度，在标尺下部拖动 Start/End 边线分别改动一个边界。复用 Arrange Snap/Grid；画布显示拖动预览，释放后提交一条稳定 RegionId 的 `UpdateProjectRegion`，保留编号和名称并支持 Undo/Redo。播放/录音/工程忙碌守卫拒绝提交，不向音频 callback 发送编辑状态。
 
 加入点击选区、整段移动、Start/End 两侧边界调整、网格吸附、单步撤销、忙碌拒绝和过期拖动冲突回归。最终 workspace nextest 950/950（66 个测试二进制、0 跳过），workspace all-target strict Clippy、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt 和 `git diff --check` 通过。此手势映射与范围吸附还未在 Linux REAPER 7.82 实窗对照，Region hit priority、重叠边界、鼠标修饰键、Lane/颜色、循环/Repeat 和 Region Render Matrix 仍未验收；`PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 和 P4 保持 `in_progress`。下一项优先探测并补齐可操作的 Region 导航与循环联动。
+
+### 2026-10-13 REAPER Region 光标动作 40615/40616
+
+在 Linux REAPER 7.82 Default 7 隔离工程中复测 Delete near cursor 的左闭右开边界、空隙、Marker/Time Selection 排除和重叠规则；结果是最新 Start 优先、同 Start 时短区间优先、完全相同时较早枚举项优先。Edit near cursor 打开包含 Name/ID/Lane/Position/Length、颜色操作及 Manager/Render Matrix 入口的原厂窗口且不移动编辑光标。原始数据、截图和复现脚本已归档至 `docs/verification/reaper-parity/fixtures/` 与 `scripts/reaper_parity/`。
+
+AAADAW action list 新增对应的 Delete/Edit region near cursor 命令。Delete 复用稳定 RegionId 的 `DawAction`，Undo 可恢复，Marker 保持不变；Edit 跳转到当前 Region 属性草稿。两者仅在编辑光标包含于 Region 且工程空闲时启用。仍需实现原厂 Lane、独立 Length、颜色、Region Manager 和 Render Matrix 控件，不能把编辑动作映射视作窗口对齐完成。`DISPLAY=:101 rtk cargo nextest run --workspace --no-fail-fast -j 1` 为 952/952 通过、0 跳过（66 个测试二进制）；strict Clippy `-D warnings`、workspace all-target check、`cargo build -p aaadaw`、fmt 与 `git diff --check` 通过。PROJECT-REGIONS-001、PROJECT-MARKERS-001、UI-013 和 P4 仍为 `in_progress`。

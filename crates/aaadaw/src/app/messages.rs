@@ -364,6 +364,8 @@ pub(crate) enum Message {
     AddMidiItem,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
+    DeleteProjectRegionNearCursor,
+    EditProjectRegionNearCursor,
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
