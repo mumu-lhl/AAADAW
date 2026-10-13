@@ -55,6 +55,12 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi` 与 `select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_track_scope` 覆盖 Action List 搜索/Run、Audio/MIDI 混合、范围边界、轨道过滤、多轨范围和工程历史不变。Item 结束于时间选区起点或开始于选区终点时均排除，是目前采用的半开区间解释；REAPER 原厂对此边界及多选轨道运行时的实窗结果尚无独立探针，`ITEM-SELECT-003/004` 保持 `in_progress`。
 
+## 2026-10-13 Main action 40289：Unselect all items
+
+默认动作目录确认 Main Section 有 40289 `Item: Unselect (clear selection of) all items`，无默认快捷键。AAADAW 将其注册为 `item.unselect-all`；Action List Run 清除选中的 item 集合、活动 item 和 item 选择锚点，但保留轨道选择、时间选区及 automation point 选择，也不修改工程或 Undo/Redo 历史。没有选中 item 时动作禁用。
+
+`unselect_all_items_action_clears_item_selection_and_preserves_other_view_state` 覆盖 Action List 搜索/Run、Audio/MIDI item 选择清除、轨道/时间范围保留、无默认快捷键和工程历史不变；`clearing_item_selection_preserves_track_time_and_automation_selection` 单独验证 timeline 选择状态边界。原厂运行时的启用条件及对 automation point 选择的交互尚未探测，`ITEM-SELECT-005` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

@@ -425,6 +425,7 @@ pub(crate) enum Message {
     SelectAllItemsInTrack,
     SelectAllItemsInTimeSelection,
     SelectAllItemsOnSelectedTracksInTimeSelection,
+    UnselectAllItems,
     DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
     DuplicateMidiItem(ItemId),

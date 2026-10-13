@@ -1033,6 +1033,12 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
+    pub(crate) fn clear_selected_items(&mut self) {
+        self.selected_items.clear();
+        self.selected_item = None;
+        self.selection_anchor = None;
+    }
+
     pub(crate) fn select_items(&mut self, items: Vec<(ItemId, TrackId)>) {
         self.selected_items = items.iter().map(|(item_id, _)| *item_id).collect();
         self.selected_item = items.last().map(|(item_id, _)| *item_id);
@@ -2069,9 +2075,7 @@ impl TimelineState {
         preserve_existing_for_drag: bool,
     ) {
         let Some(item_id) = item_id else {
-            self.selected_items.clear();
-            self.selected_item = None;
-            self.selection_anchor = None;
+            self.clear_selected_items();
             return;
         };
         let Some(&item_index) = self.cache.item_indices.get(&item_id) else {
@@ -8863,6 +8867,50 @@ mod tests {
         timeline.handle(TimelineEvent::ClearTimeSelection);
         assert_eq!(timeline.time_selection, None);
         assert_eq!(timeline.selected_items, selected_items);
+    }
+
+    #[test]
+    fn clearing_item_selection_preserves_track_time_and_automation_selection() {
+        let (project, tracks, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.selected_items = HashSet::from([items[0], items[1]]);
+        timeline.selected_item = Some(items[1]);
+        timeline.selection_anchor = Some(items[0]);
+        timeline.selected_track = Some(tracks[1]);
+        timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
+        timeline.time_selection = Some(TimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        });
+        timeline.selected_volume_automation_point = Some((tracks[0], 2));
+        timeline.selected_fx_automation_point = Some((tracks[1], 1, 42, 3));
+
+        timeline.clear_selected_items();
+
+        assert!(timeline.selected_items.is_empty());
+        assert_eq!(timeline.selected_item, None);
+        assert_eq!(timeline.selection_anchor, None);
+        assert_eq!(timeline.selected_track, Some(tracks[1]));
+        assert_eq!(
+            timeline.selected_tracks,
+            HashSet::from([tracks[0], tracks[1]])
+        );
+        assert_eq!(
+            timeline.time_selection,
+            Some(TimeSelection {
+                start_tick: 240,
+                end_tick: 960,
+            })
+        );
+        assert_eq!(
+            timeline.selected_volume_automation_point,
+            Some((tracks[0], 2))
+        );
+        assert_eq!(
+            timeline.selected_fx_automation_point,
+            Some((tracks[1], 1, 42, 3))
+        );
     }
 
     #[test]

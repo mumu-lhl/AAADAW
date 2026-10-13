@@ -4257,6 +4257,7 @@ impl App {
             Message::SelectAllItemsOnSelectedTracksInTimeSelection => {
                 self.select_all_items_on_selected_tracks_in_time_selection()
             }
+            Message::UnselectAllItems => self.timeline.clear_selected_items(),
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),

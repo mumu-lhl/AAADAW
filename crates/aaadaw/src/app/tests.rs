@@ -7661,6 +7661,7 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
             "item.select-all-in-track".to_owned(),
             "item.select-all-in-time-selection".to_owned(),
             "item.select-all-on-selected-tracks-in-time-selection".to_owned(),
+            "item.unselect-all".to_owned(),
         ])
     );
     assert!(entries.iter().all(|entry| entry.shortcut.is_none()));
@@ -7818,11 +7819,8 @@ fn select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi(
         start_tick: 960,
         end_tick: 2_880,
     });
-    app.timeline.selected_items = HashSet::from([
-        end_boundary_audio,
-        end_boundary_midi,
-        start_boundary_audio,
-    ]);
+    app.timeline.selected_items =
+        HashSet::from([end_boundary_audio, end_boundary_midi, start_boundary_audio]);
     app.timeline.selected_item = Some(end_boundary_midi);
 
     let command = CommandId::SelectAllItemsInTimeSelection;
@@ -7963,6 +7961,79 @@ fn select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_t
 
     app.timeline.selected_tracks.clear();
     app.timeline.selected_track = None;
+    assert!(!commands::is_enabled(&app, command));
+}
+
+#[test]
+fn unselect_all_items_action_clears_item_selection_and_preserves_other_view_state() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://unselect-items".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 1_200,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline
+        .select_items(vec![(audio_id, tracks[0]), (midi_id, tracks[1])]);
+    app.timeline.selected_track = Some(tracks[1]);
+    app.timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 960,
+        end_tick: 2_400,
+    });
+
+    let command = CommandId::UnselectAllItems;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(commands::find(&app, "unselect all items"), Some(command));
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.unselect-all")
+    );
+    app.action_list.set_query("unselect all items".to_owned());
+    let entries = app.action_list_entries();
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == command)
+        .expect("unselect action is searchable");
+    assert!(entry.shortcut.is_none());
+    app.action_list.select("item.unselect-all".to_owned());
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+    let time_selection_before = app.timeline.time_selection;
+    let selected_track_before = app.timeline.selected_track;
+    let selected_tracks_before = app.timeline.selected_tracks.clone();
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.selected_item, None);
+    assert_eq!(app.timeline.time_selection, time_selection_before);
+    assert_eq!(app.timeline.selected_track, selected_track_before);
+    assert_eq!(app.timeline.selected_tracks, selected_tracks_before);
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
     assert!(!commands::is_enabled(&app, command));
 }
 
