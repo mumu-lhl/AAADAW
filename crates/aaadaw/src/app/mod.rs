@@ -4261,6 +4261,11 @@ impl App {
             Message::InvertItemSelection => self.invert_item_selection(),
             Message::SelectNextAdjacentItem => self.select_adjacent_non_overlapping_item(true),
             Message::SelectPreviousAdjacentItem => self.select_adjacent_non_overlapping_item(false),
+            Message::MoveEditCursorToNearestItemEdge(forward) => {
+                if let Some(tick) = self.nearest_item_edge(forward) {
+                    self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
+                }
+            }
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9290,6 +9295,29 @@ impl App {
     fn select_adjacent_non_overlapping_item(&mut self, forward: bool) {
         if let Some(item) = self.adjacent_non_overlapping_item(forward) {
             self.timeline.select_items(vec![item]);
+        }
+    }
+
+    pub(super) fn nearest_item_edge(&self, forward: bool) -> Option<u64> {
+        let cursor = self.timeline.edit_cursor_tick;
+        let audio_edges = self.project.audio_items().iter().flat_map(|item| {
+            [item.start_sample(), item.end_sample()]
+                .into_iter()
+                .filter_map(|sample| self.project.tick_at_sample(sample).ok())
+        });
+        let midi_edges = self.project.midi_items().iter().flat_map(|item| {
+            [
+                Some(item.start_tick()),
+                item.start_tick().checked_add(item.length_ticks()),
+            ]
+            .into_iter()
+            .flatten()
+        });
+        let edges = audio_edges.chain(midi_edges);
+        if forward {
+            edges.filter(|tick| *tick > cursor).min()
+        } else {
+            edges.filter(|tick| *tick < cursor).max()
         }
     }
 

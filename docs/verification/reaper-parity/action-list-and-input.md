@@ -85,6 +85,12 @@ Main Section 动作导出列出 41127 `Item: Select next adjacent non-overlappin
 
 `adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 覆盖跨类型导航、越过重叠项、排除其它轨道、首尾无目标禁用，以及工程/Undo 历史不变。当前允许相邻目标之间存在空隙；原厂是否会越过空隙、多个选中 item 的锚点规则与 active item 变更尚待运行探针，`ITEM-SELECT-010/011` 保持 `in_progress`。
 
+## 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
+
+Main Section 动作导出列出 41167 `Item navigation: Move cursor left to nearest item edge` 与 41168 `Item navigation: Move cursor right to nearest item edge`，均无默认快捷键。AAADAW 在整个工程的 Audio/MIDI item 起止边界中，以当前 edit cursor 为基准寻找严格左侧/右侧最近边缘；执行只移动 edit cursor，保留 item 选择，不修改工程或 Undo/Redo。没有对应方向的边缘时动作禁用；相等于当前光标的边缘不会导致原地重复。
+
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合类型的最近边缘、Action List Run、双向边界禁用、item 选择保留和工程历史不变。原厂是否仅搜索 selected items、端点相等时的跳转与实窗行为尚待探测，`ITEM-SELECT-012/013` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

@@ -563,3 +563,9 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 动作目录确认 41127 `Item: Select next adjacent non-overlapping item` 与 41128 `Item: Select previous adjacent non-overlapping item` 无默认快捷键。AAADAW 按活动选中 item 的 Audio sample/MIDI tick 边界，只在同一轨道查找最近的非重叠目标并替换 item 选择；没有目标时 Action List 禁用。实现允许目标之间有空隙，未据此声称与原厂边界已一致。
 
 新增 `adjacent_non_overlapping_item_actions_navigate_within_the_active_track` 覆盖 Audio/MIDI 混排、重叠目标跳过、其它轨道隔离、前后边界禁用和工程历史不变。专项 nightly+Cranelift nextest 1/1、应用全套 514/514 passed / 0 skipped；Stable strict Clippy `-D warnings`、fmt、diff 和 parity CSV 83 项/15 列唯一 ID/证据路径检查均通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning。`ITEM-SELECT-010/011` 保持 `in_progress`：原厂是否越过间隙、多个 selected item 的 active/anchor 规则及焦点行为尚待探测。
+
+### 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
+
+动作目录确认 41167/41168 左右最近 item edge 导航无默认快捷键。AAADAW 比较全工程 Audio sample 和 MIDI tick 起止边界，按当前 edit cursor 查找严格更左/更右的最近边缘；只更新时间线 edit cursor、保留 item selection，不修改工程历史。方向上没有边缘时 Action List 禁用。
+
+新增 `item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖 Audio/MIDI 混合边缘、Action List Run、方向端点禁用、选择保留及工程/Undo 不变；专项 nightly+Cranelift nextest 1/1、应用全套 515/515 passed / 0 skipped，Stable strict Clippy `-D warnings`、fmt、diff 和 parity CSV 85 项/15 列唯一 ID/证据路径检查通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning。`ITEM-SELECT-012/013` 保持 `in_progress`：全工程/selected items 搜索范围、相等端点规则和原厂焦点仍待探测。

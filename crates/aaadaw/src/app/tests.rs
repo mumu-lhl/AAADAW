@@ -7870,6 +7870,70 @@ fn adjacent_non_overlapping_item_actions_navigate_within_the_active_track() {
 }
 
 #[test]
+fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let audio_start = app.project.sample_at_tick(960).unwrap();
+    let audio_end = app.project.sample_at_tick(1_920).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://item-edge-navigation".to_owned(),
+            start_sample: audio_start,
+            source_offset_samples: 0,
+            length_samples: audio_end - audio_start,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 2_880,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let selected_item = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(selected_item, track_id)]);
+    app.timeline.edit_cursor_tick = 2_500;
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let left = CommandId::MoveEditCursorToPreviousItemEdge;
+    assert!(commands::is_enabled(&app, left));
+    app.action_list.set_query("nearest item edge".to_owned());
+    app.action_list
+        .select("item.navigate-cursor-left-edge".to_owned());
+    let left_entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == left)
+        .expect("left edge navigation action is searchable");
+    assert!(left_entry.shortcut.is_none());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.edit_cursor_tick, 1_920);
+    assert_eq!(app.timeline.selected_items, HashSet::from([selected_item]));
+
+    app.timeline.edit_cursor_tick = 2_500;
+    let right = CommandId::MoveEditCursorToNextItemEdge;
+    assert!(commands::is_enabled(&app, right));
+    app.action_list
+        .select("item.navigate-cursor-right-edge".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.edit_cursor_tick, 2_880);
+    assert_eq!(app.timeline.selected_items, HashSet::from([selected_item]));
+
+    app.timeline.edit_cursor_tick = 0;
+    assert!(!commands::is_enabled(&app, left));
+    app.timeline.edit_cursor_tick = 3_840;
+    assert!(!commands::is_enabled(&app, right));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
 fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

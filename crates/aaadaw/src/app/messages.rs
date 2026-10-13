@@ -429,6 +429,7 @@ pub(crate) enum Message {
     InvertItemSelection,
     SelectNextAdjacentItem,
     SelectPreviousAdjacentItem,
+    MoveEditCursorToNearestItemEdge(bool),
     DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
     DuplicateMidiItem(ItemId),

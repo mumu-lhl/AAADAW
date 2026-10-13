@@ -51,6 +51,8 @@ pub(crate) enum CommandId {
     InvertItemSelection,
     SelectNextAdjacentNonOverlappingItem,
     SelectPreviousAdjacentNonOverlappingItem,
+    MoveEditCursorToPreviousItemEdge,
+    MoveEditCursorToNextItemEdge,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -148,6 +150,8 @@ enum CommandKind {
     InvertItemSelection,
     SelectNextAdjacentNonOverlappingItem,
     SelectPreviousAdjacentNonOverlappingItem,
+    MoveEditCursorToPreviousItemEdge,
+    MoveEditCursorToNextItemEdge,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -846,6 +850,26 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::MoveEditCursorToPreviousItemEdge,
+        menu: None,
+        category: "Item navigation",
+        label: "Move cursor left to nearest item edge",
+        aliases: &["move cursor left to item edge", "previous item edge"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveEditCursorToNextItemEdge,
+        menu: None,
+        category: "Item navigation",
+        label: "Move cursor right to nearest item edge",
+        aliases: &["move cursor right to item edge", "next item edge"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SelectItemUnderMouseCursor,
         menu: None,
         category: "Item",
@@ -1233,6 +1257,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::InvertItemSelection
             | CommandKind::SelectNextAdjacentNonOverlappingItem
             | CommandKind::SelectPreviousAdjacentNonOverlappingItem
+            | CommandKind::MoveEditCursorToPreviousItemEdge
+            | CommandKind::MoveEditCursorToNextItemEdge
             | CommandKind::SelectItemUnderMouseCursor
             | CommandKind::AddItemUnderMouseToSelection
             | CommandKind::ToggleSelectionOfItemUnderMouse
@@ -1778,6 +1804,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::InvertItemSelection => "item.invert-selection",
         CommandKind::SelectNextAdjacentNonOverlappingItem => "item.select-next-adjacent",
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => "item.select-previous-adjacent",
+        CommandKind::MoveEditCursorToPreviousItemEdge => "item.navigate-cursor-left-edge",
+        CommandKind::MoveEditCursorToNextItemEdge => "item.navigate-cursor-right-edge",
         CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
         CommandKind::AddItemUnderMouseToSelection => "item.add-under-mouse-to-selection",
         CommandKind::ToggleSelectionOfItemUnderMouse => "item.toggle-under-mouse-selection",
@@ -1909,6 +1937,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::InvertItemSelection => Message::InvertItemSelection,
         CommandId::SelectNextAdjacentNonOverlappingItem => Message::SelectNextAdjacentItem,
         CommandId::SelectPreviousAdjacentNonOverlappingItem => Message::SelectPreviousAdjacentItem,
+        CommandId::MoveEditCursorToPreviousItemEdge => {
+            Message::MoveEditCursorToNearestItemEdge(false)
+        }
+        CommandId::MoveEditCursorToNextItemEdge => Message::MoveEditCursorToNearestItemEdge(true),
         CommandId::SelectItemUnderMouseCursor => Message::Timeline(
             TimelineEvent::SelectHoveredItem(HoveredItemSelectionMode::Replace),
         ),
@@ -2263,6 +2295,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => {
             app.adjacent_non_overlapping_item(false).is_some()
         }
+        CommandKind::MoveEditCursorToPreviousItemEdge => app.nearest_item_edge(false).is_some(),
+        CommandKind::MoveEditCursorToNextItemEdge => app.nearest_item_edge(true).is_some(),
         CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
@@ -2398,6 +2432,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SelectPreviousAdjacentNonOverlappingItem => {
             CommandId::SelectPreviousAdjacentNonOverlappingItem
         }
+        CommandKind::MoveEditCursorToPreviousItemEdge => {
+            CommandId::MoveEditCursorToPreviousItemEdge
+        }
+        CommandKind::MoveEditCursorToNextItemEdge => CommandId::MoveEditCursorToNextItemEdge,
         CommandKind::SelectItemUnderMouseCursor => CommandId::SelectItemUnderMouseCursor,
         CommandKind::AddItemUnderMouseToSelection => CommandId::AddItemUnderMouseToSelection,
         CommandKind::ToggleSelectionOfItemUnderMouse => CommandId::ToggleSelectionOfItemUnderMouse,
