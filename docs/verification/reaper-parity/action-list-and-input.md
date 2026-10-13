@@ -67,6 +67,12 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `arrange_cursor_motion_tracks_and_clears_the_hovered_item` 从真实 timeline shader 鼠标事件验证悬停命中/清除；`select_item_under_mouse_action_uses_current_hover_and_replaces_selection` 验证 Action List 搜索/Run 和工程历史不变。REAPER 原厂对 Action List 焦点、视图变换后悬停目标及实窗界面的行为尚无运行探针，`ITEM-SELECT-006` 保持 `in_progress`。
 
+## 2026-10-13 Main actions 40529/40530：添加或切换鼠标下的 item 选择
+
+默认动作目录列出 40529 `Item: Select item under mouse cursor (leaving other items selected)` 和 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。AAADAW 注册稳定 ID `item.add-under-mouse-to-selection` 与 `item.toggle-under-mouse-selection`。40529 添加悬停 item 且不会因为它已选中而移除；40530 会在选择集合中增删悬停 item。两者不修改工程或 Undo/Redo；必须先命中有效 Arrangement item 才启用。
+
+`select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 验证添加和对已选 target 的保留；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 验证 toggle 两个方向。原厂对多选后活动 item/anchor、Action List 焦点和视图变换后 hover 的运行时行为尚未核实；这两项及 40528 一样保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

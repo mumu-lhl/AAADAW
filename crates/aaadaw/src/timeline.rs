@@ -148,6 +148,7 @@ pub(crate) enum TimelineEvent {
         range: bool,
     },
     SetHoveredItem(Option<ItemId>),
+    SelectHoveredItem(HoveredItemSelectionMode),
     SelectItemsInMarquee {
         start_tick: u64,
         end_tick: u64,
@@ -341,6 +342,13 @@ pub(crate) enum ItemKind {
 pub(crate) struct TimeSelection {
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HoveredItemSelectionMode {
+    Replace,
+    Add,
+    Toggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1631,6 +1639,18 @@ impl TimelineState {
             }
             TimelineEvent::SetHoveredItem(item_id) => {
                 self.hovered_item = item_id.filter(|id| self.cache.item_indices.contains_key(id));
+            }
+            TimelineEvent::SelectHoveredItem(mode) => {
+                if let Some(item_id) = self.hovered_item {
+                    self.selected_volume_automation_point = None;
+                    self.selected_fx_automation_point = None;
+                    let (additive, preserve_existing_for_drag) = match mode {
+                        HoveredItemSelectionMode::Replace => (false, false),
+                        HoveredItemSelectionMode::Add => (true, true),
+                        HoveredItemSelectionMode::Toggle => (true, false),
+                    };
+                    self.select_item(Some(item_id), additive, false, preserve_existing_for_drag);
+                }
             }
             TimelineEvent::SelectItemsInMarquee {
                 start_tick,
