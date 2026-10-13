@@ -103,6 +103,43 @@ fn silent_test_waveform(sample_rate: u32, frame_count: u32) -> std::sync::Arc<Au
     std::sync::Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap())
 }
 
+fn item_snap_test_app(audio_start_sample: u64, midi_start_tick: u64) -> App {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://item-snap-test".to_owned(),
+            start_sample: audio_start_sample,
+            source_offset_samples: 120,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: midi_start_tick,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, tracks[0]), (midi_id, tracks[1])]);
+    app.timeline.selected_track = Some(tracks[1]);
+    app.timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
+    app.timeline.edit_cursor_tick = 1_111;
+    app
+}
+
 #[test]
 fn midi_item_name_draft_commits_as_one_undoable_project_action() {
     let mut app = App::default();
@@ -8310,6 +8347,152 @@ fn selected_item_cursor_actions_use_outer_audio_midi_bounds() {
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);
     assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
+fn item_snap_actions_match_audio_and_midi_grid_directions_with_grouped_undo() {
+    let cases = [
+        (
+            CommandId::SnapSelectedItemsLeft,
+            "item.snap-left",
+            "snap items left",
+            60_960,
+            5_242,
+            48_000,
+            4_800,
+        ),
+        (
+            CommandId::SnapSelectedItemsRight,
+            "item.snap-right",
+            "snap items right",
+            60_960,
+            5_242,
+            72_000,
+            5_760,
+        ),
+        (
+            CommandId::SnapSelectedItemsToNearestPoint,
+            "item.snap-nearest",
+            "snap items to nearest snap point",
+            60_000,
+            5_280,
+            48_000,
+            4_800,
+        ),
+    ];
+
+    for (command, stable_id, label, original_audio, original_midi, target_audio, target_midi) in
+        cases
+    {
+        let mut app = item_snap_test_app(original_audio, original_midi);
+        let audio_id = app.project.audio_items()[0].id();
+        let midi_id = app.project.midi_items()[0].id();
+        let selected_items = app.timeline.selected_items.clone();
+        let selected_track = app.timeline.selected_track;
+        let selected_tracks = app.timeline.selected_tracks.clone();
+        let cursor_tick = app.timeline.edit_cursor_tick;
+        let revision_before = app.revision;
+        assert!(commands::is_enabled(&app, command));
+        assert_eq!(commands::stable_id(command).as_deref(), Some(stable_id));
+        assert_eq!(commands::find(&app, label), Some(command));
+        app.action_list.set_query(label.to_owned());
+        app.action_list.select(stable_id.to_owned());
+        let entry = app
+            .action_list_entries()
+            .into_iter()
+            .find(|entry| entry.id == command)
+            .expect("item snap action is searchable");
+        assert!(entry.shortcut.is_none());
+
+        let _ = app.update(Message::ActionListRun(false));
+
+        assert_eq!(app.project.audio_items()[0].id(), audio_id);
+        assert_eq!(app.project.audio_items()[0].start_sample(), target_audio);
+        assert_eq!(app.project.audio_items()[0].source_offset_samples(), 120);
+        assert_eq!(app.project.audio_items()[0].length_samples(), 24_000);
+        assert_eq!(app.project.midi_items()[0].id(), midi_id);
+        assert_eq!(app.project.midi_items()[0].start_tick(), target_midi);
+        assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
+        assert_eq!(app.timeline.selected_items, selected_items);
+        assert_eq!(app.timeline.selected_track, selected_track);
+        assert_eq!(app.timeline.selected_tracks, selected_tracks);
+        assert_eq!(app.timeline.edit_cursor_tick, cursor_tick);
+        assert_eq!(app.revision, revision_before + 1);
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), original_audio);
+        assert_eq!(app.project.midi_items()[0].start_tick(), original_midi);
+        assert_eq!(app.timeline.selected_items, selected_items);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), target_audio);
+        assert_eq!(app.project.midi_items()[0].start_tick(), target_midi);
+    }
+}
+
+#[test]
+fn item_snap_nearest_uses_sample_grid_and_ignores_snap_toggle() {
+    let mut app = item_snap_test_app(60_960, 5_242);
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.snap_enabled = false;
+
+    let command = CommandId::SnapSelectedItemsToNearestPoint;
+    assert!(commands::is_enabled(&app, command));
+    app.action_list.select("item.snap-nearest".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(app.project.audio_items()[0].id(), audio_id);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 72_000);
+    assert_eq!(app.project.midi_items()[0].id(), midi_id);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 4_800);
+}
+
+#[test]
+fn item_snap_exact_grid_empty_selection_and_busy_states_do_not_edit() {
+    let mut app = item_snap_test_app(48_000, 4_800);
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+    app.action_list.select("item.snap-nearest".to_owned());
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 4_800);
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.clear_selected_items();
+    for command in [
+        CommandId::SnapSelectedItemsLeft,
+        CommandId::SnapSelectedItemsRight,
+        CommandId::SnapSelectedItemsToNearestPoint,
+    ] {
+        assert!(!commands::is_enabled(&app, command));
+    }
+    let _ = app.update(Message::SnapSelectedItemsLeft);
+    let _ = app.update(Message::SnapSelectedItemsRight);
+    let _ = app.update(Message::SnapSelectedItemsToNearestPoint);
+    assert_eq!(app.project.audio_items()[0].id(), audio_id);
+    assert_eq!(app.project.midi_items()[0].id(), midi_id);
+    assert_eq!(app.revision, revision_before);
+
+    app.timeline.select_items(vec![
+        (audio_id, app.project.audio_items()[0].track_id()),
+        (midi_id, app.project.midi_items()[0].track_id()),
+    ]);
+    app.io_busy = true;
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::SnapSelectedItemsToNearestPoint
+    ));
+    let _ = app.update(Message::SnapSelectedItemsToNearestPoint);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 4_800);
+    assert_eq!(app.revision, revision_before);
 }
 
 #[test]

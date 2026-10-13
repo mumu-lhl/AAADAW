@@ -57,6 +57,9 @@ pub(crate) enum CommandId {
     MoveEditCursorToNextItemEdge,
     MoveEditCursorToStartOfItems,
     MoveEditCursorToEndOfItems,
+    SnapSelectedItemsLeft,
+    SnapSelectedItemsRight,
+    SnapSelectedItemsToNearestPoint,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -160,6 +163,9 @@ enum CommandKind {
     MoveEditCursorToNextItemEdge,
     MoveEditCursorToStartOfItems,
     MoveEditCursorToEndOfItems,
+    SnapSelectedItemsLeft,
+    SnapSelectedItemsRight,
+    SnapSelectedItemsToNearestPoint,
     SelectItemUnderMouseCursor,
     AddItemUnderMouseToSelection,
     ToggleSelectionOfItemUnderMouse,
@@ -918,6 +924,39 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SnapSelectedItemsLeft,
+        menu: None,
+        category: "Item",
+        label: "Snap items left",
+        aliases: &["snap selected items left"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SnapSelectedItemsRight,
+        menu: None,
+        category: "Item",
+        label: "Snap items right",
+        aliases: &["snap selected items right"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SnapSelectedItemsToNearestPoint,
+        menu: None,
+        category: "Item",
+        label: "Snap items to nearest snap point",
+        aliases: &[
+            "snap selected items to nearest snap point",
+            "snap items to grid",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SelectItemUnderMouseCursor,
         menu: None,
         category: "Item",
@@ -1311,6 +1350,9 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::MoveEditCursorToNextItemEdge
             | CommandKind::MoveEditCursorToStartOfItems
             | CommandKind::MoveEditCursorToEndOfItems
+            | CommandKind::SnapSelectedItemsLeft
+            | CommandKind::SnapSelectedItemsRight
+            | CommandKind::SnapSelectedItemsToNearestPoint
             | CommandKind::SelectItemUnderMouseCursor
             | CommandKind::AddItemUnderMouseToSelection
             | CommandKind::ToggleSelectionOfItemUnderMouse
@@ -1862,6 +1904,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::MoveEditCursorToNextItemEdge => "item.navigate-cursor-right-edge",
         CommandKind::MoveEditCursorToStartOfItems => "item.navigate-cursor-selected-start",
         CommandKind::MoveEditCursorToEndOfItems => "item.navigate-cursor-selected-end",
+        CommandKind::SnapSelectedItemsLeft => "item.snap-left",
+        CommandKind::SnapSelectedItemsRight => "item.snap-right",
+        CommandKind::SnapSelectedItemsToNearestPoint => "item.snap-nearest",
         CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
         CommandKind::AddItemUnderMouseToSelection => "item.add-under-mouse-to-selection",
         CommandKind::ToggleSelectionOfItemUnderMouse => "item.toggle-under-mouse-selection",
@@ -2005,6 +2050,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::MoveEditCursorToEndOfItems => {
             Message::MoveEditCursorToSelectedItemsBoundary(true)
         }
+        CommandId::SnapSelectedItemsLeft => Message::SnapSelectedItemsLeft,
+        CommandId::SnapSelectedItemsRight => Message::SnapSelectedItemsRight,
+        CommandId::SnapSelectedItemsToNearestPoint => Message::SnapSelectedItemsToNearestPoint,
         CommandId::SelectItemUnderMouseCursor => Message::Timeline(
             TimelineEvent::SelectHoveredItem(HoveredItemSelectionMode::Replace),
         ),
@@ -2367,6 +2415,11 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::MoveEditCursorToStartOfItems | CommandKind::MoveEditCursorToEndOfItems => {
             !app.timeline.selected_items.is_empty()
         }
+        CommandKind::SnapSelectedItemsLeft
+        | CommandKind::SnapSelectedItemsRight
+        | CommandKind::SnapSelectedItemsToNearestPoint => {
+            !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
+        }
         CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
@@ -2510,6 +2563,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::MoveEditCursorToNextItemEdge => CommandId::MoveEditCursorToNextItemEdge,
         CommandKind::MoveEditCursorToStartOfItems => CommandId::MoveEditCursorToStartOfItems,
         CommandKind::MoveEditCursorToEndOfItems => CommandId::MoveEditCursorToEndOfItems,
+        CommandKind::SnapSelectedItemsLeft => CommandId::SnapSelectedItemsLeft,
+        CommandKind::SnapSelectedItemsRight => CommandId::SnapSelectedItemsRight,
+        CommandKind::SnapSelectedItemsToNearestPoint => CommandId::SnapSelectedItemsToNearestPoint,
         CommandKind::SelectItemUnderMouseCursor => CommandId::SelectItemUnderMouseCursor,
         CommandKind::AddItemUnderMouseToSelection => CommandId::AddItemUnderMouseToSelection,
         CommandKind::ToggleSelectionOfItemUnderMouse => CommandId::ToggleSelectionOfItemUnderMouse,

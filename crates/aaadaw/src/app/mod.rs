@@ -598,6 +598,85 @@ struct MeterMapEdit {
     denominator: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemSnapDirection {
+    Left,
+    Right,
+    Nearest,
+}
+
+fn midi_item_snap_target(start_tick: u64, grid_ticks: u64, direction: ItemSnapDirection) -> u64 {
+    let lower_tick = start_tick - start_tick % grid_ticks;
+    let remainder = start_tick - lower_tick;
+    if remainder == 0 {
+        return start_tick;
+    }
+    let Some(upper_tick) = lower_tick.checked_add(grid_ticks) else {
+        return lower_tick;
+    };
+    match direction {
+        ItemSnapDirection::Left => lower_tick,
+        ItemSnapDirection::Right => upper_tick,
+        ItemSnapDirection::Nearest if remainder <= grid_ticks - remainder => lower_tick,
+        ItemSnapDirection::Nearest => upper_tick,
+    }
+}
+
+fn audio_item_snap_target(
+    project: &Project,
+    start_sample: u64,
+    grid_ticks: u64,
+    direction: ItemSnapDirection,
+) -> Result<u64, String> {
+    let approximate_tick = project
+        .tick_at_sample(start_sample)
+        .map_err(|error| error.to_string())?;
+    let mut lower_tick = approximate_tick - approximate_tick % grid_ticks;
+    let mut lower_sample = project
+        .sample_at_tick(lower_tick)
+        .map_err(|error| error.to_string())?;
+
+    while lower_sample > start_sample {
+        lower_tick = lower_tick
+            .checked_sub(grid_ticks)
+            .ok_or_else(|| "could not locate the lower snap point".to_owned())?;
+        lower_sample = project
+            .sample_at_tick(lower_tick)
+            .map_err(|error| error.to_string())?;
+    }
+    if lower_sample == start_sample {
+        return Ok(start_sample);
+    }
+
+    let upper_sample = loop {
+        let upper_tick = lower_tick
+            .checked_add(grid_ticks)
+            .ok_or_else(|| "the next snap point exceeds the timeline".to_owned())?;
+        let upper_sample = project
+            .sample_at_tick(upper_tick)
+            .map_err(|error| error.to_string())?;
+        if upper_sample > start_sample {
+            break upper_sample;
+        }
+        if upper_sample == start_sample {
+            return Ok(start_sample);
+        }
+        lower_tick = upper_tick;
+        lower_sample = upper_sample;
+    };
+
+    Ok(match direction {
+        ItemSnapDirection::Left => lower_sample,
+        ItemSnapDirection::Right => upper_sample,
+        ItemSnapDirection::Nearest
+            if start_sample - lower_sample <= upper_sample - start_sample =>
+        {
+            lower_sample
+        }
+        ItemSnapDirection::Nearest => upper_sample,
+    })
+}
+
 fn action_updates_item_fades(action: &DawAction) -> bool {
     match action {
         DawAction::SetAudioItemFades { .. } => true,
@@ -4271,6 +4350,15 @@ impl App {
             }
             Message::MoveEditCursorToSelectedItemsBoundary(move_to_end) => {
                 self.move_cursor_to_selected_items_boundary(move_to_end);
+            }
+            Message::SnapSelectedItemsLeft => {
+                self.snap_selected_items(ItemSnapDirection::Left);
+            }
+            Message::SnapSelectedItemsRight => {
+                self.snap_selected_items(ItemSnapDirection::Right);
+            }
+            Message::SnapSelectedItemsToNearestPoint => {
+                self.snap_selected_items(ItemSnapDirection::Nearest);
             }
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
@@ -9374,6 +9462,82 @@ impl App {
         if let Some(tick) = tick {
             self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
         }
+    }
+
+    fn snap_selected_items(&mut self, direction: ItemSnapDirection) {
+        if commands::project_edit_busy(self) || self.timeline.selected_items.is_empty() {
+            return;
+        }
+        let Some(grid_ticks) = self
+            .timeline
+            .snap_grid
+            .tick_interval(self.project.settings().ppq())
+        else {
+            self.status = "The current snap grid is not available at this PPQ".to_owned();
+            return;
+        };
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        let mut actions = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                let target_sample = match audio_item_snap_target(
+                    &self.project,
+                    item.start_sample(),
+                    grid_ticks,
+                    direction,
+                ) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        self.status = format!("Could not snap selected items: {error}");
+                        return;
+                    }
+                };
+                if target_sample != item.start_sample() {
+                    actions.push(DawAction::EditAudioItem {
+                        item_id,
+                        media_ref: item.media_ref().to_owned(),
+                        start_sample: target_sample,
+                        source_offset_samples: item.source_offset_samples(),
+                        length_samples: item.length_samples(),
+                    });
+                }
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                let target_tick = midi_item_snap_target(item.start_tick(), grid_ticks, direction);
+                if target_tick != item.start_tick() {
+                    actions.push(DawAction::EditMidiItem {
+                        item_id,
+                        start_tick: target_tick,
+                        length_ticks: item.length_ticks(),
+                    });
+                }
+            }
+        }
+        if actions.is_empty() {
+            return;
+        }
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected items snapped to grid",
+        );
     }
 
     fn select_all_items_in_track(&mut self) {

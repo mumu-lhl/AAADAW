@@ -581,3 +581,11 @@ AAADAW 新增稳定动作 `item.select-previous-track` / `item.select-next-track
 REAPER 7.82 / Default 7 原厂点击探针确认 41173 将 edit cursor 移到所选 Audio/MIDI items 的最早起点，41174 移到最晚终点；两项覆盖同轨/跨轨多选，空选择不移动光标，选择和工程状态保持不变。记录追加到 [item navigation TSV](../verification/reaper-parity/fixtures/item-navigation-native.tsv)，可用已存探针脚本复测。
 
 AAADAW 注册 `item.navigate-cursor-selected-start` 与 `item.navigate-cursor-selected-end`，按共同项目 tick 计算所选区间的 min-start/max-end，只修改 edit cursor。`selected_item_cursor_actions_use_outer_audio_midi_bounds` 经 Action List Run 验证跨轨 Audio/MIDI 选择、忽略未选的更早 item、保留 item/track selection、空选择 no-op 以及项目/Undo/Redo 状态不变。Stable `aaadaw` 全量测试 497/497 通过，strict all-target Clippy `-D warnings`、fmt、diff 和 parity CSV 89 项/15 列唯一 ID/证据路径检查通过。当前 edit cursor 使用整数 tick，任意 Audio sample endpoint 可能被量化；非 tick 对齐样本位置、空选择时原厂 Action List 启用状态、完整键盘焦点与 Arrange 实窗视觉仍待确认，`ITEM-SELECT-016/017` 保持 `in_progress`。
+
+### 2026-10-13 Main actions 41182/41183/41184：所选 items 网格对齐
+
+REAPER 7.82 / Default 7 点击探针确认 41182、41183、41184 分别将每个所选 Audio/MIDI item 独立对齐到左侧、右侧和最近网格点；最近点正中选择左侧。已在网格上的 item 不移动；Snap toggle 关闭时动作仍按项目网格工作；空选择没有变化。混合多选长度、选择和光标保留，单次 Undo 恢复所有 item。逐项记录及复测入口在 [item snap fixture](../verification/reaper-parity/fixtures/item-snap-native.tsv) 和 [probe](../../scripts/reaper_parity/probe-item-snap.lua)。
+
+AAADAW 新增稳定 Action List ID `item.snap-left`、`item.snap-right`、`item.snap-nearest`。MIDI 使用 PPQ 网格点；Audio 先将网格 tick 映射至项目 sample，再按精确 sample 边界决定方向和最近点；所有移动组成单个 `BatchTransaction`，保留 item 时长及 Audio source offset。三个回归覆盖 Action List 搜索/Run、Audio/MIDI 分别对齐、最近点平局、跨媒体多选单步 Undo/Redo、Snap toggle 关闭、精确网格 no-op、空选择和 project-edit busy 守卫。
+
+Stable `aaadaw` 全量测试 500/500 通过，strict all-target Clippy `-D warnings`、fmt、diff 和 parity CSV 92 项/15 列唯一 ID/新增证据路径检查通过。此原厂采样使用四分音符直网格；Swing 网格、播放期间原厂动作可用性与完整 Action List/Arrange 视觉和焦点尚未验收，`ITEM-SELECT-018/019/020` 保持 `in_progress`。AAADAW 目前遵循 `project_edit_busy` 在 playback active 时阻止这些工程编辑，须由后续原厂探针确认这项安全守卫与默认行为的差异范围。

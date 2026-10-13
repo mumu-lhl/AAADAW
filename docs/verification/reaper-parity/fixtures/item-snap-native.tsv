@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+grid	Quarter note; GetSetProjectGrid division=0.25 beats; grid_flags=3327; straight swing 0
+fixture	Audio item starts at 1.27s and MIDI item at 2.73s; each item is 0.5s; selected by Arrange click and Ctrl-click
+case	action_id	selected_items_before	selected_items_after	selected_tracks_after	cursor_before_seconds	cursor_after_seconds	audio_before	audio_after	midi_before	midi_after	snap_toggle_before	snap_toggle_after	undo_result	fixture_note
+snap_left_mixed_selection	41182	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.27+0.5	1.0+0.5	2.73+0.5	2.5+0.5	true	true	One action moves both items; one Undo restores both	Each selected item independently moves to the previous grid point
+snap_right_mixed_selection	41183	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.27+0.5	1.5+0.5	2.73+0.5	3.0+0.5	true	true	One action moves both items; one Undo restores both	Each selected item independently moves to the next grid point
+snap_nearest_mixed_selection	41184	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.27+0.5	1.5+0.5	2.73+0.5	2.5+0.5	true	true	One action moves both items; one Undo restores both	Items snap independently; each keeps its 0.5s length
+snap_nearest_audio_tie	41184	AUDIO	AUDIO	Audio	1.5	1.5	1.25+0.5	1.0+0.5	-	-	true	true	Lower grid point chosen	At an exact half-grid distance, ties go left
+snap_nearest_midi_tie	41184	MIDI	MIDI	MIDI	1.5	1.5	-	-	2.75+0.5	2.5+0.5	true	true	Lower grid point chosen	At an exact half-grid distance, ties go left
+snap_exact_grid_positions	41182/41183/41184	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.0+0.5	1.0+0.5	2.5+0.5	2.5+0.5	true	true	No movement; no snap undo entry	Items already at grid positions remain unchanged
+snap_nearest_with_global_snap_off	41184	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.27+0.5	1.5+0.5	2.73+0.5	2.5+0.5	false	false	One action moves both items; one Undo restores both	The action uses the project grid while the global Snap toggle is off
+snap_nearest_empty_selection	41184			MIDI	1.5	1.5	1.27+0.5	1.27+0.5	2.73+0.5	2.73+0.5	false	false	No project-state change	No selected items means no movement
+fresh_multi_nearest	41184	AUDIO,MIDI	AUDIO,MIDI	MIDI	1.5	1.5	1.27+0.5	1.5+0.5	2.73+0.5	2.5+0.5	true	true	Undo_CanUndo2 reports Snap media items after one Undo	Captured by probe-item-snap.lua after a fresh click-selected run

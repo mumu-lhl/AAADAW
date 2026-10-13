@@ -107,6 +107,14 @@ AAADAW 已加入稳定动作 ID `item.navigate-cursor-selected-start` 与 `item.
 
 当前尚未确认空 item 选择时 Action List 的启用状态、窗口焦点和完整 Arrange 视觉边界，`ITEM-SELECT-016/017` 保持 `in_progress`。
 
+## 2026-10-13 Main actions 41182/41183/41184：所选 items 网格对齐
+
+Main Section 动作目录列出 41182 `Item: Snap items left`、41183 `Item: Snap items right` 和 41184 `Item: Snap items to nearest snap point`，默认均无快捷键。REAPER 7.82 / Default 7 的 Arrange 点击探针确认三项会分别对每个选中 Audio/MIDI item 的起点执行向左、向右或最近网格点对齐；多选逐项独立对齐，不施加共同位移。Audio/MIDI item 的长度保留，item/track 选择和 edit cursor 保持不变。已在网格上的起点不移动；最近点等距时取左侧网格点。即使全局 Snap toggle 关闭，这三项仍使用项目网格。混合 Audio/MIDI 多选可由一次 Undo 完整还原。
+
+AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-nearest`，使用当前 Arrangement 网格和 tempo map；Audio 位置通过 tick 网格点映射为精确 sample，再按 sample 距离选择方向，避免先将 item 位置量化到 tick。批量编辑作为单一事务写入，未移动时不创建历史。`item_snap_actions_match_audio_and_midi_grid_directions_with_grouped_undo`、`item_snap_nearest_uses_sample_grid_and_ignores_snap_toggle` 和 `item_snap_exact_grid_empty_selection_and_busy_states_do_not_edit` 覆盖 Action List Run、左右/最近/平局、独立混合类型移动、长度与 source offset 保留、Snap toggle 关闭、多选 Undo/Redo、精确网格、空选择及 project-edit busy 守卫。AAADAW 在 playback active 时阻止工程修改；这三项原厂动作在播放期间的可用性尚未实测。原厂证据和复测脚本见 [item snap TSV](fixtures/item-snap-native.tsv) 与 [probe](../../scripts/reaper_parity/probe-item-snap.lua)。
+
+探针以四分音符直网格验证；Swing 网格、播放期间的原厂动作状态及完整 Arrange/Action List 视觉和焦点尚未比对，`ITEM-SELECT-018/019/020` 仍为 `in_progress`，不能据此视为整体 Item parity 完成。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。
