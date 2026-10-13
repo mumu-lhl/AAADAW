@@ -7651,12 +7651,18 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
     );
     app.action_list.set_query("select all items".to_owned());
     let entries = app.action_list_entries();
-    assert_eq!(entries.len(), 1);
+    assert_eq!(entries.len(), 2);
     assert_eq!(
-        commands::stable_id(entries[0].id).as_deref(),
-        Some("item.select-all")
+        entries
+            .iter()
+            .filter_map(|entry| commands::stable_id(entry.id))
+            .collect::<HashSet<_>>(),
+        HashSet::from([
+            "item.select-all".to_owned(),
+            "item.select-all-in-track".to_owned()
+        ])
     );
-    assert!(entries[0].shortcut.is_none());
+    assert!(entries.iter().all(|entry| entry.shortcut.is_none()));
     app.action_list.select("item.select-all".to_owned());
     let revision_before = app.revision;
     let can_undo_before = app.project.can_undo();
@@ -7674,6 +7680,75 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
     assert_eq!(app.project.can_redo(), can_redo_before);
     assert_eq!(app.project.audio_items().len(), 1);
     assert_eq!(app.project.midi_items().len(), 1);
+}
+
+#[test]
+fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://select-track-items".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[0],
+            start_tick: 960,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[1],
+            media_ref: "asset://select-track-items-other".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let first_audio = app.project.audio_items()[0].id();
+    let other_track_audio = app.project.audio_items()[1].id();
+    let first_track_midi = app.project.midi_items()[0].id();
+    app.timeline.selected_track = Some(tracks[0]);
+    app.timeline.selected_items.insert(other_track_audio);
+
+    let command = CommandId::SelectAllItemsInTrack;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "select all items in track"),
+        Some(command)
+    );
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.select-all-in-track")
+    );
+    app.action_list
+        .set_query("select all items in track".to_owned());
+    let entries = app.action_list_entries();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].shortcut.is_none());
+    app.action_list
+        .select("item.select-all-in-track".to_owned());
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([first_audio, first_track_midi])
+    );
+    assert_eq!(app.timeline.selected_item, Some(first_track_midi));
 }
 
 #[test]

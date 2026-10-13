@@ -524,4 +524,6 @@ Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cran
 
 ### 2026-10-13 Main Action 40182：Select all items
 
-默认动作目录给出 40182 `Item: Select all items`，快捷键导出为空。AAADAW 注册为稳定 action ID `item.select-all`；从 Action List 搜索/执行后按轨道和时间选择全部 Audio 与 MIDI items，并同步活动 item/轨道锚点，清除 automation point 选择。它不发送 Project/DSP 动作，也不改变工程修订或 Undo/Redo；无 items 时禁用。完整 `aaadaw` nightly+Cranelift nextest 为 503/503 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。矩阵新增 `ITEM-SELECT-001` 且保持 `in_progress`：原厂完整运行时边界和实窗焦点验收未做；Main 仅注册这一小部分原厂动作，Item action 覆盖仍远未完成。
+默认动作目录给出 40182 `Item: Select all items`，快捷键导出为空。AAADAW 注册为稳定 action ID `item.select-all`；从 Action List 搜索/执行后按轨道和时间选择全部 Audio 与 MIDI items，并同步活动 item/轨道锚点，清除 automation point 选择。它不发送 Project/DSP 动作，也不改变工程修订或 Undo/Redo；无 items 时禁用。加入相邻 40421 动作后，完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。矩阵新增 `ITEM-SELECT-001` 且保持 `in_progress`：原厂完整运行时边界和实窗焦点验收未做；Main 仅注册这一小部分原厂动作，Item action 覆盖仍远未完成。
+
+同一 Main Section 的 40421 `Item: Select all items in track`（无默认快捷键）也已注册为 `item.select-all-in-track`。当前执行范围是活动所选轨道，混合选中该轨道的 Audio 与 MIDI items 并替换先前多轨选择，仍然不修改工程或历史。`select_all_items_in_track_action_keeps_other_tracks_unselected` 通过 Action List Run 覆盖该路径。完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。新增 `ITEM-SELECT-002` 保持 `in_progress`，等待原厂验证多轨选择和 active-track 边界。

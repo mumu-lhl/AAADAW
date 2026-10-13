@@ -4252,6 +4252,7 @@ impl App {
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::SelectAllItems => self.select_all_items(),
+            Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
@@ -9188,9 +9189,37 @@ impl App {
     }
 
     fn select_all_items(&mut self) {
+        let track_ids = self
+            .project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        let selected = self.items_for_tracks(track_ids);
+        self.timeline.select_items(selected);
+    }
+
+    fn select_all_items_in_track(&mut self) {
+        let selected = self
+            .selected_track_id()
+            .map(|track_id| self.items_for_tracks([track_id]))
+            .unwrap_or_default();
+        self.timeline.select_items(selected);
+    }
+
+    fn items_for_tracks(
+        &self,
+        track_ids: impl IntoIterator<Item = TrackId>,
+    ) -> Vec<(ItemId, TrackId)> {
+        let track_ids = track_ids.into_iter().collect::<HashSet<_>>();
         let mut selected =
             Vec::with_capacity(self.project.audio_items().len() + self.project.midi_items().len());
-        for track in self.project.tracks() {
+        for track in self
+            .project
+            .tracks()
+            .iter()
+            .filter(|track| track_ids.contains(&track.id()))
+        {
             let track_id = track.id();
             let mut track_items = self
                 .project
@@ -9220,7 +9249,7 @@ impl App {
                     .map(|(_, item_id)| (item_id, track_id)),
             );
         }
-        self.timeline.select_items(selected);
+        selected
     }
 
     fn delete_selected_items(&mut self) {
