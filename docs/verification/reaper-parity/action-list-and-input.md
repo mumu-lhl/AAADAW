@@ -61,6 +61,12 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `unselect_all_items_action_clears_item_selection_and_preserves_other_view_state` 覆盖 Action List 搜索/Run、Audio/MIDI item 选择清除、轨道/时间范围保留、无默认快捷键和工程历史不变；`clearing_item_selection_preserves_track_time_and_automation_selection` 单独验证 timeline 选择状态边界。原厂运行时的启用条件及对 automation point 选择的交互尚未探测，`ITEM-SELECT-005` 保持 `in_progress`。
 
+## 2026-10-13 Main action 40528：Select item under mouse cursor
+
+默认目录确认 Main Section 有 40528 `Item: Select item under mouse cursor`，无默认快捷键。Arrange 当前在鼠标移动进入 item 区域时更新悬停 item，离开 item/时间线、载入不同工程或改变视图布局时清除目标；Action List Run 选择该目标并替换此前 item 选择，不修改工程修订或 Undo/Redo。视图平移/缩放后需要鼠标再次移动来重新命中；没有有效悬停 item 时动作禁用。
+
+`arrange_cursor_motion_tracks_and_clears_the_hovered_item` 从真实 timeline shader 鼠标事件验证悬停命中/清除；`select_item_under_mouse_action_uses_current_hover_and_replaces_selection` 验证 Action List 搜索/Run 和工程历史不变。REAPER 原厂对 Action List 焦点、视图变换后悬停目标及实窗界面的行为尚无运行探针，`ITEM-SELECT-006` 保持 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。

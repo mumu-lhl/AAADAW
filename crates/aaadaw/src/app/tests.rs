@@ -8038,6 +8038,69 @@ fn unselect_all_items_action_clears_item_selection_and_preserves_other_view_stat
 }
 
 #[test]
+fn select_item_under_mouse_action_uses_current_hover_and_replaces_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    for (track_id, start_tick) in [(tracks[0], 240), (tracks[1], 1_200)] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 480,
+            })
+            .unwrap();
+    }
+    let hovered_id = app.project.midi_items()[0].id();
+    let previously_selected_id = app.project.midi_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(previously_selected_id, tracks[1])]);
+    app.timeline.hovered_item = Some(hovered_id);
+
+    let command = CommandId::SelectItemUnderMouseCursor;
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "select item under mouse cursor"),
+        Some(command)
+    );
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("item.select-under-mouse")
+    );
+    app.action_list
+        .set_query("select item under mouse cursor".to_owned());
+    let entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == command)
+        .expect("under-mouse action is searchable");
+    assert!(entry.shortcut.is_none());
+    app.action_list.select("item.select-under-mouse".to_owned());
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(app.timeline.selected_items, HashSet::from([hovered_id]));
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[0]));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.hovered_item = None;
+    assert!(!commands::is_enabled(&app, command));
+}
+
+#[test]
 fn duplicate_selected_audio_group_preserves_sample_spacing() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

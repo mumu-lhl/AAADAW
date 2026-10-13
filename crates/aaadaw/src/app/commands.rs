@@ -48,6 +48,7 @@ pub(crate) enum CommandId {
     SelectAllItemsInTimeSelection,
     SelectAllItemsOnSelectedTracksInTimeSelection,
     UnselectAllItems,
+    SelectItemUnderMouseCursor,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -139,6 +140,7 @@ enum CommandKind {
     SelectAllItemsInTimeSelection,
     SelectAllItemsOnSelectedTracksInTimeSelection,
     UnselectAllItems,
+    SelectItemUnderMouseCursor,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
@@ -804,6 +806,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SelectItemUnderMouseCursor,
+        menu: None,
+        category: "Item",
+        label: "Select item under mouse cursor",
+        aliases: &["select item under mouse"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::DuplicateSelectedItem,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1158,6 +1170,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SelectAllItemsInTimeSelection
             | CommandKind::SelectAllItemsOnSelectedTracksInTimeSelection
             | CommandKind::UnselectAllItems
+            | CommandKind::SelectItemUnderMouseCursor
             | CommandKind::DuplicateSelectedAudioItem
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::SplitSelectedItemsAtCursor
@@ -1697,6 +1710,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
             "item.select-all-on-selected-tracks-in-time-selection"
         }
         CommandKind::UnselectAllItems => "item.unselect-all",
+        CommandKind::SelectItemUnderMouseCursor => "item.select-under-mouse",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
@@ -1822,6 +1836,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::SelectAllItemsOnSelectedTracksInTimeSelection
         }
         CommandId::UnselectAllItems => Message::UnselectAllItems,
+        CommandId::SelectItemUnderMouseCursor => Message::Timeline(TimelineEvent::SelectItem {
+            item_id: app.timeline.hovered_item,
+            additive: false,
+            range: false,
+        }),
         CommandId::DuplicateSelectedItem => Message::DuplicateSelectedItems,
         CommandId::DuplicateSelectedAudioItem => {
             let selected_audio = app.timeline.selected_item.filter(|item_id| {
@@ -2158,6 +2177,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             })
         }
         CommandKind::UnselectAllItems => !app.timeline.selected_items.is_empty(),
+        CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::SplitSelectedItemsAtCursor => {
             !project_edit_busy(app) && app.can_split_selected_items_at_cursor()
         }
@@ -2283,6 +2303,7 @@ fn command_id(kind: CommandKind) -> CommandId {
             CommandId::SelectAllItemsOnSelectedTracksInTimeSelection
         }
         CommandKind::UnselectAllItems => CommandId::UnselectAllItems,
+        CommandKind::SelectItemUnderMouseCursor => CommandId::SelectItemUnderMouseCursor,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,

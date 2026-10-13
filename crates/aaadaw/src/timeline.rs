@@ -147,6 +147,7 @@ pub(crate) enum TimelineEvent {
         additive: bool,
         range: bool,
     },
+    SetHoveredItem(Option<ItemId>),
     SelectItemsInMarquee {
         start_tick: u64,
         end_tick: u64,
@@ -789,6 +790,7 @@ pub(crate) struct TimelineState {
     pub(crate) selected_tracks: HashSet<TrackId>,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) hovered_item: Option<ItemId>,
     pub(crate) selected_project_marker: Option<MarkerId>,
     pub(crate) time_selection: Option<TimeSelection>,
     pub(crate) loop_points: Option<LoopPoints>,
@@ -988,6 +990,7 @@ impl Default for TimelineState {
             selected_tracks: HashSet::new(),
             selected_item: None,
             selected_items: HashSet::new(),
+            hovered_item: None,
             selected_project_marker: None,
             time_selection: None,
             loop_points: None,
@@ -1056,6 +1059,7 @@ impl TimelineState {
         view_state: Option<&ArrangementViewState>,
     ) {
         self.selected_project_marker = None;
+        self.hovered_item = None;
         self.context_fade = None;
         self.item_fade_preview = None;
         self.folder_compact.clear();
@@ -1301,6 +1305,12 @@ impl TimelineState {
         }
         self.selected_items
             .retain(|item_id| self.cache.item_indices.contains_key(item_id));
+        if self
+            .hovered_item
+            .is_some_and(|item_id| !self.cache.item_indices.contains_key(&item_id))
+        {
+            self.hovered_item = None;
+        }
         if !self
             .selected_item
             .is_some_and(|item_id| self.selected_items.contains(&item_id))
@@ -1483,6 +1493,7 @@ impl TimelineState {
     }
 
     fn rebuild_row_layout(&mut self) {
+        self.hovered_item = None;
         let mut top = 0.0;
         self.row_layout = self
             .cache
@@ -1579,7 +1590,10 @@ impl TimelineState {
     }
 
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
-        if !matches!(event, TimelineEvent::OpenFadeMenu { .. }) {
+        if !matches!(
+            event,
+            TimelineEvent::OpenFadeMenu { .. } | TimelineEvent::SetHoveredItem(_)
+        ) {
             self.context_fade = None;
         }
         match event {
@@ -1590,6 +1604,7 @@ impl TimelineState {
                 self.pan_fractional_tick = delta - whole_ticks;
                 self.origin_tick = (i128::from(self.origin_tick) + whole_ticks as i128)
                     .clamp(0, i128::from(u64::MAX)) as u64;
+                self.hovered_item = None;
             }
             TimelineEvent::ZoomAt { factor, anchor_x } => {
                 if !factor.is_finite() || factor <= 0.0 {
@@ -1603,6 +1618,7 @@ impl TimelineState {
                     anchor_tick - f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
                 self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
                 self.pan_fractional_tick = 0.0;
+                self.hovered_item = None;
             }
             TimelineEvent::SelectItem {
                 item_id,
@@ -1612,6 +1628,9 @@ impl TimelineState {
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
                 self.select_item(item_id, additive, range, false);
+            }
+            TimelineEvent::SetHoveredItem(item_id) => {
+                self.hovered_item = item_id.filter(|id| self.cache.item_indices.contains_key(id));
             }
             TimelineEvent::SelectItemsInMarquee {
                 start_tick,
@@ -2336,6 +2355,7 @@ impl TimelineState {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick,
             selected_items: self.selected_item_geometries(),
+            hovered_item: self.hovered_item,
             time_selection: self.time_selection,
             snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
@@ -2411,6 +2431,7 @@ struct TimelineProgram<'a> {
     edit_cursor_tick: u64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
+    hovered_item: Option<ItemId>,
     time_selection: Option<TimeSelection>,
     snap_enabled: bool,
     selected_track: Option<TrackId>,
@@ -3040,6 +3061,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         }
 
         match event {
+            Event::Mouse(mouse::Event::CursorLeft) if self.hovered_item.is_some() => {
+                Some(shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::SetHoveredItem(None),
+                )))
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let position = cursor.position_in(bounds)?;
                 let (x, y) = match delta {
@@ -3212,6 +3238,29 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                let interaction_in_progress = state.middle_drag.is_some()
+                    || state.pending_item_drag.is_some()
+                    || state.pending_item_trim.is_some()
+                    || state.pending_item_fade.is_some()
+                    || state.pending_time_selection_drag.is_some()
+                    || state.pending_item_selection_drag.is_some()
+                    || state.pending_automation_point.is_some()
+                    || state.pending_fx_lane_resize.is_some();
+                if !interaction_in_progress {
+                    let hovered_item = cursor.position_in(bounds).and_then(|position| {
+                        let (track_index, row_y) = row_at_y(self.row_layout, position.y)?;
+                        if row_y >= TIMELINE_ROW_HEIGHT {
+                            return None;
+                        }
+                        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                        self.cache.item_at(track_index, tick).map(|item| item.id)
+                    });
+                    if hovered_item != self.hovered_item {
+                        return Some(shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SetHoveredItem(hovered_item),
+                        )));
+                    }
+                }
                 if let Some(mut fade) = state.pending_item_fade {
                     let delta = position.x - fade.start_x;
                     if !fade.dragging && delta.abs() < 1.0 {
@@ -8911,6 +8960,61 @@ mod tests {
             timeline.selected_fx_automation_point,
             Some((tracks[1], 1, 42, 3))
         );
+    }
+
+    #[test]
+    fn arrange_cursor_motion_tracks_and_clears_the_hovered_item() {
+        use iced::widget::shader;
+
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let row = timeline.row_layout(0).unwrap();
+        let bounds = Rectangle::new(Point::new(30.0, 20.0), Size::new(800.0, 480.0));
+        let item_position = Point::new(27.0, row.top + 20.0);
+        let absolute_item_position =
+            Point::new(bounds.x + item_position.x, bounds.y + item_position.y);
+        let mut interaction = TimelineInteractionState::default();
+        let program = timeline.program(&project, None);
+        let action = shader::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: absolute_item_position,
+            }),
+            bounds,
+            mouse::Cursor::Available(absolute_item_position),
+        )
+        .expect("moving over an item should publish its hover target");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetHoveredItem(Some(item_id))
+            )) if item_id == items[0]
+        ));
+        timeline.handle(TimelineEvent::SetHoveredItem(Some(items[0])));
+
+        let empty_position = Point::new(bounds.x + 140.0, bounds.y + row.top + 20.0);
+        let program = timeline.program(&project, None);
+        let action = shader::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: empty_position,
+            }),
+            bounds,
+            mouse::Cursor::Available(empty_position),
+        )
+        .expect("moving off an item should clear its hover target");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetHoveredItem(None)
+            ))
+        ));
     }
 
     #[test]
