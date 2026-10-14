@@ -742,3 +742,13 @@ Stable `cargo nextest run -p aaadaw` 543/543 passed；Stable all-target Clippy `
 Linux REAPER 7.82 / Default 7 的 action 42409 探针确认四个音频/MIDI 选择项在两条轨道创建 2–12 秒区域、清空选择且只产生一个状态变更；再次执行会替换旧区域，无选择执行清空全部区域，Undo/Redo 清除和恢复区域。原厂与 AAADAW 同为 1540×960 的三轨时间线截图使用相同的 Audio/MIDI 时间位置和 2–12 秒区域，显示两轨覆盖、间隙及第三轨无区域；原厂窗口在虚拟显示中没有打开音频设备，传输保持停止。菜单截图、结果 TSV、环境和哈希见 [Enclose razor fixture](../verification/reaper-parity/fixtures/menu-item-enclose-razor.tsv)。
 
 Stable `cargo nextest run -p aaadaw-core -p aaadaw-storage -p aaadaw` 730/730 passed、0 skipped；Stable 跨三包 all-target Clippy `-D warnings`、`cargo fmt --check`、`git diff --check` 通过。Parity matrix 有 94 个唯一 ID、15 列，fixture 路径和截图/结果哈希均已验证。`ITEM-RAZOR-ENCLOSE-001` 与 `SHELL-MENU-KEYBOARD-001` 保持 `in_progress`：AAADAW 暂未实现 envelope razor area 及其它 Razor edit 命令；Undo 目前不恢复执行前的 item 选择，而原厂脚本探针的选择撤销结果受构造历史影响，仍待明确核验。其余 Item/Track 菜单和完整界面一致性继续推进。
+
+### 2026-10-14 Item 菜单 Split items at time selection or razor edit
+
+实现提交：`e30c3ee`。
+
+新增 Main action 40061 对应的 Action List 命令 `Split items at time selection or razor edit`，Item 菜单显示原厂短标签 `Split items at time selection` 和 Shift+S。时间选区与选中项并存时仅分割选中项，并只选择时间选区内部片段；时间选区有效但没有项选择时分割全工程素材并选中内部片段；没有时间选区时按每条轨道的 media razor area 边界分割该轨道所有音频/MIDI 项、清除 area 并选中 area 内片段。音频源偏移按源采样率换算，MIDI 继续按 tick 分割；每种路径都在单个工程事务中完成。
+
+Linux REAPER 7.82 / Default 7 原厂 ReaScript 探针覆盖上述三种模式，确认区域边界、未选中素材保留、选区内部片段选择和单次 state change。原厂与 AAADAW 都实际运行 1540×1160 窗口并截取时间线及 Item 菜单：四轨 0–10 秒素材中，首轨 3–7 秒片段被选中，其余轨道保持完整；两个菜单截图都显示 Shift+S，区域被消耗且无时间选区后命令处于禁用状态。原厂 TSV、菜单/时间线截图及 SHA-256、AAADAW 实窗截图与对比边界见 [Split fixture](../verification/reaper-parity/fixtures/menu-item-split-time-or-razor.tsv)。
+
+nightly + Cranelift workspace `cargo xtest` 1025/1025 通过（CLAP GUI 测试在隔离 Xvfb `DISPLAY=:223` 下运行）；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查通过。Parity matrix 有 95 个唯一 ID、15 列，五个原厂结果/截图与 AAADAW 截图哈希均已校验。`ITEM-SPLIT-TIME-RAZOR-001` 和菜单/整体 UI 仍保持 `in_progress`：时间选区与 Razor 同时存在时 REAPER 的优先级尚未探测；Undo/Redo 目前只恢复工程素材，不恢复之前/之后的 item 选择；envelope Razor、媒体分组语义及完整 Item 菜单仍待实现。

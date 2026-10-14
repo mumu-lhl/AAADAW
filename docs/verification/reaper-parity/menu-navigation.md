@@ -45,3 +45,11 @@ AAADAW 将完整命令注册为 Action List 的 Razor edit 命令，在 Item 菜
 REAPER 原厂 40508 动作将所选素材裁到时间选区与素材的交集；完全落在选区外的素材保留，恰好与选区端点相接的素材删除，没有时间选区时不修改工程。Linux REAPER 7.82 / Default 7 的 ReaScript 探针记录了内部裁切、左右部分交叠、选区外、两端贴边和无选区结果。AAADAW 将命令接到 Item 菜单，空选择时仍启用，与原厂动作可从空工程菜单执行的状态一致；裁切和端点删除在单个可撤销事务中应用，并保留音频/MIDI 源偏移及被裁后仍存活项的选择状态。
 
 原厂操作结果、原厂裁切界面截图、空工程原厂菜单截图、AAADAW Item 菜单实窗图、哈希和回归范围见 [Trim items fixture](fixtures/menu-item-trim.tsv)。截图只验证菜单项可见性与空工程可用状态，窗口尺寸、完整菜单内容及画布几何仍有差异；AAADAW 的音频/MIDI 行为由 `trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit`、`trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules` 与 `trim_items_to_selected_area_without_a_selection_is_a_noop` 验证。Item 菜单现在还按原厂顺序包含 Copy loop 与 Enclose media 命令；其它尚未实现的菜单项和完整界面对照仍为 `in_progress`。
+
+### Item 菜单的 Split items at time selection
+
+Linux REAPER 7.82 / Default 7 的 Main action 40061 名为 `Item: Split items at time selection or razor edit`，默认快捷键 Shift+S。原厂探针确认三种模式：没有时间选区时，动作按各轨道的 media razor area 两端切分该轨道上的所有音频/MIDI 项、清除这些 area，并只选择完全落在 area 内的片段；有时间选区且已有项选择时，只切分所选项并只选择时间选区内部的片段；有时间选区但没有项选择时，则切分整个工程中的项并选择选区内部片段。未受当前模式影响的素材保持原样，每次执行只增加一个工程状态变更。分割结果和原厂环境记录在 [Split 原厂 TSV](fixtures/menu-item-split-time-or-razor-native.tsv)。
+
+AAADAW 的 Action List 使用完整原厂动作名，Item 菜单显示 `Split items at time selection` 和 Shift+S。它实现上述三种路径：音频边界按样本时钟切分并换算源偏移，MIDI 按 tick 边界切分；razor 路径只处理带 media area 的轨道并在同一撤销事务中清除区域。混合音频/MIDI、时间选区无项选择时的全工程分割、选中模式下不触碰未选中轨道、Razor 轨道范围和单步 Undo/Redo 均有应用回归覆盖。REAPER 与 AAADAW 的原厂结果时间线分别见[原厂分割截图](fixtures/menu-item-split-time-or-razor-native.png)和 [AAADAW 分割截图](fixtures/menu-item-split-time-or-razor-aaadaw.png)；菜单截图、哈希、生成工程方式和比较范围见 [Split fixture](fixtures/menu-item-split-time-or-razor.tsv)。两张时间线截图使用相同的四条轨道及 0–10 秒素材，显示首轨 3–7 秒中段被选中，其他轨道素材未改变；截图只验收该动作结果与核心标签/快捷键，不代表整套菜单及界面已像素对齐。
+
+时间选区同时存在 razor area 时，AAADAW 目前优先使用时间选区；该组合尚未由原厂探针确认。撤销工程分割会恢复素材，但应用当前没有通用的 item 选择历史，因此不能承诺 Undo/Redo 后的选择状态与 REAPER 一致。其它 Razor grouping、envelope area 和完整 Item 菜单仍未实现，`ITEM-SPLIT-TIME-RAZOR-001`、`ITEM-RAZOR-ENCLOSE-001` 与菜单/界面整体继续保持 `in_progress`。
