@@ -3,9 +3,11 @@ use crate::{ItemId, TrackId};
 /// A timeline placement of an audio source on a track.
 ///
 /// `start_sample` and `length_samples` use the project's sample clock;
-/// `source_offset_samples` is relative to the referenced media source and may
-/// be negative when a non-looping item's contents begin before the source. The
-/// media reference is opaque to the core and resolved by the media layer.
+/// `source_offset_samples` is relative to the item's source view and may be
+/// negative when a non-looping item's contents begin before that view. Bounded
+/// sections retain their absolute media start separately from the offset within
+/// the section. The media reference is opaque to the core and resolved by the
+/// media layer.
 pub const MAX_AUDIO_ITEM_VOLUME: f32 = 16.0;
 /// Maximum linear volume for an audio item's active take.
 pub const MAX_AUDIO_ITEM_TAKE_VOLUME: f32 = 16.0;

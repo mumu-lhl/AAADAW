@@ -856,19 +856,15 @@ impl App {
                 };
                 if section_length == 0
                     || section_end > frame_count
-                    || current_offset < section_start
-                    || current_offset >= section_end
+                    || current_offset >= section_length
                 {
                     self.item_nudge_dialog.error =
                         Some("Selected audio item has an invalid loop source section".to_owned());
                     return;
                 }
-                let Some(offset) = wrapped_source_sample(
-                    current_offset,
-                    section_start,
-                    section_length,
-                    source_delta,
-                ) else {
+                let Some(offset) =
+                    wrapped_source_sample(current_offset, 0, section_length, source_delta)
+                else {
                     self.item_nudge_dialog.error =
                         Some("Contents nudge is outside the supported source range".to_owned());
                     return;
@@ -915,7 +911,7 @@ impl App {
         self.item_nudge_dialog.error = None;
     }
 
-    fn audio_source_limits(
+    pub(super) fn audio_source_limits(
         &self,
         media_refs: impl IntoIterator<Item = String>,
     ) -> Result<HashMap<String, (u32, u64)>, String> {

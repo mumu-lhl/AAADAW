@@ -897,33 +897,64 @@ fn run_worker<P: FeedProducer>(
     let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining, looping) =
         match source_loop_section {
             Some(section) => {
-                if negative_source_offset_frames > 0 {
-                    let error = MediaError::InvalidAudioLoopSection;
-                    let _ = startup.send(Err(worker_startup_error(&error)));
-                    return Err(error);
-                }
-                let remaining = if let Some(length) = section.length_frames {
-                    let Some(section_end) = section.start_frame.checked_add(length) else {
+                let section_end = if let Some(length) = section.length_frames {
+                    let Some(end) = section.start_frame.checked_add(length) else {
                         let error = MediaError::InvalidAudioLoopSection;
                         let _ = startup.send(Err(worker_startup_error(&error)));
                         return Err(error);
                     };
-                    if length == 0
+                    if length == 0 {
+                        let error = MediaError::InvalidAudioLoopSection;
+                        let _ = startup.send(Err(worker_startup_error(&error)));
+                        return Err(error);
+                    }
+                    Some(end)
+                } else {
+                    None
+                };
+                let remaining = if negative_source_offset_frames > 0 {
+                    if section.looping || section.length_frames.is_none() {
+                        let error = MediaError::InvalidAudioLoopSection;
+                        let _ = startup.send(Err(worker_startup_error(&error)));
+                        return Err(error);
+                    }
+                    // A disabled bounded section still starts at its section boundary after
+                    // the signed take pre-roll. The section length remains a one-pass cap.
+                    source_offset_remaining = section.start_frame;
+                    section.length_frames
+                } else if let (Some(length), Some(section_end)) =
+                    (section.length_frames, section_end)
+                {
+                    if source_offset_remaining >= length {
+                        if section.looping {
+                            let error = MediaError::InvalidAudioLoopSection;
+                            let _ = startup.send(Err(worker_startup_error(&error)));
+                            return Err(error);
+                        }
+                        source_offset_remaining = section_end;
+                        Some(0)
+                    } else {
+                        let Some(source_start) =
+                            section.start_frame.checked_add(source_offset_remaining)
+                        else {
+                            let error = MediaError::InvalidAudioLoopSection;
+                            let _ = startup.send(Err(worker_startup_error(&error)));
+                            return Err(error);
+                        };
+                        source_offset_remaining = source_start;
+                        Some(length - (source_start - section.start_frame))
+                    }
+                } else if section.length_frames.is_none() {
+                    if negative_source_offset_frames > 0
                         || source_offset_remaining < section.start_frame
-                        || source_offset_remaining >= section_end
                     {
                         let error = MediaError::InvalidAudioLoopSection;
                         let _ = startup.send(Err(worker_startup_error(&error)));
                         return Err(error);
                     }
-                    Some(section_end - source_offset_remaining)
-                } else {
-                    if source_offset_remaining < section.start_frame {
-                        let error = MediaError::InvalidAudioLoopSection;
-                        let _ = startup.send(Err(worker_startup_error(&error)));
-                        return Err(error);
-                    }
                     None
+                } else {
+                    unreachable!("bounded sections have a checked source end")
                 };
                 (
                     Some(section.start_frame),

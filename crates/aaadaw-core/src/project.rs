@@ -27,12 +27,14 @@ fn valid_audio_source_offset(
     match (section_start_samples, section_length_samples) {
         (None, None) => true,
         (Some(start), Some(length)) => {
-            let Some(end) = start.checked_add(length) else {
+            if start.checked_add(length).is_none() || length == 0 {
                 return false;
-            };
-            length > 0
-                && u64::try_from(source_offset_samples)
-                    .is_ok_and(|offset| start <= offset && offset < end)
+            }
+            if loop_source {
+                u64::try_from(source_offset_samples).is_ok_and(|offset| offset < length)
+            } else {
+                true
+            }
         }
         _ => false,
     }
@@ -3232,14 +3234,13 @@ impl Project {
                 if start_sample.checked_add(length_samples).is_none() {
                     return Err(ActionError::InvalidAudioItemPosition);
                 }
-                let Some(source_section_end_samples) =
-                    source_section_start_samples.checked_add(source_section_length_samples)
-                else {
-                    return Err(ActionError::InvalidAudioItemPosition);
-                };
-                if source_section_start_samples > source_offset_samples
-                    || source_offset_samples >= source_section_end_samples
+                if source_section_start_samples
+                    .checked_add(source_section_length_samples)
+                    .is_none()
                 {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                if source_offset_samples >= source_section_length_samples {
                     return Err(ActionError::InvalidAudioItemPosition);
                 }
                 let Ok(source_offset_samples_signed) = i64::try_from(source_offset_samples) else {

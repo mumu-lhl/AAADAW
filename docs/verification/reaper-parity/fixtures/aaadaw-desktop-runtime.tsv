@@ -16,3 +16,5 @@ eof_binary_smoke	2026-10-14; Xvfb :90; Build ID 969fe3e9997570899c03c004f8c29415
 eof_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; identical pixels to recorded startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
 latest_binary_smoke	2026-10-14; Xvfb :90; Build ID e1ab6146acaad9e9ea2d808e1f3261199529c792; binary SHA-256 0cdb64ab78668b631e6cec8b5b6a97db3f69387de364ee496fcf2a65fcfaa105; 1280x800 main window visible
 latest_binary_smoke_screenshot	aaadaw-desktop-runtime-signed-offset.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+bounded_section_binary_smoke	2026-10-14; Xvfb :90; Build ID dab8bd42de48bc34d83479ed2607137c64ab4b7a; binary SHA-256 f70ba20a0bc8675f6465b0bdd8c2b47c3264489162bc9703ea2f2b93481b5272; 1280x800 main window visible
+bounded_section_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b

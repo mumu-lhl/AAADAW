@@ -97,6 +97,60 @@ fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
 }
 
 #[test]
+fn disabled_bounded_source_section_accepts_and_restores_negative_offset() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id,
+            media_ref: "asset://bounded-preroll".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 240,
+            length_samples: 4_800,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            source_section_length_samples: 144_000,
+        })
+        .expect("bounded source loop should insert");
+    let item = project.audio_items()[0].clone();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: false,
+        })
+        .expect("looping should be disabled before signed nudge");
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id: item.id(),
+            media_ref: item.media_ref().to_owned(),
+            start_sample: item.start_sample(),
+            source_offset_samples: -7_200,
+            length_samples: item.length_samples(),
+        })
+        .expect("disabled bounded sections should allow pre-roll before their start");
+
+    let edited = project.audio_items()[0].clone();
+    assert_eq!(edited.source_offset_samples(), -7_200);
+    assert_eq!(edited.source_section_start_samples(), Some(0));
+    assert_eq!(edited.source_section_length_samples(), Some(144_000));
+    assert!(!edited.is_loop_source());
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .expect("signed bounded section should restore")
+            .audio_items()[0],
+        edited
+    );
+    assert!(matches!(
+        project.apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: true,
+        }),
+        Err(aaadaw_core::ActionError::InvalidAudioItemPosition)
+    ));
+    assert_eq!(project.audio_items()[0], edited);
+}
+
+#[test]
 fn non_looping_audio_items_support_signed_source_offsets() {
     let (mut project, track_id) = project_with_track();
     project

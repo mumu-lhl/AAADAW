@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 49;
+pub const CURRENT_SCHEMA_VERSION: u32 = 50;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -420,6 +420,14 @@ CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(positi
 const MIGRATION_49: &str = r#"
 ALTER TABLE audio_items ADD COLUMN signed_source_offset_samples INTEGER NOT NULL DEFAULT 0;
 UPDATE audio_items SET signed_source_offset_samples = source_offset_samples;
+"#;
+
+const MIGRATION_50: &str = r#"
+UPDATE audio_items
+SET signed_source_offset_samples = signed_source_offset_samples - source_section_start_samples,
+    source_offset_samples = MAX(0, signed_source_offset_samples - source_section_start_samples)
+WHERE source_section_start_samples IS NOT NULL
+  AND source_section_length_samples IS NOT NULL;
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3176,6 +3184,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_49)?;
                 }
             }
+            50 => transaction.execute_batch(MIGRATION_50)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -4743,6 +4752,7 @@ mod loop_source_storage_tests {
         assert!(item.is_loop_source());
         assert_eq!(item.source_section_start_samples(), Some(240));
         assert_eq!(item.source_section_length_samples(), Some(1_200));
+        assert_eq!(item.source_offset_samples(), 0);
     }
 
     #[test]
@@ -4828,6 +4838,115 @@ mod loop_source_storage_tests {
             )
             .unwrap();
         assert_eq!(negative_columns, (0, -7));
+    }
+
+    #[test]
+    fn schema_50_makes_bounded_source_offsets_relative_to_the_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bounded-offset-v49.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded source".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://bounded-source".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 4_800,
+                length_samples: 48_000,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 144_000,
+                source_section_length_samples: 144_000,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "UPDATE audio_items
+                 SET source_offset_samples = 148800,
+                     signed_source_offset_samples = 148800;
+                 PRAGMA user_version = 49;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 50);
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert_eq!(item.source_offset_samples(), 4_800);
+        assert_eq!(item.source_section_start_samples(), Some(144_000));
+        assert_eq!(item.source_section_length_samples(), Some(144_000));
+        let columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(columns, (4_800, 4_800));
+    }
+
+    #[test]
+    fn negative_offset_round_trips_with_disabled_bounded_source_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bounded-source-preroll.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded pre-roll".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://bounded-preroll".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 120,
+                length_samples: 4_800,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 200,
+                source_section_length_samples: 2_400,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditAudioItem {
+                item_id,
+                media_ref: "asset://bounded-preroll".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -7,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(!item.is_loop_source());
+        assert_eq!(item.source_offset_samples(), -7);
+        assert_eq!(item.source_section_start_samples(), Some(200));
+        assert_eq!(item.source_section_length_samples(), Some(2_400));
     }
 }
 

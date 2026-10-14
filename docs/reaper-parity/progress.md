@@ -1039,3 +1039,13 @@ Linux REAPER 7.82 已有探针记录非循环源负偏移值 −0.15 秒；本�
 最新桌面构建 Build ID `e1ab6146acaad9e9ea2d808e1f3261199529c792`、SHA-256 `0cdb64ab78668b631e6cec8b5b6a97db3f69387de364ee496fcf2a65fcfaa105` 已成功在 Xvfb :90 启动并绘制 1280×800 主窗口；新截图和哈希见[运行清单](../verification/reaper-parity/desktop-runtime.md)。这是运行恢复截图，不是负偏移属性控件的专项实窗截图；该编辑路径目前有单测覆盖，窗口级像素/焦点验收仍待完成。
 
 `ITEM-NUDGE-SET-001`、P4 与 PR #282 继续 `in_progress`。后续探测 bounded source section 在 loop 关闭状态下的原厂偏移边界，再做负偏移属性窗实窗交互/截图，以及 MIDI target、Set/Snap、多选锚点与 Undo 语义；不得把本次运行烟测当作完整 UI 验收。
+
+### 2026-10-14 Bounded source section 的偏移坐标与 Contents Nudge
+
+Linux REAPER 7.82 / Default 7 原厂探针补齐了 bounded source section 的 loop-off 行为：源段为 `[0, 3]` 或 `[3, 6]` 秒时，`D_STARTOFFS=0.1` 执行 250 ms Contents Nudge 右移都变为 `-0.15` 秒；段起点、段长、loop-off、item 的 12 秒位置与 3 秒长度均保持不变，project state-change 增量为 0。探针脚本、状态 TSV 与实际 Nudge/Set 窗截图见[验证记录](../verification/reaper-parity/item-nudge-bounded-section.md)。这确认 section 起点使用媒体绝对帧，`D_STARTOFFS` 使用段内相对帧。
+
+AAADAW 现在将这两个坐标分开贯穿 Core 校验、Media feeder、循环复制、Contents Nudge、waveform 映射与 Storage。关闭 loop 的 bounded section 允许 signed 段内偏移：负值先输出 pre-roll 静音，再从段首单次播放并在段尾补静音；loop-on 的偏移仍必须非负并在段内绕回。SQLite schema 升至 50，把 schema 49 旧 bounded 绝对偏移转换为段内偏移；旧非负列仍是 signed 权威列的兼容镜像。实时音频 callback 未改动。
+
+Core audio-item editing 9/9、Media WAV feeder 21/21、Storage bounded-section migration/round-trip 2/2、AAADAW Contents Nudge 13/13、循环复制、signed pre-roll waveform 测试各 1/1 通过；最终源码上的 Core/Media/Storage/AAADAW all-target Clippy `-D warnings` 通过。Stable 桌面二进制重新构建后在隔离 Xvfb `:90` 启动，真实主窗口为 1280×800；构建 ID、二进制哈希和与启动 fixture 像素相同的截图哈希已写入[运行清单](../verification/reaper-parity/desktop-runtime.md)。
+
+REAPER 负偏移的逐采样音频比较尚未验证；Nudge 的其他 Target/Snap、MIDI、多选锚点、选择恢复、Undo 完整语义和对话框视觉/滚动对齐仍开放。`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 继续 `in_progress`。

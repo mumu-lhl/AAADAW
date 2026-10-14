@@ -11180,7 +11180,7 @@ impl App {
             return;
         }
         containing_items.sort_unstable_by_key(|item| item.id().value());
-        let source_rates = match self.audio_source_sample_rates(
+        let source_limits = match self.audio_source_limits(
             containing_items
                 .iter()
                 .map(|item| item.media_ref().to_owned()),
@@ -11208,7 +11208,9 @@ impl App {
         let project_sample_rate = self.project.settings().sample_rate();
         let mut entries = Vec::with_capacity(containing_items.len());
         for item in containing_items {
-            let Some(source_sample_rate) = source_rates.get(item.media_ref()).copied() else {
+            let Some((source_sample_rate, frame_count)) =
+                source_limits.get(item.media_ref()).copied()
+            else {
                 self.status = format!(
                     "Could not copy loop of selected area: source sample rate is unavailable for {}",
                     item.media_ref()
@@ -11227,63 +11229,6 @@ impl App {
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
             };
-            let source_offset_samples = if item.is_loop_source()
-                && let (Some(section_start), Some(section_length)) = (
-                    item.source_section_start_samples(),
-                    item.source_section_length_samples(),
-                ) {
-                let Some(section_end) = section_start.checked_add(section_length) else {
-                    self.status =
-                        "Could not copy loop of selected area: source section is too large"
-                            .to_owned();
-                    return;
-                };
-                let Some(current_source_offset) = u64::try_from(item.source_offset_samples()).ok()
-                else {
-                    self.status = "Could not copy loop of selected area: source section is invalid"
-                        .to_owned();
-                    return;
-                };
-                if current_source_offset < section_start || current_source_offset >= section_end {
-                    self.status = "Could not copy loop of selected area: source section is invalid"
-                        .to_owned();
-                    return;
-                }
-                let source_phase = current_source_offset - section_start;
-                let source_phase_delta = source_delta % section_length;
-                let wrapped_phase = (u128::from(source_phase) + u128::from(source_phase_delta))
-                    % u128::from(section_length);
-                let Some(source_offset_samples) = u64::try_from(wrapped_phase)
-                    .ok()
-                    .and_then(|phase| section_start.checked_add(phase))
-                else {
-                    self.status =
-                        "Could not copy loop of selected area: source offset is too large"
-                            .to_owned();
-                    return;
-                };
-                let Ok(source_offset_samples) = i64::try_from(source_offset_samples) else {
-                    self.status =
-                        "Could not copy loop of selected area: source offset is too large"
-                            .to_owned();
-                    return;
-                };
-                source_offset_samples
-            } else if let Some(source_offset_samples) = i64::try_from(source_delta)
-                .ok()
-                .and_then(|delta| item.source_offset_samples().checked_add(delta))
-            {
-                source_offset_samples
-            } else {
-                self.status =
-                    "Could not copy loop of selected area: source offset is too large".to_owned();
-                return;
-            };
-            let Ok(source_offset_samples) = u64::try_from(source_offset_samples) else {
-                self.status =
-                    "Could not copy loop of selected area: source section is invalid".to_owned();
-                return;
-            };
             let Some(source_section_length_samples) =
                 rescale_samples(span_samples, project_sample_rate, source_sample_rate)
             else {
@@ -11297,12 +11242,65 @@ impl App {
                         .to_owned();
                 return;
             }
-            if let Some((section_start, section_length)) = item
+            let bounded_section = item
                 .source_section_start_samples()
-                .zip(item.source_section_length_samples())
-            {
+                .zip(item.source_section_length_samples());
+            let source_offset = item.source_offset_samples();
+            let source_position_in_view = if item.is_loop_source() {
+                let view_length =
+                    bounded_section.map_or(frame_count, |(_, section_length)| section_length);
+                let Ok(current_offset) = u64::try_from(source_offset) else {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                };
+                if view_length == 0 || current_offset >= view_length {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                }
+                if let Some((section_start, section_length)) = bounded_section
+                    && section_start
+                        .checked_add(section_length)
+                        .is_none_or(|section_end| section_end > frame_count)
+                {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                }
+                let source_phase_delta = source_delta % view_length;
+                let wrapped_phase = (u128::from(current_offset) + u128::from(source_phase_delta))
+                    % u128::from(view_length);
+                let Ok(wrapped_phase) = u64::try_from(wrapped_phase) else {
+                    self.status =
+                        "Could not copy loop of selected area: source offset is too large"
+                            .to_owned();
+                    return;
+                };
+                wrapped_phase
+            } else {
+                let Some(offset) = i128::from(source_offset)
+                    .checked_add(i128::from(source_delta))
+                    .and_then(|offset| u64::try_from(offset).ok())
+                else {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                };
+                offset
+            };
+            let Some(source_position_samples) = bounded_section
+                .map_or(Some(source_position_in_view), |(section_start, _)| {
+                    section_start.checked_add(source_position_in_view)
+                })
+            else {
+                self.status =
+                    "Could not copy loop of selected area: source offset is too large".to_owned();
+                return;
+            };
+            if let Some((section_start, section_length)) = bounded_section {
                 let Some(copy_end) =
-                    source_offset_samples.checked_add(source_section_length_samples)
+                    source_position_samples.checked_add(source_section_length_samples)
                 else {
                     self.status =
                         "Could not copy loop of selected area: source section is too large"
@@ -11314,7 +11312,7 @@ impl App {
                         .to_owned();
                     return;
                 };
-                if source_offset_samples < section_start || copy_end > original_end {
+                if source_position_samples < section_start || copy_end > original_end {
                     self.status =
                         "Copy loop crossing a source-loop boundary is not supported".to_owned();
                     return;
@@ -11322,8 +11320,8 @@ impl App {
             }
             entries.push(AudioItemClipboardEntry {
                 media_ref: item.media_ref().to_owned(),
-                source_offset_samples,
-                source_section_start_samples: source_offset_samples,
+                source_offset_samples: 0,
+                source_section_start_samples: source_position_samples,
                 source_section_length_samples,
                 length_samples: span_samples,
                 muted: item.is_muted(),

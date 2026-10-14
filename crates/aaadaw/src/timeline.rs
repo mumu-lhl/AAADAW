@@ -394,6 +394,8 @@ struct TimelineItem {
     start_sample: u64,
     length_samples: u64,
     source_offset_samples: i64,
+    source_section_start_samples: Option<u64>,
+    source_section_length_samples: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -491,6 +493,8 @@ impl TimelineCache {
                 start_sample: item.start_sample(),
                 length_samples: item.length_samples(),
                 source_offset_samples: item.source_offset_samples(),
+                source_section_start_samples: item.source_section_start_samples(),
+                source_section_length_samples: item.source_section_length_samples(),
             });
         }
 
@@ -534,6 +538,8 @@ impl TimelineCache {
                 start_sample: 0,
                 length_samples: 0,
                 source_offset_samples: 0,
+                source_section_start_samples: None,
+                source_section_length_samples: None,
             });
         }
 
@@ -593,13 +599,25 @@ impl TimelineCache {
             let Ok(source_length) = i128::try_from(source_length) else {
                 continue;
             };
-            let item_source_start = i128::from(item.source_offset_samples);
+            let item_source_start = item.source_section_start_samples.map_or(0_i128, i128::from)
+                + i128::from(item.source_offset_samples);
             let Some(item_source_end) = item_source_start.checked_add(source_length) else {
                 continue;
             };
             let source_limit = i128::from(waveform.frame_count());
-            let source_min = item_source_start.max(0).min(source_limit);
-            let source_max = item_source_end.max(0).min(source_limit);
+            let section_start = item.source_section_start_samples.map_or(0_i128, i128::from);
+            let section_end = item
+                .source_section_start_samples
+                .zip(item.source_section_length_samples)
+                .map(|(start, length)| i128::from(start) + i128::from(length));
+            let source_min = item_source_start
+                .max(section_start)
+                .max(0)
+                .min(source_limit);
+            let source_max = section_end
+                .map_or(item_source_end, |end| item_source_end.min(end))
+                .max(0)
+                .min(source_limit);
             if source_min >= source_max {
                 continue;
             }
@@ -8378,6 +8396,73 @@ mod tests {
             geometry
                 .iter()
                 .all(|bin| (bin.min - 0.25).abs() < 1.0e-6 && (bin.max - 0.25).abs() < 1.0e-6)
+        );
+        assert_eq!(
+            geometry[0].start_tick,
+            project.tick_at_sample(1_024).unwrap()
+        );
+        assert_eq!(geometry[3].end_tick, project.tick_at_sample(2_048).unwrap());
+    }
+
+    #[test]
+    fn waveform_geometry_places_bounded_section_after_signed_preroll() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded pre-roll waveform".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id,
+                media_ref: "asset://bounded-preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 2_048,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 1_024,
+                source_section_length_samples: 1_024,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditAudioItem {
+                item_id,
+                media_ref: "asset://bounded-preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -1_024,
+                length_samples: 2_048,
+            })
+            .unwrap();
+
+        let samples = [vec![8_192; 1_024], vec![16_384; 1_024]].concat();
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://bounded-preroll-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let geometry = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 200.0);
+        assert_eq!(geometry.len(), 4);
+        assert!(
+            geometry
+                .iter()
+                .all(|bin| { (bin.min - 0.5).abs() < 1.0e-6 && (bin.max - 0.5).abs() < 1.0e-6 })
         );
         assert_eq!(
             geometry[0].start_tick,

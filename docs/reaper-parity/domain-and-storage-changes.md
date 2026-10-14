@@ -126,6 +126,12 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 
 `audio_items.signed_source_offset_samples` 是音频 source offset 的权威字段，使用 SQLite signed INTEGER 保存媒体帧，可表示 REAPER 非循环 item 在源起点之前的 Contents Nudge。旧 `source_offset_samples` 列继续保留为非负兼容镜像：写入时存 `max(0, signed_offset)`，读取只使用 signed 列。Schema 48 及更早的已有偏移复制到新列，默认值为 0；迁移与 `user_version` 更新在同一事务内完成。当前表重建/增量补列路径也会确保该列存在。
 
-SQLite 不给新列加引用 `loop_source` 的 CHECK，因为早期 schema 迁移会先删除再添加该字段；项目恢复/Action 校验负责拒绝带负偏移的循环项及 bounded section。Storage 回归覆盖 v48→49、正偏移保留、负偏移保存/重开，Core 与 Media 覆盖非循环负偏移、seek pre-roll 和循环约束。
+SQLite 不给新列加引用 `loop_source` 的 CHECK，因为早期 schema 迁移会先删除再添加该字段；项目恢复/Action 校验负责拒绝带负偏移的循环项。Schema 49 中 bounded section 的偏移仍按原文件绝对帧解释；schema 50 将修正为 section 内相对帧。
 
 这是扩展式迁移，不删旧列。回滚到旧程序应恢复迁移前的完整数据库备份；schema 49 的数据库应由旧程序按未来 schema 拒绝。不得只把 `user_version` 改回 48：负偏移无法由旧非负列表达，强制降级会丢失语义。
+
+## schema 50 — bounded source section offset origin
+
+`source_section_start_samples` 继续表示原媒体文件中的绝对帧起点；`signed_source_offset_samples` 对 bounded source 则表示 section 内的有符号帧偏移，与 REAPER take 的 `D_STARTOFFS` 一致。循环 bounded section 要求偏移在 `[0, section_length)` 并只在 section 内绕回。关闭循环后允许 signed 偏移：负偏移先播放静音，再从 section 起点单次播放；非负偏移从 section 内对应位置播放，section 结束后补静音至 item 末尾。无 bounded section 的 whole-file source offset 语义不变。
+
+从 schema 49 迁移时，对每条同时有 section 起点/长度的记录，从 signed offset 以及兼容镜像 `source_offset_samples` 中减去旧 section 起点。旧代码曾把这两种坐标混为一体；旧有效循环项必有 offset 不小于 section 起点，因此转换后循环 offset 仍非负。迁移在独立 schema 事务中完成，不删字段；回滚需要恢复迁移前的完整备份，不能手工回退 `user_version`。Core、Media 与 Storage 覆盖相对偏移、负 pre-roll、section EOF 和 schema 49→50。

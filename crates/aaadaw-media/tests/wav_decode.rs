@@ -439,6 +439,152 @@ fn negative_non_looping_item_offset_renders_leading_silence_then_source_audio() 
 }
 
 #[test]
+fn negative_offset_in_disabled_bounded_section_prerolls_then_reads_only_that_section() {
+    let path = wav_path();
+    std::fs::write(
+        &path,
+        pcm_wav(
+            &[8_192, 16_384, 24_576, -8_192, -16_384, 8_192, 16_384, 0],
+            48_000,
+        ),
+    )
+    .expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-preroll".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            length_samples: 8,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 2,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded loop should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("bounded loop should be disabled");
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: "asset://bounded-preroll".to_owned(),
+            start_sample: 0,
+            source_offset_samples: -2,
+            length_samples: 8,
+        })
+        .expect("signed offset should be valid with looping disabled");
+    let item = project.audio_items()[0].clone();
+    assert_eq!(item.source_section_start_samples(), Some(2));
+    assert_eq!(item.source_section_length_samples(), Some(3));
+
+    let (producer, consumer) = pcm_stream(16).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("bounded pre-roll worker should start");
+    worker
+        .join()
+        .expect("bounded section should be decoded once");
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        8,
+    )
+    .expect("bounded stream should match the project item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 8];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("bounded pre-roll should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[..2], [[0.0; 2]; 2]);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[2..5].iter().zip([0.75_f32, -0.25, -0.5]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
+    }
+    assert_eq!(output[5..], [[0.0; 2]; 3]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn seeking_into_disabled_bounded_section_preroll_skips_elapsed_silence() {
+    let bytes = pcm_wav(
+        &[8_192, 16_384, 24_576, -8_192, -16_384, 8_192, 16_384, 0],
+        48_000,
+    );
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded seek pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: 2,
+            length_samples: 8,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 2,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded loop should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("bounded loop should be disabled");
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: "asset://bounded-seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: -2,
+            length_samples: 8,
+        })
+        .expect("signed offset should be valid with looping disabled");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(16).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        11,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("seek inside bounded pre-roll should start a worker");
+    worker.join().expect("bounded source should finish");
+    let mut output = [f32::NAN; 7];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert_eq!(output[0], 0.0);
+    for (sample, expected) in output[1..4].iter().zip([0.75_f32, -0.25, -0.5]) {
+        assert!((sample - expected).abs() < 1.0e-5, "output: {output:?}");
+    }
+    assert_eq!(&output[4..], &[0.0; 3]);
+}
+
+#[test]
 fn seeking_into_negative_offset_preroll_skips_only_elapsed_silence() {
     let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
     let mut project = Project::new();
@@ -590,7 +736,7 @@ fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
     assert_eq!(stats.underrun_samples, 0);
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
     let expected = [
-        0.75_f32, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75,
+        -0.25_f32, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25,
     ];
     for (frame, expected_sample) in output.iter().zip(expected) {
         assert!(
@@ -627,7 +773,7 @@ fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
         .render_into(&mut output)
         .expect("seeked loop source should render");
     assert_eq!(stats.underrun_samples, 0);
-    let expected = [-0.25_f32, 0.5, 0.75, -0.25, 0.5, 0.75];
+    let expected = [0.5_f32, 0.75, -0.25, 0.5, 0.75, -0.25];
     for (frame, expected_sample) in output.iter().zip(expected) {
         assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
@@ -693,11 +839,11 @@ fn disabled_loop_source_plays_a_bounded_section_once_then_stops() {
         .render_into(&mut output)
         .expect("single-pass section should render");
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
-    for (frame, expected_sample) in output[..2].iter().zip([0.75_f32, -0.25]) {
+    for (frame, expected_sample) in output[..1].iter().zip([-0.25_f32]) {
         assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
     }
-    assert_eq!(output[2..], [[0.0, 0.0]; 8]);
+    assert_eq!(output[1..], [[0.0, 0.0]; 9]);
 }
 
 #[test]
@@ -780,7 +926,7 @@ fn looped_audio_item_rejects_a_source_section_that_runs_past_eof() {
             track_id: project.tracks()[0].id(),
             media_ref: "asset://invalid-loop".to_owned(),
             start_sample: 0,
-            source_offset_samples: 3,
+            source_offset_samples: 0,
             phase_inverted: false,
             source_section_start_samples: 3,
             length_samples: 8,
@@ -939,7 +1085,7 @@ fn looped_cached_source_restarts_at_the_bounded_source_section() {
         .render_into(&mut output)
         .expect("cached loop source should render");
     assert_eq!(stats.underrun_samples, 0);
-    let expected = [[0.75_f32, -0.75], [0.5, -0.5]];
+    let expected = [[0.5_f32, -0.5], [0.75, -0.75]];
     for (frame, expected) in output.iter().zip(expected) {
         assert!((frame[0] - expected[0]).abs() < 1.0e-4);
         assert!((frame[1] - expected[1]).abs() < 1.0e-4);
