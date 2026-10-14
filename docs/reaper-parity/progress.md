@@ -931,3 +931,9 @@ Nightly + Cranelift 定向回归 `save_project_as_matches_native_ctrl_alt_s_and_
 REAPER Main action 41895 在 File 菜单显示 `Save new version of project` / Ctrl+Alt+Shift+S，Action List 原名为 `File: Save new version of project (automatically increment project name)`。Linux REAPER 7.82 / Default 7 原厂探针确认，连续两次执行会从 `save-version-probe.rpp` 生成 `_001`、`_002` 并把活动工程切到新路径。AAADAW 为已有工程实现同样的递增命名，跳过已占用版本路径，复用原子保存、媒体复制和会话锁；成功保存才切换活动路径。未命名工程进入保存选择器。
 
 原厂与 AAADAW File 菜单实窗截图及哈希、探针输入/输出、环境和验收边界见 [Save new version fixture](../verification/reaper-parity/fixtures/menu-save-new-version-aaadaw.tsv)。四项回归覆盖 Action List 分类/名称和快捷键、菜单显示、派发、编号冲突与来源工程保留。最终源码上的 Nightly + Cranelift 定向 nextest 4/4、AAADAW app 目标全量 559/559 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查也通过。`SHELL-MENU-KEYBOARD-001` 仍为 `in_progress`：File 的其余命令、完整 Action List 窗口几何、所有工程命名边界及整体菜单/界面一致性未完成。
+
+### 2026-10-14 File 菜单 Save all projects 与 Close all projects
+
+Linux REAPER 7.82 / Default 7 的 File 菜单与 Action List 包含无默认快捷键的 Main actions 40897 `File: Save all projects` 和 40886 `File: Close all projects`。原厂探针在唯一已保存工程中增加一条轨道后运行 Save all，确认活动工程路径未变且 RPP 已保存轨道；再运行 Close all，当前路径清空、轨道数归零并回到空白工程工作区。AAADAW 按原厂菜单次序加入两个独立动作；单工程下 Save all 保存当前工程，Close all 复用已有未保存变更保护并关闭当前工程。原厂探针输出、原厂/AAADAW 菜单截图、哈希和验收范围见 [Save/Close all fixture](../verification/reaper-parity/fixtures/menu-save-close-all-aaadaw.tsv)。
+
+Nightly + Cranelift 三项定向 nextest 3/3、最终源码上的 AAADAW app 目标全量 562/562 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。实窗 File 菜单截图确认新条目与分隔线顺序。单项目保护行为与原厂空白工程结果一致；多标签下真正保存/关闭所有项目仍待多工程模型实现，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。

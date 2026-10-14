@@ -18,7 +18,9 @@ pub(crate) enum CommandId {
     SaveProject,
     SaveProjectAs,
     SaveProjectNewVersion,
+    SaveAllProjects,
     CloseProject,
+    CloseAllProjects,
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
@@ -139,7 +141,9 @@ enum CommandKind {
     SaveProject,
     SaveProjectAs,
     SaveProjectNewVersion,
+    SaveAllProjects,
     CloseProject,
+    CloseAllProjects,
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
@@ -372,6 +376,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SaveAllProjects,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Save all projects",
+        aliases: &["save all projects", "save all"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::CloseProject,
         menu: Some(MainMenu::File),
         category: "File",
@@ -380,6 +394,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: CLOSE_PROJECT_SHORTCUT,
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::CloseAllProjects,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Close all projects",
+        aliases: &["close all projects", "close all"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::ExportWav,
@@ -2170,7 +2194,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
         CommandKind::SaveProjectNewVersion => "file.save-project-new-version",
+        CommandKind::SaveAllProjects => "file.save-all-projects",
         CommandKind::CloseProject => "file.close-project",
+        CommandKind::CloseAllProjects => "file.close-all-projects",
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
@@ -2313,6 +2339,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
     let message = match command {
         CommandId::NewProject => Message::NewProject,
         CommandId::CloseProject => Message::CloseProject,
+        CommandId::CloseAllProjects => Message::CloseProject,
         CommandId::Quit => {
             return app.main_window_id.map_or_else(Task::none, |window_id| {
                 app.update(Message::WindowCloseRequested(window_id))
@@ -2320,6 +2347,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
+        CommandId::SaveAllProjects => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
         CommandId::SaveProjectNewVersion => Message::SaveProjectNewVersion,
         CommandId::ExportWav => Message::OpenRenderWindow,
@@ -2629,11 +2657,12 @@ fn entry_for(
 
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
-        CommandKind::NewProject | CommandKind::OpenProject | CommandKind::CloseProject => {
-            !project_edit_busy(app)
-        }
+        CommandKind::NewProject
+        | CommandKind::OpenProject
+        | CommandKind::CloseProject
+        | CommandKind::CloseAllProjects => !project_edit_busy(app),
         CommandKind::Quit => true,
-        CommandKind::SaveProject => !project_file_busy(app),
+        CommandKind::SaveProject | CommandKind::SaveAllProjects => !project_file_busy(app),
         CommandKind::OpenSettings
         | CommandKind::OpenAbout
         | CommandKind::OpenProjectSettings
@@ -2928,7 +2957,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
         CommandKind::SaveProjectNewVersion => CommandId::SaveProjectNewVersion,
+        CommandKind::SaveAllProjects => CommandId::SaveAllProjects,
         CommandKind::CloseProject => CommandId::CloseProject,
+        CommandKind::CloseAllProjects => CommandId::CloseAllProjects,
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,

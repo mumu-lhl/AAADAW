@@ -2874,6 +2874,104 @@ fn save_new_project_version_dispatches_to_a_non_overwriting_incremented_path() {
 }
 
 #[test]
+fn file_menu_matches_native_save_all_and_close_all_actions_for_one_project() {
+    let app = App::default();
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let save_version_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::SaveProjectNewVersion)
+        .expect("File menu should expose Save new version of project");
+    let save_all = file_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::SaveAllProjects)
+        .expect("File menu should expose Save all projects");
+    let close_project_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::CloseProject)
+        .expect("File menu should expose Close project");
+    let close_all = file_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::CloseAllProjects)
+        .expect("File menu should expose Close all projects");
+
+    assert_eq!(save_all.label, "Save all projects");
+    assert!(save_all.enabled);
+    assert_eq!(save_all.shortcut, None);
+    assert_eq!(
+        file_menu[save_version_index + 1].id,
+        CommandId::SaveAllProjects
+    );
+    assert_eq!(close_all.label, "Close all projects");
+    assert!(close_all.enabled);
+    assert_eq!(close_all.shortcut, None);
+    assert_eq!(
+        file_menu[close_project_index + 1].id,
+        CommandId::CloseAllProjects
+    );
+
+    for (id, label) in [
+        (CommandId::SaveAllProjects, "Save all projects"),
+        (CommandId::CloseAllProjects, "Close all projects"),
+    ] {
+        let action = app
+            .action_list_entries()
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .expect("Action List should expose the native File action");
+        assert_eq!(action.category, "File");
+        assert_eq!(action.label, label);
+        assert_eq!(action.shortcut, None);
+    }
+}
+
+#[test]
+fn save_all_projects_routes_through_the_active_project_save() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let current = directory.path().join("Mix.aaadaw");
+    let mut app = App {
+        project_path_query: current.to_string_lossy().into_owned(),
+        project_path: Some(current.clone()),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::SaveAllProjects));
+
+    assert!(app.io_busy);
+    assert_eq!(app.status, format!("Saving {}…", current.display()));
+}
+
+#[test]
+fn close_all_projects_routes_through_the_guarded_single_project_close() {
+    let mut app = App {
+        project_path_query: "current.aaadaw".to_owned(),
+        project_path: Some(std::path::PathBuf::from("current.aaadaw")),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::CloseAllProjects));
+
+    assert_eq!(app.project.tracks()[0].id(), track_id);
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseProject)
+    );
+    let _ = app.update(Message::CancelProjectTransition);
+    assert!(app.is_dirty());
+    assert_eq!(
+        app.project_path.as_deref(),
+        Some(std::path::Path::new("current.aaadaw"))
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::CloseAllProjects));
+    let _ = app.update(Message::DiscardProjectChanges);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project_path.is_none());
+    assert_eq!(app.pending_project_transition, None);
+}
+
+#[test]
 fn quit_matches_native_file_menu_and_uses_dirty_close_confirmation() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

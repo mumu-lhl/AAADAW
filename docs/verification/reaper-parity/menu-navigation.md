@@ -20,6 +20,10 @@ REAPER Main action 41895 在 File 菜单显示 `Save new version of project`、�
 
 四项回归覆盖菜单/Action List/快捷键映射、命令派发、版本号补零与冲突跳过，以及保留原文件并保存当前项目状态。实窗截图验证 File 菜单短标签、快捷键和单行呈现；原厂同尺寸 File 菜单截图显示该标签和快捷键。完整 File 菜单仍有大量命令缺失；版本号边界、其它工程格式、Action List 完整窗口视觉和整体菜单对齐仍未完成，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
 
+Linux REAPER 7.82 的 File 菜单和 Action List 还提供没有默认快捷键的 `Save all projects`（40897）与 `Close all projects`（40886）。原厂探针在一个已保存工程里修改并执行 Save all，确认当前活动路径的工程文件包含新增轨道；随后 Close all 关闭唯一工程，REAPER 留在空白未保存工程工作区。AAADAW 已将两项分别接到现有当前工程 Save 与带 Save/Don't Save/Cancel 保护的 Close 流程，菜单次序与原厂相符。原厂结果、同屏 File 菜单截图、哈希和验证范围见 [Save/Close all fixture](fixtures/menu-save-close-all-aaadaw.tsv)。
+
+回归验证两个 Action List 分类/名称和无快捷键状态、File 菜单顺序、保存当前已命名工程、取消关闭保留修改以及确认放弃后回到空工程。实窗截图确认两个入口与分隔线的位置；原厂截图确认标签和默认无快捷键。AAADAW 暂无多工程标签模型，Save all / Close all 在多开工程场景尚未实现，完整 File 菜单和界面仍为 `in_progress`。
+
 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 覆盖 File 菜单标签/快捷键、Action List 名称、修改后取消，以及 Don't Save 后关闭工程并清空当前轨道、路径和修订号。`successful_save_before_close_project_clears_the_open_project` 覆盖 Save 成功后继续关闭。实窗 Ctrl+F4 确认对未保存工程弹出保护框，步骤和哈希见上方 fixture。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。
