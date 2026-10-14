@@ -48,7 +48,9 @@ end
 
 local function write_track_state(prefix, tracks)
   for index, track in ipairs(tracks) do
-    output:write(prefix, "\t", index - 1, "\t", razor(track), "\n")
+    local value = razor(track)
+    if value == "" then value = "(empty)" end
+    output:write(prefix, "\t", index - 1, "\t", value, "\n")
   end
 end
 
