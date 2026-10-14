@@ -71,6 +71,15 @@ pub enum DawAction {
         position_ticks: u64,
         name: String,
     },
+    /// Change whether one project marker is shown in the ruler.
+    SetProjectMarkerVisibility {
+        marker_id: MarkerId,
+        visible: bool,
+    },
+    /// Change visibility of the project marker lane in the ruler.
+    SetProjectMarkersVisibleOnRuler {
+        visible: bool,
+    },
     /// Remove a project marker by stable identity.
     DeleteProjectMarker {
         marker_id: MarkerId,

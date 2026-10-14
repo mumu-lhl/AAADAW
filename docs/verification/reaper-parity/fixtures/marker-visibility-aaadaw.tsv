@@ -1,0 +1,18 @@
+field	value
+aaadaw_environment	Linux AAADAW / Xvfb :125 / 1400x900 / isolated XDG profile / audio unavailable
+aaadaw_binary_sha256	a532e3f3f02cdf2e2ef217b3a73d564c906f3b5ee7d3df99a563b99749af5734
+runtime_workaround	Ignored target/runtime-pkgconfig GLib/GObject/GIO metadata and target/runtime-libs symlinks; no system package changes
+manager_visible_screenshot	marker-manager-visible-aaadaw.png
+manager_visible_sha256	b52cf9e941f60c266b9fd850371c596ce5b7674c2cdb8b753aefcbf7c23e3262
+manager_hidden_screenshot	marker-manager-hidden-aaadaw.png
+manager_hidden_sha256	ad08e59c186f2cd0fc3bc07e05347b050015c8ef06dba7ef9b44b7cbce063903
+ruler_visible_screenshot	marker-ruler-visible-aaadaw.png
+ruler_visible_sha256	947bc7e114795c079ec67a62676b6edcc9fa75156c7622ce0ccee9cb66c228d4
+ruler_hidden_screenshot	marker-ruler-hidden-aaadaw.png
+ruler_hidden_sha256	7d3c858ed70b6f16121afec93239b7269861fd64900d88ca90acd7d795d27893
+view_menu_screenshot	marker-ruler-visibility-view-menu-aaadaw.png
+view_menu_sha256	c9098580ea7d184ccd81e88ebd5c54f0db9a5137fd79691f046fdae36d0ea310
+core_tests	project_markers + midi_file_export: 12 passed; marker visibility storage tests: 4 passed
+app_tests	cargo check -p aaadaw --no-default-features --tests passed; app test binaries were not linked in this constrained run
+comparison_scope	Single-marker Manager visibility, global ruler visibility, checked View menu state, and real desktop startup
+limitation	No app test execution or pixel-level geometry/theme parity claim; full Marker/Region parity remains in_progress

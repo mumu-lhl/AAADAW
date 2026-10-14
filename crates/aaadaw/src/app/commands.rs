@@ -37,6 +37,7 @@ pub(crate) enum CommandId {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    ToggleProjectMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -162,6 +163,7 @@ enum CommandKind {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    ToggleProjectMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -600,6 +602,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: MARKER_MANAGER_SHORTCUT,
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleProjectMarkersOnRuler,
+        menu: Some(MainMenu::View),
+        category: "Ruler",
+        label: "Ruler: Show/hide all project markers",
+        aliases: &["show/hide all project markers", "toggle marker ruler"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::AddMidiItem,
@@ -2255,6 +2267,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::OpenMarkerManager => "view.marker-manager",
+        CommandKind::ToggleProjectMarkersOnRuler => "ruler.toggle-project-markers",
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::AddProjectMarker => "insert.project-marker",
@@ -2410,6 +2423,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::OpenMarkerManager => Message::OpenMarkerManager,
+        CommandId::ToggleProjectMarkersOnRuler => Message::ToggleProjectMarkersOnRuler,
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::AddProjectMarker => Message::AddProjectMarker,
@@ -2714,6 +2728,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::OpenProjectSettings
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
+        CommandKind::ToggleProjectMarkersOnRuler => !project_edit_busy(app),
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::SaveProjectNewVersion => !project_file_busy(app),
         CommandKind::ExportWav => {
@@ -3020,6 +3035,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::OpenMarkerManager => CommandId::OpenMarkerManager,
+        CommandKind::ToggleProjectMarkersOnRuler => CommandId::ToggleProjectMarkersOnRuler,
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
@@ -3389,6 +3405,7 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
         } else {
             app.media_panel_dock.mixer_open
         }),
+        CommandId::ToggleProjectMarkersOnRuler => Some(app.project.show_project_markers()),
         CommandId::LoopTime(LoopTimeCommand::ToggleLinked) => Some(app.timeline.loop_points_linked),
         CommandId::SelectedTrack(TrackCommand::ToggleFolder) => app
             .selected_track_id()

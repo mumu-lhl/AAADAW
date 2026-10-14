@@ -299,3 +299,83 @@ fn embeds_smpte_offset_and_rejects_non_drop_2997() {
         .expect("29.97 non-drop project rate should be accepted");
     assert!(encode_standard_midi(&project, options).is_err());
 }
+
+#[test]
+fn hidden_markers_are_excluded_unless_hidden_marker_export_is_enabled() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Visible marker".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 1_920,
+            name: "Hidden marker".to_owned(),
+        })
+        .unwrap();
+    let hidden_id = project.markers()[1].id();
+    project
+        .apply(DawAction::SetProjectMarkerVisibility {
+            marker_id: hidden_id,
+            visible: false,
+        })
+        .unwrap();
+
+    let visible_only = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            export_markers: true,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    assert!(
+        visible_only
+            .windows(14)
+            .any(|bytes| bytes == b"Visible marker")
+    );
+    assert!(
+        !visible_only
+            .windows(13)
+            .any(|bytes| bytes == b"Hidden marker")
+    );
+
+    let include_hidden = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            export_markers: true,
+            export_hidden_markers: true,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    assert!(
+        include_hidden
+            .windows(14)
+            .any(|bytes| bytes == b"Visible marker")
+    );
+    assert!(
+        include_hidden
+            .windows(13)
+            .any(|bytes| bytes == b"Hidden marker")
+    );
+
+    project
+        .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+        .unwrap();
+    let no_markers = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            export_markers: true,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    assert!(
+        !no_markers
+            .windows(14)
+            .any(|bytes| bytes == b"Visible marker")
+    );
+}

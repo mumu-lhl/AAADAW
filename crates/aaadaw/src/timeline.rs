@@ -4250,6 +4250,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .project
                 .markers()
                 .iter()
+                .filter(|marker| self.project.show_project_markers() && marker.is_visible())
                 .filter(|marker| {
                     let x = project_marker_x(
                         marker.position_ticks(),
@@ -5034,7 +5035,12 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 }
             }
         }
-        for marker in self.project.markers() {
+        for marker in self
+            .project
+            .markers()
+            .iter()
+            .filter(|marker| self.project.show_project_markers() && marker.is_visible())
+        {
             let position_ticks = state
                 .drag
                 .as_ref()
@@ -5234,9 +5240,13 @@ fn project_marker_hit<'a>(
     if !(0.0..=14.0).contains(&position.y) {
         return None;
     }
+    if !project.show_project_markers() {
+        return None;
+    }
     project
         .markers()
         .iter()
+        .filter(|marker| marker.is_visible())
         .filter_map(|marker| {
             let x = project_marker_x(
                 marker.position_ticks(),
@@ -6908,6 +6918,34 @@ mod tests {
         );
         assert_eq!(primitive.marker_ticks, vec![720]);
         assert_eq!(primitive.region_spans, vec![(960, 1_920)]);
+
+        let hidden_marker_id = project.markers()[0].id();
+        project
+            .apply(DawAction::SetProjectMarkerVisibility {
+                marker_id: hidden_marker_id,
+                visible: false,
+            })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert_eq!(primitive.marker_ticks, vec![2_000]);
+
+        project
+            .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.marker_ticks.is_empty());
     }
 
     #[test]

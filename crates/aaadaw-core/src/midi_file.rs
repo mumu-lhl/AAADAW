@@ -40,7 +40,7 @@ pub struct MidiExportOptions {
     pub export_markers: bool,
     pub marker_type: MidiMarkerType,
     pub only_markers_starting_with_hash: bool,
-    /// No hidden-marker flag exists in the current Project marker model.
+    /// Include markers hidden individually or by the project marker ruler lane.
     pub export_hidden_markers: bool,
 }
 
@@ -345,6 +345,10 @@ fn conductor_events(
             MidiMarkerType::Cues => 0x07,
         };
         for marker in project.markers() {
+            let hidden = !project.show_project_markers() || !marker.is_visible();
+            if hidden && !options.export_hidden_markers {
+                continue;
+            }
             if options.only_markers_starting_with_hash && !marker.name().starts_with('#') {
                 continue;
             }

@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 46;
+pub const CURRENT_SCHEMA_VERSION: u32 = 47;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -745,11 +745,27 @@ mod project_marker_storage_tests {
                 name: "Intro".to_owned(),
             })
             .unwrap();
+        let verse_id = project
+            .markers()
+            .iter()
+            .find(|marker| marker.name() == "Verse")
+            .unwrap()
+            .id();
+        project
+            .apply(DawAction::SetProjectMarkerVisibility {
+                marker_id: verse_id,
+                visible: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+            .unwrap();
         let expected = project.markers().to_vec();
 
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
         assert_eq!(store.load().unwrap().markers(), expected);
+        assert!(!store.load().unwrap().show_project_markers());
         drop(store);
 
         let connection = Connection::open(&path).unwrap();
@@ -2572,7 +2588,7 @@ impl ProjectStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
@@ -2586,6 +2602,7 @@ impl ProjectStore {
                         row.get::<_, f64>(7)?,
                         row.get::<_, i64>(8)?,
                         row.get::<_, i64>(9)?,
+                        row.get::<_, i64>(10)?,
                     ))
                 },
             )
@@ -2601,6 +2618,7 @@ impl ProjectStore {
             project_start_time_offset_seconds,
             project_start_time_fractional_frame_offset_allowed,
             force_tempo_changes_to_whole_samples,
+            show_project_markers,
         )) = metadata
         else {
             let rows: i64 = self.connection.query_row(
@@ -2659,6 +2677,15 @@ impl ProjectStore {
                 ));
             }
         };
+        let show_project_markers = match show_project_markers {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported project marker lane visibility",
+                ));
+            }
+        };
 
         let settings = ProjectSettings::new(
             from_sql_u32(sample_rate)?,
@@ -2704,6 +2731,7 @@ impl ProjectStore {
             audio_items,
             midi_items,
             markers,
+            show_project_markers,
             regions,
             tempo_points,
             meter_points,
@@ -3045,6 +3073,18 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     ensure_audio_item_phase_column(&transaction)?;
                 }
             }
+            47 => {
+                if !table_has_column(&transaction, "project_meta", "show_project_markers")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_meta ADD COLUMN show_project_markers INTEGER NOT NULL DEFAULT 1 CHECK(show_project_markers IN (0,1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "project_markers", "visible")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_markers ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK(visible IN (0,1));",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3097,8 +3137,8 @@ fn write_snapshot(
         params![i64::from(settings.frame_rate().storage_code())],
     )?;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples) \
-         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers) \
+         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
@@ -3113,6 +3153,7 @@ fn write_snapshot(
             settings.project_start_time_offset_seconds(),
             settings.project_start_time_fractional_frame_offset_allowed(),
             settings.force_tempo_changes_to_whole_samples(),
+            snapshot.show_project_markers,
         ],
     )?;
 
@@ -3348,12 +3389,13 @@ fn write_snapshot(
     }
     for marker in &snapshot.markers {
         transaction.execute(
-            "INSERT INTO project_markers(id, position_ticks, name, marker_number) VALUES(?1, ?2, ?3, ?4)",
+            "INSERT INTO project_markers(id, position_ticks, name, marker_number, visible) VALUES(?1, ?2, ?3, ?4, ?5)",
             params![
                 to_sql_integer(marker.id)?,
                 to_sql_integer(marker.position_ticks)?,
                 marker.name,
-                i64::from(marker.number)
+                i64::from(marker.number),
+                marker.visible
             ],
         )?;
     }
@@ -4185,7 +4227,7 @@ fn read_project_markers(
     connection: &Connection,
 ) -> Result<Vec<ProjectMarkerSnapshot>, StorageError> {
     let mut statement = connection.prepare(
-        "SELECT id, marker_number, position_ticks, name FROM project_markers ORDER BY position_ticks, id",
+        "SELECT id, marker_number, position_ticks, name, visible FROM project_markers ORDER BY position_ticks, id",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -4194,16 +4236,27 @@ fn read_project_markers(
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, number, position_ticks, name)| {
+        .map(|(id, number, position_ticks, name, visible)| {
+            let visible = match visible {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported project marker visibility",
+                    ));
+                }
+            };
             Ok(ProjectMarkerSnapshot {
                 id: from_sql_u64(id)?,
                 number: from_sql_u32(number)?,
                 position_ticks: from_sql_u64(position_ticks)?,
                 name,
+                visible,
             })
         })
         .collect()

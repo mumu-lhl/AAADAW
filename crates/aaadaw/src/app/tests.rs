@@ -745,6 +745,11 @@ fn marker_manager_filters_selects_edits_and_deletes_with_undo() {
     assert_eq!(app.timeline.edit_cursor_tick, 1920);
     assert!(app.selected_render_markers.contains(&marker_id));
 
+    let _ = app.update(Message::MarkerManagerSetMarkerVisibility(marker_id, false));
+    assert!(!app.project.markers()[0].is_visible());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.markers()[0].is_visible());
+
     let _ = app.update(Message::MarkerManagerEditMarker(marker_id));
     assert_eq!(app.marker_properties.as_ref().unwrap().name, "Bridge");
     let _ = app.update(Message::CloseMarkerProperties);
@@ -755,6 +760,29 @@ fn marker_manager_filters_selects_edits_and_deletes_with_undo() {
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.markers()[0].id(), marker_id);
     assert_eq!(app.project.markers()[0].name(), "Bridge");
+}
+
+#[test]
+fn project_marker_ruler_visibility_is_a_checked_view_action_and_undoable() {
+    let mut app = App::default();
+    let command = CommandId::ToggleProjectMarkersOnRuler;
+    assert!(commands::is_enabled(&app, command));
+    let entry = commands::for_menu(&app, MainMenu::View)
+        .into_iter()
+        .find(|entry| entry.id == command)
+        .expect("ruler visibility should be available in the View menu");
+    assert!(entry.checked);
+
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(!app.project.show_project_markers());
+    assert!(
+        commands::for_menu(&app, MainMenu::View)
+            .into_iter()
+            .find(|entry| entry.id == command)
+            .is_some_and(|entry| !entry.checked)
+    );
+    let _ = app.update(Message::Undo);
+    assert!(app.project.show_project_markers());
 }
 
 #[test]

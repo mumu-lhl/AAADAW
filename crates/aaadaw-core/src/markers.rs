@@ -25,6 +25,7 @@ pub struct ProjectMarker {
     pub(crate) number: u32,
     pub(crate) position_ticks: u64,
     pub(crate) name: String,
+    pub(crate) visible: bool,
 }
 
 impl ProjectMarker {
@@ -43,6 +44,7 @@ impl ProjectMarker {
             number,
             position_ticks,
             name,
+            visible: true,
         })
     }
 
@@ -64,6 +66,11 @@ impl ProjectMarker {
     /// Returns the marker's display name. An empty name uses its automatic timeline number.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether this marker is visible in the project ruler.
+    pub fn is_visible(&self) -> bool {
+        self.visible
     }
 }
 

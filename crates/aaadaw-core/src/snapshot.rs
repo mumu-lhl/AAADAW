@@ -15,6 +15,7 @@ pub struct ProjectSnapshot {
     pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,
     pub markers: Vec<ProjectMarkerSnapshot>,
+    pub show_project_markers: bool,
     pub regions: Vec<ProjectRegionSnapshot>,
     pub tempo_points: Vec<TempoPointSnapshot>,
     pub meter_points: Vec<MeterPointSnapshot>,
@@ -26,6 +27,7 @@ pub struct ProjectMarkerSnapshot {
     pub number: u32,
     pub position_ticks: u64,
     pub name: String,
+    pub visible: bool,
 }
 
 impl From<&ProjectMarker> for ProjectMarkerSnapshot {
@@ -35,6 +37,7 @@ impl From<&ProjectMarker> for ProjectMarkerSnapshot {
             number: marker.number(),
             position_ticks: marker.position_ticks(),
             name: marker.name().to_owned(),
+            visible: marker.is_visible(),
         }
     }
 }

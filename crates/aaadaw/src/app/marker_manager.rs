@@ -21,6 +21,19 @@ impl Default for MarkerManager {
 }
 
 impl App {
+    pub(super) fn toggle_project_markers_on_ruler(&mut self) -> Task<Message> {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing ruler visibility".to_owned();
+            return Task::none();
+        }
+        let visible = !self.project.show_project_markers();
+        self.apply_action(
+            DawAction::SetProjectMarkersVisibleOnRuler { visible },
+            "Project marker ruler visibility changed",
+        );
+        Task::none()
+    }
+
     pub(super) fn open_marker_manager(&mut self) -> Task<Message> {
         if let Some(window_id) = self.marker_manager_window_id {
             return iced::window::gain_focus(window_id);
@@ -89,6 +102,30 @@ impl App {
             "Project marker deleted",
         );
         self.selected_render_markers.remove(&marker_id);
+    }
+
+    pub(super) fn set_marker_visibility_from_manager(
+        &mut self,
+        marker_id: MarkerId,
+        visible: bool,
+    ) {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing marker visibility".to_owned();
+            return;
+        }
+        if !self
+            .project
+            .markers()
+            .iter()
+            .any(|marker| marker.id() == marker_id)
+        {
+            self.status = "Project marker no longer exists".to_owned();
+            return;
+        }
+        self.apply_action(
+            DawAction::SetProjectMarkerVisibility { marker_id, visible },
+            "Project marker visibility changed",
+        );
     }
 
     pub(super) fn select_region_from_manager(&mut self, region_id: RegionId, additive: bool) {

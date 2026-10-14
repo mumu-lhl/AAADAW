@@ -13,7 +13,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         text("Start").width(Length::Fixed(86.0)),
         text("End").width(Length::Fixed(86.0)),
         text("Length").width(Length::Fixed(86.0)),
-        text("Current").width(Length::Fixed(42.0)),
+        text("Current").size(12).width(Length::Fixed(50.0)),
+        text("Visible").size(12).width(Length::Fixed(50.0)),
         text("").width(Length::Fixed(104.0)),
     ]
     .spacing(4)
@@ -50,10 +51,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     });
     for entry in visible_entries {
         visible_count += 1;
-        let (row_button, edit_button, delete_button, is_selected) = match entry {
+        let (row_button, visibility_control, edit_button, delete_button, is_selected) = match entry
+        {
             Entry::Marker(marker) => {
                 let marker_id = marker.id();
                 let position = format_position(&app.project, marker.position_ticks());
+                let visibility_control: Element<'_, Message> = checkbox(marker.is_visible())
+                    .on_toggle_maybe((!commands::project_edit_busy(app)).then_some(
+                        move |visible| {
+                            Message::MarkerManagerSetMarkerVisibility(marker_id, visible)
+                        },
+                    ))
+                    .width(Length::Fixed(50.0))
+                    .into();
                 let current = if marker.position_ticks() == app.timeline.edit_cursor_tick {
                     "•"
                 } else {
@@ -75,6 +85,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 });
                 (
                     row_button,
+                    visibility_control,
                     button("Edit").on_press(Message::MarkerManagerEditMarker(marker_id)),
                     button("Delete").on_press_maybe(
                         (!commands::project_edit_busy(app))
@@ -116,6 +127,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 });
                 (
                     row_button,
+                    text("—").width(Length::Fixed(50.0)).into(),
                     button("Edit").on_press(Message::MarkerManagerEditRegion(region_id)),
                     button("Delete").on_press_maybe(
                         (!commands::project_edit_busy(app))
@@ -125,7 +137,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 )
             }
         };
-        let row_content = row![row_button, edit_button, delete_button]
+        let row_content = row![row_button, visibility_control, edit_button, delete_button]
             .spacing(4)
             .align_y(Alignment::Center);
         entries = entries.push(
@@ -252,7 +264,7 @@ fn manager_row<'a>(row: ManagerRow<'a>) -> Element<'a, Message> {
             text(row.start).width(Length::Fixed(86.0)),
             text(row.end).width(Length::Fixed(86.0)),
             text(row.length).width(Length::Fixed(86.0)),
-            text(row.current).width(Length::Fixed(42.0)),
+            text(row.current).width(Length::Fixed(50.0)),
         ]
         .spacing(4)
         .align_y(Alignment::Center),

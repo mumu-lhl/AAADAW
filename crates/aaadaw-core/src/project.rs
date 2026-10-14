@@ -434,6 +434,7 @@ struct ProjectState {
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
     markers: Vec<ProjectMarker>,
+    show_project_markers: bool,
     regions: Vec<ProjectRegion>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
@@ -453,6 +454,7 @@ impl Default for ProjectState {
             audio_items: Vec::new(),
             midi_items: Vec::new(),
             markers: Vec::new(),
+            show_project_markers: true,
             regions: Vec::new(),
             tempo_map: TempoMap::default(),
             meter_map: MeterMap::default(),
@@ -511,6 +513,10 @@ enum ProjectEvent {
     ProjectMarkersChanged {
         before: Vec<ProjectMarker>,
         after: Vec<ProjectMarker>,
+    },
+    ProjectMarkerLaneVisibilityChanged {
+        before: bool,
+        after: bool,
     },
     ProjectRegionsChanged {
         before: Vec<ProjectRegion>,
@@ -781,6 +787,12 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::ProjectMarkerLaneVisibilityChanged { before, after } => {
+                Self::ProjectMarkerLaneVisibilityChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
             Self::ProjectRegionsChanged { before, after } => Self::ProjectRegionsChanged {
                 before: after.clone(),
                 after: before.clone(),
@@ -1525,6 +1537,9 @@ impl Project {
             ProjectEvent::ProjectRegionsChanged { before, after } if before == after
         ) || matches!(
             &event,
+            ProjectEvent::ProjectMarkerLaneVisibilityChanged { before, after } if before == after
+        ) || matches!(
+            &event,
             ProjectEvent::TrackRazorEditAreasChanged { before, after } if before == after
         ) {
             return Ok(());
@@ -1596,6 +1611,11 @@ impl Project {
     /// Returns the project's markers ordered by timeline position and stable identity.
     pub fn markers(&self) -> &[ProjectMarker] {
         &self.state.markers
+    }
+
+    /// Whether the project marker lane is visible in the ruler.
+    pub fn show_project_markers(&self) -> bool {
+        self.state.show_project_markers
     }
 
     /// Returns the project's regions ordered by timeline start and stable identity.
@@ -1737,6 +1757,7 @@ impl Project {
                 .iter()
                 .map(ProjectMarkerSnapshot::from)
                 .collect(),
+            show_project_markers: self.state.show_project_markers,
             regions: self
                 .state
                 .regions
@@ -1769,6 +1790,7 @@ impl Project {
     /// Restores project state from a validated snapshot with a fresh undo history.
     pub fn from_snapshot(snapshot: ProjectSnapshot) -> Result<Self, SnapshotError> {
         let settings = snapshot.settings;
+        let show_project_markers = snapshot.show_project_markers;
         let mut send_ids = HashSet::new();
         let mut max_send_id = None;
         let mut tempo_map = TempoMap::new(settings);
@@ -1829,15 +1851,15 @@ impl Project {
                 return Err(SnapshotError::InvalidProjectData);
             }
             max_marker_id = Some(max_marker_id.map_or(marker.id, |max: u64| max.max(marker.id)));
-            markers.push(
-                ProjectMarker::new(
-                    MarkerId::from_raw(marker.id),
-                    marker.number,
-                    marker.position_ticks,
-                    marker.name,
-                )
-                .ok_or(SnapshotError::InvalidProjectData)?,
-            );
+            let mut project_marker = ProjectMarker::new(
+                MarkerId::from_raw(marker.id),
+                marker.number,
+                marker.position_ticks,
+                marker.name,
+            )
+            .ok_or(SnapshotError::InvalidProjectData)?;
+            project_marker.visible = marker.visible;
+            markers.push(project_marker);
         }
         markers.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
 
@@ -2116,6 +2138,7 @@ impl Project {
                 audio_items,
                 midi_items,
                 markers,
+                show_project_markers,
                 regions,
                 tempo_map,
                 meter_map,
@@ -2276,8 +2299,10 @@ impl Project {
                     .iter_mut()
                     .find(|marker| marker.id == marker_id)
                     .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                let visible = marker.visible;
                 *marker = ProjectMarker::new(marker_id, marker.number, position_ticks, name)
                     .ok_or(ActionError::InvalidProjectMarker)?;
+                marker.visible = visible;
                 after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
                 ProjectEvent::ProjectMarkersChanged { before, after }
             }
@@ -2293,10 +2318,28 @@ impl Project {
                     .iter_mut()
                     .find(|marker| marker.id == marker_id)
                     .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                let visible = marker.visible;
                 *marker = ProjectMarker::new(marker_id, number, position_ticks, name)
                     .ok_or(ActionError::InvalidProjectMarker)?;
+                marker.visible = visible;
                 after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
                 ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::SetProjectMarkerVisibility { marker_id, visible } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                marker.visible = visible;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::SetProjectMarkersVisibleOnRuler { visible } => {
+                ProjectEvent::ProjectMarkerLaneVisibilityChanged {
+                    before: state.show_project_markers,
+                    after: visible,
+                }
             }
             DawAction::DeleteProjectMarker { marker_id } => {
                 let before = state.markers.clone();
@@ -4048,6 +4091,12 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.markers = after.clone();
+            }
+            ProjectEvent::ProjectMarkerLaneVisibilityChanged { before, after } => {
+                if state.show_project_markers != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.show_project_markers = *after;
             }
             ProjectEvent::ProjectRegionsChanged { before, after } => {
                 if state.regions != *before || !valid_project_regions(after) {

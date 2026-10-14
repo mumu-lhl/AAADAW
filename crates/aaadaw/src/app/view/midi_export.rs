@@ -88,7 +88,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_toggle_maybe(marker_options_enabled.then_some(Message::MidiExportHashOnlyChanged),),
         checkbox(draft.export_hidden_markers)
             .label("Export hidden markers")
-            .on_toggle_maybe(None::<fn(bool) -> Message>),
+            .on_toggle_maybe(
+                marker_options_enabled.then_some(Message::MidiExportHiddenMarkersChanged),
+            ),
         rule::horizontal(1),
         row![
             iced::widget::Space::new().width(Length::Fill),

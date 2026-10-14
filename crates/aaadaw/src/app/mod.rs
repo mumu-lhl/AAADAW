@@ -1898,6 +1898,7 @@ impl App {
                     | Message::MidiExportMarkersChanged(_)
                     | Message::MidiExportMarkerTypeChanged(_)
                     | Message::MidiExportHashOnlyChanged(_)
+                    | Message::MidiExportHiddenMarkersChanged(_)
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
@@ -2522,6 +2523,17 @@ impl App {
                     dialog.only_markers_starting_with_hash = enabled;
                 }
             }
+            Message::MidiExportHiddenMarkersChanged(enabled) => {
+                if !self.project.markers().is_empty()
+                    && self
+                        .midi_export_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.export_markers)
+                    && let Some(dialog) = &mut self.midi_export_dialog
+                {
+                    dialog.export_hidden_markers = enabled;
+                }
+            }
             Message::ProjectMidiExported(path, result) => {
                 self.status = match result {
                     Ok(()) => format!("Exported project MIDI to {}", path.display()),
@@ -2634,6 +2646,7 @@ impl App {
             Message::ApplyRegionProperties => task = self.apply_region_properties(),
             Message::CloseRegionProperties => task = self.close_region_properties(),
             Message::OpenMarkerManager => task = self.open_marker_manager(),
+            Message::ToggleProjectMarkersOnRuler => task = self.toggle_project_markers_on_ruler(),
             Message::CloseMarkerManager => task = self.close_marker_manager(),
             Message::MarkerManagerFilterChanged(value) => {
                 if let Some(manager) = &mut self.marker_manager {
@@ -2657,6 +2670,9 @@ impl App {
             }
             Message::MarkerManagerSelectMarker(marker_id, additive) => {
                 self.select_marker_from_manager(marker_id, additive)
+            }
+            Message::MarkerManagerSetMarkerVisibility(marker_id, visible) => {
+                self.set_marker_visibility_from_manager(marker_id, visible)
             }
             Message::MarkerManagerEditMarker(marker_id) => {
                 task = self.open_marker_properties(marker_id)

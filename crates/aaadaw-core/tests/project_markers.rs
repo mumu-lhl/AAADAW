@@ -158,3 +158,40 @@ fn plain_marker_insertion_uses_lowest_available_positive_number() {
         .unwrap();
     assert_eq!(project.markers()[0].number(), 1);
 }
+
+#[test]
+fn marker_and_ruler_visibility_are_undoable_and_survive_snapshots() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Hidden later".to_owned(),
+        })
+        .unwrap();
+    let marker_id = project.markers()[0].id();
+    project
+        .apply(DawAction::SetProjectMarkerVisibility {
+            marker_id,
+            visible: false,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+        .unwrap();
+
+    assert!(!project.markers()[0].is_visible());
+    assert!(!project.show_project_markers());
+    let restored = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(restored.markers(), project.markers());
+    assert_eq!(
+        restored.show_project_markers(),
+        project.show_project_markers()
+    );
+
+    assert!(project.undo().unwrap());
+    assert!(project.show_project_markers());
+    assert!(project.undo().unwrap());
+    assert!(project.markers()[0].is_visible());
+    assert!(project.redo().unwrap());
+    assert!(!project.markers()[0].is_visible());
+}
