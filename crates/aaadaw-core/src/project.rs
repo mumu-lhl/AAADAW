@@ -9,13 +9,14 @@ use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
     MidiNote, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker, ProjectMarkerSnapshot,
-    ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RegionId, TempoCurve, TimeSignature,
-    TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
+    ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea, RegionId, TempoCurve,
+    TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
+const MAX_RAZOR_EDIT_AREAS_PER_TRACK: usize = 65_536;
 pub const MAX_FX_PARAMETER_AUTOMATION_POINTS: usize = 65_536;
 
 fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
@@ -26,6 +27,17 @@ fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
         && points
             .windows(2)
             .all(|pair| pair[0].sample() < pair[1].sample())
+}
+
+fn valid_razor_edit_areas(areas: &[RazorEditArea]) -> bool {
+    areas.len() <= MAX_RAZOR_EDIT_AREAS_PER_TRACK
+        && areas
+            .iter()
+            .all(|area| area.start_sample() < area.end_sample())
+        && areas.windows(2).all(|pair| {
+            pair[0].start_sample() < pair[1].start_sample()
+                && pair[0].end_sample() <= pair[1].start_sample()
+        })
 }
 
 fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool {
@@ -548,6 +560,10 @@ enum ProjectEvent {
         before: Vec<crate::VolumeAutomationPoint>,
         after: Vec<crate::VolumeAutomationPoint>,
     },
+    TrackRazorEditAreasChanged {
+        before: Vec<(TrackId, Vec<RazorEditArea>)>,
+        after: Vec<(TrackId, Vec<RazorEditArea>)>,
+    },
     TrackPanChanged {
         track_id: TrackId,
         before: f32,
@@ -841,6 +857,12 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::TrackRazorEditAreasChanged { before, after } => {
+                Self::TrackRazorEditAreasChanged {
+                    before: after.clone(),
+                    after: before.clone(),
+                }
+            }
             Self::TrackPanChanged {
                 track_id,
                 before,
@@ -1489,6 +1511,9 @@ impl Project {
         ) || matches!(
             &event,
             ProjectEvent::ProjectRegionsChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::TrackRazorEditAreasChanged { before, after } if before == after
         ) {
             return Ok(());
         }
@@ -1644,6 +1669,7 @@ impl Project {
                         })
                         .collect(),
                     volume_automation: track.volume_automation.clone(),
+                    razor_edit_areas: track.razor_edit_areas.clone(),
                     frozen_audio_item_id: track.frozen_audio_item_id.map(|id| id.value()),
                 })
                 .collect(),
@@ -1875,6 +1901,7 @@ impl Project {
                 || !track.pan.is_finite()
                 || !(-1.0..=1.0).contains(&track.pan)
                 || !valid_volume_automation(&track.volume_automation)
+                || !valid_razor_edit_areas(&track.razor_edit_areas)
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -1910,6 +1937,7 @@ impl Project {
                 instrument,
                 fx_chain,
                 volume_automation: track.volume_automation,
+                razor_edit_areas: track.razor_edit_areas,
                 frozen_audio_item_id: track.frozen_audio_item_id.map(ItemId::from_raw),
             });
         }
@@ -2327,6 +2355,7 @@ impl Project {
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    razor_edit_areas: Vec::new(),
                     frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
@@ -2362,6 +2391,7 @@ impl Project {
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    razor_edit_areas: Vec::new(),
                     frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
@@ -2511,6 +2541,27 @@ impl Project {
                     before: track.volume_automation.clone(),
                     after: points,
                 }
+            }
+            DawAction::SetTrackRazorEditAreas { mut track_areas } => {
+                let mut seen = HashSet::with_capacity(track_areas.len());
+                if track_areas.iter().any(|(track_id, areas)| {
+                    !seen.insert(*track_id) || !valid_razor_edit_areas(areas)
+                }) {
+                    return Err(ActionError::InvalidRazorEditAreas);
+                }
+                track_areas.sort_unstable_by_key(|(track_id, _)| track_id.value());
+                let mut before = Vec::with_capacity(track_areas.len());
+                let mut after = Vec::with_capacity(track_areas.len());
+                for (track_id, areas) in track_areas {
+                    let track = state
+                        .tracks
+                        .iter()
+                        .find(|track| track.id == track_id)
+                        .ok_or(ActionError::TrackNotFound { track_id })?;
+                    before.push((track_id, track.razor_edit_areas.clone()));
+                    after.push((track_id, areas));
+                }
+                ProjectEvent::TrackRazorEditAreasChanged { before, after }
             }
             DawAction::SetTrackMainSend { track_id, enabled } => {
                 let track = state
@@ -3944,6 +3995,32 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.volume_automation = after.clone();
+            }
+            ProjectEvent::TrackRazorEditAreasChanged { before, after } => {
+                if before.len() != after.len()
+                    || before
+                        .iter()
+                        .zip(after)
+                        .any(|((before_id, areas), (after_id, _))| {
+                            before_id != after_id
+                                || !state.tracks.iter().any(|track| {
+                                    track.id == *before_id && track.razor_edit_areas == *areas
+                                })
+                        })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                for (track_id, areas) in after {
+                    let track = state
+                        .tracks
+                        .iter_mut()
+                        .find(|track| track.id == *track_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if !valid_razor_edit_areas(areas) {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    track.razor_edit_areas = areas.clone();
+                }
             }
             ProjectEvent::TrackPanChanged {
                 track_id,

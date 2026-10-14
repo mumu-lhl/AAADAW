@@ -1,7 +1,7 @@
 use crate::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, ProjectMarker, ProjectRegion, ProjectSettings, TempoCurve, TimebaseError,
-    VolumeAutomationPoint,
+    MidiPitchBendData, ProjectMarker, ProjectRegion, ProjectSettings, RazorEditArea, TempoCurve,
+    TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -79,6 +79,7 @@ pub struct TrackSnapshot {
     pub instrument: Option<TrackInstrumentSnapshot>,
     pub fx_chain: Vec<TrackFxPluginSnapshot>,
     pub volume_automation: Vec<VolumeAutomationPoint>,
+    pub razor_edit_areas: Vec<RazorEditArea>,
     pub frozen_audio_item_id: Option<u64>,
 }
 

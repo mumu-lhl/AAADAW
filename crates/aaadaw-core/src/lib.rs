@@ -46,7 +46,7 @@ pub use timebase::{
 pub use timecode::FrameRate;
 pub use track::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES,
-    Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
+    RazorEditArea, Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 pub use routing::{AudioSend, AudioSendParameters, AudioSendSnapshot, AudioSendTap, SendId};

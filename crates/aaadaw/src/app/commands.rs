@@ -70,6 +70,7 @@ pub(crate) enum CommandId {
     DeleteSelectedItems,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
+    EncloseMediaItemsInRazorEdit,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -179,6 +180,7 @@ enum CommandKind {
     DeleteSelectedItems,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
+    EncloseMediaItemsInRazorEdit,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -1075,6 +1077,19 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::EncloseMediaItemsInRazorEdit,
+        menu: Some(MainMenu::Item),
+        category: "Razor edit",
+        label: "Enclose media items, including space between items",
+        aliases: &[
+            "enclose media items in razor edit",
+            "enclose selected items in razor edit",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SplitSelectedItemsAtCursor,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1408,6 +1423,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::PasteItems
             | CommandKind::CopyLoopOfSelectedArea
+            | CommandKind::EncloseMediaItemsInRazorEdit
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
             | CommandKind::AddTrack
@@ -1458,11 +1474,24 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
             let copy_loop = menu_entries.remove(index);
             menu_entries.insert(2.min(menu_entries.len()), copy_loop);
         }
+        if let Some(index) = menu_entries
+            .iter()
+            .position(|entry| entry.id == CommandId::EncloseMediaItemsInRazorEdit)
+        {
+            let enclose = menu_entries.remove(index);
+            menu_entries.insert(3.min(menu_entries.len()), enclose);
+        }
         if let Some(copy_loop) = menu_entries
             .iter_mut()
             .find(|entry| entry.id == CommandId::CopyLoopOfSelectedArea)
         {
             copy_loop.label = "Copy loop of selected area of items".to_owned();
+        }
+        if let Some(enclose) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::EncloseMediaItemsInRazorEdit)
+        {
+            enclose.label = "Enclose media items in razor edit".to_owned();
         }
         if let Some(select_all) = menu_entries
             .iter_mut()
@@ -2009,6 +2038,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DeleteSelectedItems => "item.delete-selected",
         CommandKind::TrimItemsToSelectedArea => "item.trim-to-selection",
         CommandKind::CopyLoopOfSelectedArea => "item.copy-loop-selected-area",
+        CommandKind::EncloseMediaItemsInRazorEdit => "item.enclose-media-in-razor-edit",
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
@@ -2192,6 +2222,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
         CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
         CommandId::CopyLoopOfSelectedArea => Message::CopyLoopOfSelectedArea,
+        CommandId::EncloseMediaItemsInRazorEdit => Message::EncloseMediaItemsInRazorEdit,
         CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
         CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
         CommandId::AddTrack => Message::AddTrack,
@@ -2396,6 +2427,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
         CommandKind::CopyLoopOfSelectedArea => true,
+        CommandKind::EncloseMediaItemsInRazorEdit => true,
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ToggleOfflineJobsPanel => true,
         CommandKind::ShowArrangement | CommandKind::ShowMixer | CommandKind::ToggleMixerPanel => {
@@ -2674,6 +2706,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::TrimItemsToSelectedArea => CommandId::TrimItemsToSelectedArea,
         CommandKind::CopyLoopOfSelectedArea => CommandId::CopyLoopOfSelectedArea,
+        CommandKind::EncloseMediaItemsInRazorEdit => CommandId::EncloseMediaItemsInRazorEdit,
         CommandKind::PasteItems => CommandId::PasteItems,
         CommandKind::SplitSelectedItemsAtCursor => CommandId::SplitSelectedItemsAtCursor,
         CommandKind::SplitSelectedItemsAtTimeSelection => {

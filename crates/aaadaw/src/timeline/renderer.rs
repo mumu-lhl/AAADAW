@@ -26,6 +26,7 @@ const AUTOMATION_POINT: u32 = 13;
 const FX_LANE_DIVIDER: u32 = 14;
 const ITEM_MARQUEE: u32 = 15;
 const FADE_SEGMENT: u32 = 16;
+const RAZOR_EDIT_AREA: u32 = 17;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FadeSegment {
@@ -74,6 +75,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) edit_cursor_tick: u64,
     pub(super) playhead_tick: Option<u64>,
     pub(super) selected_items: Vec<SelectedItemGeometry>,
+    pub(super) razor_edit_areas: Vec<(u64, u64, u32)>,
     pub(super) waveform_bins: Arc<[WaveformBinGeometry]>,
     pub(super) time_selection: Option<TimeSelection>,
     pub(super) drag_preview: Option<ItemDragPreview>,
@@ -599,6 +601,7 @@ impl Primitive for TimelinePrimitive {
                 + self.region_spans.len()
                 + 3
                 + self.selected_items.len()
+                + self.razor_edit_areas.len()
                 + usize::from(self.item_trim_preview.is_some())
                 + usize::from(self.item_selection_preview.is_some())
                 + if self.time_selection.is_some() { 3 } else { 0 },
@@ -638,6 +641,21 @@ impl Primitive for TimelinePrimitive {
                     kind: TIME_SELECTION_EDGE,
                 }));
             }
+        }
+        for (start_tick, end_tick, track_index) in &self.razor_edit_areas {
+            let Some(row) = self.row_layout.get(*track_index as usize) else {
+                continue;
+            };
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *start_tick,
+                end_tick: *end_tick,
+                y: row.top,
+                height: row.height,
+                color: [75, 134, 175, 76],
+                item_id: 0,
+                track_index: *track_index,
+                kind: RAZOR_EDIT_AREA,
+            }));
         }
         if let Some(selection) = self.item_selection_preview {
             dynamic.push(GpuRect::new(GpuRectSpec {

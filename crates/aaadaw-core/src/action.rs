@@ -136,6 +136,10 @@ pub enum DawAction {
         track_id: TrackId,
         points: Vec<VolumeAutomationPoint>,
     },
+    /// Replace the media razor edit areas on multiple tracks as one undoable edit.
+    SetTrackRazorEditAreas {
+        track_areas: Vec<(TrackId, Vec<crate::RazorEditArea>)>,
+    },
     /// Enable or disable the main output without deleting any sends.
     SetTrackMainSend {
         track_id: TrackId,

@@ -2194,6 +2194,7 @@ impl App {
                             | Message::DeleteAudioItem(_)
                             | Message::DeleteSelectedItems
                             | Message::TrimItemsToSelectedArea
+                            | Message::EncloseMediaItemsInRazorEdit
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateMidiItem(_)
@@ -4391,6 +4392,7 @@ impl App {
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::TrimItemsToSelectedArea => self.trim_items_to_selected_area(),
             Message::CopyLoopOfSelectedArea => self.copy_loop_of_selected_area(),
+            Message::EncloseMediaItemsInRazorEdit => self.enclose_media_items_in_razor_edit(),
             Message::PasteItems => self.paste_audio_items(),
             Message::SelectAllItems => self.select_all_items(),
             Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
@@ -10052,6 +10054,82 @@ impl App {
                 "s"
             }
         );
+    }
+
+    fn enclose_media_items_in_razor_edit(&mut self) {
+        let mut selected_tracks = HashSet::new();
+        let mut start_sample = None::<u64>;
+        let mut end_sample = None::<u64>;
+        for item in self.project.audio_items() {
+            if !self.timeline.selected_items.contains(&item.id()) {
+                continue;
+            }
+            selected_tracks.insert(item.track_id());
+            start_sample = Some(
+                start_sample.map_or(item.start_sample(), |start| start.min(item.start_sample())),
+            );
+            end_sample =
+                Some(end_sample.map_or(item.end_sample(), |end| end.max(item.end_sample())));
+        }
+        for item in self.project.midi_items() {
+            if !self.timeline.selected_items.contains(&item.id()) {
+                continue;
+            }
+            let Some(end_tick) = item.start_tick().checked_add(item.length_ticks()) else {
+                self.status = "Could not enclose selected items in a razor edit".to_owned();
+                return;
+            };
+            let (start, end) = match (
+                self.project.sample_at_tick(item.start_tick()),
+                self.project.sample_at_tick(end_tick),
+            ) {
+                (Ok(start), Ok(end)) => (start, end),
+                (Err(error), _) | (_, Err(error)) => {
+                    self.status =
+                        format!("Could not enclose selected items in a razor edit: {error}");
+                    return;
+                }
+            };
+            selected_tracks.insert(item.track_id());
+            start_sample = Some(start_sample.map_or(start, |current| current.min(start)));
+            end_sample = Some(end_sample.map_or(end, |current| current.max(end)));
+        }
+
+        let selected_area = start_sample
+            .zip(end_sample)
+            .and_then(|(start, end)| aaadaw_core::RazorEditArea::new(start, end));
+        let track_areas = self
+            .project
+            .tracks()
+            .iter()
+            .map(|track| {
+                let areas = selected_area
+                    .filter(|_| selected_tracks.contains(&track.id()))
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                (track.id(), areas)
+            })
+            .collect::<Vec<_>>();
+        let changed = track_areas.iter().any(|(track_id, areas)| {
+            self.project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == *track_id)
+                .is_some_and(|track| track.razor_edit_areas() != areas)
+        });
+        if changed {
+            self.apply_action(
+                DawAction::SetTrackRazorEditAreas { track_areas },
+                if selected_area.is_some() {
+                    "Razor edit area selected"
+                } else {
+                    "Razor edit areas cleared"
+                },
+            );
+        } else if selected_area.is_some() {
+            self.status = "Razor edit area selected".to_owned();
+        }
+        self.timeline.clear_selected_items();
     }
 
     pub(super) fn can_paste_audio_items(&self) -> bool {

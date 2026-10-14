@@ -21,7 +21,9 @@ use super::{
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
-use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, Project, TrackFxPlugin};
+use aaadaw_core::{
+    DawAction, MidiControllerData, MidiNoteData, Project, RazorEditArea, TrackFxPlugin,
+};
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
 use iced::keyboard::{Key, Modifiers};
@@ -6806,9 +6808,16 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert_eq!(copy_loop.shortcut.as_deref(), Some("Ctrl+Alt+L"));
     assert!(copy_loop.enabled);
 
-    let select_all = entries
+    let enclose = entries
         .get(3)
-        .expect("Select all should follow the item-copy section");
+        .expect("Enclose media items should follow Copy loop");
+    assert_eq!(enclose.id, CommandId::EncloseMediaItemsInRazorEdit);
+    assert_eq!(enclose.label, "Enclose media items in razor edit");
+    assert!(enclose.enabled);
+
+    let select_all = entries
+        .get(4)
+        .expect("Select all should follow the item razor-edit section");
     assert_eq!(select_all.id, CommandId::SelectAllItems);
     assert_eq!(select_all.label, "Select all");
     assert!(select_all.enabled);
@@ -7005,6 +7014,132 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
 
     app.project_generation = app.project_generation.saturating_add(1);
     assert!(!commands::is_enabled(&app, CommandId::PasteItems));
+}
+
+#[test]
+fn enclose_selected_audio_and_midi_in_razor_areas_and_support_undo() {
+    let mut app = App::default();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let track_ids = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let sample_0 = app.project.sample_at_tick(0).unwrap();
+    let sample_960 = app.project.sample_at_tick(960).unwrap();
+    let sample_1920 = app.project.sample_at_tick(1_920).unwrap();
+    let sample_5760 = app.project.sample_at_tick(5_760).unwrap();
+    let sample_7680 = app.project.sample_at_tick(7_680).unwrap();
+    let sample_11520 = app.project.sample_at_tick(11_520).unwrap();
+    let sample_13440 = app.project.sample_at_tick(13_440).unwrap();
+    let sample_23040 = app.project.sample_at_tick(23_040).unwrap();
+    let old_area = RazorEditArea::new(sample_0, sample_960).unwrap();
+    app.project
+        .apply(DawAction::SetTrackRazorEditAreas {
+            track_areas: vec![(track_ids[2], vec![old_area])],
+        })
+        .unwrap();
+
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[0],
+            media_ref: "asset://razor-test".to_owned(),
+            start_sample: sample_1920,
+            source_offset_samples: 0,
+            length_samples: sample_5760 - sample_1920,
+        })
+        .unwrap();
+    let first_audio = app.project.audio_items().last().unwrap().id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[0],
+            media_ref: "asset://razor-test".to_owned(),
+            start_sample: sample_11520,
+            source_offset_samples: 0,
+            length_samples: sample_13440 - sample_11520,
+        })
+        .unwrap();
+    let second_audio = app.project.audio_items().last().unwrap().id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[1],
+            media_ref: "asset://razor-test".to_owned(),
+            start_sample: sample_7680,
+            source_offset_samples: 0,
+            length_samples: sample_11520 - sample_7680,
+        })
+        .unwrap();
+    let other_track_audio = app.project.audio_items().last().unwrap().id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: track_ids[0],
+            start_tick: 19_200,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    let selected_ids = [first_audio, second_audio, other_track_audio, midi_id];
+    app.timeline.select_items(
+        selected_ids
+            .iter()
+            .map(|item_id| {
+                let track_id = app
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| item.track_id())
+                    .or_else(|| {
+                        app.project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .map(|item| item.track_id())
+                    })
+                    .unwrap();
+                (*item_id, track_id)
+            })
+            .collect(),
+    );
+    app.timeline.rebuild(&app.project);
+    let action_revision = app.revision;
+    let expected_area = RazorEditArea::new(sample_1920, sample_23040).unwrap();
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::EncloseMediaItemsInRazorEdit,
+    ));
+
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.project.tracks()[0].razor_edit_areas(), &[expected_area]);
+    assert_eq!(app.project.tracks()[1].razor_edit_areas(), &[expected_area]);
+    assert!(app.project.tracks()[2].razor_edit_areas().is_empty());
+    assert_eq!(app.revision, action_revision + 1);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks()[0].razor_edit_areas().is_empty());
+    assert!(app.project.tracks()[1].razor_edit_areas().is_empty());
+    assert_eq!(app.project.tracks()[2].razor_edit_areas(), &[old_area]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].razor_edit_areas(), &[expected_area]);
+    assert_eq!(app.project.tracks()[1].razor_edit_areas(), &[expected_area]);
+
+    let revision_before_clear = app.revision;
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::EncloseMediaItemsInRazorEdit,
+    ));
+    assert!(
+        app.project
+            .tracks()
+            .iter()
+            .all(|track| track.razor_edit_areas().is_empty())
+    );
+    assert_eq!(app.revision, revision_before_clear + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].razor_edit_areas(), &[expected_area]);
+    assert_eq!(app.project.tracks()[1].razor_edit_areas(), &[expected_area]);
 }
 
 #[test]

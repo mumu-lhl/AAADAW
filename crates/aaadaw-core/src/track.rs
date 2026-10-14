@@ -131,7 +131,35 @@ pub struct Track {
     pub(crate) instrument: Option<TrackInstrument>,
     pub(crate) fx_chain: Vec<TrackFxPlugin>,
     pub(crate) volume_automation: Vec<VolumeAutomationPoint>,
+    pub(crate) razor_edit_areas: Vec<RazorEditArea>,
     pub(crate) frozen_audio_item_id: Option<crate::ItemId>,
+}
+
+/// A track-scoped media razor edit area in the project's sample clock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RazorEditArea {
+    start_sample: u64,
+    end_sample: u64,
+}
+
+impl RazorEditArea {
+    /// Creates a non-empty time range using the project's sample clock.
+    pub fn new(start_sample: u64, end_sample: u64) -> Option<Self> {
+        (start_sample < end_sample).then_some(Self {
+            start_sample,
+            end_sample,
+        })
+    }
+
+    /// Returns the inclusive start sample.
+    pub fn start_sample(self) -> u64 {
+        self.start_sample
+    }
+
+    /// Returns the exclusive end sample.
+    pub fn end_sample(self) -> u64 {
+        self.end_sample
+    }
 }
 
 /// A CLAP instrument selected for a track. The bundle path is a load hint;
@@ -402,6 +430,11 @@ impl Track {
     /// Returns this track's ordered sample-clock volume automation points.
     pub fn volume_automation(&self) -> &[VolumeAutomationPoint] {
         &self.volume_automation
+    }
+
+    /// Returns the track's persisted media razor edit areas in timeline order.
+    pub fn razor_edit_areas(&self) -> &[RazorEditArea] {
+        &self.razor_edit_areas
     }
 
     /// Returns the frozen render item while this track is frozen.

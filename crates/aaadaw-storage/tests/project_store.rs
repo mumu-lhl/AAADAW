@@ -1,6 +1,6 @@
 use aaadaw_core::{
     BpmBasis, DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    Project, VolumeAutomationPoint,
+    Project, RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -13,6 +13,34 @@ use std::thread;
 use std::time::Duration;
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn track_razor_edit_areas_migrate_and_round_trip() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Razor track".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackRazorEditAreas {
+            track_areas: vec![(track_id, vec![RazorEditArea::new(480, 1_440).unwrap()])],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
 
 #[test]
 fn project_notes_migrate_schema27_preserve_media_and_roundtrip_unicode() {

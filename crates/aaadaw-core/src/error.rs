@@ -17,6 +17,8 @@ pub enum ActionError {
     InvalidVolumeDb,
     /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
     InvalidVolumeAutomation,
+    /// Razor edit areas must be non-empty, ordered, and non-overlapping.
+    InvalidRazorEditAreas,
     /// The requested track output is not a different track.
     InvalidTrackOutput,
     InvalidTrackHierarchy,
@@ -168,6 +170,9 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeDb => formatter.write_str("track volume must be finite"),
             Self::InvalidVolumeAutomation => formatter.write_str(
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
+            ),
+            Self::InvalidRazorEditAreas => formatter.write_str(
+                "razor edit areas must be non-empty, ordered, and non-overlapping",
             ),
             Self::InvalidAudioSend => formatter.write_str("audio send parameters are invalid"),
             Self::SendIdExhausted => formatter.write_str("audio send identifiers are exhausted"),

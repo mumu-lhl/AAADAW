@@ -2375,6 +2375,20 @@ impl TimelineState {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick,
             selected_items: self.selected_item_geometries(),
+            razor_edit_areas: project
+                .tracks()
+                .iter()
+                .enumerate()
+                .flat_map(|(track_index, track)| {
+                    track.razor_edit_areas().iter().filter_map(move |area| {
+                        Some((
+                            project.tick_at_sample(area.start_sample()).ok()?,
+                            project.tick_at_sample(area.end_sample()).ok()?,
+                            u32::try_from(track_index).ok()?,
+                        ))
+                    })
+                })
+                .collect(),
             hovered_item: self.hovered_item,
             time_selection: self.time_selection,
             snap_enabled: self.snap_enabled,
@@ -2451,6 +2465,7 @@ struct TimelineProgram<'a> {
     edit_cursor_tick: u64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
+    razor_edit_areas: Vec<(u64, u64, u32)>,
     hovered_item: Option<ItemId>,
     time_selection: Option<TimeSelection>,
     snap_enabled: bool,
@@ -4119,6 +4134,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             edit_cursor_tick: self.edit_cursor_tick,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
+            razor_edit_areas: self.razor_edit_areas.clone(),
             waveform_bins,
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,

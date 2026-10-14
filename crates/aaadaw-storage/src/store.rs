@@ -2,8 +2,8 @@ use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLan
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot,
     MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectMarkerSnapshot,
-    ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, SnapshotError, TempoCurve,
-    TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea, SnapshotError,
+    TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 40;
+pub const CURRENT_SCHEMA_VERSION: u32 = 41;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -89,6 +89,16 @@ ALTER TABLE audio_items ADD COLUMN take_volume REAL NOT NULL DEFAULT 1.0
 const MIGRATION_40_TAKE_PAN: &str = r#"
 ALTER TABLE audio_items ADD COLUMN take_pan REAL NOT NULL DEFAULT 0.0
     CHECK(take_pan >= -1.0 AND take_pan <= 1.0);
+"#;
+
+const MIGRATION_41: &str = r#"
+CREATE TABLE IF NOT EXISTS track_razor_edit_areas (
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    start_sample INTEGER NOT NULL CHECK(start_sample >= 0),
+    end_sample INTEGER NOT NULL CHECK(end_sample > start_sample),
+    PRIMARY KEY(track_id, position)
+);
 "#;
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
@@ -2940,6 +2950,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_40_TAKE_PAN)?;
                 }
             }
+            41 => transaction.execute_batch(MIGRATION_41)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2957,6 +2968,7 @@ fn write_snapshot(
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM track_sends", [])?;
+    transaction.execute("DELETE FROM track_razor_edit_areas", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
@@ -3050,6 +3062,18 @@ fn write_snapshot(
                     usize_to_sql(position)?,
                     to_sql_integer(point.sample())?,
                     f64::from(point.gain_db()),
+                ],
+            )?;
+        }
+        for (position, area) in track.razor_edit_areas.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_razor_edit_areas(track_id, position, start_sample, end_sample) \
+                 VALUES(?1, ?2, ?3, ?4)",
+                params![
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(area.start_sample())?,
+                    to_sql_integer(area.end_sample())?,
                 ],
             )?;
         }
@@ -3363,6 +3387,7 @@ fn time_range_from_columns(
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
     let mut sends = read_audio_sends(connection)?;
     let mut volume_automation = read_volume_automation(connection)?;
+    let mut razor_edit_areas = read_razor_edit_areas(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
     let mut fx_statement = connection.prepare(
@@ -3583,6 +3608,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     instrument,
                     fx_chain: fx_chains.remove(&id).unwrap_or_default(),
                     volume_automation: volume_automation.remove(&id).unwrap_or_default(),
+                    razor_edit_areas: razor_edit_areas.remove(&id).unwrap_or_default(),
                     frozen_audio_item_id: frozen_audio_item_id.map(from_sql_u64).transpose()?,
                 })
             },
@@ -3593,7 +3619,44 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
             "audio sends reference a missing source",
         ));
     }
+    if !razor_edit_areas.is_empty() {
+        return Err(StorageError::InvalidStoredData(
+            "razor edit areas reference a missing track",
+        ));
+    }
     Ok(tracks)
+}
+
+fn read_razor_edit_areas(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<RazorEditArea>>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT track_id, position, start_sample, end_sample \
+         FROM track_razor_edit_areas ORDER BY track_id, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut areas = HashMap::<i64, Vec<RazorEditArea>>::new();
+    for (track_id, position, start_sample, end_sample) in rows {
+        let position = from_sql_u64(position)?;
+        let track_areas = areas.entry(track_id).or_default();
+        if usize::try_from(position).ok() != Some(track_areas.len()) {
+            return Err(StorageError::InvalidStoredData("razor edit area order"));
+        }
+        track_areas.push(
+            RazorEditArea::new(from_sql_u64(start_sample)?, from_sql_u64(end_sample)?)
+                .ok_or(StorageError::InvalidStoredData("razor edit area range"))?,
+        );
+    }
+    Ok(areas)
 }
 
 fn read_volume_automation(

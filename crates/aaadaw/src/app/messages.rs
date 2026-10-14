@@ -428,6 +428,7 @@ pub(crate) enum Message {
     DeleteSelectedItems,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
+    EncloseMediaItemsInRazorEdit,
     PasteItems,
     SelectAllItems,
     SelectAllItemsInTrack,
