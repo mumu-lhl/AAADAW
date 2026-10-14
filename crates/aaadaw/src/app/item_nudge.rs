@@ -232,13 +232,6 @@ impl App {
             }
             return;
         }
-        if self.item_nudge_dialog.target != Target::Position {
-            self.item_nudge_dialog.error = Some(format!(
-                "The '{}' nudge target is not implemented yet",
-                self.item_nudge_dialog.target
-            ));
-            return;
-        }
         match self.item_nudge_dialog.mode {
             Mode::Nudge => {
                 let delta = match self.dialog_delta_samples(false) {
@@ -254,7 +247,9 @@ impl App {
                     }
                 };
                 let mut signed_delta = delta * i128::from(direction);
-                if self.item_nudge_dialog.snap_to_unit {
+                if self.item_nudge_dialog.target == Target::Position
+                    && self.item_nudge_dialog.snap_to_unit
+                {
                     signed_delta = match self.snap_delta_to_selected_anchor(signed_delta) {
                         Ok(delta) => delta,
                         Err(error) => {
@@ -263,9 +258,37 @@ impl App {
                         }
                     };
                 }
-                self.shift_selected_items(signed_delta);
+                match self.item_nudge_dialog.target {
+                    Target::Position => self.shift_selected_items(signed_delta),
+                    Target::Duplicate => self.nudge_duplicate_selected_items(signed_delta),
+                    Target::LeftTrim
+                    | Target::LeftEdge
+                    | Target::EndPosition
+                    | Target::RightTrim => {
+                        if self.item_nudge_dialog.snap_to_unit {
+                            self.item_nudge_dialog.error = Some(
+                                "Snap to unit is not supported for this item target yet".to_owned(),
+                            );
+                        } else {
+                            self.nudge_selected_audio_target(signed_delta);
+                        }
+                    }
+                    Target::Contents => {
+                        self.item_nudge_dialog.error =
+                            Some("The 'contents' nudge target is not implemented yet".to_owned());
+                    }
+                    Target::EditCursor => unreachable!("edit cursor target handled above"),
+                }
             }
-            Mode::Set => self.apply_set_position(),
+            Mode::Set if self.item_nudge_dialog.target == Target::Position => {
+                self.apply_set_position();
+            }
+            Mode::Set => {
+                self.item_nudge_dialog.error = Some(format!(
+                    "The '{}' set target is not implemented yet",
+                    self.item_nudge_dialog.target
+                ));
+            }
         }
     }
 
@@ -484,6 +507,268 @@ impl App {
         self.item_nudge_dialog.error = None;
     }
 
+    fn nudge_selected_audio_target(&mut self, delta_samples: i128) {
+        let selected_ids = &self.timeline.selected_items;
+        if self
+            .project
+            .midi_items()
+            .iter()
+            .any(|item| selected_ids.contains(&item.id()))
+        {
+            self.item_nudge_dialog.error = Some(
+                "This nudge target is currently supported for selected audio items only".to_owned(),
+            );
+            return;
+        }
+        let items = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected audio items".to_owned());
+            return;
+        }
+
+        let source_rates = if self.item_nudge_dialog.target == Target::LeftTrim {
+            let media_refs = items
+                .iter()
+                .map(|item| item.media_ref().to_owned())
+                .collect::<Vec<_>>();
+            match self.audio_source_sample_rates(media_refs) {
+                Ok(rates) => rates,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            Default::default()
+        };
+
+        let project_rate = self.project.settings().sample_rate();
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let (start_sample, source_offset_samples, length_samples) =
+                match self.item_nudge_dialog.target {
+                    Target::LeftTrim => {
+                        let Some(start_sample) = shifted_sample(item.start_sample(), delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                                "Selected items cannot move beyond the sample timeline".to_owned(),
+                            );
+                            return;
+                        };
+                        let Some(length_samples) =
+                            shifted_unsigned(item.length_samples(), -delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                            "Left trim would remove the entire item or exceed its supported length"
+                                .to_owned(),
+                        );
+                            return;
+                        };
+                        let Some(source_rate) = source_rates.get(item.media_ref()).copied() else {
+                            self.item_nudge_dialog.error = Some(format!(
+                                "Source sample rate is unavailable for {}",
+                                item.media_ref()
+                            ));
+                            return;
+                        };
+                        let Some(source_delta) =
+                            scale_sample_delta(delta_samples, source_rate, project_rate)
+                        else {
+                            self.item_nudge_dialog.error =
+                                Some("Source trim is outside the supported range".to_owned());
+                            return;
+                        };
+                        let Some(source_offset_samples) =
+                            shifted_sample(item.source_offset_samples(), source_delta)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                                "Left trim would move before the start of the audio source"
+                                    .to_owned(),
+                            );
+                            return;
+                        };
+                        (start_sample, source_offset_samples, length_samples)
+                    }
+                    Target::LeftEdge => {
+                        let Some(start_sample) = shifted_sample(item.start_sample(), delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                                "Selected items cannot move beyond the sample timeline".to_owned(),
+                            );
+                            return;
+                        };
+                        let Some(length_samples) =
+                            shifted_unsigned(item.length_samples(), -delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                            "Left edge would remove the entire item or exceed its supported length"
+                                .to_owned(),
+                        );
+                            return;
+                        };
+                        (start_sample, item.source_offset_samples(), length_samples)
+                    }
+                    Target::EndPosition => {
+                        let Some(start_sample) = shifted_sample(item.start_sample(), delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                                "Selected items cannot move beyond the sample timeline".to_owned(),
+                            );
+                            return;
+                        };
+                        (
+                            start_sample,
+                            item.source_offset_samples(),
+                            item.length_samples(),
+                        )
+                    }
+                    Target::RightTrim => {
+                        let Some(length_samples) =
+                            shifted_unsigned(item.length_samples(), delta_samples)
+                        else {
+                            self.item_nudge_dialog.error = Some(
+                            "Right trim would remove the entire item or exceed its supported length"
+                                .to_owned(),
+                        );
+                            return;
+                        };
+                        (
+                            item.start_sample(),
+                            item.source_offset_samples(),
+                            length_samples,
+                        )
+                    }
+                    _ => unreachable!("only implemented audio targets reach this method"),
+                };
+            if start_sample != item.start_sample()
+                || source_offset_samples != item.source_offset_samples()
+                || length_samples != item.length_samples()
+            {
+                actions.push(DawAction::EditAudioItem {
+                    item_id: item.id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                });
+            }
+        }
+        if actions.is_empty() {
+            self.item_nudge_dialog.error =
+                Some("Nudge did not change the selected items".to_owned());
+            return;
+        }
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected audio items edited",
+        );
+        self.item_nudge_dialog.error = None;
+    }
+
+    fn nudge_duplicate_selected_items(&mut self, delta_samples: i128) {
+        if self.item_nudge_dialog.snap_to_unit {
+            self.item_nudge_dialog.error =
+                Some("Snap to unit is not supported for the duplicate target yet".to_owned());
+            return;
+        }
+        let selected_ids = &self.timeline.selected_items;
+        let mut actions = Vec::new();
+        for item in self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+        {
+            let Some(start_sample) = shifted_sample(item.start_sample(), delta_samples) else {
+                self.item_nudge_dialog.error = Some(
+                    "Duplicate position cannot be before sample zero or beyond the timeline"
+                        .to_owned(),
+                );
+                return;
+            };
+            actions.push(DawAction::DuplicateAudioItemAt {
+                item_id: item.id(),
+                track_id: item.track_id(),
+                start_sample,
+            });
+        }
+        for item in self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+        {
+            let start_sample = match self.project.sample_at_tick(item.start_tick()) {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error.to_string());
+                    return;
+                }
+            };
+            let Some(start_sample) = shifted_sample(start_sample, delta_samples) else {
+                self.item_nudge_dialog.error = Some(
+                    "Duplicate position cannot be before sample zero or beyond the timeline"
+                        .to_owned(),
+                );
+                return;
+            };
+            let start_tick = match self.project.tick_at_sample(start_sample) {
+                Ok(tick) => tick,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error.to_string());
+                    return;
+                }
+            };
+            actions.push(DawAction::DuplicateMidiItemAt {
+                item_id: item.id(),
+                start_tick,
+            });
+        }
+        if actions.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected items to duplicate".to_owned());
+            return;
+        }
+
+        let previous_ids = self
+            .project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .collect::<std::collections::HashSet<_>>();
+        let revision = self.revision;
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected items duplicated",
+        );
+        if self.revision == revision {
+            return;
+        }
+        let selected = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| !previous_ids.contains(&item.id()))
+            .map(|item| (item.id(), item.track_id()))
+            .chain(self.project.midi_items().iter().filter_map(|item| {
+                (!previous_ids.contains(&item.id())).then_some((item.id(), item.track_id()))
+            }))
+            .collect::<Vec<_>>();
+        self.timeline.select_items(selected);
+        self.item_nudge_dialog.error = None;
+    }
+
     fn move_edit_cursor_by_samples(&mut self, delta_samples: i128) {
         let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
             Ok(sample) => sample,
@@ -644,6 +929,31 @@ impl App {
 fn shifted_sample(sample: u64, delta: i128) -> Option<u64> {
     let shifted = i128::from(sample).checked_add(delta)?;
     u64::try_from(shifted).ok()
+}
+
+fn shifted_unsigned(value: u64, delta: i128) -> Option<u64> {
+    let shifted = i128::from(value).checked_add(delta)?;
+    if shifted <= 0 {
+        return None;
+    }
+    u64::try_from(shifted).ok()
+}
+
+fn scale_sample_delta(delta: i128, source_rate: u32, project_rate: u32) -> Option<i128> {
+    if source_rate == 0 || project_rate == 0 {
+        return None;
+    }
+    let numerator = delta.checked_mul(i128::from(source_rate))?;
+    let denominator = i128::from(project_rate);
+    let magnitude = numerator.checked_abs()?;
+    let rounded = magnitude
+        .checked_add(denominator / 2)?
+        .checked_div(denominator)?;
+    if numerator < 0 {
+        rounded.checked_neg()
+    } else {
+        Some(rounded)
+    }
 }
 
 fn round_to_unit(value: i128, unit: i128) -> i128 {

@@ -1,8 +1,9 @@
 -- Run in an unsaved, stopped Linux REAPER 7.82 / Default 7 project.
 -- Choose a target and amount in the open Nudge/Set dialog, then write a unique
--- case name to AAADAW_REAPER_PROBE_DIR/item-nudge-target-command.txt. The
--- script resets the probe item, runs Nudge right once and records the result.
--- Target selection and amount are intentionally driven through the real UI.
+-- case name to AAADAW_REAPER_PROBE_DIR/item-nudge-target-command.txt. Optionally
+-- append |<source-offset-seconds> to seed the probe take. The script resets the
+-- item, runs Nudge right once and records the result. Target and amount are
+-- intentionally driven through the real UI.
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
 assert(reaper.GetPlayStateEx(0) == 0)
@@ -51,14 +52,17 @@ local function write_case(name)
   output:flush()
 end
 
-local function reset_probe_item()
+local function reset_probe_item(source_offset_seconds)
   for index = reaper.CountTrackMediaItems(track) - 1, 1, -1 do
     reaper.DeleteTrackMediaItem(track, reaper.GetTrackMediaItem(track, index))
   end
+  item = assert(reaper.GetTrackMediaItem(track, 0), "probe item was removed")
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", 2)
   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 10)
   local take = reaper.GetActiveTake(item)
-  if take then reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", 0) end
+  if take then
+    reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", source_offset_seconds or 0)
+  end
   reaper.SetMediaItemSelected(item, true)
   reaper.SetEditCurPos(7, false, false)
   reaper.UpdateArrange()
@@ -71,10 +75,12 @@ local function poll_command()
     input:close()
     os.remove(command_path)
     if command and command ~= "" then
-      reset_probe_item()
+      local name, source_offset_seconds = command:match("^([^|]+)|([%d%.]+)$")
+      if not name then name = command end
+      reset_probe_item(tonumber(source_offset_seconds) or 0)
       reaper.Main_OnCommand(41249, 0)
       reaper.UpdateArrange()
-      write_case(command)
+      write_case(name)
     end
   end
   reaper.defer(poll_command)

@@ -17,9 +17,11 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 - Position / Nudge：同时移动所选 Audio 与 MIDI 项，保持长度、源偏移和 MIDI 内容；多项用一个共享 delta，间距不变，并作为一个可撤销工程事务。
 - Position / Set：支持绝对位置和相对位移；多选时以最早的所选项为锚点，对其它项应用同一位移。
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
-- 无选择、无效时间或越界位置安全失败；其它六种 item target 明确报告未实现，不修改工程。
+- Audio / Left Trim、Left Edge、End Position、Right Trim：按原厂 250 ms 探针调整对应边界；Left Trim 按素材源采样率换算并移动源偏移。若选择中包含 MIDI、时间越界或素材源采样率不可用，则整批拒绝。
+- Duplicate：按 Nudge 量复制所选 Audio 和 MIDI 项；副本成为唯一选择，并通过一个工程事务支持 Undo。
+- Contents、这些目标的 Set/Snap 组合和其它未验证边界继续明确报告未实现，不修改工程。
 
-单元回归覆盖混合 Audio/MIDI、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；这与原厂观察到的无独立 Undo 记录不同，仍需决定并验证一致语义。Snap 取整、Set 模式控件与原厂交互、Nudge 的多项选择顺序和六种未实现目标均没有原厂逐项结果，不能据当前实现宣称完成。
+单元回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂位置 Nudge 探针未观察到专属 Undo 项，Undo 历史一致性仍待专项确认。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)。Snap 的目标语义、Set 模式控件、多项顺序和 Contents 尚未完成验证，不能据当前覆盖宣称整体完成。
 
 ## 实窗对照
 
@@ -27,8 +29,8 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 原厂参考：[默认对话框](fixtures/item-nudge-native-dialog.png)、[Target 下拉](fixtures/item-nudge-native-targets.png)、[Item 菜单](fixtures/menu-item-select-all-native.png)。AAADAW：[选中 MIDI 项时的对话框](fixtures/item-nudge-aaadaw-dialog.png)、[菜单项](fixtures/item-nudge-aaadaw-menu.png)、[Target 前四项](fixtures/item-nudge-aaadaw-targets-top.png)、[Target 后四项](fixtures/item-nudge-aaadaw-targets-bottom.png)。显示环境、操作记录和各文件 SHA-256 见 [fixture 元数据](fixtures/item-nudge.tsv)。
 
-当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、Set 模式布局/字段、错误反馈，以及除 `position` 和 `edit cursor` 以外的目标实现。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
+当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、Set 模式布局/字段、错误反馈，以及 Contents 和目标组合的覆盖。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
 
 ## 后续验收
 
-逐项探测并实现六种 item target；使用原厂配置记录 Nudge/Set 的所有 Unit、Snap、相对 Set、Get cursor、按钮和键盘焦点行为；确认多选锚点、跨轨顺序、播放/录制状态、事务与 Undo/Redo；然后在同尺寸实窗中比较每种模式和各菜单状态。完成以上行为与画面对照前，`ITEM-NUDGE-SET-001` 和 Item 菜单/UI 总体验收继续为 `in_progress`。
+继续探测 Contents、MIDI 对各 target 的响应、Set/Snap 组合，以及所有 Unit、Get cursor、按钮与键盘焦点行为；确认多选锚点、跨轨顺序、播放/录制状态和原厂 Undo 语义；再在同尺寸实窗比较各模式。完成以上行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。

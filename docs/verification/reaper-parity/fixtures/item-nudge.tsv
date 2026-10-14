@@ -6,12 +6,13 @@ native_dialog	item-nudge-native-dialog.png; 528x121; sha256 d8bcd03be3a5451d89e7
 native_targets	item-nudge-native-targets.png; 528x200 crop of actual REAPER target popup; sha256 f2dccc223ce77a968b22fea7a8b6fa04b4d98c356eeb3503942f056b9e093cb6
 native_menu	menu-item-select-all-native.png; actual Item menu shows Nudge/set items... and N; existing fixture file SHA-256 is recorded in menu-item-select-all.tsv
 native_results	item-nudge-native.tsv; sha256 994d4ad697e6b50e50d75bd15703b5fab4d242ca271e0934ea9665fe62ab476b
+native_target_results	item-nudge-targets-native.tsv; selected 10-second audio item, Nudge right 250 ms; sha256 e04a60f161356e30a71759c872ec9e0615b61b18eaea5cd6aae116d4b0eba0f2
 aaadaw_dialog	item-nudge-aaadaw-dialog.png; actual selected-MIDI-item dialog; 528x121; sha256 0fa6a76eb2ced4bdb9616b0256b472f849ba29c36baa0035163e2b20bc5a4ec1
 aaadaw_operation	item-nudge-aaadaw-after-250ms.png; actual selected MIDI item after 1ms and 250ms Nudge right operations; dialog summary 0.251s; 1280x800 crop; sha256 7d72c501d6304a87ea4248ed00d5858c2336776494b713f94b080f0f00c9a6b7
 aaadaw_menu	item-nudge-aaadaw-menu.png; actual Item menu screenshot; 1280x800 crop; sha256 5aae92837f64dce5c67bcf62a9f2a1171dc597a740efb1fd4629906bc9f064a0
 aaadaw_targets_top	item-nudge-aaadaw-targets-top.png; actual dropdown showing position, left trim, left edge, end position; sha256 b5f181eb2bc8d070b110d55406990db251a290efd21520053fea847d340cb916
 aaadaw_targets_bottom	item-nudge-aaadaw-targets-bottom.png; actual scrolled dropdown showing right trim, contents, duplicate, edit cursor; sha256 35f6bb0df37824c8df2a0db73378accb09d8f826dec5a6f5139b3ea0dfa97d8a
-native_scope	Action 41226 opens the dialog; action 41249 nudges right by the dialog's default settings; audio and MIDI move 1ms; no-selection is unchanged; no dedicated Undo record was observed
-aaadaw_scope	Position and edit-cursor Nudge/Set paths implemented; six other item targets fail closed; one transaction is used for item movement
-regression	crates/aaadaw/src/app/tests.rs item_nudge_* and item_menu_and_action_list_share_the_native_nudge_set_command; focused nextest 9/9 passed
-status	ITEM-NUDGE-SET-001 remains in_progress; Set/Snap and unsupported target parity are not verified
+native_scope	Action 41226 opens the dialog; action 41249 nudges right by dialog settings; selected Audio and MIDI position move 1ms; target results at 250ms are recorded in item-nudge-targets-native.tsv
+aaadaw_scope	Position and edit-cursor Nudge/Set paths; Audio Left Trim/Left Edge/End Position/Right Trim Nudge; Audio and MIDI Duplicate Nudge; Contents and unverified Set/Snap combinations fail closed
+regression	crates/aaadaw/src/app/tests.rs item_nudge_*; focused nextest 11/11 passed with Cranelift
+status	ITEM-NUDGE-SET-001 remains in_progress; Contents, target-specific Set/Snap and Undo parity are not verified

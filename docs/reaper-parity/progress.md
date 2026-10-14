@@ -775,4 +775,4 @@ Linux REAPER 7.82 / Default 7 的 Item 菜单在 `Select all` 后显示 `Nudge/s
 
 AAADAW 实现 Position 与 Edit cursor 的 Nudge/Set 路径、混合媒体共享位移、绝对/相对 Set 和单步 Undo/Redo；实窗中对选中 MIDI 项点击 `Nudge right` 后，摘要和时间线共同反映 0.251 秒的位置；其余六种 item target 明确失败关闭。Nightly + Cranelift workspace nextest 1037/1037 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt、`git diff --check`、Parity CSV 15 列/98 个唯一 ID及新 fixture 的 SHA-256 检查通过。构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。
 
-`ITEM-NUDGE-SET-001` 继续 `in_progress`：left trim、left edge、end position、right trim、contents、duplicate 尚未实现；Snap、Set 控件与目标语义尚未通过原厂逐项验证；REAPER 没有新增专属 Undo 记录，而 AAADAW 使用撤销事务。Item 菜单和整套界面仍远未达到 100% 对齐，后续继续补齐这些边界与其余菜单/窗口交互。
+`ITEM-NUDGE-SET-001` 继续 `in_progress`：已按 REAPER 原厂探针实现 Audio 的 left trim、left edge、end position、right trim，以及 Audio/MIDI duplicate；Contents、这些目标的 MIDI 响应、Set/Snap 组合与原厂 Undo 语义仍待验证。Item 菜单和整套界面仍远未达到 100% 对齐，后续继续补齐这些边界与其余菜单/窗口交互。
