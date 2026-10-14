@@ -349,6 +349,7 @@ struct App {
     audio_item_start_edits: HashMap<ItemId, String>,
     item_properties: Option<item_properties::ItemProperties>,
     midi_item_properties: Option<item_properties::MidiItemProperties>,
+    batch_item_properties: Option<item_properties::BatchItemProperties>,
     item_properties_window_id: Option<iced::window::Id>,
     item_properties_generation: u64,
     item_properties_unit: item_properties::TimeUnit,
@@ -1870,6 +1871,7 @@ impl App {
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyLoopSourceChanged(_)
                     | Message::ItemPropertyMuteChanged(_)
+                    | Message::BatchItemPropertyMuteChanged(_)
                     | Message::ItemPropertyPhaseChanged(_)
                     | Message::MidiItemPropertyNameChanged(_)
                     | Message::CloseItemProperties
@@ -2447,6 +2449,11 @@ impl App {
                 if let Some(draft) = &mut self.item_properties {
                     draft.set_muted(muted);
                 } else if let Some(draft) = &mut self.midi_item_properties {
+                    draft.set_muted(muted);
+                }
+            }
+            Message::BatchItemPropertyMuteChanged(muted) => {
+                if let Some(draft) = &mut self.batch_item_properties {
                     draft.set_muted(muted);
                 }
             }

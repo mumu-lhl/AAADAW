@@ -13293,6 +13293,183 @@ fn item_toggle_mute_action_handles_mixed_audio_and_midi_selection_in_one_step() 
 }
 
 #[test]
+fn item_properties_batch_mute_edits_mixed_selection_in_one_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://batch-item-properties".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://batch-item-properties".into(),
+            start_sample: 4_800,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let second_audio_id = app.project.audio_items()[1].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetAudioItemMute {
+            item_id: audio_id,
+            muted: true,
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (audio_id, track_id),
+        (second_audio_id, track_id),
+        (midi_id, track_id),
+    ]);
+
+    let _ = app.update(Message::OpenItemProperties);
+    let draft = app
+        .batch_item_properties
+        .as_ref()
+        .expect("multiple selected items should open batch properties");
+    assert_eq!(draft.item_ids.len(), 3);
+    assert!(draft.item_ids.contains(&audio_id));
+    assert!(draft.item_ids.contains(&second_audio_id));
+    assert!(draft.item_ids.contains(&midi_id));
+    assert_eq!(
+        draft.muted, None,
+        "different mute values should display mixed"
+    );
+    assert!(app.item_properties.is_none());
+    assert!(app.midi_item_properties.is_none());
+
+    app.io_busy = true;
+    let _ = app.update(Message::BatchItemPropertyMuteChanged(true));
+    assert_eq!(
+        app.batch_item_properties.as_ref().unwrap().muted,
+        Some(true),
+        "property drafts remain editable while project I/O is busy"
+    );
+    app.io_busy = false;
+
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.audio_items()[1].is_muted());
+    assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.revision, revision + 1);
+    assert!(
+        !app.batch_item_properties
+            .as_ref()
+            .expect("Apply should keep the batch dialog open")
+            .has_changes()
+    );
+
+    let _ = app.update(Message::Undo);
+    assert!(app.project.audio_items()[0].is_muted());
+    assert!(!app.project.audio_items()[1].is_muted());
+    assert!(!app.project.midi_items()[0].is_muted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.audio_items()[1].is_muted());
+    assert!(app.project.midi_items()[0].is_muted());
+
+    let revision_before_cancel = app.revision;
+    let _ = app.update(Message::BatchItemPropertyMuteChanged(false));
+    let _ = app.update(Message::CloseItemProperties);
+    assert!(app.batch_item_properties.is_none());
+    assert_eq!(app.revision, revision_before_cancel);
+    assert!(app.project.audio_items().iter().all(|item| item.is_muted()));
+    assert!(app.project.midi_items()[0].is_muted());
+}
+
+#[test]
+fn item_properties_batch_mute_only_blocks_changed_midi_items_during_playback() {
+    fn selected_items(audio_muted: bool, midi_muted: bool) -> App {
+        let mut app = App::default();
+        let _ = app.update(Message::AddTrack);
+        let track_id = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://batch-item-playback".into(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let audio_id = app.project.audio_items()[0].id();
+        let midi_id = app.project.midi_items()[0].id();
+        app.project
+            .apply(DawAction::SetAudioItemMute {
+                item_id: audio_id,
+                muted: audio_muted,
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::SetMidiItemMute {
+                item_id: midi_id,
+                muted: midi_muted,
+            })
+            .unwrap();
+        app.timeline.rebuild(&app.project);
+        app.timeline
+            .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
+        let _ = app.update(Message::OpenItemProperties);
+        app
+    }
+
+    let mut no_op = selected_items(false, false);
+    assert!(no_op.batch_item_properties.as_ref().unwrap().muted == Some(false));
+    let revision = no_op.revision;
+    let _ = no_op.apply_batch_item_properties_with_playback(true, true);
+    assert!(no_op.batch_item_properties.is_none());
+    assert_eq!(no_op.revision, revision);
+
+    let mut audio_only = selected_items(false, true);
+    let _ = audio_only.update(Message::BatchItemPropertyMuteChanged(true));
+    let revision = audio_only.revision;
+    let _ = audio_only.apply_batch_item_properties_with_playback(false, true);
+    assert!(audio_only.project.audio_items()[0].is_muted());
+    assert!(audio_only.project.midi_items()[0].is_muted());
+    assert_eq!(audio_only.revision, revision + 1);
+
+    let mut midi_change = selected_items(false, false);
+    let _ = midi_change.update(Message::BatchItemPropertyMuteChanged(true));
+    let revision = midi_change.revision;
+    let _ = midi_change.apply_batch_item_properties_with_playback(false, true);
+    assert!(!midi_change.project.audio_items()[0].is_muted());
+    assert!(!midi_change.project.midi_items()[0].is_muted());
+    assert_eq!(midi_change.revision, revision);
+    assert!(
+        midi_change
+            .batch_item_properties
+            .as_ref()
+            .unwrap()
+            .error
+            .is_some()
+    );
+}
+
+#[test]
 fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
     use super::item_properties::{ItemProperties, ItemPropertyField};
     let mut app = App::default();

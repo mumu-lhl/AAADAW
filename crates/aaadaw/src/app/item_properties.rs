@@ -166,6 +166,31 @@ impl App {
         if let Some(id) = self.item_properties_window_id {
             return iced::window::gain_focus(id);
         }
+        if self.timeline.selected_items.len() > 1 {
+            let mut item_ids = self
+                .timeline
+                .selected_items
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            item_ids.sort_unstable_by_key(|item_id| item_id.value());
+            let Some(draft) = BatchItemProperties::from_project(&item_ids, &self.project) else {
+                return Task::none();
+            };
+            self.item_properties = None;
+            self.midi_item_properties = None;
+            self.batch_item_properties = Some(draft);
+            self.item_properties_generation = self.project_generation;
+            self.timeline.context_item = None;
+            self.timeline.context_fade = None;
+            let (id, task) = iced::window::open(iced::window::Settings {
+                size: iced::Size::new(526.0, 220.0),
+                min_size: Some(iced::Size::new(526.0, 220.0)),
+                ..iced::window::Settings::default()
+            });
+            self.item_properties_window_id = Some(id);
+            return task.discard();
+        }
         let Some(item_id) = self.timeline.selected_item else {
             return Task::none();
         };
@@ -181,6 +206,7 @@ impl App {
                 self.item_properties_unit,
             ));
             self.midi_item_properties = None;
+            self.batch_item_properties = None;
         } else if let Some(item) = self
             .project
             .midi_items()
@@ -193,6 +219,7 @@ impl App {
                 &self.project,
                 self.item_properties_unit,
             ));
+            self.batch_item_properties = None;
         } else {
             return Task::none();
         }
@@ -211,12 +238,16 @@ impl App {
     pub(super) fn close_item_properties(&mut self) -> Task<Message> {
         self.item_properties = None;
         self.midi_item_properties = None;
+        self.batch_item_properties = None;
         self.item_properties_window_id
             .take()
             .map_or_else(Task::none, iced::window::close)
     }
 
     pub(super) fn apply_item_properties(&mut self, close: bool) -> Task<Message> {
+        if self.batch_item_properties.is_some() {
+            return self.apply_batch_item_properties(close);
+        }
         if self.midi_item_properties.is_some() {
             return self.apply_midi_item_properties(close);
         }
@@ -386,6 +417,120 @@ impl App {
                 &self.project,
                 self.item_properties_unit,
             ));
+            Task::none()
+        }
+    }
+
+    fn apply_batch_item_properties(&mut self, close: bool) -> Task<Message> {
+        let playback_active = self.playback_active();
+        self.apply_batch_item_properties_with_playback(close, playback_active)
+    }
+
+    pub(super) fn apply_batch_item_properties_with_playback(
+        &mut self,
+        close: bool,
+        playback_active: bool,
+    ) -> Task<Message> {
+        if self.item_properties_generation != self.project_generation {
+            return self.close_item_properties();
+        }
+        let Some(draft) = &self.batch_item_properties else {
+            return Task::none();
+        };
+        let Some(target_muted) = draft.muted else {
+            return if close {
+                self.close_item_properties()
+            } else {
+                Task::none()
+            };
+        };
+        if !draft.mute_changed {
+            return if close {
+                self.close_item_properties()
+            } else {
+                Task::none()
+            };
+        }
+        let item_ids = draft.item_ids.clone();
+        let mut actions = Vec::new();
+        for item_id in &item_ids {
+            if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+            {
+                if item.is_muted() != target_muted {
+                    actions.push(aaadaw_core::DawAction::SetAudioItemMute {
+                        item_id: *item_id,
+                        muted: target_muted,
+                    });
+                }
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+            {
+                if item.is_muted() != target_muted {
+                    actions.push(aaadaw_core::DawAction::SetMidiItemMute {
+                        item_id: *item_id,
+                        muted: target_muted,
+                    });
+                }
+            } else {
+                return self.close_item_properties();
+            }
+        }
+        if playback_active
+            && actions
+                .iter()
+                .any(|action| matches!(action, aaadaw_core::DawAction::SetMidiItemMute { .. }))
+        {
+            let error = "Stop playback before changing MIDI item mute".to_owned();
+            self.status = error.clone();
+            self.batch_item_properties
+                .as_mut()
+                .expect("open batch item draft")
+                .error = Some(error);
+            return Task::none();
+        }
+        if !actions.is_empty() {
+            let action = if actions.len() == 1 {
+                actions.pop().expect("one changed selected item")
+            } else {
+                aaadaw_core::DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                }
+            };
+            self.apply_action(action, "Item properties applied");
+            let all_match = item_ids.iter().all(|item_id| {
+                self.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .is_some_and(|item| item.is_muted() == target_muted)
+                    || self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == *item_id)
+                        .is_some_and(|item| item.is_muted() == target_muted)
+            });
+            if !all_match {
+                self.batch_item_properties
+                    .as_mut()
+                    .expect("open batch item draft")
+                    .error = Some(self.status.clone());
+                return Task::none();
+            }
+        }
+        if close {
+            self.close_item_properties()
+        } else {
+            self.batch_item_properties =
+                BatchItemProperties::from_project(&item_ids, &self.project);
             Task::none()
         }
     }
@@ -591,6 +736,62 @@ pub(crate) enum ItemPropertyField {
     SourceOffset,
     TakeVolume,
     TakePan,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BatchItemProperties {
+    pub(crate) item_ids: Vec<ItemId>,
+    pub(crate) muted: Option<bool>,
+    pub(crate) error: Option<String>,
+    initial_muted: Option<bool>,
+    mute_changed: bool,
+}
+
+impl BatchItemProperties {
+    fn from_project(item_ids: &[ItemId], project: &Project) -> Option<Self> {
+        if item_ids.len() < 2 {
+            return None;
+        }
+        let states = item_ids
+            .iter()
+            .map(|item_id| {
+                project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| item.is_muted())
+                    .or_else(|| {
+                        project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .map(|item| item.is_muted())
+                    })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let first_muted = *states.first()?;
+        let muted = states
+            .iter()
+            .all(|muted| *muted == first_muted)
+            .then_some(first_muted);
+        Some(Self {
+            item_ids: item_ids.to_vec(),
+            muted,
+            error: None,
+            initial_muted: muted,
+            mute_changed: false,
+        })
+    }
+
+    pub(crate) fn set_muted(&mut self, muted: bool) {
+        self.mute_changed = self.initial_muted != Some(muted);
+        self.muted = Some(muted);
+        self.error = None;
+    }
+
+    pub(crate) fn has_changes(&self) -> bool {
+        self.mute_changed
+    }
 }
 
 impl ItemPropertyField {

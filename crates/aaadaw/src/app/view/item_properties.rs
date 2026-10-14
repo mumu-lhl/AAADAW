@@ -1,11 +1,14 @@
 use super::super::{
     App, Message,
-    item_properties::{ItemPropertyField, MidiItemProperties, TimeUnit},
+    item_properties::{BatchItemProperties, ItemPropertyField, MidiItemProperties, TimeUnit},
 };
 use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input};
 use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    if let Some(draft) = &app.batch_item_properties {
+        return batch_item_view(draft);
+    }
     if let Some(draft) = &app.midi_item_properties {
         return midi_item_view(draft);
     }
@@ -111,6 +114,44 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(6)
     ]
     .spacing(4);
+    container(content)
+        .padding(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn batch_item_view(draft: &BatchItemProperties) -> Element<'_, Message> {
+    let mute_controls: Element<'_, Message> = match draft.muted {
+        Some(muted) => checkbox(muted)
+            .label("Mute")
+            .on_toggle(Message::BatchItemPropertyMuteChanged)
+            .into(),
+        None => row![
+            text("Mixed values"),
+            button("Mute all").on_press(Message::BatchItemPropertyMuteChanged(true)),
+            button("Unmute all").on_press(Message::BatchItemPropertyMuteChanged(false)),
+        ]
+        .spacing(6)
+        .into(),
+    };
+    let content = column![
+        text(format!("{} selected items", draft.item_ids.len())),
+        row![text("Mute:").width(120), mute_controls].spacing(6),
+        text(draft.error.as_deref().unwrap_or("")).size(12),
+        row![
+            iced::widget::Space::new().width(Length::Fill),
+            button("OK").on_press(Message::ApplyItemProperties(true)),
+            button("Cancel").on_press(Message::CloseItemProperties),
+            button("Apply").on_press_maybe(
+                draft
+                    .has_changes()
+                    .then_some(Message::ApplyItemProperties(false))
+            ),
+        ]
+        .spacing(6)
+    ]
+    .spacing(8);
     container(content)
         .padding(8)
         .width(Length::Fill)

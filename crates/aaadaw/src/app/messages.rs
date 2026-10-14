@@ -235,6 +235,7 @@ pub(crate) enum Message {
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
     ItemPropertyLoopSourceChanged(bool),
     ItemPropertyMuteChanged(bool),
+    BatchItemPropertyMuteChanged(bool),
     ItemPropertyPhaseChanged(bool),
     MidiItemPropertyNameChanged(String),
     ToggleSelectedItemsMute,
