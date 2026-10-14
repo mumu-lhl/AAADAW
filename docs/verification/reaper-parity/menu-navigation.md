@@ -26,6 +26,8 @@ Linux REAPER 7.82 的 File 菜单和 Action List 还提供没有默认快捷键�
 
 REAPER Main action 40015 的 Action List 名称为 `File: Render project to disk...`、默认 Ctrl+Alt+R，File 菜单显示 `Render...`。AAADAW 现在用该原厂短标签和快捷键打开已有渲染窗口；Action List 分类/名称也与原厂一致。原厂与 AAADAW File 菜单截图、版本和 SHA-256 见 [Render action fixture](fixtures/menu-render-action-aaadaw.tsv)，快捷键回归同步检查菜单与 Action List 注册。当前渲染实现仍只覆盖 WAV；REAPER 其它输出格式、Render to File 完整控件和逐项视觉对齐尚未完成。
 
+File 菜单的 Main action 40929 `File: Open render queue` 没有默认快捷键，原厂短标签为 `Queued Renders`。AAADAW 为其注册独立 Action List 项和同名菜单标签，执行时打开已有的 Offline Jobs 面板；重复执行保持面板打开，View 菜单中的 Toggle Offline Jobs 则继续负责开关。实窗菜单、原厂菜单参考、哈希和测试范围见 [Render queue fixture](fixtures/menu-render-queue-aaadaw.tsv)。原厂 Render Queue 与 AAADAW Offline Jobs 面板的内容/布局还未对齐。
+
 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 覆盖 File 菜单标签/快捷键、Action List 名称、修改后取消，以及 Don't Save 后关闭工程并清空当前轨道、路径和修订号。`successful_save_before_close_project_clears_the_open_project` 覆盖 Save 成功后继续关闭。实窗 Ctrl+F4 确认对未保存工程弹出保护框，步骤和哈希见上方 fixture。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。

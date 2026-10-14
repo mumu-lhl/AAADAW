@@ -1866,6 +1866,7 @@ impl App {
                     | Message::ProjectNotesWrapChanged(_)
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
+                    | Message::OpenRenderQueue
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
@@ -2424,6 +2425,7 @@ impl App {
                 task = self.open_settings();
             }
             Message::OpenRenderWindow => task = self.open_render_window(),
+            Message::OpenRenderQueue => self.offline_jobs_panel_open = true,
             Message::OpenItemProperties => task = self.open_item_properties(),
             Message::OpenItemNudge => task = self.open_item_nudge(),
             Message::CloseItemNudge => task = self.close_item_nudge(),

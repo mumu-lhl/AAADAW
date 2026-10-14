@@ -22,6 +22,7 @@ pub(crate) enum CommandId {
     CloseProject,
     CloseAllProjects,
     ExportWav,
+    OpenRenderQueue,
     CancelOfflineRender,
     OpenSettings,
     OpenAbout,
@@ -145,6 +146,7 @@ enum CommandKind {
     CloseProject,
     CloseAllProjects,
     ExportWav,
+    OpenRenderQueue,
     CancelOfflineRender,
     OpenSettings,
     OpenAbout,
@@ -420,6 +422,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: true,
     },
     CommandDefinition {
+        kind: CommandKind::OpenRenderQueue,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Open render queue",
+        aliases: &["open render queue", "queued renders", "render queue"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::CancelOfflineRender,
         menu: Some(MainMenu::File),
         category: "File",
@@ -528,7 +540,7 @@ const COMMANDS: &[CommandDefinition] = &[
         menu: Some(MainMenu::View),
         category: "View",
         label: "Toggle Offline Jobs",
-        aliases: &["show offline jobs", "hide offline jobs", "render queue"],
+        aliases: &["show offline jobs", "hide offline jobs"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -1745,6 +1757,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
     {
         render.label = "Render...".to_owned();
     }
+    if menu == MainMenu::File
+        && let Some(render_queue) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::OpenRenderQueue)
+    {
+        render_queue.label = "Queued Renders".to_owned();
+    }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
             .into_iter()
@@ -2209,6 +2228,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::CloseProject => "file.close-project",
         CommandKind::CloseAllProjects => "file.close-all-projects",
         CommandKind::ExportWav => "audio.export-wav",
+        CommandKind::OpenRenderQueue => "file.open-render-queue",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
         CommandKind::OpenAbout => "help.about",
@@ -2362,6 +2382,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
         CommandId::SaveProjectNewVersion => Message::SaveProjectNewVersion,
         CommandId::ExportWav => Message::OpenRenderWindow,
+        CommandId::OpenRenderQueue => Message::OpenRenderQueue,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
         CommandId::OpenAbout => Message::OpenAbout,
@@ -2686,6 +2707,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && !recording_busy(app)
                 && app.offline_job_submission_allowed()
         }
+        CommandKind::OpenRenderQueue => true,
         CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => {
             (app.project.can_undo()
@@ -2972,6 +2994,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::CloseProject => CommandId::CloseProject,
         CommandKind::CloseAllProjects => CommandId::CloseAllProjects,
         CommandKind::ExportWav => CommandId::ExportWav,
+        CommandKind::OpenRenderQueue => CommandId::OpenRenderQueue,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,
         CommandKind::OpenAbout => CommandId::OpenAbout,

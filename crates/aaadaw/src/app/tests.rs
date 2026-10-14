@@ -5654,6 +5654,51 @@ fn offline_jobs_panel_is_available_from_view_menu_and_action_search() {
 }
 
 #[test]
+fn native_open_render_queue_action_opens_the_offline_jobs_panel_idempotently() {
+    let mut app = App::default();
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let render_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::ExportWav)
+        .expect("File menu should expose Render");
+    let queue = file_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::OpenRenderQueue)
+        .expect("File menu should expose Queued Renders");
+    let queue_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::OpenRenderQueue)
+        .unwrap();
+    assert_eq!(queue.label, "Queued Renders");
+    assert!(queue.enabled);
+    assert_eq!(queue.shortcut, None);
+    assert_eq!(queue_index, render_index + 1);
+
+    let action = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == CommandId::OpenRenderQueue)
+        .expect("Action List should expose the native File action");
+    assert_eq!(action.category, "File");
+    assert_eq!(action.label, "Open render queue");
+    assert_eq!(action.shortcut, None);
+    assert_eq!(
+        commands::matching_actions_menu(&app, "render queue")
+            .first()
+            .map(|entry| entry.id),
+        Some(CommandId::OpenRenderQueue)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenRenderQueue));
+    assert!(app.offline_jobs_panel_open);
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenRenderQueue));
+    assert!(
+        app.offline_jobs_panel_open,
+        "Open render queue must not toggle closed"
+    );
+}
+
+#[test]
 fn track_controls_and_undo_change_project_only_through_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

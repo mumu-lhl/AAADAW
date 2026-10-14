@@ -943,3 +943,9 @@ Nightly + Cranelift 三项定向 nextest 3/3、最终源码上的 AAADAW app 目
 原厂 Main action 40015 的 Action List 名称是 `File: Render project to disk...` / Ctrl+Alt+R，File 菜单短标签是 `Render...`。AAADAW 现将此动作映射至现有渲染窗口，并更新默认组合键、Action List 名称和菜单短标签；窗口仍显示并输出当前实现支持的 WAV。原厂与 AAADAW File 菜单实窗图、哈希、环境和对照范围见 [Render action fixture](../verification/reaper-parity/fixtures/menu-render-action-aaadaw.tsv)。
 
 `wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu` 定向回归覆盖菜单标签、Action List 名称/分类、Ctrl+Alt+R 默认值与实际解析，并继续验证渲染/排队中可取消及录音期间禁用状态。最终源码上的 Nightly + Cranelift 定向测试 1/1、AAADAW app 目标全量 562/562 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。REAPER 的非 WAV 编码、完整 Render to File 面板及整体视觉对齐仍未实现，`SHELL-MENU-KEYBOARD-001` 和 Render 原子项继续 `in_progress`。
+
+### 2026-10-14 File 菜单 Queued Renders
+
+原厂 Main action 40929 的 Action List 名称为 `File: Open render queue`，无默认快捷键，File 菜单显示 `Queued Renders`。AAADAW 增加独立动作并复用现有 Offline Jobs 面板；Open 操作幂等，不会像 View 菜单 Toggle Offline Jobs 那样关闭已打开的面板。原厂/AAADAW File 菜单截图、哈希、环境和范围见 [Render queue fixture](../verification/reaper-parity/fixtures/menu-render-queue-aaadaw.tsv)。
+
+Nightly + Cranelift 定向回归 2/2、最终源码上的 AAADAW app 目标全量 563/563 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。回归验证菜单顺序、Action List 分类/名称、无快捷键、Action List 搜索唯一命中，以及连续调用后面板仍打开。原厂 Render Queue 对话框与 AAADAW Offline Jobs 面板布局/操作还有差异，完整 File 菜单与窗口视觉继续为 `in_progress`。

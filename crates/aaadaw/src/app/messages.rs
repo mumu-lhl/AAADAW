@@ -199,6 +199,7 @@ pub(crate) enum Message {
     ActionListRun(bool),
     OpenClapPluginSettings,
     OpenRenderWindow,
+    OpenRenderQueue,
     OpenProjectSettings,
     CloseProjectSettings,
     ApplyProjectSettings,
