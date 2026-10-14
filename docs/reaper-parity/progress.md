@@ -696,3 +696,11 @@ REAPER 7.82 / Default 7 原厂 File 菜单打开后，ArrowUp 从初始顶部位
 核对发现 `SHELL-DOCK-001` 的“当前互斥 workspace”描述过时：Linux Desktop profile 已默认在同一窗口显示 Arrange 和 Mixer；Arrange/Mixer 工作区切换仅用于 Touch profile。用全新 REAPER 7.82 配置、Default 主题和 Dummy Audio（虚拟环境无硬件）复验冷启动默认布局，再插入一条空轨确认同一 Track 同时出现在 TCP/MCP；AAADAW 实窗也显示 Arrange、Mixer 和同一 Audio 1。原厂默认、原厂同轨和 AAADAW 截图及哈希见 [Arrange/Mixer fixture](../verification/reaper-parity/fixtures/arrange-mixer-dock.tsv)。
 
 nightly+Cranelift 的两项 focused nextest 2/2 passed、535 skipped，覆盖 Mixer/Media Browser 开关、独立比例、轨道 ID 保留和布局保存/恢复；编译保留既有 iced/wgpu `TimelinePipeline: MaybeSync` 递归深度警告。矩阵修正为 `in_progress`，不以截图或这两项回归宣称 Docker parity 完成：边缘停靠、标签页、浮动窗口、默认几何和 TCP/MCP 控件双向编辑仍待验证。
+
+### 2026-10-14 Item 菜单空工程 Select all
+
+提交：`41678b3`。
+
+Linux REAPER 7.82 / Default 7 在一条空轨且无媒体项时仍启用 Item > Select all。AAADAW 已将现有选择动作接入 Item 菜单并使用原厂命令名称；空工程执行保持无选择、无 revision 变化。原厂和 AAADAW 实窗截图、环境、空工程状态及 SHA-256 见 [Item Select all fixture](../verification/reaper-parity/fixtures/menu-item-select-all.tsv)。两图显示菜单条目和启用状态，不构成完整布局对照：AAADAW 当前把它放在首项，REAPER 前面还有尚未实现的命令。
+
+`item_menu_exposes_enabled_select_all_for_an_empty_project` 和原有的音频/MIDI 全选测试通过；更新旧测试对空工程禁用的断言。nightly + Cranelift `aaadaw` 全量 nextest 538/538 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、parity CSV 92 个唯一 ID/15 列及新增截图哈希检查通过。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`：其它 Item/Track 命令与子菜单、完整禁用/勾选状态、命令顺序、视觉及焦点行为仍未完成。
