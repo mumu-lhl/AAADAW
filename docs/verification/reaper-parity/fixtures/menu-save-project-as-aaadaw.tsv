@@ -1,0 +1,12 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_action	40022 / File: Save project as... / Ctrl+Alt+S
+native_reference_screenshot	menu-file-native.png
+aaadaw_environment	Linux AAADAW / Xvfb :230 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_label	Save project as...
+aaadaw_default_shortcut	Ctrl+Alt+S
+aaadaw_screenshot	menu-file-close-project-aaadaw.png
+aaadaw_screenshot_sha256	c9f33ec9fd3aa4630f8c1af199e4d8d05868013ef606b1541ef2517086caa8ee
+test	crates/aaadaw/src/app/tests.rs::save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker
+test_result	The default chord resolves to SaveProjectAs; dispatch sets path_picker_busy and dismisses the menu
+limit	The File menu binding is screenshot-verified; Xvfb did not expose a visible native file-picker window for screenshot comparison

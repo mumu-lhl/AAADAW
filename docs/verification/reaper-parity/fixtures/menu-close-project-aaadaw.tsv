@@ -6,7 +6,7 @@ native_reference_screenshot	menu-file-native.png
 aaadaw_environment	Linux AAADAW / Xvfb :229 / 1280x800 / fresh isolated XDG profile / audio unavailable
 aaadaw_menu_action	Open File; Close project appears after Save project as and before Render project to WAV; shortcut Ctrl+F4
 aaadaw_menu_screenshot	menu-file-close-project-aaadaw.png
-aaadaw_menu_screenshot_sha256	834ee83cdd56524756851868965f65e62f492b5015e4c27416c0234e70759da8
+aaadaw_menu_screenshot_sha256	c9f33ec9fd3aa4630f8c1af199e4d8d05868013ef606b1541ef2517086caa8ee
 aaadaw_close_action	Add one track; press Ctrl+F4
 aaadaw_confirmation	Save changes before continuing? The current project has unsaved changes. Closing the current project will leave an empty project workspace.
 aaadaw_confirmation_screenshot	menu-close-project-confirmation-aaadaw.png

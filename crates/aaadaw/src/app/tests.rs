@@ -2763,6 +2763,43 @@ fn close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed(
 }
 
 #[test]
+fn save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        ..App::default()
+    };
+    let save_as = commands::for_menu(&app, MainMenu::File)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::SaveProjectAs)
+        .expect("File menu should expose Save project as");
+    assert_eq!(save_as.label, "Save project as...");
+    let binding = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "file.save-project-as")
+        .expect("Save project as should have a configurable shortcut entry");
+    assert_eq!(binding.default_binding, "Ctrl+Alt+S");
+    let bindings = app
+        .shortcut_bindings
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("s"),
+            Modifiers::CTRL.union(Modifiers::ALT),
+            &bindings,
+            &app.action_macros,
+        ),
+        Some(CommandId::SaveProjectAs)
+    );
+    drop(bindings);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::SaveProjectAs));
+    assert!(app.path_picker_busy);
+    assert_eq!(app.active_menu, None);
+}
+
+#[test]
 fn quit_matches_native_file_menu_and_uses_dirty_close_confirmation() {
     let window_id = iced::window::Id::unique();
     let mut app = App {
@@ -4438,7 +4475,7 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
             .find(|entry| entry.id == "file.save-project-as")
             .unwrap()
             .binding,
-        ""
+        commands::format_shortcut_label("Ctrl+Alt+S")
     );
     assert_eq!(
         commands::shortcut_entries(&app)
@@ -4454,7 +4491,7 @@ fn settings_categories_preserve_edits_and_actions_restore_individual_defaults() 
             .find(|entry| entry.id == "file.save-project-as")
             .unwrap()
             .binding,
-        ""
+        commands::format_shortcut_label("Ctrl+Alt+S")
     );
 }
 

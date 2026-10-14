@@ -235,6 +235,10 @@ const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::
 const QUIT_SHORTCUT: &[Shortcut] = &[Shortcut::character('q', Modifiers::CTRL)];
 const CLOSE_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F4, Modifiers::CTRL)];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
+const SAVE_PROJECT_AS_SHORTCUT: &[Shortcut] = &[Shortcut::character(
+    's',
+    Modifiers::CTRL.union(Modifiers::ALT),
+)];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
 const PASTE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('v', Modifiers::CTRL)];
@@ -332,9 +336,16 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::SaveProjectAs,
         menu: Some(MainMenu::File),
         category: "File",
-        label: "Save project as…",
-        aliases: &["save project as", "save project as…", "save as", "save as…"],
-        shortcuts: &[],
+        label: "Save project as...",
+        aliases: &[
+            "save project as",
+            "save project as...",
+            "save project as…",
+            "save as",
+            "save as...",
+            "save as…",
+        ],
+        shortcuts: SAVE_PROJECT_AS_SHORTCUT,
         destructive: false,
         separator_before: false,
     },

@@ -919,3 +919,9 @@ Nightly + Cranelift 定向回归 `quit_matches_native_file_menu_and_uses_dirty_c
 REAPER File 菜单的 `Close project` 对应 Main Action 40860 `Close current project tab` / Ctrl+F4。AAADAW 现在注册该可配置动作；对已修改工程使用统一 Save / Don't Save / Cancel 转换，确认关闭后清空当前工程、路径、选择及修订状态并创建空工程工作区。实窗菜单顺序、Ctrl+F4 未保存确认截图和 SHA-256 见 [Close project fixture](../verification/reaper-parity/fixtures/menu-close-project-aaadaw.tsv)。
 
 Nightly + Cranelift 定向回归 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 与 `successful_save_before_close_project_clears_the_open_project` 2/2 passed，覆盖菜单、Ctrl+F4 默认绑定、Action List 原厂动作名、取消保留、Save 后关闭及 Don't Save 关闭。此行为只支持单工程；REAPER 多标签及 Close all projects 仍未实现，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
+
+### 2026-10-14 File 菜单 Save project as Ctrl+Alt+S
+
+REAPER Main Action 40022 的原厂名称为 `File: Save project as...`，默认 Ctrl+Alt+S。AAADAW 将 File 菜单标签的省略号和组合键补齐；快捷键使用现有 SaveProjectAs/原生文件选择器路径。实窗 File 菜单截图显示保存、关闭和退出命令及各自快捷键，SHA-256 见 [Save project as fixture](../verification/reaper-parity/fixtures/menu-save-project-as-aaadaw.tsv)。
+
+Nightly + Cranelift 定向回归 `save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker` 1/1 passed，验证 Ctrl+Alt+S 解码为 SaveProjectAs、打开保存选择器状态并关闭菜单。Xvfb 中未捕获到可见的原生文件选择器窗口，故只验证菜单截图和应用内路由，不宣称选择器视觉一致。File 菜单及键盘焦点仍有其它未实现命令，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
