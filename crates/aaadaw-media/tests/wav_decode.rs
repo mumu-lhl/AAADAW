@@ -2,7 +2,7 @@ use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
 use aaadaw_media::{
     AudioStreamDecoder, AudioWaveform, spawn_audio_item_stream, spawn_audio_item_stream_at,
-    spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
+    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
     spawn_stereo_audio_item_stream_from_reader,
 };
 use aaadaw_storage::ProjectStore;
@@ -323,6 +323,390 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
     }
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped audio".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://looped-wav".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            source_section_start_samples: 1,
+            length_samples: 10,
+            source_section_length_samples: 3,
+        })
+        .expect("looped audio item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit the repeated section");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("looped item feeder should start");
+    worker
+        .join()
+        .expect("worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("looped item stream should match the project item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("looped audio should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected = [
+        0.75_f32, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75,
+    ];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!(
+            (frame[0] - expected_sample * center_gain).abs() < 1.0e-4,
+            "output: {output:?}"
+        );
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+
+    let (producer, consumer) = pcm_stream(16).expect("seek queue should fit the repeated section");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        4,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("looped item seek feeder should start");
+    worker
+        .join()
+        .expect("worker should seek within the repeated source section");
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_at_sample(item.id(), 4, consumer)],
+        6,
+    )
+    .expect("seeked loop stream should match the project item");
+    graph.transport_mut().seek_sample(4);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("seeked loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [-0.25_f32, 0.5, 0.75, -0.25, 0.5, 0.75];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn looped_audio_item_without_a_bounded_section_repeats_the_entire_source() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Whole-source loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://whole-source-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 1,
+            length_samples: 10,
+        })
+        .expect("audio item should be inserted");
+    let mut snapshot = project.snapshot();
+    snapshot.audio_items[0].loop_source = true;
+    let project = Project::from_snapshot(snapshot).expect("whole-source loop should be valid");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit repeated source frames");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("whole-source loop feeder should start");
+    worker
+        .join()
+        .expect("worker should restart the complete source at EOF");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("whole-source stream should match the item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("whole-source loop should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected = [
+        0.5_f32, 0.75, -0.25, 0.25, 0.5, 0.75, -0.25, 0.25, 0.5, 0.75,
+    ];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!(
+            (frame[0] - expected_sample * center_gain).abs() < 1.0e-4,
+            "output: {output:?}"
+        );
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn looped_audio_item_rejects_a_source_section_that_runs_past_eof() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Invalid loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://invalid-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 3,
+            source_section_start_samples: 3,
+            length_samples: 8,
+            source_section_length_samples: 2,
+        })
+        .expect("looped item metadata should be structurally valid");
+    let item = &project.audio_items()[0];
+    let (producer, _consumer) = pcm_stream(16).expect("queue should fit the source section");
+    let worker = spawn_audio_item_stream_from_reader(
+        item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("worker should start before the media bounds are decoded");
+    assert!(matches!(
+        worker.join(),
+        Err(aaadaw_media::MediaError::AudioLoopSectionExceedsSource)
+    ));
+}
+
+#[test]
+fn looped_stereo_audio_item_repeats_through_the_realtime_stereo_stream() {
+    let bytes = stereo_pcm_wav(
+        &[[8_192, -8_192], [16_384, -16_384], [24_576, -24_576]],
+        48_000,
+    );
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped stereo".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://looped-stereo".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            source_section_start_samples: 0,
+            length_samples: 5,
+            source_section_length_samples: 2,
+        })
+        .expect("stereo looped item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(8).expect("stereo queue should have capacity");
+    let worker = spawn_stereo_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("stereo loop feeder should start");
+    worker
+        .join()
+        .expect("stereo worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo(item.id(), consumer)],
+        5,
+    )
+    .expect("stereo stream should match the looped item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 5];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("stereo loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [
+        [0.25_f32, -0.25],
+        [0.5, -0.5],
+        [0.25, -0.25],
+        [0.5, -0.5],
+        [0.25, -0.25],
+    ];
+    for (frame, expected) in output.iter().zip(expected) {
+        assert!((frame[0] - expected[0]).abs() < 1.0e-4);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn looped_cached_source_restarts_at_the_bounded_source_section() {
+    let bytes = stereo_pcm_wav(
+        &[[8_192, -8_192], [16_384, -16_384], [24_576, -24_576]],
+        48_000,
+    );
+    let source = aaadaw_media::decode_audio_source_for_cache(
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        1_024,
+    )
+    .expect("small test source should decode for cache")
+    .expect("test source should fit the cache budget");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Cached loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://cached-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 1,
+            source_section_start_samples: 1,
+            length_samples: 5,
+            source_section_length_samples: 2,
+        })
+        .expect("cached loop item should be inserted");
+    let item = &project.audio_items()[0];
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(8).expect("stereo queue should have capacity");
+    let worker = aaadaw_media::spawn_cached_stereo_audio_item_stream_with_quality(
+        item,
+        3,
+        Arc::new(source),
+        48_000,
+        producer,
+        aaadaw_media::ResamplingQuality::Sinc192,
+    )
+    .expect("cached loop feeder should start");
+    worker
+        .join()
+        .expect("cached worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo_at_sample(
+            item.id(),
+            3,
+            consumer,
+        )],
+        2,
+    )
+    .expect("cached stream should match the looped item");
+    graph.transport_mut().seek_sample(3);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 2];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("cached loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [[0.75_f32, -0.75], [0.5, -0.5]];
+    for (frame, expected) in output.iter().zip(expected) {
+        assert!((frame[0] - expected[0]).abs() < 1.0e-4);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn large_looped_reader_rewinds_the_decoder_for_each_source_cycle() {
+    let loop_frames = 262_145_u64;
+    let bytes = pcm_wav(&vec![8_192; loop_frames as usize], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Large loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://large-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            source_section_start_samples: 0,
+            length_samples: loop_frames + 1,
+            source_section_length_samples: loop_frames,
+        })
+        .expect("large looped item should be inserted");
+    let item = &project.audio_items()[0];
+    let (producer, mut consumer) =
+        pcm_stream((loop_frames + 1) as usize).expect("queue should hold both loop cycles");
+    let worker = spawn_audio_item_stream_from_reader(
+        item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("large loop feeder should start");
+    worker
+        .join()
+        .expect("worker should rewind the decoder at the loop boundary");
+
+    let mut output = vec![0.0; (loop_frames + 1) as usize];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert!(
+        output[loop_frames as usize - 2..]
+            .iter()
+            .all(|sample| (*sample - 0.25).abs() < 1.0e-4)
+    );
 }
 
 #[test]

@@ -18,6 +18,7 @@ pub struct AudioItem {
     pub(crate) source_offset_samples: u64,
     pub(crate) length_samples: u64,
     pub(crate) loop_source: bool,
+    pub(crate) source_section_start_samples: Option<u64>,
     pub(crate) source_section_length_samples: Option<u64>,
     pub(crate) fades: crate::AudioItemFades,
     pub(crate) volume: f32,
@@ -59,6 +60,11 @@ impl AudioItem {
     /// Returns whether the item's source repeats when playback reaches its end.
     pub fn is_loop_source(&self) -> bool {
         self.loop_source
+    }
+
+    /// Returns the first source frame in a bounded loop section.
+    pub fn source_section_start_samples(&self) -> Option<u64> {
+        self.source_section_start_samples
     }
 
     /// Returns the source-section length in source frames when this item loops a copied section.

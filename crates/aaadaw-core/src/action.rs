@@ -264,6 +264,7 @@ pub enum DawAction {
         start_sample: u64,
         source_offset_samples: u64,
         length_samples: u64,
+        source_section_start_samples: u64,
         source_section_length_samples: u64,
     },
     /// Set both manual Item fades as one undoable edit.

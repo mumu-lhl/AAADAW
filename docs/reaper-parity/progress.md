@@ -802,3 +802,13 @@ Nightly + Cranelift Nudge focused nextest 11/11 passed，覆盖 44.1 kHz source 
 AudioItem 现在持久化 `B_LOOPSRC` 与可选 source-section 长度；schema 42 对旧工程以循环关闭/完整源默认值迁移。Copy loop 根据素材采样率保存所选源段长度，Paste 创建带循环源标记的音频项，撤销/重做和 SQLite 保存/重开保留该元数据。正常导入与冻结渲染继续使用循环关闭默认值。
 
 Nightly + Cranelift `aaadaw-core`、`aaadaw-storage` 与 `aaadaw` nextest 749/749 passed；覆盖 schema 41 的增量迁移、旧音频表被重新创建、source-section 往返与 44.1/48 kHz Copy/Paste 换算。Stable all-target Clippy、fmt、diff 检查通过。该步骤只建立数据模型与粘贴状态；实时播放、离线渲染和 Nudge Contents 仍未消费循环标记，因此循环源功能保持 `in_progress`。
+
+### 2026-10-14 B_LOOPSRC source-section playback and Contents wrap
+
+在 schema 42 的循环标志/长度后新增 schema 43 `source_section_start_samples`。旧 schema 42 bounded loop 项以其原有 `source_offset_samples` 回填循环段起点；循环段起点、长度与当前源偏移在 Core/Snapshot/SQLite 中共同校验和往返。Copy/Paste 继续从复制时的源偏移建立新段起点。
+
+后台媒体 worker 现在按 REAPER item 的循环源顺序处理：bounded section 首轮从当前源偏移播放到固定段尾，随后从固定段起点循环；没有 bounded section 的 B_LOOPSRC 项在完整媒体 EOF 后从源头重启。短 bounded section 在解码 worker 内缓存完整循环段，较长循环段和完整源循环由可重启解码器继续读取；这些路径均不在实时 callback 中做文件 I/O 或分配。Mono/stereo、realtime Sinc64、offline Sinc192、媒体 seek、共享 embedded source cache 与超过 1 MiB 的解码路径有回归覆盖。两轨共享嵌入素材的端到端测试验证了实时混音与离线 WAV 中的重复帧。
+
+Audio Contents Nudge 现在按源采样率把偏移限制在 loop source 的固定段内（完整源循环使用媒体帧范围），并保持循环段边界、item 时间位置和长度不变；Undo 仍作为同一步工程修改。复制范围跨过已有 loop 边界时当前明确拒绝，因为单一连续媒体段不能准确表示拼接后的循环内容。
+
+Nightly + Cranelift 的 Core/Storage/Media/App/desktop nextest 为 869/869 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Linux REAPER 7.82 的 Copy loop 探针曾确认 `B_LOOPSRC=1` 和源段长度；本轮没有重新探测 Contents 回绕边界，也没有为新增音频行为制作 REAPER/AAADAW 实窗截图。`ITEM-AUDIO-COPYLOOP-001` 与 `ITEM-NUDGE-SET-001` 继续 `in_progress`：原厂回绕与跨边界复制语义、Item/take mix/fade/rate 元数据、目标专属 Set/Snap、完整剪贴板与整套 UI 对齐仍待完成。全源循环在当前模型与媒体 worker 可用，但 UI 尚未提供对应的 B_LOOPSRC 切换入口。

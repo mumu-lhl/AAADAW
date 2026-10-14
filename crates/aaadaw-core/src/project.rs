@@ -1689,6 +1689,7 @@ impl Project {
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
                     loop_source: item.loop_source,
+                    source_section_start_samples: item.source_section_start_samples,
                     source_section_length_samples: item.source_section_length_samples,
                 })
                 .collect(),
@@ -1968,9 +1969,23 @@ impl Project {
                 || !(-1.0..=1.0).contains(&item.take_pan)
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
-                || item
-                    .source_section_length_samples
-                    .is_some_and(|length| length == 0 || !item.loop_source)
+                || match (
+                    item.loop_source,
+                    item.source_section_start_samples,
+                    item.source_section_length_samples,
+                ) {
+                    (false, None, None) | (true, None, None) => false,
+                    (true, Some(section_start), Some(section_length)) => {
+                        section_length == 0
+                            || section_start
+                                .checked_add(section_length)
+                                .is_none_or(|section_end| {
+                                    item.source_offset_samples < section_start
+                                        || item.source_offset_samples >= section_end
+                                })
+                    }
+                    _ => true,
+                }
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -1987,6 +2002,7 @@ impl Project {
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
                 loop_source: item.loop_source,
+                source_section_start_samples: item.source_section_start_samples,
                 source_section_length_samples: item.source_section_length_samples,
             });
         }
@@ -2840,6 +2856,7 @@ impl Project {
                     source_offset_samples: 0,
                     length_samples,
                     loop_source: false,
+                    source_section_start_samples: None,
                     source_section_length_samples: None,
                 };
                 ids.next_item_id = next_id;
@@ -3058,6 +3075,7 @@ impl Project {
                     source_offset_samples,
                     length_samples,
                     loop_source: false,
+                    source_section_start_samples: None,
                     source_section_length_samples: None,
                 };
                 ids.next_item_id = next_id;
@@ -3072,6 +3090,7 @@ impl Project {
                 start_sample,
                 source_offset_samples,
                 length_samples,
+                source_section_start_samples,
                 source_section_length_samples,
             } => {
                 if !state.tracks.iter().any(|track| track.id == track_id) {
@@ -3093,9 +3112,13 @@ impl Project {
                 if start_sample.checked_add(length_samples).is_none() {
                     return Err(ActionError::InvalidAudioItemPosition);
                 }
-                if source_offset_samples
-                    .checked_add(source_section_length_samples)
-                    .is_none()
+                let Some(source_section_end_samples) =
+                    source_section_start_samples.checked_add(source_section_length_samples)
+                else {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                };
+                if source_section_start_samples > source_offset_samples
+                    || source_offset_samples >= source_section_end_samples
                 {
                     return Err(ActionError::InvalidAudioItemPosition);
                 }
@@ -3115,6 +3138,7 @@ impl Project {
                     source_offset_samples,
                     length_samples,
                     loop_source: true,
+                    source_section_start_samples: Some(source_section_start_samples),
                     source_section_length_samples: Some(source_section_length_samples),
                 };
                 ids.next_item_id = next_id;

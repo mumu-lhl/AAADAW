@@ -137,6 +137,101 @@ fn prepares_and_renders_an_embedded_audio_item() {
 }
 
 #[test]
+fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
+    let database_path = unique_path("aaadaw");
+    let playback_wav = pcm_wav(&[0, 8_192, 16_384], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://looped-playback",
+            "loop.wav",
+            Cursor::new(&playback_wav),
+        )
+        .expect("looped source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    for index in 0..2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Loop {}", index + 1),
+            })
+            .expect("audio track should be created");
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[index].id(),
+                media_ref: "asset://looped-playback".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 1,
+                source_section_start_samples: 1,
+                length_samples: 5,
+                source_section_length_samples: 2,
+            })
+            .expect("looped item should be inserted");
+    }
+
+    let prepared = prepare_audio_playback(&project, &store, 16, 8)
+        .expect("looped embedded sources should prepare for playback");
+    assert_eq!(prepared.feeder_count(), 2);
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder
+            .join()
+            .expect("playback feeder should loop the source section");
+    }
+    graph.transport_mut().start();
+    let mut playback = [[0.0; 2]; 5];
+    let stats = graph
+        .render_into(&mut playback)
+        .expect("looped playback graph should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected_mono = [0.25_f32, 0.5, 0.25, 0.5, 0.25];
+    for (frame, sample) in playback.iter().zip(expected_mono) {
+        assert!((frame[0] - sample * center_gain * 2.0).abs() < 1.0e-5);
+        assert!((frame[1] - sample * center_gain * 2.0).abs() < 1.0e-5);
+    }
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("looped sources should prepare for offline render quality");
+    let render_path = unique_path("wav");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        5,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("offline renderer should repeat the copied source sections");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(decoder.metadata().channel_count, Some(2));
+    assert_eq!(rendered.len(), 10);
+    for (frame, sample) in rendered.as_chunks::<2>().0.iter().zip(expected_mono) {
+        assert!((frame[0] - sample * center_gain * 2.0).abs() < 2.0e-5);
+        assert!((frame[1] - sample * center_gain * 2.0).abs() < 2.0e-5);
+    }
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
 fn repeated_embedded_source_reuses_cached_pcm_and_preserves_each_trim() {
     let database_path = unique_path("aaadaw");
     let frames = [

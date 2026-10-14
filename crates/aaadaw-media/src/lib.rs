@@ -186,6 +186,8 @@ pub enum MediaError {
         input: u32,
         output: u32,
     },
+    AudioLoopSectionExceedsSource,
+    InvalidAudioLoopSection,
     AudioTooLong,
     WorkerCancelled,
     ThreadSpawn(std::io::Error),
@@ -236,6 +238,12 @@ impl fmt::Display for MediaError {
                 formatter,
                 "resampling ratio from {input} Hz to {output} Hz exceeds the supported limit"
             ),
+            Self::AudioLoopSectionExceedsSource => {
+                formatter.write_str("looped source section extends beyond the decoded media")
+            }
+            Self::InvalidAudioLoopSection => {
+                formatter.write_str("loop source section does not contain the item source offset")
+            }
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
             Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),
             Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),

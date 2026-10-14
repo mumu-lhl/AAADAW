@@ -209,6 +209,7 @@ struct AudioItemClipboard {
 struct AudioItemClipboardEntry {
     media_ref: String,
     source_offset_samples: u64,
+    source_section_start_samples: u64,
     source_section_length_samples: u64,
     length_samples: u64,
     track_offset: usize,
@@ -10702,9 +10703,42 @@ impl App {
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
             };
-            let Some(source_offset_samples) =
+            let source_offset_samples = if let (Some(section_start), Some(section_length)) = (
+                item.source_section_start_samples(),
+                item.source_section_length_samples(),
+            ) {
+                let Some(section_end) = section_start.checked_add(section_length) else {
+                    self.status =
+                        "Could not copy loop of selected area: source section is too large"
+                            .to_owned();
+                    return;
+                };
+                if item.source_offset_samples() < section_start
+                    || item.source_offset_samples() >= section_end
+                {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                }
+                let source_phase = item.source_offset_samples() - section_start;
+                let source_phase_delta = source_delta % section_length;
+                let wrapped_phase = (u128::from(source_phase) + u128::from(source_phase_delta))
+                    % u128::from(section_length);
+                let Some(source_offset_samples) = u64::try_from(wrapped_phase)
+                    .ok()
+                    .and_then(|phase| section_start.checked_add(phase))
+                else {
+                    self.status =
+                        "Could not copy loop of selected area: source offset is too large"
+                            .to_owned();
+                    return;
+                };
+                source_offset_samples
+            } else if let Some(source_offset_samples) =
                 item.source_offset_samples().checked_add(source_delta)
-            else {
+            {
+                source_offset_samples
+            } else {
                 self.status =
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
@@ -10722,9 +10756,33 @@ impl App {
                         .to_owned();
                 return;
             }
+            if let Some((section_start, section_length)) = item
+                .source_section_start_samples()
+                .zip(item.source_section_length_samples())
+            {
+                let Some(copy_end) =
+                    source_offset_samples.checked_add(source_section_length_samples)
+                else {
+                    self.status =
+                        "Could not copy loop of selected area: source section is too large"
+                            .to_owned();
+                    return;
+                };
+                let Some(original_end) = section_start.checked_add(section_length) else {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                };
+                if source_offset_samples < section_start || copy_end > original_end {
+                    self.status =
+                        "Copy loop crossing a source-loop boundary is not supported".to_owned();
+                    return;
+                }
+            }
             entries.push(AudioItemClipboardEntry {
                 media_ref: item.media_ref().to_owned(),
                 source_offset_samples,
+                source_section_start_samples: source_offset_samples,
                 source_section_length_samples,
                 length_samples: span_samples,
                 track_offset: track_index - first_track_index,
@@ -10905,6 +10963,7 @@ impl App {
                     media_ref: item.media_ref.clone(),
                     start_sample,
                     source_offset_samples: item.source_offset_samples,
+                    source_section_start_samples: item.source_section_start_samples,
                     length_samples,
                     source_section_length_samples: item.source_section_length_samples,
                 })

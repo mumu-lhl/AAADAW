@@ -824,40 +824,85 @@ impl App {
                 ));
                 return;
             };
-            let Some(source_delta) = scale_sample_delta(-delta_samples, source_rate, project_rate)
+            let Some(source_delta) = delta_samples
+                .checked_neg()
+                .and_then(|delta| scale_sample_delta(delta, source_rate, project_rate))
             else {
                 self.item_nudge_dialog.error =
                     Some("Contents nudge is outside the supported range".to_owned());
                 return;
             };
-            let Some(source_offset_samples) =
-                shifted_sample(item.source_offset_samples(), source_delta)
-            else {
-                self.item_nudge_dialog.error = Some(
-                    "Contents nudge would move before the start of the audio source".to_owned(),
-                );
-                return;
+            let source_offset_samples = if item.is_loop_source() {
+                let (section_start, section_length) = match (
+                    item.source_section_start_samples(),
+                    item.source_section_length_samples(),
+                ) {
+                    (Some(start), Some(length)) => (start, length),
+                    (None, None) => (0, frame_count),
+                    _ => {
+                        self.item_nudge_dialog.error = Some(
+                            "Selected audio item has an invalid loop source section".to_owned(),
+                        );
+                        return;
+                    }
+                };
+                let Some(section_end) = section_start.checked_add(section_length) else {
+                    self.item_nudge_dialog.error =
+                        Some("Selected audio item has an invalid loop source section".to_owned());
+                    return;
+                };
+                if section_length == 0
+                    || section_end > frame_count
+                    || item.source_offset_samples() < section_start
+                    || item.source_offset_samples() >= section_end
+                {
+                    self.item_nudge_dialog.error =
+                        Some("Selected audio item has an invalid loop source section".to_owned());
+                    return;
+                }
+                let Some(offset) = wrapped_source_sample(
+                    item.source_offset_samples(),
+                    section_start,
+                    section_length,
+                    source_delta,
+                ) else {
+                    self.item_nudge_dialog.error =
+                        Some("Contents nudge is outside the supported source range".to_owned());
+                    return;
+                };
+                offset
+            } else {
+                let Some(offset) = shifted_sample(item.source_offset_samples(), source_delta)
+                else {
+                    self.item_nudge_dialog.error = Some(
+                        "Contents nudge would move before the start of the audio source".to_owned(),
+                    );
+                    return;
+                };
+                let Some(source_length) = scale_sample_delta(
+                    i128::from(item.length_samples()),
+                    source_rate,
+                    project_rate,
+                )
+                .and_then(|length| u64::try_from(length).ok()) else {
+                    self.item_nudge_dialog.error =
+                        Some("Item source length is outside the supported range".to_owned());
+                    return;
+                };
+                let Some(source_end) = offset.checked_add(source_length) else {
+                    self.item_nudge_dialog.error =
+                        Some("Contents nudge is outside the supported source range".to_owned());
+                    return;
+                };
+                if source_end > frame_count {
+                    self.item_nudge_dialog.error = Some(
+                        "Contents nudge would extend beyond the audio source; looping is not enabled"
+                            .to_owned(),
+                    );
+                    return;
+                }
+                offset
             };
-            let Some(source_length) =
-                scale_sample_delta(i128::from(item.length_samples()), source_rate, project_rate)
-                    .and_then(|length| u64::try_from(length).ok())
-            else {
-                self.item_nudge_dialog.error =
-                    Some("Item source length is outside the supported range".to_owned());
-                return;
-            };
-            let Some(source_end) = source_offset_samples.checked_add(source_length) else {
-                self.item_nudge_dialog.error =
-                    Some("Contents nudge is outside the supported source range".to_owned());
-                return;
-            };
-            if source_end > frame_count {
-                self.item_nudge_dialog.error = Some(
-                    "Contents nudge would extend beyond the audio source; looping is not enabled"
-                        .to_owned(),
-                );
-                return;
-            }
             if source_offset_samples != item.source_offset_samples() {
                 actions.push(DawAction::EditAudioItem {
                     item_id: item.id(),
@@ -1088,6 +1133,18 @@ impl App {
         selected.sort_by_key(|(_, sample)| *sample);
         Ok(selected)
     }
+}
+
+fn wrapped_source_sample(current: u64, start: u64, length: u64, delta: i128) -> Option<u64> {
+    let end = start.checked_add(length)?;
+    if length == 0 || current < start || current >= end {
+        return None;
+    }
+    let modulus = u128::from(length);
+    let phase = u128::from(current - start);
+    let delta_phase = u128::try_from(delta.rem_euclid(i128::from(length))).ok()?;
+    let wrapped_phase = (phase + delta_phase) % modulus;
+    start.checked_add(u64::try_from(wrapped_phase).ok()?)
 }
 
 fn shifted_sample(sample: u64, delta: i128) -> Option<u64> {

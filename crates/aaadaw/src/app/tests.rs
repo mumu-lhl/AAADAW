@@ -432,6 +432,88 @@ fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
 }
 
 #[test]
+fn item_nudge_contents_wraps_inside_a_bounded_loop_source_section() {
+    use super::item_nudge::Target;
+
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-item-nudge-loop-contents-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let media_ref = "asset://item-nudge-loop-contents-test";
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    store
+        .import_audio_asset(
+            media_ref,
+            "loop-contents.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(44_100),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(100_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test metadata should store");
+    store.close().expect("project store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 80_000,
+            source_section_start_samples: 80_000,
+            length_samples: 24_000,
+            source_section_length_samples: 20_000,
+        })
+        .expect("bounded loop source should insert");
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+    let revision = app.revision;
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    let item = &app.project.audio_items()[0];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(item.start_sample(), 0);
+    assert_eq!(item.length_samples(), 24_000);
+    assert_eq!(item.source_offset_samples(), 88_975);
+    assert_eq!(item.source_section_start_samples(), Some(80_000));
+    assert_eq!(item.source_section_length_samples(), Some(20_000));
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.source_offset_samples(), 91_025);
+    assert_eq!(item.source_section_start_samples(), Some(80_000));
+    assert_eq!(item.source_section_length_samples(), Some(20_000));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    drop(app);
+    let _ = std::fs::remove_file(project_path);
+}
+
+#[test]
 fn item_nudge_duplicate_offsets_copies_mixed_selection_and_selects_the_copies() {
     use super::item_nudge::Target;
 
@@ -7583,6 +7665,10 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[0].track_offset, 0);
     assert_eq!(clipboard.items[1].track_offset, 1);
     assert_eq!(clipboard.items[0].source_offset_samples, 128 + source_delta);
+    assert_eq!(
+        clipboard.items[0].source_section_start_samples,
+        128 + source_delta
+    );
     assert_eq!(clipboard.items[1].source_offset_samples, 256 + source_delta);
     assert_eq!(clipboard.items[0].length_samples, selection_length);
     assert_eq!(
@@ -7616,6 +7702,10 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted[0].track_id(), track_ids[0]);
     assert_eq!(pasted[1].track_id(), track_ids[1]);
     assert_eq!(pasted[0].source_offset_samples(), 128 + source_delta);
+    assert_eq!(
+        pasted[0].source_section_start_samples(),
+        Some(clipboard.items[0].source_section_start_samples)
+    );
     assert_eq!(pasted[1].source_offset_samples(), 256 + source_delta);
     assert_eq!(pasted[0].length_samples(), paste_length);
     assert!(pasted.iter().all(|item| item.is_loop_source()));

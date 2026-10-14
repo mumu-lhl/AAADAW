@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 42;
+pub const CURRENT_SCHEMA_VERSION: u32 = 43;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -2784,6 +2784,17 @@ fn ensure_audio_item_loop_columns(connection: &Connection) -> Result<(), Storage
     Ok(())
 }
 
+fn ensure_audio_item_loop_section_start_column(
+    connection: &Connection,
+) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "source_section_start_samples")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN source_section_start_samples INTEGER CHECK(source_section_start_samples IS NULL OR source_section_start_samples >= 0);",
+        )?;
+    }
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageError> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -2978,6 +2989,17 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     ensure_audio_item_loop_columns(&transaction)?;
                 }
             }
+            43 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_loop_columns(&transaction)?;
+                    ensure_audio_item_loop_section_start_column(&transaction)?;
+                    transaction.execute_batch(
+                        "UPDATE audio_items SET source_section_start_samples = source_offset_samples \
+                         WHERE loop_source = 1 AND source_section_length_samples IS NOT NULL \
+                         AND source_section_start_samples IS NULL;",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2986,6 +3008,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     }
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
     ensure_audio_item_loop_columns(connection)?;
+    ensure_audio_item_loop_section_start_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
     Ok(())
@@ -3162,8 +3185,8 @@ fn write_snapshot(
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
              source_offset_samples, length_samples, volume, take_volume, take_pan, loop_source, \
-             source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             source_section_start_samples, source_section_length_samples) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3176,6 +3199,9 @@ fn write_snapshot(
                 f64::from(item.take_volume),
                 f64::from(item.take_pan),
                 item.loop_source,
+                item.source_section_start_samples
+                    .map(to_sql_integer)
+                    .transpose()?,
                 item.source_section_length_samples
                     .map(to_sql_integer)
                     .transpose()?,
@@ -3809,7 +3835,8 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
          length_samples, volume, take_volume, take_pan, loop_source, \
-         source_section_length_samples FROM audio_items ORDER BY position",
+         source_section_start_samples, source_section_length_samples \
+         FROM audio_items ORDER BY position",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -3826,6 +3853,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, f64>(9)?,
                 row.get::<_, i64>(10)?,
                 row.get::<_, Option<i64>>(11)?,
+                row.get::<_, Option<i64>>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -3844,6 +3872,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 take_volume,
                 take_pan,
                 loop_source,
+                source_section_start,
                 source_section_length,
             )| {
                 let _ = from_sql_u64(position)?;
@@ -3862,9 +3891,13 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     1 => true,
                     _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
                 };
+                let source_section_start_samples =
+                    source_section_start.map(from_sql_u64).transpose()?;
                 let source_section_length_samples =
                     source_section_length.map(from_sql_u64).transpose()?;
-                if source_section_length_samples.is_some() && !loop_source {
+                if source_section_length_samples.is_some() != source_section_start_samples.is_some()
+                    || (source_section_length_samples.is_some() && !loop_source)
+                {
                     return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
                 }
                 Ok(AudioItemSnapshot {
@@ -3879,6 +3912,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     source_offset_samples: from_sql_u64(source_offset)?,
                     length_samples: from_sql_u64(length)?,
                     loop_source,
+                    source_section_start_samples,
                     source_section_length_samples,
                 })
             },
@@ -4265,6 +4299,7 @@ mod loop_source_storage_tests {
                 media_ref: "asset://loop-source".to_owned(),
                 start_sample: 10,
                 source_offset_samples: 120,
+                source_section_start_samples: 100,
                 length_samples: 4_800,
                 source_section_length_samples: 2_400,
             })
@@ -4278,6 +4313,7 @@ mod loop_source_storage_tests {
         let loaded = store.load().unwrap();
         let item = &loaded.audio_items()[0];
         assert!(item.is_loop_source());
+        assert_eq!(item.source_section_start_samples(), Some(100));
         assert_eq!(item.source_section_length_samples(), Some(2_400));
     }
 
@@ -4307,7 +4343,8 @@ mod loop_source_storage_tests {
         store
             .connection
             .execute_batch(
-                "ALTER TABLE audio_items DROP COLUMN source_section_length_samples;\
+                "ALTER TABLE audio_items DROP COLUMN source_section_start_samples;\
+                 ALTER TABLE audio_items DROP COLUMN source_section_length_samples;\
                  ALTER TABLE audio_items DROP COLUMN loop_source;\
                  PRAGMA user_version = 41;",
             )
@@ -4315,11 +4352,60 @@ mod loop_source_storage_tests {
         store.close().unwrap();
 
         let store = ProjectStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 42);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
         let loaded = store.load().unwrap();
         let item = &loaded.audio_items()[0];
         assert!(!item.is_loop_source());
         assert_eq!(item.source_section_length_samples(), None);
+    }
+
+    #[test]
+    fn schema_42_loop_source_migration_sets_section_start_to_existing_offset() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-42-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy loop".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://legacy-loop".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 240,
+                source_section_start_samples: 200,
+                length_samples: 4_800,
+                source_section_length_samples: 1_200,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN source_section_start_samples;\
+                 PRAGMA user_version = 42;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_section_start_samples(), Some(240));
+        assert_eq!(item.source_section_length_samples(), Some(1_200));
     }
 }
 

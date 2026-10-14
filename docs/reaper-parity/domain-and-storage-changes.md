@@ -115,3 +115,9 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 新增独立 project_notes 单行表：title/author/notes 为非空全文，show_on_load/word_wrap 严格 0/1，旧工程默认空值/false/true。与帧率、Master 和媒体快照共用既有保存事务，Notes 插入失败必须回滚全部删除和写入。迁移为独立 CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE，在 user_version 事务内提交；只读旧文件拒绝迁移且保护原字节。旧版本应用拒绝 28；回滚以升级前备份恢复。
 
 公开 ProjectNotes、Project::project_notes、DawAction::SetProjectNotes 及 Snapshot 恢复。原厂实测 Notes 非媒体 Undo：领域动作与嵌套 Batch 仍原子执行，记录媒体历史时移除 Notes 事件；既有 Redo 保留，后续 Undo 不丢弃说明。Unicode、空行与未编辑行尾保留；读取非法布尔值 fail closed。参见 [实测与验证](../verification/reaper-parity/project-notes.md)。
+
+## schema 43 — B_LOOPSRC source-section start
+
+`audio_items.source_section_start_samples` 保存 bounded loop source 的绝对媒体帧起点，与 `loop_source` 和 `source_section_length_samples` 一起写入快照事务。Schema 42 中 `loop_source=1` 且已有 bounded length 的项，迁移时将当前 `source_offset_samples` 作为起点；这与当时 Copy/Paste 创建的 section 起点一致。非 loop 项三列保持关闭/空值，旧全源 B_LOOPSRC 仍以起点/长度空值表达。
+
+读取校验起点与长度必须同时为空或同时存在；bounded 段长度必须大于零，起点加长度不得溢出，且当前源偏移必须落在段内。运行时循环读取只在后台 worker 解码线程中重启 seekable source；短 bounded section 的缓存上限为 1 MiB，避免实时音频 callback 执行文件 I/O、解码或动态分配。回滚以原数据库备份恢复，不允许手工回退 `user_version`。Schema 41 的旧音频表与 Schema 42 的循环项分别有迁移回归；写入、重开、循环源快照及读写拒绝均由 storage/core 测试覆盖。
