@@ -1,11 +1,14 @@
 use super::super::{
     App, Message,
-    item_properties::{ItemPropertyField, TimeUnit},
+    item_properties::{ItemPropertyField, MidiItemProperties, TimeUnit},
 };
 use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input};
 use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
+    if let Some(draft) = &app.midi_item_properties {
+        return midi_item_view(draft);
+    }
     let Some(draft) = &app.item_properties else {
         return text("No item selected").into();
     };
@@ -85,6 +88,36 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             text("Curve:").width(80),
             field(ItemPropertyField::OutCurvature, 80),
             field(ItemPropertyField::OutS, 80)
+        ]
+        .spacing(6),
+        text(draft.error.as_deref().unwrap_or("")).size(12),
+        row![
+            iced::widget::Space::new().width(Length::Fill),
+            button("OK").on_press(Message::ApplyItemProperties(true)),
+            button("Cancel").on_press(Message::CloseItemProperties),
+            button("Apply").on_press_maybe(
+                draft
+                    .has_changes()
+                    .then_some(Message::ApplyItemProperties(false))
+            ),
+        ]
+        .spacing(6)
+    ]
+    .spacing(4);
+    container(content)
+        .padding(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
+    let content = column![
+        row![
+            text("").width(120),
+            checkbox(draft.muted)
+                .label("Mute")
+                .on_toggle(Message::ItemPropertyMuteChanged)
         ]
         .spacing(6),
         text(draft.error.as_deref().unwrap_or("")).size(12),

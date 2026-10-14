@@ -347,6 +347,7 @@ struct App {
     master_guard_ticks_remaining: u8,
     audio_item_start_edits: HashMap<ItemId, String>,
     item_properties: Option<item_properties::ItemProperties>,
+    midi_item_properties: Option<item_properties::MidiItemProperties>,
     item_properties_window_id: Option<iced::window::Id>,
     item_properties_generation: u64,
     item_properties_unit: item_properties::TimeUnit,
@@ -1864,6 +1865,8 @@ impl App {
                     | Message::NudgeSelectedItems(_)
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
+                    | Message::ItemPropertyLoopSourceChanged(_)
+                    | Message::ItemPropertyMuteChanged(_)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
                     | Message::MarkerNumberChanged(_)
@@ -2436,6 +2439,8 @@ impl App {
             Message::ItemPropertyMuteChanged(muted) => {
                 if let Some(draft) = &mut self.item_properties {
                     draft.set_muted(muted);
+                } else if let Some(draft) = &mut self.midi_item_properties {
+                    draft.set_muted(muted);
                 }
             }
             Message::ToggleSelectedItemsMute => self.toggle_selected_items_mute(),
@@ -2593,6 +2598,7 @@ impl App {
                 } else if self.item_properties_window_id == Some(window_id) {
                     self.item_properties_window_id = None;
                     self.item_properties = None;
+                    self.midi_item_properties = None;
                 } else if self.item_nudge_window_id == Some(window_id) {
                     self.item_nudge_window_id = None;
                 } else if self.marker_properties_window_id == Some(window_id) {

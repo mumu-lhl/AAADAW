@@ -132,20 +132,33 @@ impl App {
         if let Some(id) = self.item_properties_window_id {
             return iced::window::gain_focus(id);
         }
-        let Some(item) = self.timeline.selected_item.and_then(|id| {
-            self.project
-                .audio_items()
-                .iter()
-                .find(|item| item.id() == id)
-        }) else {
+        let Some(item_id) = self.timeline.selected_item else {
             return Task::none();
         };
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        {
+            self.item_properties = Some(ItemProperties::from_project_item(
+                item,
+                &self.project,
+                self.item_properties_unit,
+            ));
+            self.midi_item_properties = None;
+        } else if let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        {
+            self.item_properties = None;
+            self.midi_item_properties = Some(MidiItemProperties::from_item(item));
+        } else {
+            return Task::none();
+        }
         self.item_properties_generation = self.project_generation;
-        self.item_properties = Some(ItemProperties::from_project_item(
-            item,
-            &self.project,
-            self.item_properties_unit,
-        ));
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
         let (id, task) = iced::window::open(iced::window::Settings {
@@ -159,12 +172,16 @@ impl App {
 
     pub(super) fn close_item_properties(&mut self) -> Task<Message> {
         self.item_properties = None;
+        self.midi_item_properties = None;
         self.item_properties_window_id
             .take()
             .map_or_else(Task::none, iced::window::close)
     }
 
     pub(super) fn apply_item_properties(&mut self, close: bool) -> Task<Message> {
+        if self.midi_item_properties.is_some() {
+            return self.apply_midi_item_properties(close);
+        }
         if self.item_properties_generation != self.project_generation {
             return self.close_item_properties();
         }
@@ -316,6 +333,72 @@ impl App {
                 &self.project,
                 self.item_properties_unit,
             ));
+            Task::none()
+        }
+    }
+
+    fn apply_midi_item_properties(&mut self, close: bool) -> Task<Message> {
+        if self.item_properties_generation != self.project_generation {
+            return self.close_item_properties();
+        }
+        let Some(draft) = &self.midi_item_properties else {
+            return Task::none();
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == draft.item_id)
+        else {
+            return self.close_item_properties();
+        };
+        let item_id = item.id();
+        let current_muted = item.is_muted();
+        let changes_mute = draft.mute_changed && draft.muted != current_muted;
+        if changes_mute && self.playback_active() {
+            let error = "Stop playback before changing MIDI item mute".to_owned();
+            self.status = error.clone();
+            self.midi_item_properties
+                .as_mut()
+                .expect("open MIDI item draft")
+                .error = Some(error);
+            return Task::none();
+        }
+        if changes_mute {
+            self.apply_action(
+                aaadaw_core::DawAction::SetMidiItemMute {
+                    item_id,
+                    muted: self
+                        .midi_item_properties
+                        .as_ref()
+                        .expect("open MIDI item draft")
+                        .muted,
+                },
+                "MIDI item properties applied",
+            );
+            if !self
+                .project
+                .midi_items()
+                .iter()
+                .any(|item| item.id() == item_id && item.is_muted() != current_muted)
+            {
+                self.midi_item_properties
+                    .as_mut()
+                    .expect("open MIDI item draft")
+                    .error = Some(self.status.clone());
+                return Task::none();
+            }
+        }
+        if close {
+            self.close_item_properties()
+        } else {
+            let item = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .expect("MIDI item is still present");
+            self.midi_item_properties = Some(MidiItemProperties::from_item(item));
             Task::none()
         }
     }
@@ -916,6 +999,35 @@ fn parse_curve(text: &str) -> Result<f64, String> {
         Ok(value.clamp(-1.0, 1.0))
     } else {
         Err("Invalid curve".to_owned())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MidiItemProperties {
+    pub(crate) item_id: ItemId,
+    pub(crate) muted: bool,
+    pub(crate) error: Option<String>,
+    mute_changed: bool,
+}
+
+impl MidiItemProperties {
+    fn from_item(item: &aaadaw_core::MidiItem) -> Self {
+        Self {
+            item_id: item.id(),
+            muted: item.is_muted(),
+            error: None,
+            mute_changed: false,
+        }
+    }
+
+    pub(crate) fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+        self.mute_changed = true;
+        self.error = None;
+    }
+
+    pub(crate) fn has_changes(&self) -> bool {
+        self.mute_changed
     }
 }
 

@@ -2571,10 +2571,12 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::OpenItemNudgeDialog => true,
         CommandKind::CloseItemNudgeDialog => app.item_nudge_window_id.is_some(),
         CommandKind::NudgeItemsLeft | CommandKind::NudgeItemsRight => !project_edit_busy(app),
-        CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
-            .timeline
-            .selected_item
-            .is_some_and(|id| app.project.audio_items().iter().any(|item| item.id() == id)),
+        CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => {
+            app.timeline.selected_item.is_some_and(|id| {
+                app.project.audio_items().iter().any(|item| item.id() == id)
+                    || app.project.midi_items().iter().any(|item| item.id() == id)
+            })
+        }
         CommandKind::DuplicateSelectedItem => {
             !project_edit_busy(app)
                 && !app.timeline.selected_items.is_empty()

@@ -13062,6 +13062,65 @@ fn item_properties_mute_applies_with_undo_and_preserves_gain() {
 }
 
 #[test]
+fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+
+    assert!(commands::is_enabled(&app, CommandId::OpenItemProperties));
+    assert!(commands::is_enabled(&app, CommandId::ToggleItemProperties));
+    let _ = app.update(Message::ToggleItemProperties);
+    assert!(app.item_properties.is_none());
+    assert!(app.midi_item_properties.is_some());
+    assert!(app.item_properties_window_id.is_some());
+
+    let revision = app.revision;
+    let _ = app.update(Message::ItemPropertyMuteChanged(true));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].notes().len(), 1);
+    assert_eq!(app.revision, revision + 1);
+
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].notes().len(), 1);
+    let _ = app.update(Message::Redo);
+    assert!(app.project.midi_items()[0].is_muted());
+
+    let _ = app.update(Message::ItemPropertyMuteChanged(false));
+    let _ = app.update(Message::CloseItemProperties);
+    assert!(app.midi_item_properties.is_none());
+    assert!(app.project.midi_items()[0].is_muted());
+}
+
+#[test]
 fn item_toggle_mute_action_matches_action_list_and_is_undoable() {
     let mut app = App::default();
     app.project

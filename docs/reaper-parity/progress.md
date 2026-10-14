@@ -840,3 +840,9 @@ Nightly + Cranelift workspace nextest 1063/1063 passed，排除了两项依赖 X
 ### 2026-10-14 Audio loop Copy/Paste mute state
 
 Audio loop clipboard entries now retain each source item’s mute bit; `InsertLoopedAudioItem` applies that bit when creating the pasted item, within the same undoable transaction. The multi-track copy test checks muted/unmuted entries, pasted state, Undo removal and Redo restoration. Nightly + Cranelift focused copy test passed; the complete workspace suite (1063/1063, with two X11-dependent tests excluded) and Stable strict Clippy had passed before this final assertion-only test extension. Native REAPER copy-mute behavior and AAADAW screenshots remain unverified; `ITEM-AUDIO-COPYLOOP-001` and `ITEM-MUTE-001` stay `in_progress`.
+
+### 2026-10-14 MIDI Item Properties mute control
+
+F2 / `Item properties: Toggle mute` now opens the properties window for a selected MIDI item. Its Mute checkbox uses a draft; Apply writes one undoable project action, Cancel closes without applying pending edits, and Undo/Redo changes mute without altering MIDI notes. The checkbox message is accepted through the secondary-window event route. This is a mute-only MIDI properties view; the remaining source, timing, take, and fade fields and REAPER window geometry are still absent.
+
+Nightly + Cranelift workspace nextest passed 1064/1064 with two X11-dependent CLAP floating-editor tests excluded; the focused MIDI and Audio item-properties/F2 tests passed 3/3. Stable workspace all-target Clippy `-D warnings`, fmt, and diff checks passed. No AAADAW screenshot or new native REAPER probe was made. `ITEM-MUTE-001` and `ITEM-PROPERTIES-001` remain `in_progress`.
