@@ -4167,7 +4167,35 @@ fn wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_me
         .find(|entry| entry.id == CommandId::ExportWav)
         .expect("File menu should expose WAV rendering");
     assert!(export.enabled);
-    assert_eq!(export.label, "Render project to WAV…");
+    assert_eq!(export.label, "Render...");
+    assert_eq!(export.shortcut.as_deref(), Some("Ctrl+Alt+R"));
+
+    let action = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ExportWav)
+        .expect("Action List should expose native Render project to disk action");
+    assert_eq!(action.category, "File");
+    assert_eq!(action.label, "Render project to disk...");
+    assert_eq!(action.shortcut.as_deref(), Some("Ctrl+Alt+R"));
+    let binding = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "audio.export-wav")
+        .expect("Render action should have a configurable shortcut entry");
+    assert_eq!(binding.default_binding, "Ctrl+Alt+R");
+    let bindings = app
+        .shortcut_bindings
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("r"),
+            Modifiers::CTRL.union(Modifiers::ALT),
+            &bindings,
+            &app.action_macros,
+        ),
+        Some(CommandId::ExportWav)
+    );
 
     app.offline_render_busy = true;
     let file_commands = commands::for_menu(&app, MainMenu::File);

@@ -24,6 +24,8 @@ Linux REAPER 7.82 的 File 菜单和 Action List 还提供没有默认快捷键�
 
 回归验证两个 Action List 分类/名称和无快捷键状态、File 菜单顺序、保存当前已命名工程、取消关闭保留修改以及确认放弃后回到空工程。实窗截图确认两个入口与分隔线的位置；原厂截图确认标签和默认无快捷键。AAADAW 暂无多工程标签模型，Save all / Close all 在多开工程场景尚未实现，完整 File 菜单和界面仍为 `in_progress`。
 
+REAPER Main action 40015 的 Action List 名称为 `File: Render project to disk...`、默认 Ctrl+Alt+R，File 菜单显示 `Render...`。AAADAW 现在用该原厂短标签和快捷键打开已有渲染窗口；Action List 分类/名称也与原厂一致。原厂与 AAADAW File 菜单截图、版本和 SHA-256 见 [Render action fixture](fixtures/menu-render-action-aaadaw.tsv)，快捷键回归同步检查菜单与 Action List 注册。当前渲染实现仍只覆盖 WAV；REAPER 其它输出格式、Render to File 完整控件和逐项视觉对齐尚未完成。
+
 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 覆盖 File 菜单标签/快捷键、Action List 名称、修改后取消，以及 Don't Save 后关闭工程并清空当前轨道、路径和修订号。`successful_save_before_close_project_clears_the_open_project` 覆盖 Save 成功后继续关闭。实窗 Ctrl+F4 确认对未保存工程弹出保护框，步骤和哈希见上方 fixture。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。

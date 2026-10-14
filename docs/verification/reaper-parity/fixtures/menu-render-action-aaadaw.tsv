@@ -1,0 +1,15 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_action	40015 / File: Render project to disk... / Ctrl+Alt+R
+native_menu_label	Render...
+native_reference_screenshot	menu-file-native.png
+native_reference_screenshot_sha256	c5a37d3fa3c79c458dbd9caf868123d4dd64a0c0c95382c78e1bbbdb42c7229b
+aaadaw_environment	Linux AAADAW / Xvfb :255 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_label	Render...
+aaadaw_default_shortcut	Ctrl+Alt+R
+aaadaw_action_list_label	File: Render project to disk...
+aaadaw_screenshot	menu-render-action-aaadaw.png
+aaadaw_screenshot_sha256	5bd936c654636589e691423cec10c02b311cf4a78d7c3b86d7cbb6bde70ad68d
+test	crates/aaadaw/src/app/tests.rs::wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu
+comparison_scope	File menu label and position, Ctrl+Alt+R mapping, Action List category/name and opening the existing render window
+limitation	AAADAW's current render window outputs WAV only; other native formats, full Render to File controls and full visual parity remain in_progress

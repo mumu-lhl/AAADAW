@@ -251,6 +251,10 @@ const SAVE_PROJECT_NEW_VERSION_SHORTCUT: &[Shortcut] = &[Shortcut::character(
         .union(Modifiers::ALT)
         .union(Modifiers::SHIFT),
 )];
+const RENDER_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character(
+    'r',
+    Modifiers::CTRL.union(Modifiers::ALT),
+)];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
 const PASTE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('v', Modifiers::CTRL)];
@@ -409,9 +413,9 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::ExportWav,
         menu: Some(MainMenu::File),
         category: "File",
-        label: "Render project to WAV…",
+        label: "Render project to disk...",
         aliases: &["render", "export audio", "bounce project", "render wav"],
-        shortcuts: &[],
+        shortcuts: RENDER_PROJECT_SHORTCUT,
         destructive: false,
         separator_before: true,
     },
@@ -1733,6 +1737,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
             .find(|entry| entry.id == CommandId::SaveProjectNewVersion)
     {
         save_version.label = "Save new version of project".to_owned();
+    }
+    if menu == MainMenu::File
+        && let Some(render) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::ExportWav)
+    {
+        render.label = "Render...".to_owned();
     }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries

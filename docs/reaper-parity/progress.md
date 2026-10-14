@@ -937,3 +937,9 @@ REAPER Main action 41895 在 File 菜单显示 `Save new version of project` / C
 Linux REAPER 7.82 / Default 7 的 File 菜单与 Action List 包含无默认快捷键的 Main actions 40897 `File: Save all projects` 和 40886 `File: Close all projects`。原厂探针在唯一已保存工程中增加一条轨道后运行 Save all，确认活动工程路径未变且 RPP 已保存轨道；再运行 Close all，当前路径清空、轨道数归零并回到空白工程工作区。AAADAW 按原厂菜单次序加入两个独立动作；单工程下 Save all 保存当前工程，Close all 复用已有未保存变更保护并关闭当前工程。原厂探针输出、原厂/AAADAW 菜单截图、哈希和验收范围见 [Save/Close all fixture](../verification/reaper-parity/fixtures/menu-save-close-all-aaadaw.tsv)。
 
 Nightly + Cranelift 三项定向 nextest 3/3、最终源码上的 AAADAW app 目标全量 562/562 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。实窗 File 菜单截图确认新条目与分隔线顺序。单项目保护行为与原厂空白工程结果一致；多标签下真正保存/关闭所有项目仍待多工程模型实现，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
+
+### 2026-10-14 File 菜单 Render... 与 Ctrl+Alt+R
+
+原厂 Main action 40015 的 Action List 名称是 `File: Render project to disk...` / Ctrl+Alt+R，File 菜单短标签是 `Render...`。AAADAW 现将此动作映射至现有渲染窗口，并更新默认组合键、Action List 名称和菜单短标签；窗口仍显示并输出当前实现支持的 WAV。原厂与 AAADAW File 菜单实窗图、哈希、环境和对照范围见 [Render action fixture](../verification/reaper-parity/fixtures/menu-render-action-aaadaw.tsv)。
+
+`wav_render_command_is_discoverable_queueable_and_cancellable_from_the_file_menu` 定向回归覆盖菜单标签、Action List 名称/分类、Ctrl+Alt+R 默认值与实际解析，并继续验证渲染/排队中可取消及录音期间禁用状态。最终源码上的 Nightly + Cranelift 定向测试 1/1、AAADAW app 目标全量 562/562 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。REAPER 的非 WAV 编码、完整 Render to File 面板及整体视觉对齐仍未实现，`SHELL-MENU-KEYBOARD-001` 和 Render 原子项继续 `in_progress`。
