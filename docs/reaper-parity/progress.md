@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；当前 P10 切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；最新 P4 提交 65eb38c 增补 Contents Nudge 边界与 EOF 静音；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents，signed source offset、MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1015,3 +1015,13 @@ Linux AAADAW 新桌面版实窗显示 Name、ID、Position、Length（示例 `1.
 此前重启 AAADAW 时已没有有效 `DISPLAY`，系统也没有安装 Xvfb；旧 Xvfb/应用进程多数已退出为僵尸进程。改用隔离 REAPER 运行包中的 Xvfb 创建新显示后，最新 AAADAW 二进制 SHA-256 `59bc8bfa475f11edc45e8eff911e63b1b003148b481ffbf07838ea4d58b86e44` 正常显示 1280×800 主窗口。用 XTest 点击 Item 菜单与 `Nudge/set items...`，真实窗口树报告 528×121 Nudge/Set 窗口。新增可复现启动/首帧截图脚本 `scripts/reaper_parity/run-aaadaw-desktop-smoke.sh`，它隔离 XDG profile、自动选用系统或 REAPER 包内 Xvfb，并轮询实际非黑色帧；运行截图、交互截图及 SHA-256 见[桌面运行记录](../verification/reaper-parity/desktop-runtime.md)。
 
 复核 `ITEM-NUDGE-SET-001` 时发现 bounded source loop wrap 已有实现与 App 测试，但详细说明仍称其未实现。已更正 Nudge 主文档、Item 菜单对照和 fixture 状态；当前明确区分“AAADAW 实现/单测通过”和“REAPER 原生边界行为未复验”，该项仍 `in_progress`。启动脚本实际运行成功；bash 语法检查、截图窗口/像素检查和 `git diff --check` 通过。下一步回到原厂 Nudge 行为探测，不以本次桌面启动证明代替具体功能验收。
+
+### 2026-10-14 Item Contents Nudge 源边界与桌面运行复验
+
+提交 `65eb38c481e526f30ad52c2df4cd828f3e1788f1`（矩阵 `ITEM-NUDGE-SET-001`）扩展 Linux REAPER 7.82 / Default 7 原厂探针，实测整份 10 秒循环源从 0.1 秒向右 Nudge 后绕回 9.85 秒、从 9.9 秒向左 Nudge 后绕回 0.15 秒；非循环源两侧则得到 −0.15 秒与 10.15 秒。四种操作都保持 timeline position=2 秒、item length=10 秒，REAPER project state-change 增量为 0。探针 TSV 与非循环边界实窗截图已归档。
+
+AAADAW Contents Nudge 现在允许正向越过源 EOF。媒体 feeder 在源数据结束后以固定 1024 帧静音块填充有限 item 的剩余长度，保持有界队列回压；实时 callback 未改动。Core 的源偏移仍为 `u64`，SQLite 对该字段仍有非负约束，因此原厂允许的负偏移尚未实现，保持明确差异。显式 bounded source section 的原厂行为也未验收。
+
+`cargo xtest` 全工作区在临时 Xvfb :97 与 nightly Cranelift 下 1108/1108 通过；定向 media EOF 测试 2/2、App Nudge/Undo 测试 1/1、media/App Clippy `-D warnings`、fmt 和 `git diff --check` 通过。更新后的 `target/debug/aaadaw` Build ID `969fe3e9997570899c03c004f8c2941506c012e4`、SHA-256 `7410ee3a4d34bfc579f09f941df3aafef4b168ff68032c2b613de53e715809fe` 经桌面烟测显示为 1280×800 窗口，截图 hash 与已存启动图相同；完整记录见 [桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。
+
+下一步先为 signed source offset 设计并实现 Core、SQLite schema 和媒体读取的完整传播，再用原厂负偏移用例验证读回、保存、重开和播放；随后继续 bounded-section 探针、MIDI target 与 Set/Snap 行为。`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 保持进行中。
