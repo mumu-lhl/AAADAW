@@ -26,9 +26,11 @@ as `[0.03125, 0.09375]`. A separate four-item probe with take volume at 0.5 rend
 sample; the [native record](../verification/reaper-parity/selected-item-take-mix-native.tsv) has
 all PCM24 values and hashes. A separate [Master control probe](../verification/reaper-parity/selected-item-master-mix-native.tsv)
 confirms that this REAPER source bypasses Master volume and pan, so the in-memory render snapshot
-neutralizes those controls. Native Item Properties inspection confirms that Volume/pan edits the
-active take. Whether Master FX, item/take FX, automation, folders, and sends participate still
-needs direct comparison; the parity record tracks those gaps separately.
+neutralizes those controls. A native probe also found that REAPER bypasses its stock JS Volume
+Adjustment Master effect for this source, even with the effect set to +3 dB; other Master FX types
+remain unverified. Native Item Properties inspection confirms that Volume/pan edits the active
+take. Item/take FX, automation, folders, and sends still need direct comparison; the parity record
+tracks those gaps separately.
 
 Each finite floating-point output sample is clamped to [-1, 1], multiplied by 2^23, rounded to the
 nearest integer, then saturated to the signed 24-bit range and written little-endian. The renderer

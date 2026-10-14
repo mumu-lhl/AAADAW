@@ -976,8 +976,8 @@ fn selected_audio_item_render_project(
     }
 
     let mut snapshot = project.snapshot();
-    // REAPER's Selected media items source includes the track mix but renders
-    // before the Master fader, so preserve Master FX while neutralizing its mix.
+    // REAPER's Selected media items source bypasses Master volume/pan and the
+    // tested Master FX. Keep the fader neutral in this in-memory snapshot.
     snapshot.master_mix = aaadaw_core::MasterMix::default();
     snapshot
         .audio_items
