@@ -105,6 +105,94 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
 }
 
 #[test]
+fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 120,
+                duration: 120,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 240,
+                value: 64,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 360,
+                value: 12_288,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 3_000,
+            source_offset_ticks: 720,
+        })
+        .unwrap();
+
+    let bytes = encode_standard_midi(&project, MidiExportOptions::for_project(&project))
+        .expect("looped MIDI should export");
+    assert_eq!(
+        bytes
+            .windows(3)
+            .filter(|event| *event == [0x90, 60, 100])
+            .count(),
+        3
+    );
+    assert_eq!(
+        bytes
+            .windows(3)
+            .filter(|event| *event == [0x80, 60, 0])
+            .count(),
+        3
+    );
+    assert_eq!(
+        bytes
+            .windows(3)
+            .filter(|event| *event == [0xb0, 1, 64])
+            .count(),
+        3
+    );
+    assert_eq!(
+        bytes
+            .windows(3)
+            .filter(|event| *event == [0xe0, 0, 96])
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn exports_tempo_ramps_as_bounded_step_events() {
     let mut project = Project::new();
     project

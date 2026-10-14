@@ -103,6 +103,8 @@ pub struct MidiItem {
     pub(crate) name: String,
     pub(crate) start_tick: u64,
     pub(crate) source_offset_ticks: u64,
+    pub(crate) loop_source: bool,
+    pub(crate) source_loop_length_ticks: u64,
     pub(crate) length_ticks: u64,
     pub(crate) muted: bool,
     pub(crate) notes: Arc<Vec<MidiNote>>,
@@ -136,8 +138,71 @@ impl MidiItem {
         self.source_offset_ticks
     }
 
+    /// Returns whether the MIDI source repeats across this item's visible length.
+    pub fn is_loop_source(&self) -> bool {
+        self.loop_source
+    }
+
+    /// Returns the fixed source loop length in MIDI ticks.
+    pub fn source_loop_length_ticks(&self) -> u64 {
+        self.source_loop_length_ticks
+    }
+
+    /// Maps a project tick inside this item to its stored MIDI source tick.
+    pub fn source_tick_at_project_tick(&self, project_tick: u64) -> Option<u64> {
+        let project_offset = project_tick.checked_sub(self.start_tick)?;
+        if project_offset >= self.length_ticks {
+            return None;
+        }
+        let source_tick = self.source_offset_ticks.checked_add(project_offset)?;
+        if self.loop_source {
+            (self.source_loop_length_ticks > 0).then(|| source_tick % self.source_loop_length_ticks)
+        } else {
+            Some(source_tick)
+        }
+    }
+
+    /// Returns each project occurrence of a stored source event visible in this item.
+    ///
+    /// The iterator is allocation-free. Looped events advance by the preserved source loop
+    /// length; a non-looped item yields at most one occurrence.
+    pub fn project_ticks_at_content_tick(&self, content_tick: u64) -> impl Iterator<Item = u64> {
+        let clip_end = self.start_tick.saturating_add(self.length_ticks);
+        let first_tick = if self.loop_source {
+            if self.source_loop_length_ticks == 0 {
+                None
+            } else {
+                let loop_length = self.source_loop_length_ticks;
+                let source_tick = content_tick % loop_length;
+                let source_offset = self.source_offset_ticks % loop_length;
+                let phase = if source_tick >= source_offset {
+                    source_tick - source_offset
+                } else {
+                    loop_length - (source_offset - source_tick)
+                };
+                self.start_tick.checked_add(phase)
+            }
+        } else {
+            self.project_tick_at_content_tick(content_tick)
+        };
+        let interval = self.loop_source.then_some(self.source_loop_length_ticks);
+        let mut next_tick = first_tick;
+        std::iter::from_fn(move || {
+            let tick = next_tick?;
+            if tick < self.start_tick || tick >= clip_end {
+                next_tick = None;
+                return None;
+            }
+            next_tick = interval.and_then(|interval| tick.checked_add(interval));
+            Some(tick)
+        })
+    }
+
     /// Maps a stored event tick to its project position, if it fits the project timeline.
     pub fn project_tick_at_content_tick(&self, content_tick: u64) -> Option<u64> {
+        if self.loop_source {
+            return self.project_ticks_at_content_tick(content_tick).next();
+        }
         let project_tick = i128::from(self.start_tick) + i128::from(content_tick)
             - i128::from(self.source_offset_ticks);
         u64::try_from(project_tick).ok()

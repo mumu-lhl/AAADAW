@@ -135,3 +135,11 @@ SQLite 不给新列加引用 `loop_source` 的 CHECK，因为早期 schema 迁�
 `source_section_start_samples` 继续表示原媒体文件中的绝对帧起点；`signed_source_offset_samples` 对 bounded source 则表示 section 内的有符号帧偏移，与 REAPER take 的 `D_STARTOFFS` 一致。循环 bounded section 要求偏移在 `[0, section_length)` 并只在 section 内绕回。关闭循环后允许 signed 偏移：负偏移先播放静音，再从 section 起点单次播放；非负偏移从 section 内对应位置播放，section 结束后补静音至 item 末尾。无 bounded section 的 whole-file source offset 语义不变。
 
 从 schema 49 迁移时，对每条同时有 section 起点/长度的记录，从 signed offset 以及兼容镜像 `source_offset_samples` 中减去旧 section 起点。旧代码曾把这两种坐标混为一体；旧有效循环项必有 offset 不小于 section 起点，因此转换后循环 offset 仍非负。迁移在独立 schema 事务中完成，不删字段；回滚需要恢复迁移前的完整备份，不能手工回退 `user_version`。Core、Media 与 Storage 覆盖相对偏移、负 pre-roll、section EOF 和 schema 49→50。
+
+## schema 51 — MIDI source loop metadata
+
+`items.loop_source` 与 `items.source_loop_length_ticks` 将 MIDI item's loop-source flag 和固定源循环长度保存在快照与 SQLite 中；MIDI source loop length 与可见 item length 分离，因此 Nudge/trim/resize 不会重写循环边界。新增 MIDI item 默认 loop source 开启，初始源长等于插入长度；Duplicate 与 Split 保留 loop flag 和源长。事件 tick 到 item 时间的映射按源偏移和循环长度计算，不改写原始 MIDI event PPQ。
+
+Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可见 item 长度与存储事件结束位置中的较大者。旧模型没有保留被 trim 后的原始空源长度，因此空 MIDI item 的历史循环长度无法精确恢复。循环 source length 必须大于零，SQLite boolean 只接受 0/1；未来切换 loop source 的 Action 仍需在 Core 校验状态与长度。
+
+重复事件在 Core 的无分配 tick iterator 上贯穿事件计划、Arrangement preview 和标准 MIDI 导出。播放 callback 不做循环枚举、分配、锁或 I/O；事件计划/导出在离线编译阶段限制为最多 1,000,000 个 MIDI 事件，超限返回错误。回滚使用升级前工程备份并由旧版本拒绝未来 schema，不手工改 `user_version`。

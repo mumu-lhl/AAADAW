@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 50;
+pub const CURRENT_SCHEMA_VERSION: u32 = 51;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -428,6 +428,21 @@ SET signed_source_offset_samples = signed_source_offset_samples - source_section
     source_offset_samples = MAX(0, signed_source_offset_samples - source_section_start_samples)
 WHERE source_section_start_samples IS NOT NULL
   AND source_section_length_samples IS NOT NULL;
+"#;
+
+const MIGRATION_51: &str = r#"
+ALTER TABLE items ADD COLUMN source_loop_length_ticks INTEGER NOT NULL DEFAULT 1
+    CHECK(source_loop_length_ticks > 0);
+UPDATE items
+SET source_loop_length_ticks = MAX(
+    length_ticks,
+    COALESCE((
+        SELECT MIN(9223372036854775807, MAX(tick + duration))
+        FROM midi_notes WHERE midi_notes.item_id = items.id
+    ), 0),
+    COALESCE((SELECT MIN(9223372036854775807, MAX(tick + 1)) FROM midi_controllers WHERE midi_controllers.item_id = items.id), 0),
+    COALESCE((SELECT MIN(9223372036854775807, MAX(tick + 1)) FROM midi_pitch_bends WHERE midi_pitch_bends.item_id = items.id), 0)
+);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3185,6 +3200,16 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
             }
             50 => transaction.execute_batch(MIGRATION_50)?,
+            51 => {
+                if !table_has_column(&transaction, "items", "loop_source")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE items ADD COLUMN loop_source INTEGER NOT NULL DEFAULT 1 CHECK(loop_source IN (0, 1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "items", "source_loop_length_ticks")? {
+                    transaction.execute_batch(MIGRATION_51)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3415,8 +3440,8 @@ fn write_snapshot(
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3425,6 +3450,8 @@ fn write_snapshot(
                 to_sql_integer(item.length_ticks)?,
                 item.name,
                 to_sql_integer(item.source_offset_ticks)?,
+                item.loop_source,
+                to_sql_integer(item.source_loop_length_ticks)?,
                 item.muted
             ],
         )?;
@@ -4230,7 +4257,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted \
+        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -4244,14 +4271,31 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
                 row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut items = Vec::with_capacity(item_rows.len());
-    for (id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted) in
-        item_rows
+    for (
+        id,
+        track_id,
+        position,
+        start_tick,
+        length_ticks,
+        name,
+        source_offset_ticks,
+        loop_source,
+        source_loop_length_ticks,
+        muted,
+    ) in item_rows
     {
         let muted = match muted {
+            0 => false,
+            1 => true,
+            _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        };
+        let loop_source = match loop_source {
             0 => false,
             1 => true,
             _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
@@ -4267,6 +4311,8 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             name,
             start_tick: from_sql_u64(start_tick)?,
             source_offset_ticks: from_sql_u64(source_offset_ticks)?,
+            loop_source,
+            source_loop_length_ticks: from_sql_u64(source_loop_length_ticks)?,
             length_ticks: from_sql_u64(length_ticks)?,
             muted,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
@@ -4523,7 +4569,7 @@ mod saved_snapshot_tests {
 #[cfg(test)]
 mod loop_source_storage_tests {
     use super::ProjectStore;
-    use aaadaw_core::{DawAction, Project};
+    use aaadaw_core::{DawAction, MidiNoteData, Project};
     use rusqlite::Connection;
 
     #[test]
@@ -4643,7 +4689,6 @@ mod loop_source_storage_tests {
                 muted: true,
             })
             .unwrap();
-
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
         store
@@ -4792,7 +4837,10 @@ mod loop_source_storage_tests {
         drop(connection);
 
         let mut store = ProjectStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 49);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
         let mut migrated = store.load().unwrap();
         assert_eq!(migrated.audio_items()[0].source_offset_samples(), 120);
         let migrated_columns: (i64, i64) = store
@@ -4879,7 +4927,10 @@ mod loop_source_storage_tests {
         store.close().unwrap();
 
         let store = ProjectStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 50);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
         let loaded = store.load().unwrap();
         let item = &loaded.audio_items()[0];
         assert_eq!(item.source_offset_samples(), 4_800);
@@ -4894,6 +4945,105 @@ mod loop_source_storage_tests {
             )
             .unwrap();
         assert_eq!(columns, (4_800, 4_800));
+    }
+
+    #[test]
+    fn midi_loop_metadata_round_trips_through_snapshots_and_sqlite() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI loop".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 1_500,
+                source_offset_ticks: 240,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        let item = &loaded.midi_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_loop_length_ticks(), 960);
+        assert_eq!(item.source_offset_ticks(), 240);
+        assert_eq!(item.length_ticks(), 1_500);
+    }
+
+    #[test]
+    fn schema_50_midi_items_migrate_with_looping_and_event_extent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-50-midi-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 1_300,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 1_080,
+                    duration: 120,
+                    velocity: 100,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditMidiItem {
+                item_id,
+                start_tick: 0,
+                length_ticks: 480,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE items DROP COLUMN source_loop_length_ticks;
+                 ALTER TABLE items DROP COLUMN loop_source;
+                 UPDATE items SET length_ticks = 480;
+                 PRAGMA user_version = 50;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        let migrated = store.load().unwrap();
+        let item = &migrated.midi_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_loop_length_ticks(), 1_200);
+        assert_eq!(item.length_ticks(), 480);
     }
 
     #[test]

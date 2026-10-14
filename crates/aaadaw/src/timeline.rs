@@ -502,6 +502,7 @@ impl TimelineCache {
             let Some(&track_index) = track_indices.get(&item.track_id()) else {
                 continue;
             };
+            let item_end_tick = item.start_tick().saturating_add(item.length_ticks());
             items.push(TimelineItem {
                 id: item.id(),
                 track_id: item.track_id(),
@@ -514,25 +515,20 @@ impl TimelineCache {
                 midi_notes: item
                     .notes()
                     .iter()
-                    .filter_map(|note| {
-                        let start_tick = note.tick();
-                        let end_tick = start_tick.checked_add(note.duration())?;
-                        let source_start_tick = item.source_offset_ticks();
-                        let source_end_tick = source_start_tick.saturating_add(item.length_ticks());
-                        (source_start_tick..source_end_tick)
-                            .contains(&start_tick)
-                            .then(|| MidiNotePreview {
-                                tick: start_tick - source_start_tick,
-                                duration: end_tick.min(source_end_tick) - start_tick,
-                                pitch: note.pitch(),
-                            })
+                    .flat_map(|note| {
+                        item.project_ticks_at_content_tick(note.tick()).filter_map(
+                            move |start_tick| {
+                                let end_tick = start_tick
+                                    .saturating_add(note.duration())
+                                    .min(item_end_tick);
+                                (end_tick > start_tick).then_some(MidiNotePreview {
+                                    tick: start_tick - item.start_tick(),
+                                    duration: end_tick - start_tick,
+                                    pitch: note.pitch(),
+                                })
+                            },
+                        )
                     })
-                    .step_by(
-                        item.notes()
-                            .len()
-                            .div_ceil(MAX_MIDI_ITEM_PREVIEW_NOTES)
-                            .max(1),
-                    )
                     .take(MAX_MIDI_ITEM_PREVIEW_NOTES)
                     .collect(),
                 start_sample: 0,

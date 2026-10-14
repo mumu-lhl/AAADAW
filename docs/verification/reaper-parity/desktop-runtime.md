@@ -2,11 +2,19 @@
 
 This smoke run starts the built desktop binary in a fresh X11 display and isolated XDG profile, waits for its real main window, and captures the display. It does not require an audio device. `WGPU_BACKEND=gl` selects the Mesa/OpenGL path used by the headless Xvfb host.
 
-Run it from the repository root:
+Run it from the repository root when an executable has already been built:
 
 ```sh
 bash scripts/reaper_parity/run-aaadaw-desktop-smoke.sh [path/to/aaadaw] [output.png]
 ```
+
+To rebuild the Linux desktop binary and capture it in one command, run:
+
+```sh
+bash scripts/reaper_parity/build-and-smoke-aaadaw-desktop.sh [output.png]
+```
+
+The build helper links the executable with debug sections stripped, stages the managed host's `target/runtime-pkgconfig` path when present, and removes only AAADAW incremental/link scratch files if the workspace has less than 1 GiB free. Dependency debug information and runtime code generation are unchanged.
 
 The script uses a system `Xvfb` when available. On the parity host, Xvfb is bundled with the isolated REAPER runtime rather than installed system-wide; the script discovers the extracted executable or accepts an explicit `AAADAW_XVFB=/path/to/Xvfb`. `xwininfo`, ImageMagick `import`, and `sha256sum` are also required. The XDG profile, app log, and Xvfb log are kept under ignored `target/aaadaw-desktop-smoke.*` for inspection.
 
@@ -15,3 +23,5 @@ On 2026-10-14 the post-EOF, pre-signed-offset `target/debug/aaadaw` (Build ID `9
 The earlier failed relaunch followed a teardown of the old Xvfb session: `DISPLAY` was unset, no system Xvfb executable existed, and prior Xvfb/app processes were zombies. Launching against that stale environment could not create a client window. A fresh Xvfb process from the bundled REAPER runtime resolved the issue without changing system packages. This runtime proof is separate from feature acceptance; each parity item still needs its own behavior, screenshot, and regression evidence.
 
 After the bounded-source-section coordinate correction, the rebuilt desktop binary (Build ID `dab8bd42de48bc34d83479ed2607137c64ab4b7a`, SHA-256 `f70ba20a0bc8675f6465b0bdd8c2b47c3264489162bc9703ea2f2b93481b5272`) launched on Xvfb `:90`; the smoke script found the actual AAADAW main window and captured 1280×800. Its screenshot is pixel-identical to the startup fixture (SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b`). The [fixture manifest](fixtures/aaadaw-desktop-runtime.tsv) records this rebuild separately from earlier runs.
+
+On 2026-10-14, after MIDI source-loop, Contents Nudge, and per-item tempo-map conversion changes, the new desktop binary (Build ID `0b3b3dfe381801986c1a53db45b9f66e6f7aa900`, SHA-256 `6f0345d4001c61d44cd0356759c7176117045ea58d5c359dcdf5a4f45edfc1f1`) was rebuilt with `build-and-smoke-aaadaw-desktop.sh`. The script launched the real main window on a fresh Xvfb display at 1280×800; the screenshot again matches the startup fixture byte-for-byte (SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b`). This verifies startup after the source changes, not MIDI Editor or Nudge window visuals.

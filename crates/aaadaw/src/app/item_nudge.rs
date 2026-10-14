@@ -282,7 +282,7 @@ impl App {
                                     .to_owned(),
                             );
                         } else {
-                            self.nudge_selected_audio_contents(signed_delta);
+                            self.nudge_selected_contents(signed_delta);
                         }
                     }
                     Target::EditCursor => unreachable!("edit cursor target handled above"),
@@ -775,20 +775,124 @@ impl App {
         self.item_nudge_dialog.error = None;
     }
 
-    fn nudge_selected_audio_contents(&mut self, delta_samples: i128) {
+    fn nudge_selected_contents(&mut self, delta_samples: i128) {
         let selected_ids = &self.timeline.selected_items;
-        if self
+        let selected_audio = self
+            .project
+            .audio_items()
+            .iter()
+            .any(|item| selected_ids.contains(&item.id()));
+        let selected_midi = self
             .project
             .midi_items()
             .iter()
-            .any(|item| selected_ids.contains(&item.id()))
-        {
+            .any(|item| selected_ids.contains(&item.id()));
+        if selected_audio && selected_midi {
             self.item_nudge_dialog.error = Some(
-                "The contents target is currently supported for selected audio items only"
-                    .to_owned(),
+                "The contents target does not yet support a mixed audio/MIDI selection".to_owned(),
             );
             return;
         }
+        if selected_midi {
+            self.nudge_selected_midi_contents(delta_samples);
+        } else {
+            self.nudge_selected_audio_contents(delta_samples);
+        }
+    }
+
+    fn nudge_selected_midi_contents(&mut self, delta_samples: i128) {
+        let selected_ids = &self.timeline.selected_items;
+        let items = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected MIDI items".to_owned());
+            return;
+        }
+        let Some(sample_delta) = delta_samples
+            .checked_abs()
+            .and_then(|samples| u64::try_from(samples).ok())
+        else {
+            self.item_nudge_dialog.error =
+                Some("Contents nudge is outside the supported range".to_owned());
+            return;
+        };
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let source_loop_length = item.source_loop_length_ticks();
+            if !item.is_loop_source() || source_loop_length == 0 {
+                self.item_nudge_dialog.error =
+                    Some("MIDI Contents nudge requires a valid loop source".to_owned());
+                return;
+            }
+            let start_sample = match self.project.sample_at_tick(item.start_tick()) {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error.to_string());
+                    return;
+                }
+            };
+            let Some(target_sample) = start_sample.checked_add(sample_delta) else {
+                self.item_nudge_dialog.error =
+                    Some("Contents nudge is outside the supported range".to_owned());
+                return;
+            };
+            let target_tick = match self.project.tick_at_sample(target_sample) {
+                Ok(tick) => tick,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error.to_string());
+                    return;
+                }
+            };
+            let Some(tick_delta) = target_tick.checked_sub(item.start_tick()) else {
+                self.item_nudge_dialog.error =
+                    Some("Contents nudge is outside the supported range".to_owned());
+                return;
+            };
+            let source_delta = if delta_samples > 0 {
+                -i128::from(tick_delta)
+            } else {
+                i128::from(tick_delta)
+            };
+            let Some(source_offset_ticks) = wrapped_source_sample(
+                item.source_offset_ticks() % source_loop_length,
+                0,
+                source_loop_length,
+                source_delta,
+            ) else {
+                self.item_nudge_dialog.error =
+                    Some("MIDI Contents nudge is outside the supported range".to_owned());
+                return;
+            };
+            if source_offset_ticks != item.source_offset_ticks() {
+                actions.push(DawAction::EditMidiItemPlacement {
+                    item_id: item.id(),
+                    start_tick: item.start_tick(),
+                    length_ticks: item.length_ticks(),
+                    source_offset_ticks,
+                });
+            }
+        }
+        if actions.is_empty() {
+            self.item_nudge_dialog.error =
+                Some("MIDI Contents nudge did not change the selected item contents".to_owned());
+            return;
+        }
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected MIDI item contents moved",
+        );
+        self.item_nudge_dialog.error = None;
+    }
+
+    fn nudge_selected_audio_contents(&mut self, delta_samples: i128) {
+        let selected_ids = &self.timeline.selected_items;
         let items = self
             .project
             .audio_items()

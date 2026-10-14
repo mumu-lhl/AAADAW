@@ -709,6 +709,75 @@ fn item_nudge_set_can_set_the_edit_cursor_to_a_project_time() {
 }
 
 #[test]
+fn item_nudge_contents_wraps_looped_midi_offsets_and_undoes_atomically() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 0,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+    let revision = app.revision;
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    let item = &app.project.midi_items()[0];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(item.start_tick(), 0);
+    assert_eq!(item.length_ticks(), 9_600);
+    assert_eq!(item.source_offset_ticks(), 9_120);
+    assert_eq!(item.source_loop_length_ticks(), 9_600);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 480);
+    assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
+fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 960,
+            bpm: 60.0,
+        })
+        .unwrap();
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 960,
+            length_ticks: 4_800,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 4_560);
+    assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
 fn item_nudge_contents_target_fails_closed_without_editing_items() {
     let mut app = item_snap_test_app(0, 0);
     let _ = app.update(Message::ItemNudgeTargetChanged(

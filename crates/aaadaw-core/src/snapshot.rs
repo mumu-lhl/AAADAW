@@ -187,6 +187,8 @@ pub struct MidiItemSnapshot {
     pub name: String,
     pub start_tick: u64,
     pub source_offset_ticks: u64,
+    pub loop_source: bool,
+    pub source_loop_length_ticks: u64,
     pub length_ticks: u64,
     pub muted: bool,
     pub notes: Vec<MidiNoteSnapshot>,

@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents；schema 50 signed section-relative source offset 已跨 Core/Storage/Media/UI 接入，MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Audio/MIDI Contents；schema 50 signed section-relative audio source offset 已跨 Core/Storage/Media/UI 接入，schema 51 MIDI source loop length 与重复事件已接入 Core/Storage/playback/timeline preview/export；MIDI Editor 循环事件显示编辑、source-loop 控件、tempo-map 原厂转换、混合媒体和 Snap/Set/完整 Undo 仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1055,3 +1055,13 @@ REAPER 负偏移的逐采样音频比较尚未验证；Nudge 的其他 Target/Sn
 Linux REAPER 7.82 / Default 7 原厂实窗探针使用五秒循环 MIDI item、两条带 PPQ 标记的音符和 250 ms Nudge。Contents 目标下，41249 将 `D_STARTOFFS` 从 0 秒绕至 4.75 秒；41250 从 4.75 秒回到 0，再从 0 推进到 0.25 秒。六种 Snap 开/关状态的对应样例结果相同。整个过程中 item 位置 2 秒、长度 5 秒、loop flag 和选择保持不变，原始 MIDI note PPQ 范围不变，project state-change 计数增量为 0。实测值、截图和脚本见[MIDI Contents Nudge 记录](../verification/reaper-parity/item-nudge-midi-contents.md)。
 
 AAADAW 当前对 MIDI Contents Nudge fail closed。现有 MIDI `source_offset_ticks` 不保存可用于环绕的源循环长度，因此只改偏移会在 timeline、MIDI editor、playback 或 MIDI export 中丢失循环片段。Undo_CanUndo2 标签在本轮 probe 中不稳定，音频设备模态窗口也阻挡了独立 Ctrl+Z 验证，故 Undo 语义仍未判定。下一步先扩展 MIDI source loop 数据模型，再把 loop 长度贯穿保存、编辑显示、播放、导出、剪切/复制和 Undo，并以这些原厂值建立回归；`ITEM-NUDGE-SET-001` 继续 `in_progress`。
+
+### 2026-10-14 MIDI source loop 与 Contents Nudge
+
+实现推进：schema 51 在 MIDI item 上增加 `loop_source` 与固定 `source_loop_length_ticks`；新 MIDI item 默认沿用 REAPER MIDI item 的 loop-source 行为，旧工程迁移按 item 长度和事件最大结束位置推断 source length。Duplicate、Split、Snapshot 与 SQLite 保存/重开会保留该元数据。对旧 trimmed empty MIDI items 无法恢复历史源长度，推断值仍是已知兼容边界。
+
+Core 现在提供无分配的 source-event loop occurrence iterator；离线/实时共享的 MIDI 事件计划、Arrangement note preview 和标准 MIDI 导出会按可见 item 长度重复 note/controller/pitch-bend。事件计划与导出各有 1,000,000 MIDI event 的硬上限，避免极短 loop 扩展成失控内存。Contents Nudge 对单独选中的 looped MIDI item 按每个 item 起点所在的 Tempo Map 把毫秒时长换算成 PPQ tick，再环绕源偏移；250 ms / 120 BPM 用例从 0 到 9120 tick（4.75 秒），Undo 恢复 0，向左移动到 480 tick（0.25 秒）。新增 item 位于 60 BPM tempo point 后的回归确认 250 ms 转为 240 ticks。混合 Audio/MIDI 选择、非循环 MIDI source、Snap 和 Set 继续失败关闭；REAPER 原厂变速工程的逐项对照仍待验证。
+
+定向回归：Core loop mapping 与 MIDI export 9/9、Storage loop/migration 10/10、Engine MIDI schedule 15/15、新的 Tempo Map app 回归 1/1；严格 all-target Clippy `-D warnings`、fmt、diff 检查通过。Linux desktop 使用新建的 [`build-and-smoke-aaadaw-desktop.sh`](../../scripts/reaper_parity/build-and-smoke-aaadaw-desktop.sh) 重建并在 Xvfb 运行，实际主窗口 1280×800；SHA 与启动 fixture 相同。为避免窄磁盘工作区在 GUI 二进制重链接时失败，该脚本对最终桌面可执行文件剥离 DWARF，并仅在可用空间低于 1 GiB 时清理 AAADAW 自身增量缓存与失败链接临时对象；Rust 依赖 debug 信息和运行代码生成保持不变。新二进制和截图哈希见[桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。该启动截图不覆盖 Nudge 功能控件。
+
+`ITEM-NUDGE-SET-001` 继续 `in_progress`：MIDI Editor 仍按未循环源坐标渲染/编辑；REAPER 变速工程换算对照、Undo 语义、mixed-media、Snap/Set、循环源 UI、bounded MIDI source 和全部目标截图仍待完成；不能把此纵向数据/播放/导出切片视为 Nudge 或 P7 完成。

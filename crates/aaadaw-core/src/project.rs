@@ -1258,6 +1258,8 @@ fn duplicate_midi_item_to_track(
         name: original.name.clone(),
         start_tick,
         source_offset_ticks: original.source_offset_ticks,
+        loop_source: original.loop_source,
+        source_loop_length_ticks: original.source_loop_length_ticks,
         length_ticks: item_end - start_tick,
         muted: original.muted,
         notes: Arc::new(notes),
@@ -1782,6 +1784,8 @@ impl Project {
                     name: item.name.clone(),
                     start_tick: item.start_tick,
                     source_offset_ticks: item.source_offset_ticks,
+                    loop_source: item.loop_source,
+                    source_loop_length_ticks: item.source_loop_length_ticks,
                     length_ticks: item.length_ticks,
                     muted: item.muted,
                     notes: item
@@ -2089,6 +2093,7 @@ impl Project {
                 || item.name.trim().is_empty()
                 || item.name.chars().count() > 128
                 || item.length_ticks == 0
+                || item.source_loop_length_ticks == 0
                 || item.start_tick.checked_add(item.length_ticks).is_none()
                 || item
                     .source_offset_ticks
@@ -2131,6 +2136,8 @@ impl Project {
                 name: item.name,
                 start_tick: item.start_tick,
                 source_offset_ticks: item.source_offset_ticks,
+                loop_source: item.loop_source,
+                source_loop_length_ticks: item.source_loop_length_ticks,
                 length_ticks: item.length_ticks,
                 muted: item.muted,
                 notes: Arc::new(notes),
@@ -3543,6 +3550,8 @@ impl Project {
                     name: "MIDI".to_owned(),
                     start_tick,
                     source_offset_ticks: 0,
+                    loop_source: true,
+                    source_loop_length_ticks: length_ticks,
                     length_ticks,
                     muted: false,
                     notes: Arc::new(Vec::new()),
@@ -3810,6 +3819,8 @@ impl Project {
                         } else {
                             0
                         },
+                        loop_source: original.loop_source,
+                        source_loop_length_ticks: original.source_loop_length_ticks,
                         length_ticks: segment_end - segment_start,
                         muted: original.muted,
                         notes: Arc::new(notes),

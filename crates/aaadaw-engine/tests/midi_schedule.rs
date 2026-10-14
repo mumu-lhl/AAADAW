@@ -164,6 +164,43 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
 }
 
 #[test]
+fn event_plan_repeats_midi_notes_after_the_preserved_source_loop_length() {
+    let (mut project, _) = project_with_note(60, 120, 90);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 8_000,
+            source_offset_ticks: 3_600,
+        })
+        .expect("the visible MIDI clip should extend beyond its source loop");
+
+    let plan = MidiEventPlan::compile(&project).expect("looped MIDI should compile");
+    assert_eq!(plan.len(), 4);
+    let block_end = project.sample_at_tick(8_000).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(
+        plan.events_for_block(0, block_end as usize + 1, &mut events)
+            .unwrap(),
+        4
+    );
+    let note_ons = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::NoteOn)
+        .map(|event| event.sample_offset)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        note_ons,
+        [
+            project.sample_at_tick(360).unwrap() as usize,
+            project.sample_at_tick(4_200).unwrap() as usize,
+        ]
+    );
+}
+
+#[test]
 fn event_plan_applies_midi_source_offset_at_the_visible_start() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()

@@ -2,6 +2,8 @@ use aaadaw_core::{NoteId, Project, TimebaseError, Track, TrackId};
 use std::collections::HashMap;
 use std::fmt;
 
+const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
+
 /// A MIDI event kind. Shared-sample ordering also accounts for sustain-on/off semantics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MidiEventKind {
@@ -257,6 +259,8 @@ pub enum MidiScheduleError {
     MissingTrack { track_id: u64 },
     /// Tick/sample arithmetic exceeds the supported range.
     PositionOutOfRange,
+    /// Expanding MIDI source loops would exceed the bounded offline schedule size.
+    EventLimitExceeded,
     /// Converting a project tick to a sample failed.
     Timebase(TimebaseError),
     /// The caller-provided output slice cannot hold the requested block events.
@@ -270,6 +274,8 @@ impl fmt::Display for MidiScheduleError {
                 write!(formatter, "MIDI item references missing track {track_id}")
             }
             Self::PositionOutOfRange => formatter.write_str("MIDI event position is out of range"),
+            Self::EventLimitExceeded => formatter
+                .write_str("MIDI source loops expand beyond the supported event schedule limit"),
             Self::Timebase(error) => {
                 write!(formatter, "MIDI event timebase conversion failed: {error}")
             }
@@ -387,130 +393,127 @@ impl MidiEventPlan {
                 .checked_add(item.length_ticks())
                 .ok_or(MidiScheduleError::PositionOutOfRange)?;
             for note in item.notes() {
-                let Some(start_tick) = item.project_tick_at_content_tick(note.tick()) else {
-                    continue;
-                };
-                if start_tick < item.start_tick() || start_tick >= clip_end_tick {
-                    continue;
+                for start_tick in item.project_ticks_at_content_tick(note.tick()) {
+                    if events.len() > MAX_COMPILED_MIDI_EVENTS - 2 {
+                        return Err(MidiScheduleError::EventLimitExceeded);
+                    }
+                    let end_tick = start_tick
+                        .checked_add(note.duration())
+                        .ok_or(MidiScheduleError::PositionOutOfRange)?
+                        .min(clip_end_tick);
+                    let start_sample = project
+                        .sample_at_tick(start_tick)
+                        .map_err(MidiScheduleError::Timebase)?;
+                    let end_sample = project
+                        .sample_at_tick(end_tick)
+                        .map_err(MidiScheduleError::Timebase)?;
+                    notes.push(CompiledMidiNote {
+                        start_sample,
+                        end_sample,
+                        track_id: item.track_id(),
+                        note_id: note.id(),
+                        pitch: note.pitch(),
+                        velocity: note.velocity(),
+                    });
+                    events.push(CompiledMidiEvent {
+                        absolute_sample: start_sample,
+                        track_id: item.track_id(),
+                        note_id: Some(note.id()),
+                        pitch: note.pitch(),
+                        velocity: note.velocity(),
+                        controller: None,
+                        pitch_bend: None,
+                        kind: MidiEventKind::NoteOn,
+                    });
+                    events.push(CompiledMidiEvent {
+                        absolute_sample: end_sample,
+                        track_id: item.track_id(),
+                        note_id: Some(note.id()),
+                        pitch: note.pitch(),
+                        velocity: 0,
+                        controller: None,
+                        pitch_bend: None,
+                        kind: MidiEventKind::NoteOff,
+                    });
                 }
-                let end_tick = start_tick
-                    .checked_add(note.duration())
-                    .ok_or(MidiScheduleError::PositionOutOfRange)?
-                    .min(clip_end_tick);
-                let start_sample = project
-                    .sample_at_tick(start_tick)
-                    .map_err(MidiScheduleError::Timebase)?;
-                let end_sample = project
-                    .sample_at_tick(end_tick)
-                    .map_err(MidiScheduleError::Timebase)?;
-                notes.push(CompiledMidiNote {
-                    start_sample,
-                    end_sample,
-                    track_id: item.track_id(),
-                    note_id: note.id(),
-                    pitch: note.pitch(),
-                    velocity: note.velocity(),
-                });
-                events.push(CompiledMidiEvent {
-                    absolute_sample: start_sample,
-                    track_id: item.track_id(),
-                    note_id: Some(note.id()),
-                    pitch: note.pitch(),
-                    velocity: note.velocity(),
-                    controller: None,
-                    pitch_bend: None,
-                    kind: MidiEventKind::NoteOn,
-                });
-                events.push(CompiledMidiEvent {
-                    absolute_sample: end_sample,
-                    track_id: item.track_id(),
-                    note_id: Some(note.id()),
-                    pitch: note.pitch(),
-                    velocity: 0,
-                    controller: None,
-                    pitch_bend: None,
-                    kind: MidiEventKind::NoteOff,
-                });
             }
             for controller in item.controllers() {
-                let Some(absolute_tick) = item.project_tick_at_content_tick(controller.tick) else {
-                    continue;
-                };
-                if absolute_tick < item.start_tick() || absolute_tick >= clip_end_tick {
-                    continue;
-                }
-                let absolute_sample = project
-                    .sample_at_tick(absolute_tick)
-                    .map_err(MidiScheduleError::Timebase)?;
-                let timeline = controller_timelines.iter_mut().find(|timeline| {
-                    timeline.track_id == item.track_id()
-                        && timeline.controller == controller.controller
-                });
-                let timeline = if let Some(timeline) = timeline {
-                    timeline
-                } else {
-                    controller_timelines.push(ControllerTimeline {
-                        track_id: item.track_id(),
-                        controller: controller.controller,
-                        values: Vec::new(),
+                for absolute_tick in item.project_ticks_at_content_tick(controller.tick) {
+                    if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                        return Err(MidiScheduleError::EventLimitExceeded);
+                    }
+                    let absolute_sample = project
+                        .sample_at_tick(absolute_tick)
+                        .map_err(MidiScheduleError::Timebase)?;
+                    let timeline = controller_timelines.iter_mut().find(|timeline| {
+                        timeline.track_id == item.track_id()
+                            && timeline.controller == controller.controller
                     });
-                    controller_timelines
-                        .last_mut()
-                        .expect("controller timeline was just inserted")
-                };
-                timeline.values.push(CompiledControllerValue {
-                    absolute_sample,
-                    value: controller.value,
-                });
-                events.push(CompiledMidiEvent {
-                    absolute_sample,
-                    track_id: item.track_id(),
-                    note_id: None,
-                    pitch: controller.controller,
-                    velocity: controller.value,
-                    controller: Some(controller.controller),
-                    pitch_bend: None,
-                    kind: MidiEventKind::ControllerChange,
-                });
+                    let timeline = if let Some(timeline) = timeline {
+                        timeline
+                    } else {
+                        controller_timelines.push(ControllerTimeline {
+                            track_id: item.track_id(),
+                            controller: controller.controller,
+                            values: Vec::new(),
+                        });
+                        controller_timelines
+                            .last_mut()
+                            .expect("controller timeline was just inserted")
+                    };
+                    timeline.values.push(CompiledControllerValue {
+                        absolute_sample,
+                        value: controller.value,
+                    });
+                    events.push(CompiledMidiEvent {
+                        absolute_sample,
+                        track_id: item.track_id(),
+                        note_id: None,
+                        pitch: controller.controller,
+                        velocity: controller.value,
+                        controller: Some(controller.controller),
+                        pitch_bend: None,
+                        kind: MidiEventKind::ControllerChange,
+                    });
+                }
             }
             for bend in item.pitch_bends() {
-                let Some(absolute_tick) = item.project_tick_at_content_tick(bend.tick) else {
-                    continue;
-                };
-                if absolute_tick < item.start_tick() || absolute_tick >= clip_end_tick {
-                    continue;
-                }
-                let absolute_sample = project
-                    .sample_at_tick(absolute_tick)
-                    .map_err(MidiScheduleError::Timebase)?;
-                let timeline = pitch_bend_timelines
-                    .iter_mut()
-                    .find(|timeline| timeline.track_id == item.track_id());
-                let timeline = if let Some(timeline) = timeline {
-                    timeline
-                } else {
-                    pitch_bend_timelines.push(PitchBendTimeline {
-                        track_id: item.track_id(),
-                        values: Vec::new(),
+                for absolute_tick in item.project_ticks_at_content_tick(bend.tick) {
+                    if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                        return Err(MidiScheduleError::EventLimitExceeded);
+                    }
+                    let absolute_sample = project
+                        .sample_at_tick(absolute_tick)
+                        .map_err(MidiScheduleError::Timebase)?;
+                    let timeline = pitch_bend_timelines
+                        .iter_mut()
+                        .find(|timeline| timeline.track_id == item.track_id());
+                    let timeline = if let Some(timeline) = timeline {
+                        timeline
+                    } else {
+                        pitch_bend_timelines.push(PitchBendTimeline {
+                            track_id: item.track_id(),
+                            values: Vec::new(),
+                        });
+                        pitch_bend_timelines
+                            .last_mut()
+                            .expect("pitch-bend timeline was just inserted")
+                    };
+                    timeline.values.push(CompiledPitchBendValue {
+                        absolute_sample,
+                        value: bend.value,
                     });
-                    pitch_bend_timelines
-                        .last_mut()
-                        .expect("pitch-bend timeline was just inserted")
-                };
-                timeline.values.push(CompiledPitchBendValue {
-                    absolute_sample,
-                    value: bend.value,
-                });
-                events.push(CompiledMidiEvent {
-                    absolute_sample,
-                    track_id: item.track_id(),
-                    note_id: None,
-                    pitch: 0,
-                    velocity: 0,
-                    controller: None,
-                    pitch_bend: Some(bend.value),
-                    kind: MidiEventKind::PitchBend,
-                });
+                    events.push(CompiledMidiEvent {
+                        absolute_sample,
+                        track_id: item.track_id(),
+                        note_id: None,
+                        pitch: 0,
+                        velocity: 0,
+                        controller: None,
+                        pitch_bend: Some(bend.value),
+                        kind: MidiEventKind::PitchBend,
+                    });
+                }
             }
         }
 
