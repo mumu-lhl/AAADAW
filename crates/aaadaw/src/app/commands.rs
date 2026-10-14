@@ -227,6 +227,8 @@ const COPY_LOOP_OF_SELECTED_AREA_SHORTCUT: &[Shortcut] = &[Shortcut::character(
     Modifiers::CTRL.union(Modifiers::ALT),
 )];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
+const SPLIT_ITEMS_AT_TIME_SELECTION_SHORTCUT: &[Shortcut] =
+    &[Shortcut::character('s', Modifiers::SHIFT)];
 const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
 const INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT: &[Shortcut] =
     &[Shortcut::character('r', Modifiers::SHIFT)];
@@ -1107,13 +1109,13 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::SplitSelectedItemsAtTimeSelection,
         menu: Some(MainMenu::Item),
         category: "Item",
-        label: "Split items at time selection",
+        label: "Split items at time selection or razor edit",
         aliases: &[
             "split at time selection",
             "split items at selection",
             "split selected items at time selection",
         ],
-        shortcuts: &[],
+        shortcuts: SPLIT_ITEMS_AT_TIME_SELECTION_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -1498,6 +1500,18 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
             .find(|entry| entry.id == CommandId::SelectAllItems)
         {
             select_all.label = "Select all".to_owned();
+        }
+        if let Some(split_at_cursor) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::SplitSelectedItemsAtCursor)
+        {
+            split_at_cursor.label = "Split items at cursor".to_owned();
+        }
+        if let Some(split_at_time_selection) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::SplitSelectedItemsAtTimeSelection)
+        {
+            split_at_time_selection.label = "Split items at time selection".to_owned();
         }
     }
     if menu == MainMenu::Edit
@@ -2554,9 +2568,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
-        CommandKind::SplitSelectedItemsAtCursor => {
-            !project_edit_busy(app) && app.can_split_selected_items_at_cursor()
-        }
+        CommandKind::SplitSelectedItemsAtCursor => !project_edit_busy(app),
         CommandKind::SplitSelectedItemsAtTimeSelection => {
             !project_edit_busy(app) && app.can_split_selected_items_at_time_selection()
         }

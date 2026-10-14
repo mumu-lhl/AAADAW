@@ -17,7 +17,7 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, ItemId, MarkerId, MeterPointSnapshot, MidiItem,
-    Project, RegionId, TempoCurve, TimeSignature, TrackId,
+    Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -286,6 +286,8 @@ impl Default for ShellProfile {
         }
     }
 }
+
+type TrackRazorAreas = Vec<(TrackId, Vec<RazorEditArea>)>;
 
 #[derive(Default)]
 struct App {
@@ -9161,14 +9163,19 @@ impl App {
         ])
     }
 
-    pub(super) fn can_split_selected_items_at_cursor(&self) -> bool {
-        self.selected_item_split_action(false, None)
-            .is_ok_and(|action| action.is_some())
-    }
-
     pub(super) fn can_split_selected_items_at_time_selection(&self) -> bool {
-        self.selected_item_split_action(true, None)
-            .is_ok_and(|action| action.is_some())
+        if self.timeline.time_selection.is_some() {
+            if self.timeline.selected_items.is_empty() {
+                self.all_items_time_selection_split_action(None)
+                    .is_ok_and(|action| action.is_some())
+            } else {
+                self.selected_item_split_action(true, None)
+                    .is_ok_and(|action| action.is_some())
+            }
+        } else {
+            self.all_items_razor_area_split_action(None)
+                .is_ok_and(|action| action.is_some())
+        }
     }
 
     fn selected_item_split_action(
@@ -9372,6 +9379,17 @@ impl App {
     }
 
     fn split_selected_items(&mut self, use_time_selection: bool) {
+        if use_time_selection {
+            if let Some(selection) = self.timeline.time_selection {
+                if self.timeline.selected_items.is_empty() {
+                    self.split_all_items_at_time_selection(selection);
+                    return;
+                }
+            } else {
+                self.split_items_in_razor_areas();
+                return;
+            }
+        }
         let source_sample_rates = match self.selected_audio_source_sample_rates(use_time_selection)
         {
             Ok(rates) => rates,
@@ -9392,6 +9410,30 @@ impl App {
                     return;
                 }
             };
+        let time_selection_range = if use_time_selection {
+            let Some(selection) = self.timeline.time_selection else {
+                self.status = "No time selection to split".to_owned();
+                return;
+            };
+            let start_sample = match self.project.sample_at_tick(selection.start_tick) {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.status = format!("Split failed: {error}");
+                    return;
+                }
+            };
+            let end_sample = match self.project.sample_at_tick(selection.end_tick) {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.status = format!("Split failed: {error}");
+                    return;
+                }
+            };
+            Some((selection, start_sample, end_sample))
+        } else {
+            None
+        };
+        let previously_selected_ids = self.timeline.selected_items.clone();
         let previous_ids = self
             .project
             .audio_items()
@@ -9412,8 +9454,294 @@ impl App {
             .chain(self.project.midi_items().iter().map(|item| item.id()))
             .filter(|item_id| !previous_ids.contains(item_id))
             .collect::<Vec<_>>();
-        self.timeline.selected_items.extend(new_ids);
+        if let Some((selection, start_sample, end_sample)) = time_selection_range {
+            let candidates = previously_selected_ids
+                .into_iter()
+                .chain(new_ids)
+                .collect::<HashSet<_>>();
+            let selected = self
+                .project
+                .audio_items()
+                .iter()
+                .filter(|item| {
+                    candidates.contains(&item.id())
+                        && start_sample <= item.start_sample()
+                        && item.end_sample() <= end_sample
+                })
+                .map(|item| (item.id(), item.track_id()))
+                .chain(self.project.midi_items().iter().filter_map(|item| {
+                    let item_end = item.start_tick().checked_add(item.length_ticks())?;
+                    (candidates.contains(&item.id())
+                        && selection.start_tick <= item.start_tick()
+                        && item_end <= selection.end_tick)
+                        .then_some((item.id(), item.track_id()))
+                }))
+                .collect();
+            self.timeline.select_items(selected);
+        } else {
+            self.timeline.selected_items.extend(new_ids);
+        }
         self.audio_item_start_edits.clear();
+    }
+
+    fn all_items_time_selection_split_action(
+        &self,
+        source_sample_rates: Option<&HashMap<String, u32>>,
+    ) -> Result<Option<DawAction>, String> {
+        let Some(selection) = self.timeline.time_selection else {
+            return Ok(None);
+        };
+        let boundaries = [selection.start_tick, selection.end_tick];
+        let mut actions = Vec::new();
+        for item in self.project.audio_items() {
+            let source_sample_rate = source_sample_rates
+                .and_then(|rates| rates.get(item.media_ref()).copied())
+                .unwrap_or_else(|| self.project.settings().sample_rate());
+            split_audio_item_actions(
+                &self.project,
+                item,
+                &boundaries,
+                source_sample_rate,
+                &mut actions,
+            )?;
+        }
+        for item in self.project.midi_items() {
+            split_midi_item_actions(item, &boundaries, &mut actions)?;
+        }
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }))
+        }
+    }
+
+    fn all_items_razor_area_split_action(
+        &self,
+        source_sample_rates: Option<&HashMap<String, u32>>,
+    ) -> Result<Option<(DawAction, TrackRazorAreas)>, String> {
+        let track_areas = self
+            .project
+            .tracks()
+            .iter()
+            .filter(|track| !track.razor_edit_areas().is_empty())
+            .map(|track| (track.id(), track.razor_edit_areas().to_vec()))
+            .collect::<Vec<_>>();
+        if track_areas.is_empty() {
+            return Ok(None);
+        }
+        let areas_by_track = track_areas.iter().cloned().collect::<HashMap<_, _>>();
+        let mut actions = Vec::new();
+        for item in self.project.audio_items() {
+            let Some(areas) = areas_by_track.get(&item.track_id()) else {
+                continue;
+            };
+            let boundaries = areas
+                .iter()
+                .flat_map(|area| [area.start_sample(), area.end_sample()])
+                .collect::<Vec<_>>();
+            let source_sample_rate = source_sample_rates
+                .and_then(|rates| rates.get(item.media_ref()).copied())
+                .unwrap_or_else(|| self.project.settings().sample_rate());
+            split_audio_item_actions_at_samples(
+                &self.project,
+                item,
+                &boundaries,
+                source_sample_rate,
+                &mut actions,
+            )?;
+        }
+        for item in self.project.midi_items() {
+            let Some(areas) = areas_by_track.get(&item.track_id()) else {
+                continue;
+            };
+            let boundaries = areas
+                .iter()
+                .flat_map(|area| [area.start_sample(), area.end_sample()])
+                .map(|sample| {
+                    self.project
+                        .tick_at_sample(sample)
+                        .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            split_midi_item_actions(item, &boundaries, &mut actions)?;
+        }
+        actions.push(DawAction::SetTrackRazorEditAreas {
+            track_areas: track_areas
+                .iter()
+                .map(|(track_id, _)| (*track_id, Vec::new()))
+                .collect(),
+        });
+        Ok(Some((
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            track_areas,
+        )))
+    }
+
+    fn split_all_items_at_time_selection(&mut self, selection: timeline::TimeSelection) {
+        let start_sample = match self.project.sample_at_tick(selection.start_tick) {
+            Ok(sample) => sample,
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let end_sample = match self.project.sample_at_tick(selection.end_tick) {
+            Ok(sample) => sample,
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let media_refs = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| {
+                [selection.start_tick, selection.end_tick]
+                    .iter()
+                    .any(|tick| {
+                        self.project.sample_at_tick(*tick).is_ok_and(|sample| {
+                            item.start_sample() < sample && sample < item.end_sample()
+                        })
+                    })
+            })
+            .map(|item| item.media_ref().to_owned())
+            .collect::<Vec<_>>();
+        let source_sample_rates = match self.audio_source_sample_rates(media_refs) {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let action = match self.all_items_time_selection_split_action(Some(&source_sample_rates)) {
+            Ok(Some(action)) => action,
+            Ok(None) => {
+                self.status = "No item crosses the time selection".to_owned();
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let previous_revision = self.revision;
+        self.apply_action(action, "Items split at time selection");
+        if self.revision == previous_revision {
+            return;
+        }
+        let mut selected = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| start_sample <= item.start_sample() && item.end_sample() <= end_sample)
+            .map(|item| (item.id(), item.track_id()))
+            .collect::<Vec<_>>();
+        selected.extend(self.project.midi_items().iter().filter_map(|item| {
+            let end_tick = item.start_tick().checked_add(item.length_ticks())?;
+            (selection.start_tick <= item.start_tick() && end_tick <= selection.end_tick)
+                .then_some((item.id(), item.track_id()))
+        }));
+        self.timeline.select_items(selected);
+    }
+
+    fn split_items_in_razor_areas(&mut self) {
+        let track_areas = self
+            .project
+            .tracks()
+            .iter()
+            .filter(|track| !track.razor_edit_areas().is_empty())
+            .map(|track| (track.id(), track.razor_edit_areas().to_vec()))
+            .collect::<Vec<_>>();
+        let areas_by_track = track_areas.iter().cloned().collect::<HashMap<_, _>>();
+        let media_refs = self
+            .project
+            .audio_items()
+            .iter()
+            .filter_map(|item| {
+                let areas = areas_by_track.get(&item.track_id())?;
+                areas
+                    .iter()
+                    .any(|area| {
+                        item.start_sample() < area.start_sample()
+                            && area.start_sample() < item.end_sample()
+                            || item.start_sample() < area.end_sample()
+                                && area.end_sample() < item.end_sample()
+                    })
+                    .then(|| item.media_ref().to_owned())
+            })
+            .collect::<Vec<_>>();
+        let source_sample_rates = match self.audio_source_sample_rates(media_refs) {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status = format!("Split failed: {error}");
+                return;
+            }
+        };
+        let (action, areas) =
+            match self.all_items_razor_area_split_action(Some(&source_sample_rates)) {
+                Ok(Some(action)) => action,
+                Ok(None) => {
+                    self.status = "No razor edit area to split".to_owned();
+                    return;
+                }
+                Err(error) => {
+                    self.status = format!("Split failed: {error}");
+                    return;
+                }
+            };
+        let previous_revision = self.revision;
+        self.apply_action(action, "Items split at razor edit boundaries");
+        if self.revision == previous_revision {
+            return;
+        }
+        let area_ticks = areas
+            .iter()
+            .map(|(track_id, track_areas)| {
+                let ticks = track_areas
+                    .iter()
+                    .filter_map(|area| {
+                        Some((
+                            self.project.tick_at_sample(area.start_sample()).ok()?,
+                            self.project.tick_at_sample(area.end_sample()).ok()?,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                (*track_id, ticks)
+            })
+            .collect::<HashMap<_, _>>();
+        let mut selected = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| {
+                areas.iter().any(|(track_id, track_areas)| {
+                    *track_id == item.track_id()
+                        && track_areas.iter().any(|area| {
+                            area.start_sample() <= item.start_sample()
+                                && item.end_sample() <= area.end_sample()
+                        })
+                })
+            })
+            .map(|item| (item.id(), item.track_id()))
+            .collect::<Vec<_>>();
+        selected.extend(self.project.midi_items().iter().filter_map(|item| {
+            let item_end = item.start_tick().checked_add(item.length_ticks())?;
+            area_ticks
+                .get(&item.track_id())?
+                .iter()
+                .any(|(start_tick, end_tick)| {
+                    *start_tick <= item.start_tick() && item_end <= *end_tick
+                })
+                .then_some((item.id(), item.track_id()))
+        }));
+        self.timeline.select_items(selected);
     }
 
     fn select_all_items(&mut self) {
@@ -10412,9 +10740,23 @@ fn split_audio_item_actions(
     source_sample_rate: u32,
     actions: &mut Vec<DawAction>,
 ) -> Result<(), String> {
-    let mut cut_samples = boundaries
+    let cut_samples = boundaries
         .iter()
         .filter_map(|tick| project.sample_at_tick(*tick).ok())
+        .collect::<Vec<_>>();
+    split_audio_item_actions_at_samples(project, item, &cut_samples, source_sample_rate, actions)
+}
+
+fn split_audio_item_actions_at_samples(
+    project: &Project,
+    item: &AudioItem,
+    boundaries: &[u64],
+    source_sample_rate: u32,
+    actions: &mut Vec<DawAction>,
+) -> Result<(), String> {
+    let mut cut_samples = boundaries
+        .iter()
+        .copied()
         .filter(|sample| item.start_sample() < *sample && *sample < item.end_sample())
         .collect::<Vec<_>>();
     cut_samples.sort_unstable();
