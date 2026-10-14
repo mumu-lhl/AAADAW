@@ -6782,6 +6782,25 @@ fn track_menu_context_menu_and_action_search_share_command_definitions() {
 }
 
 #[test]
+fn item_menu_exposes_enabled_select_all_for_an_empty_project() {
+    let mut app = App::default();
+    let entries = commands::for_menu(&app, MainMenu::Item);
+    let select_all = entries
+        .first()
+        .expect("Item menu should start with Select all");
+    assert_eq!(select_all.id, CommandId::SelectAllItems);
+    assert_eq!(select_all.label, "Select all");
+    assert!(select_all.enabled);
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::SelectAllItems));
+    assert!(app.project.audio_items().is_empty());
+    assert!(app.project.midi_items().is_empty());
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
 fn toolbar_and_track_controls_share_command_availability() {
     let mut app = App::default();
     assert!(!commands::is_enabled(&app, CommandId::AddMidiItem));
@@ -7901,7 +7920,7 @@ fn duplicate_selected_audio_and_midi_items_is_one_undoable_action() {
 
 #[test]
 fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() {
-    assert!(!commands::is_enabled(
+    assert!(commands::is_enabled(
         &App::default(),
         CommandId::SelectAllItems
     ));

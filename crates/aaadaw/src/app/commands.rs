@@ -764,6 +764,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::SelectAllItems,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Select all items",
+        aliases: &["select all media items"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::ToggleItemProperties,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -779,16 +789,6 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Item",
         label: "Item properties…",
         aliases: &["media item properties"],
-        shortcuts: &[],
-        destructive: false,
-        separator_before: false,
-    },
-    CommandDefinition {
-        kind: CommandKind::SelectAllItems,
-        menu: None,
-        category: "Item",
-        label: "Select all items",
-        aliases: &["select all media items"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -1386,6 +1386,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
         .filter(|entry| entry.section == Some(menu))
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
+    if menu == MainMenu::Item
+        && let Some(select_all) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::SelectAllItems)
+    {
+        select_all.label = "Select all".to_owned();
+    }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
             .into_iter()
@@ -2371,9 +2378,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
-        CommandKind::SelectAllItems => {
-            !app.project.audio_items().is_empty() || !app.project.midi_items().is_empty()
-        }
+        CommandKind::SelectAllItems => true,
         CommandKind::SelectAllItemsInTrack => app.selected_track_id().is_some_and(|track_id| {
             app.project
                 .audio_items()

@@ -11,3 +11,9 @@
 回归 `options_menu_exposes_preferences_and_updates_the_loop_link_checkmark` 验证菜单命令、快捷键绑定可用、勾选态切换、全局偏好排队保存和工程 revision 不变；`help_menu_opens_the_action_list_and_a_single_about_window` 验证帮助入口、About 复用同一窗口、关闭清理和 Ctrl+F1；菜单键盘回归覆盖 Alt+O/Alt+H、九项左右顺序和启用命令首尾循环。nightly+Cranelift 定向 nextest 6/6 通过。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。
+
+### Item 菜单的空工程 Select all
+
+Linux REAPER 7.82 / Default 7 原厂窗口在一条空轨、没有媒体项时仍将 Item > Select all 显示为启用；AAADAW 的同状态实窗也显示启用的 `Select all`，当前位于菜单首项。原厂将它放在多个 AAADAW 尚未实现的命令之后，故菜单顺序仍不一致；原厂菜单中其它依赖媒体项的命令也按其自身状态禁用。原厂与 AAADAW 截图、版本、空工程状态和 SHA-256 见 [Item Select all fixture](fixtures/menu-item-select-all.tsv)。两张图尺寸、菜单顺序和余下内容不同，本次只验收命令名称、空工程可用状态与执行结果。
+
+`item_menu_exposes_enabled_select_all_for_an_empty_project` 验证该菜单项在零媒体项时可用，执行后仍无选择且不修改工程 revision；选择动作本身对空工程是安全 no-op。此切片没有补齐 REAPER Item 菜单的其它命令或子菜单，整项菜单一致性仍为 `in_progress`。
