@@ -209,6 +209,7 @@ struct AudioItemClipboard {
 struct AudioItemClipboardEntry {
     media_ref: String,
     source_offset_samples: u64,
+    source_section_length_samples: u64,
     length_samples: u64,
     track_offset: usize,
 }
@@ -10708,9 +10709,23 @@ impl App {
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
             };
+            let Some(source_section_length_samples) =
+                rescale_samples(span_samples, project_sample_rate, source_sample_rate)
+            else {
+                self.status =
+                    "Could not copy loop of selected area: source section is too large".to_owned();
+                return;
+            };
+            if source_section_length_samples == 0 {
+                self.status =
+                    "Could not copy loop of selected area: source section is shorter than one frame"
+                        .to_owned();
+                return;
+            }
             entries.push(AudioItemClipboardEntry {
                 media_ref: item.media_ref().to_owned(),
                 source_offset_samples,
+                source_section_length_samples,
                 length_samples: span_samples,
                 track_offset: track_index - first_track_index,
             });
@@ -10885,12 +10900,13 @@ impl App {
             .filter_map(|item| {
                 let track_index = anchor_index.checked_add(item.track_offset)?;
                 let track_id = self.project.tracks().get(track_index)?.id();
-                Some(DawAction::InsertAudioItem {
+                Some(DawAction::InsertLoopedAudioItem {
                     track_id,
                     media_ref: item.media_ref.clone(),
                     start_sample,
                     source_offset_samples: item.source_offset_samples,
                     length_samples,
+                    source_section_length_samples: item.source_section_length_samples,
                 })
             })
             .collect::<Vec<_>>();

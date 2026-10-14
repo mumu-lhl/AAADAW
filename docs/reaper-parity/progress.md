@@ -796,3 +796,9 @@ Contents / Nudge 现在只在媒体元数据可用且移动后的整个 source s
 Nightly + Cranelift Nudge focused nextest 11/11 passed，覆盖 44.1 kHz source 与 48 kHz project 的双向换算、两个 source 边界的安全拒绝及 Undo；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 检查通过。Parity matrix 保持 98 个唯一 ID / 15 列，原厂 target fixture 哈希与矩阵引用校验通过。当前容器没有虚拟显示服务，本轮未新增 AAADAW 实窗截图。
 
 `ITEM-NUDGE-SET-001` 仍为 `in_progress`：REAPER 的循环源属性及 Contents 绕回、MIDI 对各 target 的响应、target-specific Set/Snap、Undo 历史和新增操作的 AAADAW 实窗验证继续待办。
+
+### 2026-10-14 Item Copy loop source metadata
+
+AudioItem 现在持久化 `B_LOOPSRC` 与可选 source-section 长度；schema 42 对旧工程以循环关闭/完整源默认值迁移。Copy loop 根据素材采样率保存所选源段长度，Paste 创建带循环源标记的音频项，撤销/重做和 SQLite 保存/重开保留该元数据。正常导入与冻结渲染继续使用循环关闭默认值。
+
+Nightly + Cranelift `aaadaw-core`、`aaadaw-storage` 与 `aaadaw` nextest 749/749 passed；覆盖 schema 41 的增量迁移、旧音频表被重新创建、source-section 往返与 44.1/48 kHz Copy/Paste 换算。Stable all-target Clippy、fmt、diff 检查通过。该步骤只建立数据模型与粘贴状态；实时播放、离线渲染和 Nudge Contents 仍未消费循环标记，因此循环源功能保持 `in_progress`。

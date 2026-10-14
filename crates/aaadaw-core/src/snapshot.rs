@@ -167,6 +167,8 @@ pub struct AudioItemSnapshot {
     pub start_sample: u64,
     pub source_offset_samples: u64,
     pub length_samples: u64,
+    pub loop_source: bool,
+    pub source_section_length_samples: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

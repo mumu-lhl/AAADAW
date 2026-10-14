@@ -7585,6 +7585,10 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[0].source_offset_samples, 128 + source_delta);
     assert_eq!(clipboard.items[1].source_offset_samples, 256 + source_delta);
     assert_eq!(clipboard.items[0].length_samples, selection_length);
+    assert_eq!(
+        clipboard.items[0].source_section_length_samples,
+        u64::try_from((u128::from(selection_length) * 48_000 + 44_100 / 2) / 44_100).unwrap()
+    );
     assert_eq!(clipboard.span_samples, selection_length);
     assert_eq!(clipboard.project_sample_rate, 44_100);
     assert_eq!(app.timeline.selected_items, selected_before);
@@ -7614,6 +7618,11 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted[0].source_offset_samples(), 128 + source_delta);
     assert_eq!(pasted[1].source_offset_samples(), 256 + source_delta);
     assert_eq!(pasted[0].length_samples(), paste_length);
+    assert!(pasted.iter().all(|item| item.is_loop_source()));
+    assert_eq!(
+        pasted[0].source_section_length_samples(),
+        Some(clipboard.items[0].source_section_length_samples)
+    );
     assert_eq!(app.revision, revision_before + 1);
     assert_eq!(app.timeline.selected_items.len(), 2);
     assert!(commands::is_enabled(&app, CommandId::PasteItems));

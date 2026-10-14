@@ -1688,6 +1688,8 @@ impl Project {
                     start_sample: item.start_sample,
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
+                    loop_source: item.loop_source,
+                    source_section_length_samples: item.source_section_length_samples,
                 })
                 .collect(),
             midi_items: self
@@ -1966,6 +1968,9 @@ impl Project {
                 || !(-1.0..=1.0).contains(&item.take_pan)
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
+                || item
+                    .source_section_length_samples
+                    .is_some_and(|length| length == 0 || !item.loop_source)
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -1981,6 +1986,8 @@ impl Project {
                 start_sample: item.start_sample,
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
+                loop_source: item.loop_source,
+                source_section_length_samples: item.source_section_length_samples,
             });
         }
         let mut note_ids = HashSet::new();
@@ -2832,6 +2839,8 @@ impl Project {
                     start_sample,
                     source_offset_samples: 0,
                     length_samples,
+                    loop_source: false,
+                    source_section_length_samples: None,
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::TrackFreezeChanged {
@@ -3048,6 +3057,65 @@ impl Project {
                     start_sample,
                     source_offset_samples,
                     length_samples,
+                    loop_source: false,
+                    source_section_length_samples: None,
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::AudioItemInserted {
+                    index: state.audio_items.len(),
+                    item,
+                }
+            }
+            DawAction::InsertLoopedAudioItem {
+                track_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+                source_section_length_samples,
+            } => {
+                if !state.tracks.iter().any(|track| track.id == track_id) {
+                    return Err(ActionError::TrackNotFound { track_id });
+                }
+                if state
+                    .tracks
+                    .iter()
+                    .any(|track| track.id == track_id && track.frozen_audio_item_id.is_some())
+                {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                if media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if length_samples == 0 || source_section_length_samples == 0 {
+                    return Err(ActionError::InvalidAudioItemLength);
+                }
+                if start_sample.checked_add(length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                if source_offset_samples
+                    .checked_add(source_section_length_samples)
+                    .is_none()
+                {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    media_ref,
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                    loop_source: true,
+                    source_section_length_samples: Some(source_section_length_samples),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::AudioItemInserted {

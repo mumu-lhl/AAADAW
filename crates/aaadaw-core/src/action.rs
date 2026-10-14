@@ -257,6 +257,15 @@ pub enum DawAction {
         source_offset_samples: u64,
         length_samples: u64,
     },
+    /// Insert an audio item that repeats a bounded source section during playback.
+    InsertLoopedAudioItem {
+        track_id: TrackId,
+        media_ref: String,
+        start_sample: u64,
+        source_offset_samples: u64,
+        length_samples: u64,
+        source_section_length_samples: u64,
+    },
     /// Set both manual Item fades as one undoable edit.
     SetAudioItemFades {
         item_id: ItemId,

@@ -817,7 +817,10 @@ impl App {
                         .imported_actions
                         .iter()
                         .filter_map(|action| match action {
-                            DawAction::InsertAudioItem { media_ref, .. } => Some(media_ref.clone()),
+                            DawAction::InsertAudioItem { media_ref, .. }
+                            | DawAction::InsertLoopedAudioItem { media_ref, .. } => {
+                                Some(media_ref.clone())
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -973,7 +976,8 @@ fn cleanup_recorded_import(target: &super::RecordImportTarget) -> Result<(), Str
         .imported_actions
         .iter()
         .filter_map(|action| match action {
-            DawAction::InsertAudioItem { media_ref, .. } => Some(media_ref.clone()),
+            DawAction::InsertAudioItem { media_ref, .. }
+            | DawAction::InsertLoopedAudioItem { media_ref, .. } => Some(media_ref.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
