@@ -1868,6 +1868,7 @@ impl App {
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyLoopSourceChanged(_)
                     | Message::ItemPropertyMuteChanged(_)
+                    | Message::MidiItemPropertyNameChanged(_)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
                     | Message::MarkerNumberChanged(_)
@@ -2444,6 +2445,11 @@ impl App {
                     draft.set_muted(muted);
                 } else if let Some(draft) = &mut self.midi_item_properties {
                     draft.set_muted(muted);
+                }
+            }
+            Message::MidiItemPropertyNameChanged(name) => {
+                if let Some(draft) = &mut self.midi_item_properties {
+                    draft.set_name(name);
                 }
             }
             Message::ToggleSelectedItemsMute => self.toggle_selected_items_mute(),

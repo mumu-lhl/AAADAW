@@ -13135,8 +13135,19 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         "0:00.250".into(),
     ));
     let _ = app.update(Message::ItemPropertyMuteChanged(true));
+    let _ = app.update(Message::MidiItemPropertyNameChanged("   ".into()));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.midi_items()[0].name(), "MIDI");
+    assert!(!app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
+    assert!(app.midi_item_properties.as_ref().unwrap().error.is_some());
+
+    let _ = app.update(Message::MidiItemPropertyNameChanged("Intro".into()));
     let _ = app.update(Message::ApplyItemProperties(false));
     assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].name(), "Intro");
     assert_eq!(app.project.midi_items()[0].start_tick(), expected_start);
     assert_eq!(
         app.project.midi_items()[0].length_ticks(),
@@ -13154,6 +13165,7 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
     assert_eq!(app.project.midi_items()[0].start_tick(), 0);
     assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
     assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
+    assert_eq!(app.project.midi_items()[0].name(), "MIDI");
     assert_eq!(app.project.midi_items()[0].notes().len(), 1);
     let _ = app.update(Message::Redo);
     assert!(app.project.midi_items()[0].is_muted());
@@ -13166,11 +13178,14 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         app.project.midi_items()[0].source_offset_ticks(),
         expected_source_offset
     );
+    assert_eq!(app.project.midi_items()[0].name(), "Intro");
 
+    let _ = app.update(Message::MidiItemPropertyNameChanged("Unapplied".into()));
     let _ = app.update(Message::ItemPropertyMuteChanged(false));
     let _ = app.update(Message::CloseItemProperties);
     assert!(app.midi_item_properties.is_none());
     assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].name(), "Intro");
 }
 
 #[test]

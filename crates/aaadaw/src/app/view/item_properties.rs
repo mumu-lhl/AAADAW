@@ -120,6 +120,14 @@ fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
     };
     let content = column![
         row![
+            text("Name:").width(120),
+            text_input("", &draft.name)
+                .on_input(Message::MidiItemPropertyNameChanged)
+                .on_submit(Message::ApplyItemProperties(true))
+                .width(Length::Fill)
+        ]
+        .spacing(6),
+        row![
             text("Display:").width(120),
             pick_list(
                 [

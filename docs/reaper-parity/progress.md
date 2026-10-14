@@ -862,3 +862,11 @@ Start in source 现在在 MIDI 属性窗口可编辑：Time/Beats/H:M:S:F 使用
 Nightly + Cranelift workspace nextest 1066/1066 passed，排除两项需 X11 的 CLAP 浮动编辑器测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。专项 Core Undo/Redo、SQLite 往返与 MIDI 属性 UI 测试 3/3 passed；四种单位及负工程起点、非法数值测试通过。本轮无 AAADAW 截图及 REAPER 新探针。
 
 完整 MIDI 属性仍待 Item timebase、take/source controls、fade、批量/混合值以及原厂尺寸和控件布局；`ITEM-PROPERTIES-001` 与 `ITEM-MUTE-001` 保持 `in_progress`。
+
+### 2026-10-14 MIDI Item Properties Name
+
+MIDI Item Properties 增加 Name 草稿字段。Name、Position、Length、Start in source、Mute 共用一个 Apply transaction；名称沿用 `SetMidiItemName` 的非空及 128 字符限制，任何字段验证失败时整组修改保持未应用。Cancel 会丢弃未应用名称。
+
+App 测试覆盖全部五字段一次 Apply/Undo/Redo、空名称导致批量字段原子拒绝，以及改名后 Cancel。Nightly + Cranelift workspace nextest 1066/1066 passed，排除两项 X11 依赖测试；Stable workspace all-target Clippy `-D warnings`、fmt 和 diff 检查通过。本轮未录 AAADAW 截图或重新探测 REAPER。
+
+MIDI Properties 仍缺 item timebase、take playback rate/pitch/mix、剩余 source controls、fades、批量/混合值和完整窗口几何；不关闭 `ITEM-PROPERTIES-001` 或 `ITEM-MUTE-001`。

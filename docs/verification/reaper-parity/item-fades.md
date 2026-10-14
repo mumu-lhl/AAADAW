@@ -176,7 +176,13 @@ The MIDI Item Properties window now edits Position and Length in the same Time, 
 
 Focused regressions round-trip all four display units, including a negative project start-time offset for Time and H:M:S:F; reject zero length and a sample position outside exact `f64` integer range; and apply position, length, and mute together while preserving MIDI notes across Undo/Redo. Nightly + Cranelift workspace nextest passed 1065/1065 with two X11-dependent tests excluded. Stable strict Clippy, fmt, and diff checks passed. No AAADAW screenshot or new native probe was captured.
 
-The MIDI window still lacks item timebase, take name/playback rate/pitch/mix, other source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
+The MIDI window still lacks item timebase, playback rate/pitch/mix, other source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
+
+### MIDI Item Name (2026-10-14)
+
+The MIDI Properties draft now edits the item's visible Name. Name, Position, Length, Start in source, and Mute are submitted in one transaction. Invalid blank or overlong names reject the transaction without partially applying other draft fields; Cancel drops an unapplied name. The model continues to expose its existing `SetMidiItemName` operation and character limit.
+
+App coverage applies Name with Position, Length, Start in source, and Mute together; it checks Undo/Redo, Cancel, and atomic rejection when the name is invalid. Nightly + Cranelift workspace nextest passed 1066/1066 with two X11-dependent CLAP floating-editor tests excluded. Stable workspace all-target Clippy `-D warnings`, fmt, and diff checks passed. No AAADAW screenshot or new REAPER probe was captured.
 
 ### MIDI Item Start in source (2026-10-14)
 

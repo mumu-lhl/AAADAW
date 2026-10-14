@@ -395,6 +395,7 @@ impl App {
         let current_start = item.start_tick();
         let current_length = item.length_ticks();
         let current_source_offset = item.source_offset_ticks();
+        let current_name = item.name().to_owned();
         let (start_tick, length_ticks, source_offset_ticks) =
             match draft.placement_in_project(item, &self.project) {
                 Ok(placement) => placement,
@@ -414,6 +415,8 @@ impl App {
                 || source_offset_ticks != current_source_offset);
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
+        let target_name = draft.name.clone();
+        let changes_name = draft.name_changed && target_name != current_name;
         if (changes_placement || changes_mute) && self.playback_active() {
             let error = "Stop playback before changing MIDI item properties".to_owned();
             self.status = error.clone();
@@ -423,7 +426,7 @@ impl App {
                 .error = Some(error);
             return Task::none();
         }
-        let mut actions = Vec::with_capacity(2);
+        let mut actions = Vec::with_capacity(3);
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditMidiItemPlacement {
                 item_id,
@@ -436,6 +439,12 @@ impl App {
             actions.push(aaadaw_core::DawAction::SetMidiItemMute {
                 item_id,
                 muted: target_muted,
+            });
+        }
+        if changes_name {
+            actions.push(aaadaw_core::DawAction::SetMidiItemName {
+                item_id,
+                name: target_name.clone(),
             });
         }
         if !actions.is_empty() {
@@ -454,6 +463,7 @@ impl App {
                     && item.length_ticks() == length_ticks
                     && item.source_offset_ticks() == source_offset_ticks
                     && item.is_muted() == target_muted
+                    && item.name() == target_name
             }) {
                 self.midi_item_properties
                     .as_mut()
@@ -1082,6 +1092,7 @@ fn parse_curve(text: &str) -> Result<f64, String> {
 #[derive(Debug, Clone)]
 pub(crate) struct MidiItemProperties {
     pub(crate) item_id: ItemId,
+    pub(crate) name: String,
     pub(crate) fields: [String; 11],
     changed: [bool; 11],
     pub(crate) unit: TimeUnit,
@@ -1089,12 +1100,14 @@ pub(crate) struct MidiItemProperties {
     pub(crate) muted: bool,
     pub(crate) error: Option<String>,
     mute_changed: bool,
+    name_changed: bool,
 }
 
 impl MidiItemProperties {
     fn from_item(item: &MidiItem, project: &Project, unit: TimeUnit) -> Self {
         let mut draft = Self {
             item_id: item.id(),
+            name: item.name().to_owned(),
             fields: std::array::from_fn(|_| String::new()),
             changed: [false; 11],
             unit,
@@ -1102,6 +1115,7 @@ impl MidiItemProperties {
             muted: item.is_muted(),
             error: None,
             mute_changed: false,
+            name_changed: false,
         };
         let start_tick = item.start_tick() as f64;
         let end_tick = item.start_tick().saturating_add(item.length_ticks()) as f64;
@@ -1194,8 +1208,14 @@ impl MidiItemProperties {
         self.error = None;
     }
 
+    pub(crate) fn set_name(&mut self, name: String) {
+        self.name = name;
+        self.name_changed = true;
+        self.error = None;
+    }
+
     pub(crate) fn has_changes(&self) -> bool {
-        self.mute_changed || self.changed.iter().any(|changed| *changed)
+        self.mute_changed || self.name_changed || self.changed.iter().any(|changed| *changed)
     }
 
     fn placement_in_project(
