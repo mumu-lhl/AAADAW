@@ -679,3 +679,12 @@ AAADAW 为结果列表增加稳定滚动 ID；Home/End 选择首/末个可见过
 Linux REAPER 7.82 / Default 7 的 `item` 搜索结果在 Enter 后连续 ArrowDown 18 次，选中行进入列表下方视口并触发滚动，传输仍停止且没有运行动作。AAADAW 的相同输入保持选中项可见；再按 ArrowUp 8 次，列表向前滚动到较早结果。原厂和 AAADAW 截图、步骤及哈希见[长列表方向键 fixtures](../verification/reaper-parity/fixtures/action-list-arrow-scroll-native.tsv)与[AAADAW fixtures](../verification/reaper-parity/fixtures/action-list-arrow-scroll-aaadaw.tsv)。
 
 AAADAW 为结果行固定高度，并按当前窗口尺寸跟踪滚动视口；方向键只在目标行将离开可视区域时滚动，过滤条件改变时回到列表顶部。已有导航回归增加首尾偏移钳制、滚到底部和反向滚动检查。nightly+Cranelift `aaadaw` nextest 537/537 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、fixture 哈希和矩阵证据链接检查通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`，其它编辑器、键盘布局、插件/浮动窗口和 Action Section 焦点例外仍未逐项验收。
+
+
+### 2026-10-14 主菜单命令边界循环
+
+提交：`168d9bb`。
+
+REAPER 7.82 / Default 7 原厂 File 菜单打开后，ArrowUp 从初始顶部位置选中末项 Quit，菜单保持打开，动作没有运行。AAADAW 实窗 ArrowUp 选中当前 File 菜单的最后一个启用项 Project settings...；再按 ArrowDown 回到 New project。两端截图、选中项和工程状态见[菜单边界键 fixtures](../verification/reaper-parity/fixtures/menu-keyboard-boundary-native.tsv)与[AAADAW fixtures](../verification/reaper-parity/fixtures/menu-keyboard-boundary-aaadaw.tsv)。该对照只验证键盘循环，不代表菜单项内容相同。
+
+`keyboard_navigation_switches_menus_and_wraps_enabled_commands` 现在直接断言 File 菜单启用项从首项向上循环至末项、再向下循环回首项。nightly+Cranelift 定向 nextest 1/1 passed；截图哈希、矩阵链接、fmt 和 diff 检查通过。`SHELL-MENU-KEYBOARD-001` 仍为 `in_progress`：Help 文档入口、完整 Options、Item/Track 命令集、禁用/勾选态与文本焦点仍有差距。
