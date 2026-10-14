@@ -976,6 +976,9 @@ fn selected_audio_item_render_project(
     }
 
     let mut snapshot = project.snapshot();
+    // REAPER's Selected media items source includes the track mix but renders
+    // before the Master fader, so preserve Master FX while neutralizing its mix.
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
     snapshot
         .audio_items
         .retain(|candidate| candidate.id == item_id.value());
@@ -1846,7 +1849,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_audio_item_source_renders_through_item_take_and_track_gain_without_other_items() {
+    fn selected_audio_item_source_applies_item_take_and_track_gain_but_bypasses_master_mix() {
         let project_path = destination().with_extension("aaadaw");
         let source_path = destination();
         let output_path = destination();
@@ -1908,6 +1911,12 @@ mod tests {
                 volume_db: -6.020_6,
             })
             .expect("track volume should be set");
+        project
+            .apply(DawAction::SetMasterMix {
+                mix: aaadaw_core::MasterMix::new(-6.020_6, 0.5)
+                    .expect("master volume should be valid"),
+            })
+            .expect("Master volume and pan should be set");
         let before = project.snapshot();
         let settings = ProjectWavRenderSettings {
             master_ceiling: MasterOutputCeiling::default(),

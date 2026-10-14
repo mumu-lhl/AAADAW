@@ -1,0 +1,20 @@
+property	value
+target	Linux REAPER 7.82/linux-x86_64, Default_7.0.ReaperThemeZip
+fixture	Unsaved disposable project; one selected audio item
+source	48 kHz PCM24 stereo, constant L=0.125/R=0.375
+source_sha256	3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+render_source	Selected media items
+render_format	WAV 24-bit PCM, 48 kHz, stereo, 48000 frames
+media_item_volume_linear	1.0
+take_volume_linear	1.0
+track_volume_linear	1.0
+master_volume_linear	0.5
+master_pan	0.5
+output	selected-item-master-half-pan-right.wav
+output_first_frame_pcm24	1048576,3145728
+output_first_frame_float	0.125,0.375
+output_sha256	5972e09589169a25b1c29109d25984e8c8c2ed47f001ef2b101e36b17afeb3c9
+probe_script	scripts/reaper_parity/probe-render-selected-item-master-mix.lua
+setup_screenshot_sha256	2d83473889f7369597d21f6a4776f4fa8f7a829715e81fb6fa8822691b17ceef
+finished_screenshot_sha256	61ec47b3a118fea590f0c3d6c1f2182dbd6ed2145f07d9d4d5eab994c668b992
+observation	Selected-item output bypasses both Master volume and Master pan in this fixture
