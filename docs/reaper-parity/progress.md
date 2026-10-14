@@ -688,3 +688,11 @@ AAADAW 为结果行固定高度，并按当前窗口尺寸跟踪滚动视口；�
 REAPER 7.82 / Default 7 原厂 File 菜单打开后，ArrowUp 从初始顶部位置选中末项 Quit，菜单保持打开，动作没有运行。AAADAW 实窗 ArrowUp 选中当前 File 菜单的最后一个启用项 Project settings...；再按 ArrowDown 回到 New project。两端截图、选中项和工程状态见[菜单边界键 fixtures](../verification/reaper-parity/fixtures/menu-keyboard-boundary-native.tsv)与[AAADAW fixtures](../verification/reaper-parity/fixtures/menu-keyboard-boundary-aaadaw.tsv)。该对照只验证键盘循环，不代表菜单项内容相同。
 
 `keyboard_navigation_switches_menus_and_wraps_enabled_commands` 现在直接断言 File 菜单启用项从首项向上循环至末项、再向下循环回首项。nightly+Cranelift 定向 nextest 1/1 passed；截图哈希、矩阵链接、fmt 和 diff 检查通过。`SHELL-MENU-KEYBOARD-001` 仍为 `in_progress`：Help 文档入口、完整 Options、Item/Track 命令集、禁用/勾选态与文本焦点仍有差距。
+
+### 2026-10-14 Arrange 与 Mixer 同窗布局核验
+
+提交：`72c0129`。
+
+核对发现 `SHELL-DOCK-001` 的“当前互斥 workspace”描述过时：Linux Desktop profile 已默认在同一窗口显示 Arrange 和 Mixer；Arrange/Mixer 工作区切换仅用于 Touch profile。用全新 REAPER 7.82 配置、Default 主题和 Dummy Audio（虚拟环境无硬件）复验冷启动默认布局，再插入一条空轨确认同一 Track 同时出现在 TCP/MCP；AAADAW 实窗也显示 Arrange、Mixer 和同一 Audio 1。原厂默认、原厂同轨和 AAADAW 截图及哈希见 [Arrange/Mixer fixture](../verification/reaper-parity/fixtures/arrange-mixer-dock.tsv)。
+
+nightly+Cranelift 的两项 focused nextest 2/2 passed、535 skipped，覆盖 Mixer/Media Browser 开关、独立比例、轨道 ID 保留和布局保存/恢复；编译保留既有 iced/wgpu `TimelinePipeline: MaybeSync` 递归深度警告。矩阵修正为 `in_progress`，不以截图或这两项回归宣称 Docker parity 完成：边缘停靠、标签页、浮动窗口、默认几何和 TCP/MCP 控件双向编辑仍待验证。
