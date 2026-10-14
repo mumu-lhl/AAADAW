@@ -6782,12 +6782,20 @@ fn track_menu_context_menu_and_action_search_share_command_definitions() {
 }
 
 #[test]
-fn item_menu_exposes_enabled_select_all_for_an_empty_project() {
+fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project() {
     let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
     let entries = commands::for_menu(&app, MainMenu::Item);
-    let select_all = entries
+    let remove_items = entries
         .first()
-        .expect("Item menu should start with Select all");
+        .expect("Item menu should start with Remove items");
+    assert_eq!(remove_items.id, CommandId::DeleteSelectedItems);
+    assert_eq!(remove_items.label, "Remove items");
+    assert!(!remove_items.enabled);
+
+    let select_all = entries
+        .get(1)
+        .expect("Select all should follow the removal section");
     assert_eq!(select_all.id, CommandId::SelectAllItems);
     assert_eq!(select_all.label, "Select all");
     assert!(select_all.enabled);
@@ -6798,6 +6806,47 @@ fn item_menu_exposes_enabled_select_all_for_an_empty_project() {
     assert!(app.project.midi_items().is_empty());
     assert!(app.timeline.selected_items.is_empty());
     assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn item_menu_remove_items_deletes_selected_media_and_is_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .handle(crate::timeline::TimelineEvent::SelectItem {
+            item_id: Some(item_id),
+            additive: false,
+            range: false,
+        });
+
+    let entries = commands::for_menu(&app, MainMenu::Item);
+    assert_eq!(entries[0].id, CommandId::DeleteSelectedItems);
+    assert!(entries[0].enabled);
+    assert_eq!(
+        commands::find(&app, "remove items"),
+        Some(CommandId::DeleteSelectedItems)
+    );
+    assert_eq!(
+        commands::find(&app, "delete selected items"),
+        Some(CommandId::DeleteSelectedItems)
+    );
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteSelectedItems));
+    assert!(app.project.midi_items().is_empty());
+    assert_eq!(app.revision, revision + 1);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].id(), item_id);
 }
 
 #[test]

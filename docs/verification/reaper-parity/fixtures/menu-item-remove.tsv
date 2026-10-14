@@ -1,0 +1,11 @@
+version	Linux REAPER 7.82/linux-x86_64; AAADAW working tree built with nightly + Cranelift
+theme	REAPER Default_7.0.ReaperThemeZip
+display	X11 :126, 1280x1024
+configuration	fresh isolated projects; one empty track; no media items
+audio	REAPER built-in Dummy Audio because the host has no hardware; AAADAW build has no audio device
+transport	stopped for both captures
+step	input_sequence	menu	selected_command	project_effect	screenshot	sha256	observation
+inspect_item_menu	open Item menu	Item	Remove items	no action executed	menu-item-select-all-native.png	252434f823858e608c773bb83b05e9336a1129e46c4897c315b5d7954e805e22	REAPER puts Remove items first and disables it when no media item is selected; the same capture shows Select all enabled after several commands absent from AAADAW
+inspect_item_menu	open Item menu	Item	Remove items	no action executed	menu-item-remove-aaadaw.png	05649fbeab2881d242811c2fb66a2f9fde22a2ee08bd960ce93fe6e96c211a81	AAADAW puts Remove items first, disables it for no selection, and places enabled Select all after a divider
+scope	visual comparison	Item		no action executed			Both windows show the empty-selection state; dimensions and remaining commands differ, and the selected-item enabled state is covered by regression rather than this screenshot pair
+regression	App unit tests	Item	DeleteSelectedItems	selected MIDI item deleted, then restored by Undo	crates/aaadaw/src/app/tests.rs::item_menu_remove_items_deletes_selected_media_and_is_undoable		The menu entry is enabled for a selected item; execution is one undoable edit; empty-project availability is checked by item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project

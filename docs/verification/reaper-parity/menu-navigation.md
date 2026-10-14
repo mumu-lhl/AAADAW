@@ -14,6 +14,12 @@ Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse mo
 
 ### Item 菜单的空工程 Select all
 
-Linux REAPER 7.82 / Default 7 原厂窗口在一条空轨、没有媒体项时仍将 Item > Select all 显示为启用；AAADAW 的同状态实窗也显示启用的 `Select all`，当前位于菜单首项。原厂将它放在多个 AAADAW 尚未实现的命令之后，故菜单顺序仍不一致；原厂菜单中其它依赖媒体项的命令也按其自身状态禁用。原厂与 AAADAW 截图、版本、空工程状态和 SHA-256 见 [Item Select all fixture](fixtures/menu-item-select-all.tsv)。两张图尺寸、菜单顺序和余下内容不同，本次只验收命令名称、空工程可用状态与执行结果。
+Linux REAPER 7.82 / Default 7 原厂窗口在一条空轨、没有媒体项时仍将 Item > Select all 显示为启用；AAADAW 的同状态实窗也显示启用的 `Select all`，现在位于 `Remove items` 与分隔线之后。原厂将它放在多个 AAADAW 尚未实现的命令之后，故菜单顺序仍不一致；原厂菜单中其它依赖媒体项的命令也按其自身状态禁用。原厂与 AAADAW 截图、版本、空工程状态和 SHA-256 见 [Item Select all fixture](fixtures/menu-item-select-all.tsv)。两张图尺寸、菜单顺序和余下内容不同，本次只验收命令名称、空工程可用状态与执行结果。
 
-`item_menu_exposes_enabled_select_all_for_an_empty_project` 验证该菜单项在零媒体项时可用，执行后仍无选择且不修改工程 revision；选择动作本身对空工程是安全 no-op。此切片没有补齐 REAPER Item 菜单的其它命令或子菜单，整项菜单一致性仍为 `in_progress`。
+`item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证 `Select all` 在零媒体项时可用，执行后仍无选择且不修改工程 revision；选择动作本身对空工程是安全 no-op。此切片没有补齐 REAPER Item 菜单的其它命令或子菜单，整项菜单一致性仍为 `in_progress`。
+
+### Item 菜单的 Remove items
+
+REAPER 7.82 / Default 7 在没有所选媒体项时将 `Remove items` 放在 Item 菜单首项并禁用。AAADAW 现将已有的删除所选项动作放到菜单首项，使用原厂名称，并在空选择时禁用；`Select all` 仍启用且位于分隔线之后。选择 MIDI 项后该动作启用，执行删除作为一次可撤销工程编辑；Action List 的原有 “Delete selected items” 搜索名称保留为别名。原厂截图复用空工程 Item 菜单探针，AAADAW 截图、哈希与回归范围见 [Remove items fixture](fixtures/menu-item-remove.tsv)。截图只对比空选择状态，尺寸及菜单中其余命令仍有差异。
+
+`item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证首项名称、顺序、禁用状态及 Select all 的启用状态；`item_menu_remove_items_deletes_selected_media_and_is_undoable` 验证所选 MIDI 项使菜单动作可用、删除和撤销。原厂全选所在位置之前的其它菜单命令仍未实现，整项菜单继续 `in_progress`。

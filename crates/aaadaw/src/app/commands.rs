@@ -771,7 +771,7 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["select all media items"],
         shortcuts: &[],
         destructive: false,
-        separator_before: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::ToggleItemProperties,
@@ -1020,8 +1020,12 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::DeleteSelectedItems,
         menu: Some(MainMenu::Item),
         category: "Item",
-        label: "Delete selected items",
-        aliases: &["delete selected item", "delete items"],
+        label: "Remove items",
+        aliases: &[
+            "delete selected items",
+            "delete selected item",
+            "delete items",
+        ],
         shortcuts: DELETE_ITEMS_SHORTCUT,
         destructive: true,
         separator_before: false,
@@ -1386,12 +1390,20 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
         .filter(|entry| entry.section == Some(menu))
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
-    if menu == MainMenu::Item
-        && let Some(select_all) = menu_entries
+    if menu == MainMenu::Item {
+        if let Some(index) = menu_entries
+            .iter()
+            .position(|entry| entry.id == CommandId::DeleteSelectedItems)
+        {
+            let remove_items = menu_entries.remove(index);
+            menu_entries.insert(0, remove_items);
+        }
+        if let Some(select_all) = menu_entries
             .iter_mut()
             .find(|entry| entry.id == CommandId::SelectAllItems)
-    {
-        select_all.label = "Select all".to_owned();
+        {
+            select_all.label = "Select all".to_owned();
+        }
     }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
