@@ -67,6 +67,7 @@ pub(crate) enum CommandId {
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
+    TrimItemsToSelectedArea,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -173,6 +174,7 @@ enum CommandKind {
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
+    TrimItemsToSelectedArea,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -1031,6 +1033,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::TrimItemsToSelectedArea,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Trim items to selected area",
+        aliases: &["trim items to time selection", "trim items to selection"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SplitSelectedItemsAtCursor,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1397,6 +1409,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
         {
             let remove_items = menu_entries.remove(index);
             menu_entries.insert(0, remove_items);
+        }
+        if let Some(index) = menu_entries
+            .iter()
+            .position(|entry| entry.id == CommandId::TrimItemsToSelectedArea)
+        {
+            let trim_items = menu_entries.remove(index);
+            menu_entries.insert(1.min(menu_entries.len()), trim_items);
         }
         if let Some(select_all) = menu_entries
             .iter_mut()
@@ -1933,6 +1952,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
+        CommandKind::TrimItemsToSelectedArea => "item.trim-to-selection",
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
@@ -2113,6 +2133,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateMidiItem(item_id)
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
+        CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
         CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
         CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
         CommandId::AddTrack => Message::AddTrack,
@@ -2390,6 +2411,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
+        CommandKind::TrimItemsToSelectedArea => !project_edit_busy(app),
         CommandKind::SelectAllItems => true,
         CommandKind::SelectAllItemsInTrack => app.selected_track_id().is_some_and(|track_id| {
             app.project
@@ -2590,6 +2612,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
+        CommandKind::TrimItemsToSelectedArea => CommandId::TrimItemsToSelectedArea,
         CommandKind::SplitSelectedItemsAtCursor => CommandId::SplitSelectedItemsAtCursor,
         CommandKind::SplitSelectedItemsAtTimeSelection => {
             CommandId::SplitSelectedItemsAtTimeSelection

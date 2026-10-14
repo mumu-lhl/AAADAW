@@ -6793,8 +6793,15 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert_eq!(remove_items.label, "Remove items");
     assert!(!remove_items.enabled);
 
-    let select_all = entries
+    let trim_items = entries
         .get(1)
+        .expect("Trim items should follow Remove items");
+    assert_eq!(trim_items.id, CommandId::TrimItemsToSelectedArea);
+    assert_eq!(trim_items.label, "Trim items to selected area");
+    assert!(trim_items.enabled);
+
+    let select_all = entries
+        .get(2)
         .expect("Select all should follow the removal section");
     assert_eq!(select_all.id, CommandId::SelectAllItems);
     assert_eq!(select_all.label, "Select all");
@@ -6805,6 +6812,226 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert!(app.project.audio_items().is_empty());
     assert!(app.project.midi_items().is_empty());
     assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let selection_start_tick = 5_760;
+    let selection_end_tick = 13_440;
+    let audio_selection_start = app
+        .project
+        .sample_at_tick(selection_start_tick)
+        .expect("selection start should map to a sample");
+    let audio_selection_end = app
+        .project
+        .sample_at_tick(selection_end_tick)
+        .expect("selection end should map to a sample");
+    let audio_item_end = app
+        .project
+        .sample_at_tick(19_200)
+        .expect("item end should map to a sample");
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://trim-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 128,
+            length_samples: audio_item_end,
+        })
+        .expect("test audio item should be inserted");
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 19_200,
+        })
+        .expect("test MIDI item should be inserted");
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.handle(TimelineEvent::SelectItem {
+        item_id: Some(audio_id),
+        additive: false,
+        range: false,
+    });
+    app.timeline.handle(TimelineEvent::SelectItem {
+        item_id: Some(midi_id),
+        additive: true,
+        range: false,
+    });
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: selection_start_tick,
+        end_tick: selection_end_tick,
+    }));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::TrimItemsToSelectedArea));
+
+    let audio = &app.project.audio_items()[0];
+    assert_eq!(audio.start_sample(), audio_selection_start);
+    assert_eq!(
+        audio.length_samples(),
+        audio_selection_end - audio_selection_start
+    );
+    assert_eq!(audio.source_offset_samples(), 128 + audio_selection_start);
+    let midi = &app.project.midi_items()[0];
+    assert_eq!(midi.start_tick(), selection_start_tick);
+    assert_eq!(
+        midi.length_ticks(),
+        selection_end_tick - selection_start_tick
+    );
+    assert_eq!(midi.source_offset_ticks(), selection_start_tick);
+    assert!(app.timeline.selected_items.contains(&audio_id));
+    assert!(app.timeline.selected_items.contains(&midi_id));
+    assert_eq!(app.revision, revision + 1);
+
+    let _ = app.update(Message::Undo);
+    let audio = &app.project.audio_items()[0];
+    assert_eq!(audio.id(), audio_id);
+    assert_eq!(audio.start_sample(), 0);
+    assert_eq!(audio.length_samples(), audio_item_end);
+    assert_eq!(audio.source_offset_samples(), 128);
+    let midi = &app.project.midi_items()[0];
+    assert_eq!(midi.id(), midi_id);
+    assert_eq!(midi.start_tick(), 0);
+    assert_eq!(midi.length_ticks(), 19_200);
+    assert_eq!(midi.source_offset_ticks(), 0);
+}
+
+#[test]
+fn trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let ranges = [
+        (0, 3_840),
+        (0, 5_760),
+        (0, 7_680),
+        (5_760, 13_440),
+        (11_520, 19_200),
+        (13_440, 19_200),
+        (15_360, 19_200),
+    ];
+    let mut ids = Vec::with_capacity(ranges.len());
+    for (start_tick, end_tick) in ranges {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: end_tick - start_tick,
+            })
+            .expect("test MIDI item should be inserted");
+        ids.push(app.project.midi_items().last().unwrap().id());
+    }
+    app.timeline.rebuild(&app.project);
+    for (index, item_id) in ids.iter().copied().enumerate() {
+        app.timeline.handle(TimelineEvent::SelectItem {
+            item_id: Some(item_id),
+            additive: index != 0,
+            range: false,
+        });
+    }
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 5_760,
+        end_tick: 13_440,
+    }));
+
+    let revision = app.revision;
+    let _ = app.update(Message::TrimItemsToSelectedArea);
+
+    assert_eq!(app.project.midi_items().len(), 5);
+    assert!(
+        app.project
+            .midi_items()
+            .iter()
+            .any(|item| item.id() == ids[0])
+    );
+    for item_id in [ids[2], ids[3], ids[4], ids[6]] {
+        assert!(
+            app.project
+                .midi_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+        );
+    }
+    let left_overlap = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == ids[2])
+        .unwrap();
+    assert_eq!(left_overlap.start_tick(), 5_760);
+    assert_eq!(left_overlap.length_ticks(), 1_920);
+    assert_eq!(left_overlap.source_offset_ticks(), 5_760);
+    let interior = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == ids[3])
+        .unwrap();
+    assert_eq!(interior.start_tick(), 5_760);
+    assert_eq!(interior.length_ticks(), 7_680);
+    let right_overlap = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == ids[4])
+        .unwrap();
+    assert_eq!(right_overlap.start_tick(), 11_520);
+    assert_eq!(right_overlap.length_ticks(), 1_920);
+    assert_eq!(app.revision, revision + 1);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items().len(), 7);
+    assert!(ids.iter().all(|item_id| {
+        app.project
+            .midi_items()
+            .iter()
+            .any(|item| item.id() == *item_id)
+    }));
+}
+
+#[test]
+fn trim_items_to_selected_area_without_a_selection_is_a_noop() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.handle(TimelineEvent::SelectItem {
+        item_id: Some(item_id),
+        additive: false,
+        range: false,
+    });
+    let revision = app.revision;
+
+    let _ = app.update(Message::TrimItemsToSelectedArea);
+
+    assert_eq!(app.project.midi_items()[0].id(), item_id);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
+    assert_eq!(app.revision, revision);
+
+    let _ = app.update(Message::Timeline(TimelineEvent::SetTimeSelection {
+        start_tick: 120,
+        end_tick: 480,
+    }));
+    app.timeline.clear_selected_items();
+    let revision = app.revision;
+    let _ = app.update(Message::TrimItemsToSelectedArea);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
     assert_eq!(app.revision, revision);
 }
 

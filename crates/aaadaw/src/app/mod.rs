@@ -2176,6 +2176,7 @@ impl App {
                             | Message::CancelAudioItemStartSampleEdit(_)
                             | Message::DeleteAudioItem(_)
                             | Message::DeleteSelectedItems
+                            | Message::TrimItemsToSelectedArea
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateMidiItem(_)
@@ -4371,6 +4372,7 @@ impl App {
                 self.apply_action(DawAction::DeleteAudioItem { item_id }, "Audio item deleted");
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
+            Message::TrimItemsToSelectedArea => self.trim_items_to_selected_area(),
             Message::SelectAllItems => self.select_all_items(),
             Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
             Message::SelectAllItemsInTimeSelection => self.select_all_items_in_time_selection(),
@@ -9752,6 +9754,152 @@ impl App {
             );
         }
         selected
+    }
+
+    fn trim_items_to_selected_area(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before trimming items"
+                    .to_owned();
+            return;
+        }
+        let Some(selection) = self.timeline.time_selection else {
+            return;
+        };
+        if selection.start_tick >= selection.end_tick || self.timeline.selected_items.is_empty() {
+            return;
+        }
+        let (selection_start_sample, selection_end_sample) = match (
+            self.project.sample_at_tick(selection.start_tick),
+            self.project.sample_at_tick(selection.end_tick),
+        ) {
+            (Ok(start), Ok(end)) => (start, end),
+            (Err(error), _) | (_, Err(error)) => {
+                self.status = format!("Could not trim items to the selected area: {error}");
+                return;
+            }
+        };
+
+        let mut item_ids = self
+            .timeline
+            .selected_items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        item_ids.sort_unstable_by_key(|item_id| item_id.value());
+        let mut actions = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            if let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                if selection_start_sample >= selection_end_sample {
+                    continue;
+                }
+                let item_start = item.start_sample();
+                let Some(item_end) = item_start.checked_add(item.length_samples()) else {
+                    self.status =
+                        "Could not trim an audio item with an invalid position".to_owned();
+                    return;
+                };
+                if item_end < selection_start_sample || item_start > selection_end_sample {
+                    continue;
+                }
+                if item_end == selection_start_sample || item_start == selection_end_sample {
+                    actions.push(DawAction::DeleteAudioItem { item_id });
+                    continue;
+                }
+                let new_start = item_start.max(selection_start_sample);
+                let new_end = item_end.min(selection_end_sample);
+                if new_start >= new_end {
+                    actions.push(DawAction::DeleteAudioItem { item_id });
+                    continue;
+                }
+                if new_start == item_start && new_end == item_end {
+                    continue;
+                }
+                let Some(source_offset_samples) = item
+                    .source_offset_samples()
+                    .checked_add(new_start - item_start)
+                else {
+                    self.status =
+                        "Could not trim an audio item past its source position".to_owned();
+                    return;
+                };
+                actions.push(DawAction::EditAudioItem {
+                    item_id,
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample: new_start,
+                    source_offset_samples,
+                    length_samples: new_end - new_start,
+                });
+            } else if let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            {
+                let item_start = item.start_tick();
+                let Some(item_end) = item_start.checked_add(item.length_ticks()) else {
+                    self.status = "Could not trim a MIDI item with an invalid position".to_owned();
+                    return;
+                };
+                if item_end < selection.start_tick || item_start > selection.end_tick {
+                    continue;
+                }
+                if item_end == selection.start_tick || item_start == selection.end_tick {
+                    actions.push(DawAction::DeleteMidiItem { item_id });
+                    continue;
+                }
+                let new_start = item_start.max(selection.start_tick);
+                let new_end = item_end.min(selection.end_tick);
+                if new_start >= new_end {
+                    actions.push(DawAction::DeleteMidiItem { item_id });
+                    continue;
+                }
+                if new_start == item_start && new_end == item_end {
+                    continue;
+                }
+                let new_length = new_end - new_start;
+                if new_start > item_start {
+                    let Some(source_offset_ticks) = item
+                        .source_offset_ticks()
+                        .checked_add(new_start - item_start)
+                    else {
+                        self.status =
+                            "Could not trim a MIDI item past its source position".to_owned();
+                        return;
+                    };
+                    actions.push(DawAction::TrimMidiItemStart {
+                        item_id,
+                        start_tick: new_start,
+                        length_ticks: new_length,
+                        source_offset_ticks,
+                    });
+                } else {
+                    actions.push(DawAction::EditMidiItem {
+                        item_id,
+                        start_tick: new_start,
+                        length_ticks: new_length,
+                    });
+                }
+            }
+        }
+        if actions.is_empty() {
+            return;
+        }
+        self.audio_item_start_edits.clear();
+        let action = if actions.len() == 1 {
+            actions.pop().expect("single trim action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected items trimmed to selected area");
     }
 
     fn delete_selected_items(&mut self) {
