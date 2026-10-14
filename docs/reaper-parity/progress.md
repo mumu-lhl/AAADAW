@@ -743,6 +743,14 @@ Linux REAPER 7.82 / Default 7 的 action 42409 探针确认四个音频/MIDI 选
 
 Stable `cargo nextest run -p aaadaw-core -p aaadaw-storage -p aaadaw` 730/730 passed、0 skipped；Stable 跨三包 all-target Clippy `-D warnings`、`cargo fmt --check`、`git diff --check` 通过。Parity matrix 有 94 个唯一 ID、15 列，fixture 路径和截图/结果哈希均已验证。`ITEM-RAZOR-ENCLOSE-001` 与 `SHELL-MENU-KEYBOARD-001` 保持 `in_progress`：AAADAW 暂未实现 envelope razor area 及其它 Razor edit 命令；Undo 目前不恢复执行前的 item 选择，而原厂脚本探针的选择撤销结果受构造历史影响，仍待明确核验。其余 Item/Track 菜单和完整界面一致性继续推进。
 
+### 2026-10-14 Item 菜单 Split items at cursor
+
+实现 Main action 40012 的完整编辑路径。Linux REAPER 7.82 / Default 7 原厂探针确认 S 快捷键的 action 名称 `Item: Split items at edit or play cursor (select right)`：有选择时只切选中项并只选择右段；无选择时切割所有跨越光标的项目并只选择右段；光标正好位于边界上时不改工程。AAADAW 的 Action List 名称现已与原厂一致，Item 菜单使用短标签 `Split items at cursor` 和 S；有选择和无选择两种路径都按原厂规则更新选择，音频源采样率与源偏移被保留，MIDI 按 tick 切分。
+
+原厂输出 TSV 和 REAPER/AAADAW 1540×1160 实窗截图、哈希与比较边界记录在 [Split cursor fixture](../verification/reaper-parity/fixtures/menu-item-split-cursor.tsv)。AAADAW 实窗通过实际 S 键切开双轨 MIDI 工程并选择右段；屏幕像素定位落在 5.007 秒，原厂探针在 5.000 秒。回归覆盖选中 MIDI 项、无选择多轨、音频 44.1 kHz 源在 48 kHz 工程中的偏移换算、边界 no-op、Action List 名称和单步 Undo/Redo。
+
+Nightly + Cranelift workspace nextest 1027/1027 通过，隔离 Xvfb `DISPLAY=:223` 下的 UI/CLAP 测试均运行；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查通过。Parity matrix 有 96 个唯一 ID、15 列，cursor-split TSV 与截图哈希已校验。`ITEM-SPLIT-CURSOR-001` 仍为 `in_progress`：尚未制作音频项的 REAPER 原厂实窗对照，也没有撤销 item 选择恢复；Item 菜单其它命令、更多光标/播放状态交互和完整 UI 对齐继续推进。
+
 ### 2026-10-14 Item 菜单 Split items at time selection or razor edit
 
 实现提交：`e30c3ee`。

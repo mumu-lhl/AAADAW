@@ -10998,6 +10998,15 @@ fn split_item_commands_are_selection_aware_and_share_menu_search_definitions() {
         .expect("Item menu should expose Split items at cursor");
     assert_eq!(split_at_cursor.label, "Split items at cursor");
     assert_eq!(split_at_cursor.shortcut.as_deref(), Some("S"));
+    let cursor_action = commands::matching_actions_menu(&app, "split items at edit or play cursor")
+        .into_iter()
+        .find(|entry| entry.id == cursor)
+        .expect("Action List should use the native edit/play cursor label");
+    assert_eq!(
+        cursor_action.label,
+        "Split items at edit or play cursor (select right)"
+    );
+    assert_eq!(cursor_action.shortcut.as_deref(), Some("S"));
     let split_at_time_selection = item_menu
         .iter()
         .find(|entry| entry.id == time_selection)
@@ -11269,6 +11278,10 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
     assert_eq!(app.project.midi_items()[1].start_tick(), 1_440);
     assert_eq!(app.project.midi_items()[1].notes()[0].tick(), 0);
     assert_eq!(app.project.midi_items()[1].notes()[0].duration(), 480);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([app.project.midi_items()[1].id()])
+    );
     assert_eq!(app.revision, revision + 1);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.snapshot(), before);
@@ -11283,6 +11296,156 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
     let _ = app.update(Message::SplitSelectedItemsAtCursor);
     assert_eq!(app.project.snapshot(), before_noop);
     assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn cursor_split_without_selection_splits_all_tracks_and_selects_right_segments_once() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let track_ids = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    for track_id in &track_ids {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id: *track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+    }
+    app.timeline.rebuild(&app.project);
+    app.timeline.edit_cursor_tick = 1_920;
+    assert!(app.timeline.selected_items.is_empty());
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+
+    assert_eq!(app.project.midi_items().len(), 4);
+    for track_id in track_ids {
+        let fragments = app
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| item.track_id() == track_id)
+            .collect::<Vec<_>>();
+        assert_eq!(fragments.len(), 2);
+        assert_eq!(
+            (fragments[0].start_tick(), fragments[0].length_ticks()),
+            (0, 1_920)
+        );
+        assert_eq!(
+            (fragments[1].start_tick(), fragments[1].length_ticks()),
+            (1_920, 1_920)
+        );
+        assert!(!app.timeline.selected_items.contains(&fragments[0].id()));
+        assert!(app.timeline.selected_items.contains(&fragments[1].id()));
+    }
+    assert_eq!(app.timeline.selected_items.len(), 2);
+    assert_eq!(app.revision, revision + 1);
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+
+    app.timeline.selected_items.clear();
+    app.timeline.selected_item = None;
+    app.timeline.edit_cursor_tick = 1_920;
+    let before_boundary = app.project.snapshot();
+    let revision = app.revision;
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+    assert_eq!(app.project.snapshot(), before_boundary);
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn cursor_split_without_selection_preserves_audio_source_rate_and_selects_right_item() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-cursor-split-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let media_ref = "asset://cursor-split-test";
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    store
+        .import_audio_asset(
+            media_ref,
+            "cursor-split-test.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(44_100),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(100_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test audio source metadata should store");
+    store.close().expect("project store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let item_end = app.project.sample_at_tick(3_840).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5_000,
+            length_samples: item_end,
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.edit_cursor_tick = 1_920;
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+
+    let items = app.project.audio_items();
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        (items[0].start_sample(), items[0].length_samples()),
+        (0, 48_000)
+    );
+    assert_eq!(items[0].source_offset_samples(), 5_000);
+    assert_eq!(
+        (items[1].start_sample(), items[1].length_samples()),
+        (48_000, 48_000)
+    );
+    assert_eq!(items[1].source_offset_samples(), 49_100);
+    assert_eq!(app.timeline.selected_items, HashSet::from([items[1].id()]));
+    assert_eq!(app.revision, revision + 1);
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+
+    drop(app);
+    let _ = std::fs::remove_file(&project_path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
 }
 
 fn test_shortcut_input(logical_key: Key, modifiers: Modifiers) -> shortcut::ShortcutInput {

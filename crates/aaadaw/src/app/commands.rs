@@ -1095,7 +1095,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::SplitSelectedItemsAtCursor,
         menu: Some(MainMenu::Item),
         category: "Item",
-        label: "Split items at edit cursor",
+        label: "Split items at edit or play cursor (select right)",
         aliases: &[
             "split at cursor",
             "split items at cursor",

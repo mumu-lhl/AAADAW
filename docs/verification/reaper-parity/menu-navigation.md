@@ -53,3 +53,11 @@ Linux REAPER 7.82 / Default 7 的 Main action 40061 名为 `Item: Split items at
 AAADAW 的 Action List 使用完整原厂动作名，Item 菜单显示 `Split items at time selection` 和 Shift+S。它实现上述三种路径：音频边界按样本时钟切分并换算源偏移，MIDI 按 tick 边界切分；razor 路径只处理带 media area 的轨道并在同一撤销事务中清除区域。混合音频/MIDI、时间选区无项选择时的全工程分割、选中模式下不触碰未选中轨道、Razor 轨道范围和单步 Undo/Redo 均有应用回归覆盖。REAPER 与 AAADAW 的原厂结果时间线分别见[原厂分割截图](fixtures/menu-item-split-time-or-razor-native.png)和 [AAADAW 分割截图](fixtures/menu-item-split-time-or-razor-aaadaw.png)；菜单截图、哈希、生成工程方式和比较范围见 [Split fixture](fixtures/menu-item-split-time-or-razor.tsv)。两张时间线截图使用相同的四条轨道及 0–10 秒素材，显示首轨 3–7 秒中段被选中，其他轨道素材未改变；截图只验收该动作结果与核心标签/快捷键，不代表整套菜单及界面已像素对齐。
 
 时间选区同时存在 razor area 时，AAADAW 目前优先使用时间选区；该组合尚未由原厂探针确认。撤销工程分割会恢复素材，但应用当前没有通用的 item 选择历史，因此不能承诺 Undo/Redo 后的选择状态与 REAPER 一致。其它 Razor grouping、envelope area 和完整 Item 菜单仍未实现，`ITEM-SPLIT-TIME-RAZOR-001`、`ITEM-RAZOR-ENCLOSE-001` 与菜单/界面整体继续保持 `in_progress`。
+
+### Item 菜单的 Split items at cursor
+
+Linux REAPER 7.82 / Default 7 的 Main action 40012 在 Action List 中显示 `Item: Split items at edit or play cursor (select right)`，默认快捷键 S；Item 菜单短标签为 `Split items at cursor`。原厂 ReaScript 探针确认：已有项选择时只分割所选的跨光标素材，并取消左段选择、只选择右段；没有项选择时分割所有轨道中跨光标的音频/MIDI 项，并选择新生成的右段；光标落在项边界上不产生工程变更。每次有效分割只产生一次 project state change，结果见[原厂 TSV](fixtures/menu-item-split-cursor-native.tsv)。
+
+AAADAW 的 Item 菜单保留 `Split items at cursor` 和 S，Action List 名称现与原厂 action text 对齐。所选项路径仅选择新增右段；空选择路径遍历全部项目并用正确的源采样率切分音频、按 tick 切分 MIDI。回归验证右段选择、跨轨无选择切分、边界无操作、音频源偏移、Undo/Redo 工程状态和快捷键/Action List 名称。REAPER 与 AAADAW 的实窗结果见[原厂图](fixtures/menu-item-split-cursor-native.png)和[AAADAW 图](fixtures/menu-item-split-cursor-aaadaw.png)；环境、图片/TSV 哈希、实际 S 键输入以及截图中的 5.000s / 5.007s 光标差见[Split cursor fixture](fixtures/menu-item-split-cursor.tsv)。两张图均显示两条 MIDI 轨道的右段被选中；AAADAW 时间尺按屏幕像素定位，因此实窗输入落在 5.007s，严格功能边界由 tick 级回归覆盖。
+
+本切片尚未对音频项做 REAPER 原厂实窗截图验证，也没有实现撤销后恢复 item 选择；其它 Razor 行为、Item 菜单未实现项和整体界面复刻仍在 `in_progress`，对应验收条目为 `ITEM-SPLIT-CURSOR-001`。
