@@ -661,3 +661,12 @@ REAPER 7.82 / Default 7 实窗观察：Filter 聚焦时 ArrowDown 不移动结�
 AAADAW 的 Action List 键盘路由现在对未被输入控件消费、无修饰键的 ↑/↓ 选择相邻可见结果，并在首尾钳制。`action_list_result_arrows_select_visible_actions_and_clamp_at_bounds` 验证 Filter 捕获按键时不改选择、提交后选择首项、上下移动及两端停留。真实界面查询 `item` 后，第一次 Enter 高亮 `Insert: MIDI item`，ArrowDown 高亮第二项 `Item: Item properties...`；两项都未执行。截图与哈希见 [AAADAW 方向键 fixture](../verification/reaper-parity/fixtures/action-list-arrow-aaadaw.tsv)。
 
 nightly+Cranelift `aaadaw` 全量 nextest 1013/1013 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、`git diff --check` 及 parity CSV 92 个唯一 ID/15 列/新增证据路径检查通过。Cranelift 测试构建继续报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：轨道名编辑器与 Action List Filter/结果列表已有首批验证；其它文本字段、AltGr/键盘布局、脚本编辑区、插件/浮动窗口及其它 Action Section 焦点例外未逐项覆盖。
+
+
+### 2026-10-14 Action List Home/End 导航
+
+提交：`e90228d`。
+
+REAPER 7.82 / Default 7 原厂会话确认：Filter 输入 `undo` 后 Enter 交给结果列表，Home 选择首项、End 选择末项；按键只改选择，没有运行动作。AAADAW 实窗输入 `item` 后 Enter 再按 End，会选择末项并将列表滚到底部；Home 选择首项并滚回顶部。空工程保持零轨，传输停止。原厂与 AAADAW 截图、步骤及 SHA-256 见 [边界键 fixture](../verification/reaper-parity/fixtures/action-list-boundary-native.tsv) 与 [AAADAW fixture](../verification/reaper-parity/fixtures/action-list-boundary-aaadaw.tsv)。
+
+AAADAW 为结果列表增加稳定滚动 ID；Home/End 选择首/末个可见过滤结果，并将相应边界滚入视口。`action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds` 同时覆盖过滤焦点分流、Home/End、方向移动及方向键首尾钳制。nightly+Cranelift `aaadaw` nextest 537/537 passed、0 skipped；Stable `aaadaw --all-targets` Clippy `-D warnings`、fmt、diff 和截图哈希/fixture/矩阵引用检查通过。Cranelift 构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/键盘布局、脚本编辑器、插件/浮动窗口及其它 Action Section 的穿透例外尚未逐项核验。
