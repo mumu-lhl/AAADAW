@@ -641,3 +641,13 @@ Linux REAPER 7.82 / Default 7 实窗 Source 菜单确认该模式显示 `1 media
 REAPER 7.82 / Default 7 的隔离 Xvfb 会话实测 Action List Filter：输入 `undo` 后按 `Ctrl+Z`，Filter 和工程保持不变；关闭列表后，同一按键在主窗口撤销临时轨道。Filter 内空格不会启动传输，Escape 关闭列表。原厂状态、探针与截图哈希见 [Action List 焦点记录](../verification/reaper-parity/input-focus.md)及其 fixture。
 
 AAADAW 新增 `action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window`，通过实际 `RuntimeKeyboardEvent` 窗口分发验证 Filter 窗口隔离全局快捷键、主窗口 Ctrl+Z 仍执行 Undo、Escape 关闭 Action List。该回归单独通过 1/1；`aaadaw` 全量 nightly+Cranelift nextest 在 `DISPLAY=:126` 下 1011/1011 通过（两个 CLAP GUI 测试需要可连接的 X11 显示）。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible 警告。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/布局、脚本编辑器和其它 Action Section 的焦点穿透仍待逐项验证。
+
+### 2026-10-14 Action List Filter Enter
+
+提交：`12ae6ee`。
+
+REAPER 7.82 / Default 7 原厂探针确认 Filter 输入 `undo` 后第一次 Enter 只选择 `Edit: Undo` 并移开 Filter 焦点，第二次 Enter 才撤销临时轨道。ReaScript 在第一次 Enter 后记录 1 条轨道/工程状态计数 2，第二次后记录 0 条轨道/状态计数 3；播放保持停止。原厂截图、状态与哈希见 [Enter fixture](../verification/reaper-parity/fixtures/action-list-enter-native.tsv)。第二次输入时独立音频硬件错误对话框遮住 Action List，故只保留该步探针状态，没有归档遮挡截图。
+
+AAADAW Filter 现在将第一次 Enter 作为结果提交并移开文本焦点；无可见选择时自动选择首个匹配结果。第二次 Enter 才由 Action List 路由执行选中动作。回归 `action_list_filter_enter_focuses_results_before_running_selected_action` 通过，实窗截图显示第一步轨道仍在、第二步轨道已撤销，证据见 [AAADAW Enter fixture](../verification/reaper-parity/fixtures/action-list-enter-aaadaw.tsv)。
+
+nightly+Cranelift 定向回归 1/1；`aaadaw` 全量 nextest 在无窗口管理器的 `DISPLAY=:124` Xvfb 下 1012/1012 通过。首次用带窗口管理器的显示运行全量时，CLAP X11 fixture 没能在根窗口发布标题；同一用例在无窗口管理器的 Xvfb 单独通过，随后全量也通过。Stable all-target Clippy `-D warnings`、fmt、`git diff --check`，以及 parity CSV 92 个唯一 ID/15 列和新增证据路径检查通过。Cranelift 测试构建保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/键盘布局、脚本编辑器、插件/浮动窗口和其它 Action Section 穿透例外仍待逐项探测。
