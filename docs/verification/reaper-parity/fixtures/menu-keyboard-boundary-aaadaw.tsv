@@ -1,6 +1,6 @@
 version	AAADAW Linux X11 working tree
-display	Xvfb :126 1280x1024 with xfwm4; isolated fresh XDG directories
+display	Xvfb :226 1280x800; isolated fresh XDG directories; no window manager
 audio	unavailable in this build; transport remained stopped
 step	input_sequence	menu	selected_command	track_count	project_effect	screenshot	sha256	observation
-wrap_up	open File menu; ArrowUp	File	Project settings...	0	no action executed	fixtures/menu-file-wrap-up-aaadaw.png	1eaaf2dd3541edeafcb80d0a4b392f480cf09297f42e71cd96a6e5839a9286f7	ArrowUp wraps to the last enabled File entry; menu command coverage differs from REAPER
-wrap_down	ArrowDown	File	New project	0	no action executed	fixtures/menu-file-wrap-down-aaadaw.png	400b5fef5300eb6d5d80735f24d58e825b1d7445e5cb4e9a2ee11241caa3899d	ArrowDown from the last enabled entry wraps to the first; no project action runs
+wrap_up	open File menu; ArrowUp	File	Quit	0	no action executed	fixtures/menu-file-quit-boundary-aaadaw.png	5cc5f6027ad515a0e852a83c9acd92bd26e44b2e07d9e2c36ba6683759da09f0	ArrowUp selects the native last command; menu stays open and Quit is not activated
+ctrl_q	Add one track; press Ctrl+Q	File	Quit REAPER	1	Save changes / Don't Save / Cancel prompt opened; project remains open	fixtures/menu-quit-confirmation-aaadaw.png	2eaa6aa866c45cfe5cdb9261404522d5bda81b9cb612e3112dc62dcb0f8c5916	Quit follows the existing close transition and preserves the dirty project until a choice is made

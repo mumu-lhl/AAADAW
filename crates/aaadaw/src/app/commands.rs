@@ -13,6 +13,7 @@ pub(crate) type ShortcutBindings = HashMap<String, String>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandId {
     NewProject,
+    Quit,
     OpenProject,
     SaveProject,
     SaveProjectAs,
@@ -131,6 +132,7 @@ pub(crate) enum LoopTimeCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandKind {
     NewProject,
+    Quit,
     OpenProject,
     SaveProject,
     SaveProjectAs,
@@ -228,6 +230,7 @@ const ABOUT_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F1, Modifiers::CTRL
 const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::COMMAND)];
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
 const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
+const QUIT_SHORTCUT: &[Shortcut] = &[Shortcut::character('q', Modifiers::CTRL)];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
@@ -359,6 +362,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Project settings...",
         aliases: &["project settings", "video frame rate"],
         shortcuts: &[Shortcut::named(Named::Enter, Modifiers::ALT)],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::Quit,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Quit REAPER",
+        aliases: &["quit", "quit reaper"],
+        shortcuts: QUIT_SHORTCUT,
         destructive: false,
         separator_before: true,
     },
@@ -1630,6 +1643,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
     {
         paste.label = "Paste".to_owned();
     }
+    if menu == MainMenu::File
+        && let Some(quit) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::Quit)
+    {
+        quit.label = "Quit".to_owned();
+    }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
             .into_iter()
@@ -2083,6 +2103,7 @@ fn config_binding_for(app: &App, id: &str, _defaults: &[Shortcut]) -> String {
 fn command_kind_id(kind: CommandKind) -> &'static str {
     match kind {
         CommandKind::NewProject => "file.new-project",
+        CommandKind::Quit => "file.quit",
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
@@ -2227,6 +2248,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
     }
     let message = match command {
         CommandId::NewProject => Message::NewProject,
+        CommandId::Quit => {
+            return app.main_window_id.map_or_else(Task::none, |window_id| {
+                app.update(Message::WindowCloseRequested(window_id))
+            });
+        }
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
@@ -2535,6 +2561,7 @@ fn entry_for(
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
         CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
+        CommandKind::Quit => true,
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings
         | CommandKind::OpenAbout
@@ -2824,6 +2851,7 @@ fn numbered_project_marker_action_id(slot: u8) -> &'static str {
 fn command_id(kind: CommandKind) -> CommandId {
     match kind {
         CommandKind::NewProject => CommandId::NewProject,
+        CommandKind::Quit => CommandId::Quit,
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,

@@ -907,3 +907,9 @@ Core 快照/Undo、Storage schema 38 迁移、App Apply/Cancel/Undo/Redo 和 Eng
 原有交互把轨道名单击直接交给文本输入框，导致 Delete 被输入控件消费，无法像 REAPER TCP 那样以轨道为目标。名称现在默认是只读标签：单击选择轨道并设置 TrackPanel 删除目标，双击进入现有可撤销名称编辑器；编辑中的文本控件继续接收键盘输入。实窗验证了单击后 Delete 打开轨道确认，以及双击后名称输入框获得焦点；截图和哈希分别记录在 [Delete by focus runtime evidence](../verification/reaper-parity/fixtures/delete-by-focus-runtime-native.tsv) 与 [双击编辑 fixture](../verification/reaper-parity/fixtures/track-name-double-click-aaadaw.tsv)。
 
 Nightly + Cranelift AAADAW 测试 551/551 passed；Stable workspace all-target Clippy `-D warnings`、fmt 和 diff 检查通过。`track_rename_is_undoable` 覆盖名称编辑、提交和可撤销行为。该修正只覆盖 TCP/MCP 名称控件；`INPUT-FOCUS-001` 继续 `in_progress`，完整文本控件、键盘布局、插件和子窗口焦点矩阵尚未验收。
+
+### 2026-10-14 File 菜单 Quit 与 Ctrl+Q
+
+REAPER 7.82 File 末项是 Quit，Action List 显示 `File: Quit REAPER` / Ctrl+Q（40004）。AAADAW 现在把该动作注册为可配置快捷键和 File 菜单末项；执行经统一主窗口关闭请求，因此未保存工程提供 Save、Don't Save、Cancel，取消或出现提示时不会丢失工程。File 菜单 ArrowUp 边界现在选中 Quit，实窗截图确认了菜单选择与 Ctrl+Q 触发的未保存工程确认框，证据及 SHA-256 见 [AAADAW 菜单边界 fixture](../verification/reaper-parity/fixtures/menu-keyboard-boundary-aaadaw.tsv)。
+
+Nightly + Cranelift 定向回归 `quit_matches_native_file_menu_and_uses_dirty_close_confirmation` 1/1 passed，覆盖末项/标签/分隔线/Ctrl+Q 默认值及取消/放弃流程。File 菜单的其它原厂条目和完整键盘焦点行为尚未复刻；`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`。

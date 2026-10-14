@@ -2698,6 +2698,44 @@ fn new_project_is_in_file_menu_and_prompts_before_discarding_dirty_work() {
 }
 
 #[test]
+fn quit_matches_native_file_menu_and_uses_dirty_close_confirmation() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(window_id),
+        ..App::default()
+    };
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let quit = file_menu
+        .last()
+        .expect("Quit should be the last File command");
+    assert_eq!(quit.id, CommandId::Quit);
+    assert_eq!(quit.label, "Quit");
+    assert!(quit.enabled);
+    assert!(quit.separator_before);
+    let binding = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "file.quit")
+        .expect("Quit should have a configurable shortcut entry");
+    assert_eq!(binding.default_binding, "Ctrl+Q");
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let _ = app.update(Message::ExecuteCommand(CommandId::Quit));
+    assert_eq!(app.project.tracks()[0].id(), track_id);
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseMainWindow(window_id))
+    );
+    let _ = app.update(Message::CancelProjectTransition);
+    assert!(app.is_dirty());
+    assert_eq!(app.pending_project_transition, None);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::Quit));
+    let _ = app.update(Message::DiscardProjectChanges);
+    assert_eq!(app.pending_project_transition, None);
+}
+
+#[test]
 fn dirty_main_window_close_offers_save_discard_or_cancel_without_closing() {
     let window_id = iced::window::Id::unique();
     let mut app = App {
