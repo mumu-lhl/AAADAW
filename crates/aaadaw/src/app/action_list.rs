@@ -2,6 +2,8 @@ use super::{App, Message, commands, keyboard_config, shortcut};
 use iced::Task;
 use iced::keyboard::{Key, Modifiers, key::Named};
 
+pub(super) const RESULTS_SCROLL_ID: &str = "aaadaw-action-list-results";
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum CaptureMode {
     Add,
@@ -67,12 +69,33 @@ impl App {
         shortcut::parse_bindings(&value).unwrap_or_default()
     }
 
-    fn select_adjacent_action_list_entry(&mut self, move_down: bool) {
-        let ids = self
-            .action_list_entries()
+    fn visible_action_list_entry_ids(&self) -> Vec<String> {
+        self.action_list_entries()
             .into_iter()
             .filter_map(|entry| commands::stable_id(entry.id))
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    fn select_action_list_boundary(&mut self, select_last: bool) -> Task<Message> {
+        let ids = self.visible_action_list_entry_ids();
+        let selected = if select_last { ids.last() } else { ids.first() };
+        if let Some(id) = selected {
+            self.action_list.select(id.clone());
+            use iced::advanced::widget::operation::scrollable::{self, RelativeOffset};
+
+            return iced::advanced::widget::operate(scrollable::snap_to(
+                iced::widget::Id::new(RESULTS_SCROLL_ID),
+                RelativeOffset {
+                    x: None,
+                    y: Some(if select_last { 1.0 } else { 0.0 }),
+                },
+            ));
+        }
+        Task::none()
+    }
+
+    fn select_adjacent_action_list_entry(&mut self, move_down: bool) {
+        let ids = self.visible_action_list_entry_ids();
         if ids.is_empty() {
             return;
         }
@@ -340,9 +363,18 @@ impl App {
             }
         } else if status == iced::event::Status::Ignored
             && modifiers == Modifiers::NONE
-            && matches!(key, Key::Named(Named::ArrowUp | Named::ArrowDown))
+            && matches!(
+                key,
+                Key::Named(Named::ArrowUp | Named::ArrowDown | Named::Home | Named::End)
+            )
         {
-            self.select_adjacent_action_list_entry(key == Key::Named(Named::ArrowDown));
+            match key {
+                Key::Named(Named::ArrowUp) => self.select_adjacent_action_list_entry(false),
+                Key::Named(Named::ArrowDown) => self.select_adjacent_action_list_entry(true),
+                Key::Named(Named::Home) => return self.select_action_list_boundary(false),
+                Key::Named(Named::End) => return self.select_action_list_boundary(true),
+                _ => unreachable!("only action-list result navigation keys are handled"),
+            }
         } else if status == iced::event::Status::Ignored
             && key == Key::Named(Named::Enter)
             && modifiers == Modifiers::NONE

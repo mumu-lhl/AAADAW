@@ -4533,7 +4533,7 @@ fn action_list_filter_enter_focuses_results_before_running_selected_action() {
 }
 
 #[test]
-fn action_list_result_arrows_select_visible_actions_and_clamp_at_bounds() {
+fn action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds() {
     let main_window = iced::window::Id::unique();
     let action_list_window = iced::window::Id::unique();
     let mut app = App {
@@ -4557,6 +4557,14 @@ fn action_list_result_arrows_select_visible_actions_and_clamp_at_bounds() {
         Key::Named(iced::keyboard::key::Named::ArrowUp),
         Modifiers::NONE,
     ));
+    let home = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Home),
+        Modifiers::NONE,
+    ));
+    let end = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::End),
+        Modifiers::NONE,
+    ));
     let _ = app.update(Message::RuntimeKeyboardEvent(
         down.clone(),
         iced::event::Status::Captured,
@@ -4565,6 +4573,18 @@ fn action_list_result_arrows_select_visible_actions_and_clamp_at_bounds() {
     assert!(app.action_list.selected.is_none());
 
     let _ = app.update(Message::ActionListFilterSubmitted);
+    assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        end,
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        home,
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
     assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
     let _ = app.update(Message::RuntimeKeyboardEvent(
         down.clone(),

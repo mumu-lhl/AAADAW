@@ -1,4 +1,4 @@
-use super::super::{App, Message, commands};
+use super::super::{App, Message, action_list, commands};
 use iced::widget::{button, column, container, row, rule, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -95,7 +95,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(6)
             .align_y(Alignment::Center),
-            scrollable(actions).height(Length::Fill),
+            scrollable(actions)
+                .id(iced::widget::Id::new(action_list::RESULTS_SCROLL_ID))
+                .height(Length::Fill),
             text("Shortcuts for selected action").size(12),
             row![
                 scrollable(shortcuts)
