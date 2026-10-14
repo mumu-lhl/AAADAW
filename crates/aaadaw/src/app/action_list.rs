@@ -67,6 +67,29 @@ impl App {
         shortcut::parse_bindings(&value).unwrap_or_default()
     }
 
+    fn select_adjacent_action_list_entry(&mut self, move_down: bool) {
+        let ids = self
+            .action_list_entries()
+            .into_iter()
+            .filter_map(|entry| commands::stable_id(entry.id))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return;
+        }
+        let current_index = self
+            .action_list
+            .selected
+            .as_ref()
+            .and_then(|selected| ids.iter().position(|id| id == selected));
+        let selected_index = match (current_index, move_down) {
+            (Some(index), true) => (index + 1).min(ids.len() - 1),
+            (Some(index), false) => index.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => ids.len() - 1,
+        };
+        self.action_list.select(ids[selected_index].clone());
+    }
+
     pub(super) fn open_action_list(&mut self) -> Task<Message> {
         if cfg!(target_os = "android") {
             return self.open_settings();
@@ -315,6 +338,11 @@ impl App {
                     self.action_list.capture = None;
                 }
             }
+        } else if status == iced::event::Status::Ignored
+            && modifiers == Modifiers::NONE
+            && matches!(key, Key::Named(Named::ArrowUp | Named::ArrowDown))
+        {
+            self.select_adjacent_action_list_entry(key == Key::Named(Named::ArrowDown));
         } else if status == iced::event::Status::Ignored
             && key == Key::Named(Named::Enter)
             && modifiers == Modifiers::NONE

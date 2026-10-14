@@ -26,4 +26,10 @@ REAPER 7.82 / Default 7 在 Filter 输入 `undo` 后，第一次 Enter 会把选
 
 AAADAW 的 Filter 现在将 Enter 作为提交：若没有可见的当前选择，则选中首个可见动作，然后移开 Filter 焦点。后续 Enter 由 Action List 的动作键盘路由执行所选动作。回归 `action_list_filter_enter_focuses_results_before_running_selected_action` 验证第一次 Enter 不改变轨道数，第二次才执行 Undo。真实 AAADAW 截图见[第一次 Enter](fixtures/action-list-filter-enter-aaadaw-first.png)和[第二次 Enter](fixtures/action-list-filter-enter-aaadaw-second.png)，对应状态与 SHA-256 见 [AAADAW fixture](fixtures/action-list-enter-aaadaw.tsv)。
 
+### Action List 结果方向键
+
+REAPER 原厂 Filter 有焦点时，↑/↓不会移动结果选择；按 Enter 把焦点交给结果列表后，↑/↓在可见动作间移动选择，首行和末行不循环。原厂探针只观察列表选择，未运行动作；焦点、第二行选择与首尾边界截图及哈希见 [方向键 fixture](fixtures/action-list-arrow-native.tsv)。
+
+AAADAW 现在在 Filter 未消费键盘事件后以↑/↓选择相邻的可见动作，并在首尾停止；Filter 仍有焦点时被捕获的方向键不改变选择。`action_list_result_arrows_select_visible_actions_and_clamp_at_bounds` 覆盖过滤结果、焦点分流和两端边界。AAADAW 实窗截图记录 Enter 选中首项后、按 ArrowDown 选中第二项；对应结果与 SHA-256 见 [AAADAW 方向键 fixture](fixtures/action-list-arrow-aaadaw.tsv)。
+
 其它文本字段、AltGr 与非 US 键盘、脚本编辑区、插件窗口、浮动工具、每个 Action Section 对文本焦点的穿透例外尚未逐项验证；INPUT-FOCUS-001 继续 `in_progress`。

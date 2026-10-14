@@ -4533,6 +4533,75 @@ fn action_list_filter_enter_focuses_results_before_running_selected_action() {
 }
 
 #[test]
+fn action_list_result_arrows_select_visible_actions_and_clamp_at_bounds() {
+    let main_window = iced::window::Id::unique();
+    let action_list_window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window),
+        action_list_window_id: Some(action_list_window),
+        ..App::default()
+    };
+    app.action_list.set_query("item".to_owned());
+    let visible_ids = app
+        .action_list_entries()
+        .into_iter()
+        .filter_map(|entry| commands::stable_id(entry.id))
+        .collect::<Vec<_>>();
+    assert!(visible_ids.len() >= 2);
+
+    let down = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowDown),
+        Modifiers::NONE,
+    ));
+    let up = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowUp),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down.clone(),
+        iced::event::Status::Captured,
+        action_list_window,
+    ));
+    assert!(app.action_list.selected.is_none());
+
+    let _ = app.update(Message::ActionListFilterSubmitted);
+    assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down.clone(),
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[1]));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        up.clone(),
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        up,
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
+
+    for _ in 1..visible_ids.len() {
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            down.clone(),
+            iced::event::Status::Ignored,
+            action_list_window,
+        ));
+    }
+    assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down,
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+}
+
+#[test]
 fn shortcut_add_capture_preserves_existing_bindings_and_duplicate_candidates() {
     let mut app = App::default();
     let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));
