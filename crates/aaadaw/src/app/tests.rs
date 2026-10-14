@@ -2800,6 +2800,80 @@ fn save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker() {
 }
 
 #[test]
+fn save_new_project_version_matches_native_action_and_shortcut() {
+    let mut app = App::default();
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let save_as_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::SaveProjectAs)
+        .expect("File menu should expose Save project as");
+    let save_version = file_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::SaveProjectNewVersion)
+        .expect("File menu should expose Save new version of project");
+    assert_eq!(save_version.label, "Save new version of project");
+    assert_eq!(save_version.shortcut.as_deref(), Some("Ctrl+Alt+Shift+S"));
+    assert_eq!(
+        file_menu[save_as_index + 1].id,
+        CommandId::SaveProjectNewVersion,
+        "REAPER places the new-version action after Save project as"
+    );
+
+    let action = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == CommandId::SaveProjectNewVersion)
+        .expect("Action List should expose Save new version of project");
+    assert_eq!(action.category, "File");
+    assert_eq!(
+        action.label,
+        "Save new version of project (automatically increment project name)"
+    );
+    let binding = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "file.save-project-new-version")
+        .expect("Save new version should have a configurable shortcut entry");
+    assert_eq!(binding.default_binding, "Ctrl+Alt+Shift+S");
+    let bindings = app
+        .shortcut_bindings
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("s"),
+            Modifiers::CTRL
+                .union(Modifiers::ALT)
+                .union(Modifiers::SHIFT),
+            &bindings,
+            &app.action_macros,
+        ),
+        Some(CommandId::SaveProjectNewVersion)
+    );
+    drop(bindings);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::SaveProjectNewVersion));
+    assert!(app.path_picker_busy);
+    assert_eq!(app.active_menu, None);
+}
+
+#[test]
+fn save_new_project_version_dispatches_to_a_non_overwriting_incremented_path() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let current = directory.path().join("Mix.aaadaw");
+    let expected = directory.path().join("Mix_001.aaadaw");
+    let mut app = App {
+        project_path_query: current.to_string_lossy().into_owned(),
+        project_path: Some(current),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::SaveProjectNewVersion));
+
+    assert!(app.io_busy);
+    assert_eq!(app.status, format!("Saving {}…", expected.display()));
+}
+
+#[test]
 fn quit_matches_native_file_menu_and_uses_dirty_close_confirmation() {
     let window_id = iced::window::Id::unique();
     let mut app = App {
@@ -11841,6 +11915,64 @@ fn save_as_allows_overwrite_only_for_the_current_file() {
         super::project_io::resolve_save_target(None, "/projects/typed.aaadaw", None),
         Some((std::path::PathBuf::from("/projects/typed.aaadaw"), false))
     );
+}
+
+#[test]
+fn next_project_version_path_matches_reaper_padding_and_skips_existing_versions() {
+    let directory = tempfile::tempdir().unwrap();
+    let current = directory.path().join("Mix.aaadaw");
+    let first = directory.path().join("Mix_001.aaadaw");
+    let second = directory.path().join("Mix_002.aaadaw");
+    let third = directory.path().join("Mix_003.aaadaw");
+
+    assert_eq!(
+        super::project_io::next_project_version_path(&current),
+        Ok(first.clone())
+    );
+    std::fs::write(&first, b"occupied").unwrap();
+    assert_eq!(
+        super::project_io::next_project_version_path(&current),
+        Ok(second.clone())
+    );
+    assert_eq!(
+        super::project_io::next_project_version_path(&first),
+        Ok(second.clone())
+    );
+    std::fs::write(&second, b"occupied").unwrap();
+    assert_eq!(
+        super::project_io::next_project_version_path(&current),
+        Ok(third)
+    );
+}
+
+#[test]
+fn saving_a_new_project_version_preserves_the_source_and_copies_current_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("Mix.aaadaw");
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    save_project_file(source.clone(), app.project.snapshot(), false)
+        .expect("the source project should be saved");
+    let _ = app.update(Message::AddTrack);
+
+    let version = super::project_io::next_project_version_path(&source).unwrap();
+    let mut version_lock = ProjectSessionLock::acquire(&version).unwrap();
+    save_project_session_file_with_media(
+        version.clone(),
+        app.project.snapshot(),
+        app.timeline.arrangement_view_state(&app.project),
+        false,
+        Some(&mut version_lock),
+        Some(source.clone()),
+    )
+    .expect("the new version should be saved without replacing the source");
+
+    let original = load_project_file(source.clone()).unwrap();
+    let saved_version = load_project_file(version.clone()).unwrap();
+    assert!(source.is_file());
+    assert!(version.is_file());
+    assert_eq!(original.tracks().len(), 1);
+    assert_eq!(saved_version.tracks().len(), 2);
 }
 
 #[test]

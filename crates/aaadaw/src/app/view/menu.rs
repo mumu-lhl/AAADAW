@@ -20,7 +20,7 @@ const MENU_LAYOUT: [MenuLayout; 9] = [
     MenuLayout {
         menu: MainMenu::File,
         button_width: 48.0,
-        popup_width: 244.0,
+        popup_width: 360.0,
     },
     MenuLayout {
         menu: MainMenu::Edit,
@@ -393,7 +393,7 @@ fn command<'a>(
     let button = button(
         row![
             text(if entry.checked { "✓" } else { "" }).width(Length::Fixed(14.0)),
-            text(entry.label.clone()).width(Length::Fill),
+            text(entry.label.clone()).size(14).width(Length::Fill),
             text(entry.shortcut.unwrap_or_default()).size(11),
         ]
         .spacing(tokens::SPACING_MD)

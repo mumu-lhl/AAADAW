@@ -17,6 +17,7 @@ pub(crate) enum CommandId {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    SaveProjectNewVersion,
     CloseProject,
     ExportWav,
     CancelOfflineRender,
@@ -137,6 +138,7 @@ enum CommandKind {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    SaveProjectNewVersion,
     CloseProject,
     ExportWav,
     CancelOfflineRender,
@@ -238,6 +240,12 @@ const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND
 const SAVE_PROJECT_AS_SHORTCUT: &[Shortcut] = &[Shortcut::character(
     's',
     Modifiers::CTRL.union(Modifiers::ALT),
+)];
+const SAVE_PROJECT_NEW_VERSION_SHORTCUT: &[Shortcut] = &[Shortcut::character(
+    's',
+    Modifiers::CTRL
+        .union(Modifiers::ALT)
+        .union(Modifiers::SHIFT),
 )];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
@@ -346,6 +354,20 @@ const COMMANDS: &[CommandDefinition] = &[
             "save as…",
         ],
         shortcuts: SAVE_PROJECT_AS_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SaveProjectNewVersion,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Save new version of project (automatically increment project name)",
+        aliases: &[
+            "save new version of project",
+            "save new version",
+            "increment project version",
+        ],
+        shortcuts: SAVE_PROJECT_NEW_VERSION_SHORTCUT,
         destructive: false,
         separator_before: false,
     },
@@ -1681,6 +1703,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
     {
         close_project.label = "Close project".to_owned();
     }
+    if menu == MainMenu::File
+        && let Some(save_version) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::SaveProjectNewVersion)
+    {
+        save_version.label = "Save new version of project".to_owned();
+    }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
             .into_iter()
@@ -2140,6 +2169,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
+        CommandKind::SaveProjectNewVersion => "file.save-project-new-version",
         CommandKind::CloseProject => "file.close-project",
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
@@ -2291,6 +2321,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
+        CommandId::SaveProjectNewVersion => Message::SaveProjectNewVersion,
         CommandId::ExportWav => Message::OpenRenderWindow,
         CommandId::CancelOfflineRender => Message::CancelOfflineRender,
         CommandId::OpenSettings => Message::OpenSettings,
@@ -2609,6 +2640,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
         CommandKind::SaveProjectAs => !project_edit_busy(app),
+        CommandKind::SaveProjectNewVersion => !project_file_busy(app),
         CommandKind::ExportWav => {
             app.media_store_path().is_some()
                 && !recording_busy(app)
@@ -2895,6 +2927,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
+        CommandKind::SaveProjectNewVersion => CommandId::SaveProjectNewVersion,
         CommandKind::CloseProject => CommandId::CloseProject,
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,

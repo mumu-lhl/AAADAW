@@ -118,6 +118,20 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     )
 }
 
+pub(super) fn save_new_project_version(app: &mut App) -> Task<Message> {
+    let Some(current_path) = app.project_path.as_deref() else {
+        return app.pick_path(super::PathPickerTarget::SaveProject);
+    };
+    let version_path = match next_project_version_path(current_path) {
+        Ok(path) => path,
+        Err(error) => {
+            app.status = format!("Could not create project version: {error}");
+            return Task::none();
+        }
+    };
+    save_project(app, Some(version_path))
+}
+
 pub(super) fn resolve_save_target(
     current: Option<&Path>,
     query: &str,
@@ -131,6 +145,41 @@ pub(super) fn resolve_save_target(
         return Some((path.to_path_buf(), true));
     }
     project_path_from_query(query).map(|path| (path, false))
+}
+
+pub(super) fn next_project_version_path(current: &Path) -> Result<PathBuf, String> {
+    let stem = current
+        .file_stem()
+        .ok_or_else(|| "project path must name a file".to_owned())?;
+    let parent = current.parent().unwrap_or_else(|| Path::new(""));
+    let extension = current.extension();
+    let (base, mut version) = match stem.to_str().and_then(|stem| {
+        let (base, suffix) = stem.rsplit_once('_')?;
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let version = suffix.parse::<u64>().ok()?.checked_add(1)?;
+        Some((base.to_owned(), version))
+    }) {
+        Some((base, version)) => (std::ffi::OsString::from(base), version),
+        None => (stem.to_os_string(), 1),
+    };
+
+    loop {
+        let mut file_name = base.clone();
+        file_name.push(format!("_{version:03}"));
+        if let Some(extension) = extension {
+            file_name.push(".");
+            file_name.push(extension);
+        }
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+        version = version
+            .checked_add(1)
+            .ok_or_else(|| "project version number is too large".to_owned())?;
+    }
 }
 
 #[cfg(test)]

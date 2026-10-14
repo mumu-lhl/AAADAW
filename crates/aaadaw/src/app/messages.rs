@@ -493,6 +493,7 @@ pub(crate) enum Message {
     ExecuteCommand(CommandId),
     OpenProject,
     SaveProject,
+    SaveProjectNewVersion,
     SaveBeforeProjectTransition,
     DiscardProjectChanges,
     CancelProjectTransition,

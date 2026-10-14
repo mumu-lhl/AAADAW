@@ -4745,6 +4745,9 @@ impl App {
             Message::SaveProject => {
                 task = self.save_project_command();
             }
+            Message::SaveProjectNewVersion => {
+                task = self.save_new_project_version_command();
+            }
             Message::SaveBeforeProjectTransition => {
                 task = self.save_before_project_transition();
             }
@@ -11331,6 +11334,10 @@ impl App {
         } else {
             project_io::save_project(self, None)
         }
+    }
+
+    fn save_new_project_version_command(&mut self) -> Task<Message> {
+        project_io::save_new_project_version(self)
     }
 
     fn open_project_command(&mut self) -> Task<Message> {

@@ -925,3 +925,9 @@ Nightly + Cranelift 定向回归 `close_project_matches_native_menu_and_preserve
 REAPER Main Action 40022 的原厂名称为 `File: Save project as...`，默认 Ctrl+Alt+S。AAADAW 将 File 菜单标签的省略号和组合键补齐；快捷键使用现有 SaveProjectAs/原生文件选择器路径。实窗 File 菜单截图显示保存、关闭和退出命令及各自快捷键，SHA-256 见 [Save project as fixture](../verification/reaper-parity/fixtures/menu-save-project-as-aaadaw.tsv)。
 
 Nightly + Cranelift 定向回归 `save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker` 1/1 passed，验证 Ctrl+Alt+S 解码为 SaveProjectAs、打开保存选择器状态并关闭菜单。Xvfb 中未捕获到可见的原生文件选择器窗口，故只验证菜单截图和应用内路由，不宣称选择器视觉一致。File 菜单及键盘焦点仍有其它未实现命令，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
+
+### 2026-10-14 File 菜单 Save new version of project
+
+REAPER Main action 41895 在 File 菜单显示 `Save new version of project` / Ctrl+Alt+Shift+S，Action List 原名为 `File: Save new version of project (automatically increment project name)`。Linux REAPER 7.82 / Default 7 原厂探针确认，连续两次执行会从 `save-version-probe.rpp` 生成 `_001`、`_002` 并把活动工程切到新路径。AAADAW 为已有工程实现同样的递增命名，跳过已占用版本路径，复用原子保存、媒体复制和会话锁；成功保存才切换活动路径。未命名工程进入保存选择器。
+
+原厂与 AAADAW File 菜单实窗截图及哈希、探针输入/输出、环境和验收边界见 [Save new version fixture](../verification/reaper-parity/fixtures/menu-save-new-version-aaadaw.tsv)。四项回归覆盖 Action List 分类/名称和快捷键、菜单显示、派发、编号冲突与来源工程保留。最终源码上的 Nightly + Cranelift 定向 nextest 4/4、AAADAW app 目标全量 559/559 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查也通过。`SHELL-MENU-KEYBOARD-001` 仍为 `in_progress`：File 的其余命令、完整 Action List 窗口几何、所有工程命名边界及整体菜单/界面一致性未完成。

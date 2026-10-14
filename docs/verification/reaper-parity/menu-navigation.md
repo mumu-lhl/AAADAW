@@ -16,6 +16,10 @@ REAPER 原厂 File 末项为 `Quit`，Action List 名称 `File: Quit REAPER`，�
 
 `save_project_as_matches_native_ctrl_alt_s_and_opens_the_save_picker` 验证原厂 Ctrl+Alt+S 解析为 SaveProjectAs，并在应用更新后进入既有保存选择器状态、关闭主菜单；本轮 AAADAW 全量 nightly+Cranelift 测试 555/555 通过。
 
+REAPER Main action 41895 在 File 菜单显示 `Save new version of project`、快捷键 Ctrl+Alt+Shift+S；Action List 名称是 `File: Save new version of project (automatically increment project name)`。Linux REAPER 7.82 / Default 7 探针从 `save-version-probe.rpp` 连续执行两次，当前工程路径依次变为 `_001`、`_002` 版本。AAADAW 现注册相同菜单名、Action List 名称和默认快捷键；保存已有工程时从 `_001` 开始递增，跳过已有版本文件，沿用现有原子保存和媒体复制流程，成功后切换活动路径；未命名工程转入保存选择器。原厂探针、两张菜单图、截图哈希和回归范围见 [Save new version fixture](fixtures/menu-save-new-version-aaadaw.tsv)。
+
+四项回归覆盖菜单/Action List/快捷键映射、命令派发、版本号补零与冲突跳过，以及保留原文件并保存当前项目状态。实窗截图验证 File 菜单短标签、快捷键和单行呈现；原厂同尺寸 File 菜单截图显示该标签和快捷键。完整 File 菜单仍有大量命令缺失；版本号边界、其它工程格式、Action List 完整窗口视觉和整体菜单对齐仍未完成，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
+
 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 覆盖 File 菜单标签/快捷键、Action List 名称、修改后取消，以及 Don't Save 后关闭工程并清空当前轨道、路径和修订号。`successful_save_before_close_project_clears_the_open_project` 覆盖 Save 成功后继续关闭。实窗 Ctrl+F4 确认对未保存工程弹出保护框，步骤和哈希见上方 fixture。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。
