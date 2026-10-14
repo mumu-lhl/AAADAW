@@ -12,5 +12,7 @@ screenshot_sha256	bc10e4f08dc3f21bfc5b9d3ec6233c3eb7180c5c5ff62c783438dcb516f5da
 smoke_script_run	bash scripts/reaper_parity/run-aaadaw-desktop-smoke.sh target/debug/aaadaw target/aaadaw-smoke-script-test.png
 smoke_script_display	Xvfb :90; fresh isolated XDG profile; WGPU_BACKEND=gl
 smoke_script_screenshot	aaadaw-desktop-runtime-startup.png; 1280x800; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
-latest_binary_smoke	2026-10-14; Xvfb :90; Build ID 969fe3e9997570899c03c004f8c2941506c012e4; binary SHA-256 7410ee3a4d34bfc579f09f941df3aafef4b168ff68032c2b613de53e715809fe; 1280x800 main window visible
-latest_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; identical pixels to recorded startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+eof_binary_smoke	2026-10-14; Xvfb :90; Build ID 969fe3e9997570899c03c004f8c2941506c012e4; binary SHA-256 7410ee3a4d34bfc579f09f941df3aafef4b168ff68032c2b613de53e715809fe; 1280x800 main window visible
+eof_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; identical pixels to recorded startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+latest_binary_smoke	2026-10-14; Xvfb :90; Build ID e1ab6146acaad9e9ea2d808e1f3261199529c792; binary SHA-256 0cdb64ab78668b631e6cec8b5b6a97db3f69387de364ee496fcf2a65fcfaa105; 1280x800 main window visible
+latest_binary_smoke_screenshot	aaadaw-desktop-runtime-signed-offset.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b

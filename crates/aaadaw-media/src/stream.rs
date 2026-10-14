@@ -457,7 +457,7 @@ where
 fn spawn_stream(
     input: DecoderInput,
     output_sample_rate: u32,
-    source_offset_samples: u64,
+    source_offset_samples: i64,
     output_length_samples: Option<u64>,
     output_samples_to_skip: u64,
     position: AudioStreamPosition,
@@ -505,7 +505,7 @@ fn spawn_stream(
 fn spawn_stereo_stream(
     input: DecoderInput,
     output_sample_rate: u32,
-    source_offset_samples: u64,
+    source_offset_samples: i64,
     output_length_samples: Option<u64>,
     output_samples_to_skip: u64,
     position: AudioStreamPosition,
@@ -770,7 +770,7 @@ impl WorkerDecoder {
 
 struct WorkerConfig {
     output_sample_rate: u32,
-    source_offset_remaining: u64,
+    source_offset_remaining: i64,
     output_samples_remaining: Option<u64>,
     output_samples_to_skip: u64,
     quality: ResamplingQuality,
@@ -878,15 +878,30 @@ fn run_worker<P: FeedProducer>(
 ) -> Result<(), MediaError> {
     let WorkerConfig {
         output_sample_rate,
-        mut source_offset_remaining,
+        source_offset_remaining,
         mut output_samples_remaining,
         mut output_samples_to_skip,
         quality,
         source_loop_section,
     } = config;
+    let (negative_source_offset_frames, mut source_offset_remaining) =
+        if source_offset_remaining < 0 {
+            (source_offset_remaining.unsigned_abs(), 0)
+        } else {
+            (
+                0,
+                u64::try_from(source_offset_remaining)
+                    .expect("nonnegative signed source offset fits u64"),
+            )
+        };
     let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining, looping) =
         match source_loop_section {
             Some(section) => {
+                if negative_source_offset_frames > 0 {
+                    let error = MediaError::InvalidAudioLoopSection;
+                    let _ = startup.send(Err(worker_startup_error(&error)));
+                    return Err(error);
+                }
                 let remaining = if let Some(length) = section.length_frames {
                     let Some(section_end) = section.start_frame.checked_add(length) else {
                         let error = MediaError::InvalidAudioLoopSection;
@@ -948,6 +963,25 @@ fn run_worker<P: FeedProducer>(
         },
         None => None,
     };
+    let mut leading_silence_samples = 0_u64;
+    if negative_source_offset_frames > 0 {
+        let Some(source_sample_rate) = initial_sample_rate else {
+            let error = MediaError::InvalidDecodedAudioSpec;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        let Some(leading_silence_total) = scale_frames_rounded(
+            negative_source_offset_frames,
+            source_sample_rate,
+            output_sample_rate,
+        ) else {
+            let error = MediaError::AudioTooLong;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        leading_silence_samples = leading_silence_total.saturating_sub(output_samples_to_skip);
+        output_samples_to_skip = output_samples_to_skip.saturating_sub(leading_silence_total);
+    }
     if looping
         && let (Some(source_rate), Some(loop_frames), Some(initial_frames)) = (
             initial_sample_rate,
@@ -968,6 +1002,17 @@ fn run_worker<P: FeedProducer>(
         }
     }
     let _ = startup.send(Ok(()));
+    push_silence_frames(
+        &mut producer,
+        leading_silence_samples,
+        &mut output_samples_remaining,
+        &cancelled,
+        &position,
+        &mut output_timeline_sample,
+    );
+    if output_samples_remaining == Some(0) {
+        return Ok(());
+    }
     let mut decoded_frames = Vec::new();
     let mut source_channels = None;
     let mut loop_buffer = looping
@@ -1178,13 +1223,41 @@ fn push_remaining_item_silence<P: FeedProducer>(
     position: &AudioStreamPosition,
     timeline_sample: &mut u64,
 ) {
+    let Some(remaining_frames) = *remaining else {
+        return;
+    };
+    push_silence_frames(
+        producer,
+        remaining_frames,
+        remaining,
+        cancelled,
+        position,
+        timeline_sample,
+    );
+}
+
+fn push_silence_frames<P: FeedProducer>(
+    producer: &mut P,
+    requested_frames: u64,
+    remaining: &mut Option<u64>,
+    cancelled: &AtomicBool,
+    position: &AudioStreamPosition,
+    timeline_sample: &mut u64,
+) {
     const SILENCE_CHUNK_FRAMES: usize = 1_024;
     let silence = [P::Frame::zero(); SILENCE_CHUNK_FRAMES];
-    while let Some(remaining_frames) = remaining.as_mut().filter(|frames| **frames > 0) {
+    let mut frames_left = if let Some(remaining_frames) = remaining {
+        let frames = requested_frames.min(*remaining_frames);
+        *remaining_frames -= frames;
+        frames
+    } else {
+        requested_frames
+    };
+    while frames_left > 0 {
         if cancelled.load(Ordering::Acquire) {
             return;
         }
-        let frame_count = usize::try_from((*remaining_frames).min(SILENCE_CHUNK_FRAMES as u64))
+        let frame_count = usize::try_from(frames_left.min(SILENCE_CHUNK_FRAMES as u64))
             .expect("silence chunk length fits usize");
         push_with_backpressure(
             producer,
@@ -1193,7 +1266,7 @@ fn push_remaining_item_silence<P: FeedProducer>(
             position,
             timeline_sample,
         );
-        *remaining_frames -= frame_count as u64;
+        frames_left -= frame_count as u64;
     }
 }
 

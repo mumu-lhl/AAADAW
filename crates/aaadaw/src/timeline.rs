@@ -393,7 +393,7 @@ struct TimelineItem {
     midi_notes: Vec<MidiNotePreview>,
     start_sample: u64,
     length_samples: u64,
-    source_offset_samples: u64,
+    source_offset_samples: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -590,11 +590,19 @@ impl TimelineCache {
             }
             let source_length =
                 (u128::from(item.length_samples) * source_rate).div_ceil(project_rate);
-            let Some(item_source_end) =
-                u64::try_from(u128::from(item.source_offset_samples) + source_length).ok()
-            else {
+            let Ok(source_length) = i128::try_from(source_length) else {
                 continue;
             };
+            let item_source_start = i128::from(item.source_offset_samples);
+            let Some(item_source_end) = item_source_start.checked_add(source_length) else {
+                continue;
+            };
+            let source_limit = i128::from(waveform.frame_count());
+            let source_min = item_source_start.max(0).min(source_limit);
+            let source_max = item_source_end.max(0).min(source_limit);
+            if source_min >= source_max {
+                continue;
+            }
             let visible_start_tick = item.start_tick.max(origin_tick);
             let visible_end_tick = item.end_tick.min(visible_end_tick);
             let Ok(visible_start_sample) = project.sample_at_tick(visible_start_tick) else {
@@ -613,22 +621,30 @@ impl TimelineCache {
             if visible_start_sample >= visible_end_sample {
                 continue;
             }
-            let source_start = u64::try_from(
-                u128::from(item.source_offset_samples)
-                    + (u128::from(visible_start_sample - item.start_sample) * source_rate)
-                        / project_rate,
-            )
-            .unwrap_or(item_source_end)
-            .min(item_source_end)
-            .min(waveform.frame_count());
-            let source_end = u64::try_from(
-                u128::from(item.source_offset_samples)
-                    + (u128::from(visible_end_sample - item.start_sample) * source_rate)
-                        .div_ceil(project_rate),
-            )
-            .unwrap_or(item_source_end)
-            .min(item_source_end)
-            .min(waveform.frame_count());
+            let Ok(visible_source_start_delta) = i128::try_from(
+                (u128::from(visible_start_sample - item.start_sample) * source_rate) / project_rate,
+            ) else {
+                continue;
+            };
+            let Ok(visible_source_end_delta) = i128::try_from(
+                (u128::from(visible_end_sample - item.start_sample) * source_rate)
+                    .div_ceil(project_rate),
+            ) else {
+                continue;
+            };
+            let Some(visible_source_start) =
+                item_source_start.checked_add(visible_source_start_delta)
+            else {
+                continue;
+            };
+            let Some(visible_source_end) = item_source_start.checked_add(visible_source_end_delta)
+            else {
+                continue;
+            };
+            let source_start = u64::try_from(visible_source_start.clamp(source_min, source_max))
+                .unwrap_or(waveform.frame_count());
+            let source_end = u64::try_from(visible_source_end.clamp(source_min, source_max))
+                .unwrap_or(waveform.frame_count());
             if source_start >= source_end {
                 continue;
             }
@@ -647,12 +663,23 @@ impl TimelineCache {
                 if overlap_start >= overlap_end {
                     return;
                 }
-                let start_delta = (u128::from(overlap_start - item.source_offset_samples)
-                    * project_rate)
-                    / source_rate;
-                let end_delta = (u128::from(overlap_end - item.source_offset_samples)
-                    * project_rate)
-                    .div_ceil(source_rate);
+                let Some(start_source_delta) =
+                    i128::from(overlap_start).checked_sub(item_source_start)
+                else {
+                    return;
+                };
+                let Some(end_source_delta) = i128::from(overlap_end).checked_sub(item_source_start)
+                else {
+                    return;
+                };
+                let Ok(start_source_delta) = u128::try_from(start_source_delta) else {
+                    return;
+                };
+                let Ok(end_source_delta) = u128::try_from(end_source_delta) else {
+                    return;
+                };
+                let start_delta = (start_source_delta * project_rate) / source_rate;
+                let end_delta = (end_source_delta * project_rate).div_ceil(source_rate);
                 let Some(start_sample) =
                     u64::try_from(u128::from(item.start_sample) + start_delta).ok()
                 else {
@@ -707,8 +734,8 @@ impl TimelineCache {
                 let peak_end = peak_start
                     .saturating_add(frames_per_peak)
                     .min(waveform.frame_count());
-                let overlap_start = peak_start.max(source_start).max(item.source_offset_samples);
-                let overlap_end = peak_end.min(source_end).min(item_source_end);
+                let overlap_start = peak_start.max(source_start);
+                let overlap_end = peak_end.min(source_end);
                 if overlap_start >= overlap_end {
                     continue;
                 }
@@ -744,7 +771,9 @@ impl TimelineCache {
                         // Peak summaries cannot be clipped to individual samples. Omit a
                         // partial base bin at a trim edge rather than leaking audio from
                         // outside the clip into its waveform.
-                        if base_start < item.source_offset_samples || base_end > item_source_end {
+                        if i128::from(base_start) < item_source_start
+                            || i128::from(base_end) > item_source_end
+                        {
                             continue;
                         }
                         let clipped_start = base_start.max(overlap_start);
@@ -769,7 +798,8 @@ impl TimelineCache {
                         );
                     }
                 } else if frames_per_peak == u64::from(waveform.frames_per_peak())
-                    && (peak_start < item.source_offset_samples || peak_end > item_source_end)
+                    && (i128::from(peak_start) < item_source_start
+                        || i128::from(peak_end) > item_source_end)
                 {
                     // A base-level summary still contains samples outside an unaligned trim.
                     continue;
@@ -8308,6 +8338,52 @@ mod tests {
             overview.last().unwrap().end_tick,
             project.tick_at_sample(3_048).unwrap()
         );
+    }
+
+    #[test]
+    fn waveform_geometry_places_source_after_negative_offset_preroll() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Pre-roll waveform".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -1_024,
+                length_samples: 2_048,
+            })
+            .unwrap();
+        assert!(!project.audio_items()[0].is_loop_source());
+        let samples = [vec![8_192; 1_024], vec![16_384; 1_024]].concat();
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://preroll-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let geometry = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 200.0);
+        assert_eq!(geometry.len(), 4);
+        assert!(
+            geometry
+                .iter()
+                .all(|bin| (bin.min - 0.25).abs() < 1.0e-6 && (bin.max - 0.25).abs() < 1.0e-6)
+        );
+        assert_eq!(
+            geometry[0].start_tick,
+            project.tick_at_sample(1_024).unwrap()
+        );
+        assert_eq!(geometry[3].end_tick, project.tick_at_sample(2_048).unwrap());
     }
 
     #[test]

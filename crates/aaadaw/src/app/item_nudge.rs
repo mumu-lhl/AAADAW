@@ -592,12 +592,10 @@ impl App {
                             return;
                         };
                         let Some(source_offset_samples) =
-                            shifted_sample(item.source_offset_samples(), source_delta)
+                            shifted_source_offset(item.source_offset_samples(), source_delta)
                         else {
-                            self.item_nudge_dialog.error = Some(
-                                "Left trim would move before the start of the audio source"
-                                    .to_owned(),
-                            );
+                            self.item_nudge_dialog.error =
+                                Some("Left trim is outside the supported source range".to_owned());
                             return;
                         };
                         (start_sample, source_offset_samples, length_samples)
@@ -851,17 +849,22 @@ impl App {
                         Some("Selected audio item has an invalid loop source section".to_owned());
                     return;
                 };
+                let Some(current_offset) = u64::try_from(item.source_offset_samples()).ok() else {
+                    self.item_nudge_dialog.error =
+                        Some("Selected audio item has an invalid loop source section".to_owned());
+                    return;
+                };
                 if section_length == 0
                     || section_end > frame_count
-                    || item.source_offset_samples() < section_start
-                    || item.source_offset_samples() >= section_end
+                    || current_offset < section_start
+                    || current_offset >= section_end
                 {
                     self.item_nudge_dialog.error =
                         Some("Selected audio item has an invalid loop source section".to_owned());
                     return;
                 }
                 let Some(offset) = wrapped_source_sample(
-                    item.source_offset_samples(),
+                    current_offset,
                     section_start,
                     section_length,
                     source_delta,
@@ -870,12 +873,18 @@ impl App {
                         Some("Contents nudge is outside the supported source range".to_owned());
                     return;
                 };
+                let Ok(offset) = i64::try_from(offset) else {
+                    self.item_nudge_dialog.error =
+                        Some("Contents nudge is outside the supported source range".to_owned());
+                    return;
+                };
                 offset
             } else {
-                let Some(offset) = shifted_sample(item.source_offset_samples(), source_delta)
+                let Some(offset) =
+                    shifted_source_offset(item.source_offset_samples(), source_delta)
                 else {
                     self.item_nudge_dialog.error = Some(
-                        "Contents nudge would move before the start of the audio source".to_owned(),
+                        "Contents nudge is outside the supported signed source range".to_owned(),
                     );
                     return;
                 };
@@ -1128,6 +1137,11 @@ fn wrapped_source_sample(current: u64, start: u64, length: u64, delta: i128) -> 
 fn shifted_sample(sample: u64, delta: i128) -> Option<u64> {
     let shifted = i128::from(sample).checked_add(delta)?;
     u64::try_from(shifted).ok()
+}
+
+fn shifted_source_offset(sample: i64, delta: i128) -> Option<i64> {
+    let shifted = i128::from(sample).checked_add(delta)?;
+    i64::try_from(shifted).ok()
 }
 
 fn shifted_unsigned(value: u64, delta: i128) -> Option<u64> {

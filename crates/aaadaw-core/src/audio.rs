@@ -3,7 +3,8 @@ use crate::{ItemId, TrackId};
 /// A timeline placement of an audio source on a track.
 ///
 /// `start_sample` and `length_samples` use the project's sample clock;
-/// `source_offset_samples` is relative to the referenced media source. The
+/// `source_offset_samples` is relative to the referenced media source and may
+/// be negative when a non-looping item's contents begin before the source. The
 /// media reference is opaque to the core and resolved by the media layer.
 pub const MAX_AUDIO_ITEM_VOLUME: f32 = 16.0;
 /// Maximum linear volume for an audio item's active take.
@@ -15,7 +16,7 @@ pub struct AudioItem {
     pub(crate) track_id: TrackId,
     pub(crate) media_ref: String,
     pub(crate) start_sample: u64,
-    pub(crate) source_offset_samples: u64,
+    pub(crate) source_offset_samples: i64,
     pub(crate) length_samples: u64,
     pub(crate) muted: bool,
     pub(crate) phase_inverted: bool,
@@ -49,8 +50,8 @@ impl AudioItem {
         self.start_sample
     }
 
-    /// Returns the source offset in media sample frames.
-    pub fn source_offset_samples(&self) -> u64 {
+    /// Returns the signed source offset in media sample frames.
+    pub fn source_offset_samples(&self) -> i64 {
         self.source_offset_samples
     }
 

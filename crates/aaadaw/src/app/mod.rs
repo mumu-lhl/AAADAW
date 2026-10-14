@@ -8444,7 +8444,7 @@ impl App {
         &self,
         item: &aaadaw_core::AudioItem,
         preview: timeline::ItemTrimPreview,
-    ) -> Result<Option<(u64, u64, u64)>, String> {
+    ) -> Result<Option<(u64, i64, u64)>, String> {
         let old_start = item.start_sample();
         let old_end = old_start
             .checked_add(item.length_samples())
@@ -8476,20 +8476,8 @@ impl App {
         )?;
         let source_offset_samples = i128::from(item.source_offset_samples())
             .checked_add(source_start_delta)
-            .and_then(|offset| u64::try_from(offset).ok())
-            .ok_or_else(|| "Audio trim exceeds the start of the source".to_owned())?;
-        let source_length = scale_project_samples_to_source_frames_ceil(
-            i128::from(end_sample - start_sample),
-            source_rate,
-            project_rate,
-        )?;
-        let source_end = i128::from(source_offset_samples)
-            .checked_add(source_length)
-            .and_then(|end| u64::try_from(end).ok())
-            .ok_or_else(|| "Audio trim exceeds the end of the source".to_owned())?;
-        if source_offset_samples >= source_end || source_end > waveform.frame_count() {
-            return Err("Audio trim must stay within the source media".to_owned());
-        }
+            .and_then(|offset| i64::try_from(offset).ok())
+            .ok_or_else(|| "Audio trim exceeds the supported signed source range".to_owned())?;
         let length_samples = end_sample - start_sample;
         Ok(Some((start_sample, source_offset_samples, length_samples)))
     }
@@ -10499,7 +10487,7 @@ impl App {
                         * u128::from(source_rate)
                         + u128::from(project_sample_rate) / 2)
                         / u128::from(project_sample_rate);
-                    let source_delta = u64::try_from(source_delta)
+                    let source_delta = i64::try_from(source_delta)
                         .map_err(|_| "audio source offset exceeds the supported range")?;
                     if current.source_offset_samples().checked_add(source_delta)
                         != Some(next.source_offset_samples())
@@ -11068,9 +11056,13 @@ impl App {
                 if new_start == item_start && new_end == item_end {
                     continue;
                 }
-                let Some(source_offset_samples) = item
-                    .source_offset_samples()
-                    .checked_add(new_start - item_start)
+                let Some(source_delta) = i64::try_from(new_start - item_start).ok() else {
+                    self.status =
+                        "Could not trim an audio item past its source position".to_owned();
+                    return;
+                };
+                let Some(source_offset_samples) =
+                    item.source_offset_samples().checked_add(source_delta)
                 else {
                     self.status =
                         "Could not trim an audio item past its source position".to_owned();
@@ -11246,14 +11238,18 @@ impl App {
                             .to_owned();
                     return;
                 };
-                if item.source_offset_samples() < section_start
-                    || item.source_offset_samples() >= section_end
-                {
+                let Some(current_source_offset) = u64::try_from(item.source_offset_samples()).ok()
+                else {
+                    self.status = "Could not copy loop of selected area: source section is invalid"
+                        .to_owned();
+                    return;
+                };
+                if current_source_offset < section_start || current_source_offset >= section_end {
                     self.status = "Could not copy loop of selected area: source section is invalid"
                         .to_owned();
                     return;
                 }
-                let source_phase = item.source_offset_samples() - section_start;
+                let source_phase = current_source_offset - section_start;
                 let source_phase_delta = source_delta % section_length;
                 let wrapped_phase = (u128::from(source_phase) + u128::from(source_phase_delta))
                     % u128::from(section_length);
@@ -11266,14 +11262,26 @@ impl App {
                             .to_owned();
                     return;
                 };
+                let Ok(source_offset_samples) = i64::try_from(source_offset_samples) else {
+                    self.status =
+                        "Could not copy loop of selected area: source offset is too large"
+                            .to_owned();
+                    return;
+                };
                 source_offset_samples
-            } else if let Some(source_offset_samples) =
-                item.source_offset_samples().checked_add(source_delta)
+            } else if let Some(source_offset_samples) = i64::try_from(source_delta)
+                .ok()
+                .and_then(|delta| item.source_offset_samples().checked_add(delta))
             {
                 source_offset_samples
             } else {
                 self.status =
                     "Could not copy loop of selected area: source offset is too large".to_owned();
+                return;
+            };
+            let Ok(source_offset_samples) = u64::try_from(source_offset_samples) else {
+                self.status =
+                    "Could not copy loop of selected area: source section is invalid".to_owned();
                 return;
             };
             let Some(source_section_length_samples) =
@@ -11746,7 +11754,7 @@ fn split_audio_item_actions_at_samples(
         let start_sample = segment[0];
         let length_samples = segment[1] - segment[0];
         let project_sample_rate = project.settings().sample_rate();
-        let source_delta = u64::try_from(
+        let source_delta = i64::try_from(
             (u128::from(start_sample - item.start_sample()) * u128::from(source_sample_rate)
                 + u128::from(project_sample_rate) / 2)
                 / u128::from(project_sample_rate),
@@ -11910,6 +11918,7 @@ fn scale_project_samples_to_source_frames_toward_zero(
     Ok(numerator / i128::from(project_rate))
 }
 
+#[cfg(test)]
 fn scale_project_samples_to_source_frames_ceil(
     project_samples: i128,
     source_rate: u64,

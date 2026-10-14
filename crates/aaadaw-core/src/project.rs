@@ -15,6 +15,29 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+fn valid_audio_source_offset(
+    source_offset_samples: i64,
+    loop_source: bool,
+    section_start_samples: Option<u64>,
+    section_length_samples: Option<u64>,
+) -> bool {
+    if loop_source && source_offset_samples < 0 {
+        return false;
+    }
+    match (section_start_samples, section_length_samples) {
+        (None, None) => true,
+        (Some(start), Some(length)) => {
+            let Some(end) = start.checked_add(length) else {
+                return false;
+            };
+            length > 0
+                && u64::try_from(source_offset_samples)
+                    .is_ok_and(|offset| start <= offset && offset < end)
+        }
+        _ => false,
+    }
+}
+
 const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
 const MAX_RAZOR_EDIT_AREAS_PER_TRACK: usize = 65_536;
 pub const MAX_FX_PARAMETER_AUTOMATION_POINTS: usize = 65_536;
@@ -2028,23 +2051,12 @@ impl Project {
                 || !(-1.0..=1.0).contains(&item.take_pan)
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
-                || match (
+                || !valid_audio_source_offset(
+                    item.source_offset_samples,
                     item.loop_source,
                     item.source_section_start_samples,
                     item.source_section_length_samples,
-                ) {
-                    (false, None, None) | (true, None, None) => false,
-                    (_, Some(section_start), Some(section_length)) => {
-                        section_length == 0
-                            || section_start
-                                .checked_add(section_length)
-                                .is_none_or(|section_end| {
-                                    item.source_offset_samples < section_start
-                                        || item.source_offset_samples >= section_end
-                                })
-                    }
-                    _ => true,
-                }
+                )
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -3180,7 +3192,7 @@ impl Project {
                     length_samples,
                     muted: false,
                     phase_inverted: false,
-                    loop_source: true,
+                    loop_source: source_offset_samples >= 0,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
                 };
@@ -3230,6 +3242,9 @@ impl Project {
                 {
                     return Err(ActionError::InvalidAudioItemPosition);
                 }
+                let Ok(source_offset_samples_signed) = i64::try_from(source_offset_samples) else {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                };
                 let next_id = ids
                     .next_item_id
                     .checked_add(1)
@@ -3243,7 +3258,7 @@ impl Project {
                     track_id,
                     media_ref,
                     start_sample,
-                    source_offset_samples,
+                    source_offset_samples: source_offset_samples_signed,
                     length_samples,
                     muted,
                     phase_inverted,
@@ -3267,6 +3282,16 @@ impl Project {
                     return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
                 }
                 let before = item.clone();
+                if enabled
+                    && !valid_audio_source_offset(
+                        item.source_offset_samples,
+                        true,
+                        item.source_section_start_samples,
+                        item.source_section_length_samples,
+                    )
+                {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
                 let after = AudioItem {
                     loop_source: enabled,
                     ..before.clone()
@@ -3428,6 +3453,14 @@ impl Project {
                     .ok_or(ActionError::AudioItemNotFound { item_id })?;
                 if is_frozen_render(state, item_id) {
                     return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                if !valid_audio_source_offset(
+                    source_offset_samples,
+                    item.loop_source,
+                    item.source_section_start_samples,
+                    item.source_section_length_samples,
+                ) {
+                    return Err(ActionError::InvalidAudioItemPosition);
                 }
                 let before = item.clone();
                 let after = AudioItem {
@@ -4996,19 +5029,12 @@ fn valid_audio_item(item: &AudioItem) -> bool {
         && (-1.0..=1.0).contains(&item.take_pan)
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
-        && match (
+        && valid_audio_source_offset(
+            item.source_offset_samples,
+            item.loop_source,
             item.source_section_start_samples,
             item.source_section_length_samples,
-        ) {
-            (None, None) => true,
-            (Some(start), Some(length)) => {
-                length > 0
-                    && start.checked_add(length).is_some_and(|end| {
-                        item.source_offset_samples >= start && item.source_offset_samples < end
-                    })
-            }
-            _ => false,
-        }
+        )
 }
 
 fn is_frozen_render(state: &ProjectState, item_id: ItemId) -> bool {

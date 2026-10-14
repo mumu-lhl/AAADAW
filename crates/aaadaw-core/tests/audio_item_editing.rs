@@ -97,6 +97,55 @@ fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
 }
 
 #[test]
+fn non_looping_audio_items_support_signed_source_offsets() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://preroll".to_owned(),
+            start_sample: 24,
+            source_offset_samples: -12,
+            length_samples: 48,
+        })
+        .expect("negative source offsets are valid for one-pass playback");
+    let item = project.audio_items()[0].clone();
+    assert_eq!(item.start_sample(), 24);
+    assert_eq!(item.length_samples(), 48);
+    assert_eq!(item.source_offset_samples(), -12);
+    assert!(!item.is_loop_source());
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .expect("signed item snapshot should restore")
+            .audio_items()[0]
+            .source_offset_samples(),
+        -12
+    );
+
+    let rejected = project.apply(DawAction::SetAudioItemLoopSource {
+        item_id: item.id(),
+        enabled: true,
+    });
+    assert!(matches!(
+        rejected,
+        Err(aaadaw_core::ActionError::InvalidAudioItemPosition)
+    ));
+    assert_eq!(project.audio_items()[0], item);
+
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id: item.id(),
+            media_ref: item.media_ref().to_owned(),
+            start_sample: item.start_sample(),
+            source_offset_samples: -24,
+            length_samples: item.length_samples(),
+        })
+        .expect("non-looping items should allow further signed nudges");
+    assert_eq!(project.audio_items()[0].source_offset_samples(), -24);
+    assert!(project.undo().expect("signed offset edit should undo"));
+    assert_eq!(project.audio_items()[0].source_offset_samples(), -12);
+}
+
+#[test]
 fn audio_item_mute_is_undoable_and_keeps_item_gain_unchanged() {
     let (mut project, track_id) = project_with_track();
     project

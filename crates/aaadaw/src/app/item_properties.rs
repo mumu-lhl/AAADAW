@@ -987,16 +987,13 @@ impl ItemProperties {
             sample_rate,
         );
         draft.unit = unit;
-        for (index, samples) in [
-            item.start_sample(),
-            item.length_samples(),
-            item.source_offset_samples(),
-        ]
-        .into_iter()
-        .enumerate()
+        for (index, samples) in [item.start_sample(), item.length_samples()]
+            .into_iter()
+            .enumerate()
         {
             draft.fields[index + 6] = format_samples(samples, sample_rate, unit);
         }
+        draft.fields[8] = format_signed_samples(item.source_offset_samples(), sample_rate, unit);
         draft.loop_source = item.is_loop_source();
         draft.muted = item.is_muted();
         draft.phase_inverted = item.is_phase_inverted();
@@ -1020,40 +1017,50 @@ impl ItemProperties {
     }
 
     fn placement(&self, item: &AudioItem, sample_rate: u32) -> Result<ItemPlacement, String> {
-        let values = [
-            item.start_sample(),
-            item.length_samples(),
-            item.source_offset_samples(),
-        ];
-        let mut samples = values;
-        for (index, value) in samples.iter_mut().enumerate() {
-            if self.changed[index + 6] {
-                let parsed = match self.unit {
-                    TimeUnit::Time | TimeUnit::Beats | TimeUnit::Hmsf => {
-                        parse_time(&self.fields[index + 6])? * f64::from(sample_rate)
-                    }
-                    TimeUnit::Samples => self.fields[index + 6]
-                        .trim()
-                        .parse::<f64>()
-                        .map_err(|_| "Invalid samples".to_owned())?,
-                };
-                // Keep conversions exact; do not saturate overflow to u64::MAX.
-                if !parsed.is_finite() || parsed < 0.0 || parsed > ((1_u64 << 53) - 1) as f64 {
-                    return Err("Time exceeds the supported sample range".to_owned());
+        let mut start = item.start_sample();
+        let mut length = item.length_samples();
+        let mut source_offset = item.source_offset_samples();
+        for (index, field) in self.fields[6..9].iter().enumerate() {
+            if !self.changed[index + 6] {
+                continue;
+            }
+            let parsed = match self.unit {
+                TimeUnit::Time | TimeUnit::Beats | TimeUnit::Hmsf if index == 2 => {
+                    parse_signed_time(field)? * f64::from(sample_rate)
                 }
-                *value = parsed.round() as u64;
+                TimeUnit::Time | TimeUnit::Beats | TimeUnit::Hmsf => {
+                    parse_time(field)? * f64::from(sample_rate)
+                }
+                TimeUnit::Samples => field
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Invalid samples".to_owned())?,
+            };
+            let max_exact_sample = ((1_u64 << 53) - 1) as f64;
+            if !parsed.is_finite()
+                || parsed > max_exact_sample
+                || (index != 2 && parsed < 0.0)
+                || (index == 2 && parsed < -max_exact_sample)
+            {
+                return Err("Time exceeds the supported sample range".to_owned());
+            }
+            match index {
+                0 => start = parsed.round() as u64,
+                1 => length = parsed.round() as u64,
+                2 => source_offset = parsed.round() as i64,
+                _ => unreachable!("placement only contains start, length, and source offset"),
             }
         }
-        if samples[1] == 0 {
+        if length == 0 {
             return Err("Item length must be at least one sample".to_owned());
         }
-        if samples[0].checked_add(samples[1]).is_none() {
+        if start.checked_add(length).is_none() {
             return Err("Invalid item position".to_owned());
         }
         Ok(ItemPlacement {
-            start: samples[0],
-            length: samples[1],
-            source_offset: samples[2],
+            start,
+            length,
+            source_offset,
         })
     }
 
@@ -1229,6 +1236,20 @@ fn format_samples(samples: u64, sample_rate: u32, unit: TimeUnit) -> String {
     }
 }
 
+fn format_signed_samples(samples: i64, sample_rate: u32, unit: TimeUnit) -> String {
+    if samples >= 0 {
+        return format_samples(samples as u64, sample_rate, unit);
+    }
+    let magnitude = samples.unsigned_abs();
+    match unit {
+        TimeUnit::Time | TimeUnit::Beats | TimeUnit::Hmsf => format!(
+            "-{}",
+            format_time(magnitude as f64 / f64::from(sample_rate))
+        ),
+        TimeUnit::Samples => samples.to_string(),
+    }
+}
+
 fn format_take_volume_db(volume: f32) -> String {
     if volume == 0.0 {
         "-inf dB".to_owned()
@@ -1326,6 +1347,15 @@ fn parse_time(text: &str) -> Result<f64, String> {
         Ok(seconds)
     } else {
         Err("Invalid time".to_owned())
+    }
+}
+
+fn parse_signed_time(text: &str) -> Result<f64, String> {
+    let text = text.trim();
+    if let Some(magnitude) = text.strip_prefix('-') {
+        Ok(-parse_time(magnitude)?)
+    } else {
+        parse_time(text)
     }
 }
 
@@ -1616,7 +1646,7 @@ fn sample_to_tick(project: &Project, sample: f64) -> Result<u64, String> {
 struct ItemPlacement {
     start: u64,
     length: u64,
-    source_offset: u64,
+    source_offset: i64,
 }
 impl ItemPlacement {
     fn from_item(item: &AudioItem) -> Self {
@@ -1822,6 +1852,40 @@ mod tests {
         assert!(!draft.has_changes());
         draft.edit(ItemPropertyField::Position, "-0.4".into());
         assert!(draft.placement(item, 48000).is_err());
+    }
+
+    #[test]
+    fn audio_source_offset_properties_format_and_edit_negative_samples() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Pre-roll".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://negative-offset".into(),
+                start_sample: 48_000,
+                source_offset_samples: -12_000,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let item = &project.audio_items()[0];
+
+        let mut samples = ItemProperties::from_item(item, 48_000, TimeUnit::Samples);
+        assert_eq!(samples.fields[8], "-12000");
+        samples.edit(ItemPropertyField::SourceOffset, "-24000".into());
+        assert_eq!(
+            samples.placement(item, 48_000).unwrap().source_offset,
+            -24_000
+        );
+
+        let mut time = ItemProperties::from_item(item, 48_000, TimeUnit::Time);
+        assert_eq!(time.fields[8], "-0:00.250");
+        time.edit(ItemPropertyField::SourceOffset, "-0:00.500".into());
+        assert_eq!(time.placement(item, 48_000).unwrap().source_offset, -24_000);
     }
 
     #[test]

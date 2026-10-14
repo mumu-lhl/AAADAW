@@ -272,7 +272,7 @@ pub enum DawAction {
         track_id: TrackId,
         media_ref: String,
         start_sample: u64,
-        source_offset_samples: u64,
+        source_offset_samples: i64,
         length_samples: u64,
     },
     /// Insert an audio item that repeats a bounded source section during playback.
@@ -329,7 +329,7 @@ pub enum DawAction {
         item_id: ItemId,
         media_ref: String,
         start_sample: u64,
-        source_offset_samples: u64,
+        source_offset_samples: i64,
         length_samples: u64,
     },
     /// Move an audio or MIDI item to another track without changing its content or position.

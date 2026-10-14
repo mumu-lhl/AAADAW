@@ -121,3 +121,11 @@ project_master_mix 的 singleton=1 保存 volume_db / pan；迁移插入 unity/c
 `audio_items.source_section_start_samples` 保存 bounded loop source 的绝对媒体帧起点，与 `loop_source` 和 `source_section_length_samples` 一起写入快照事务。Schema 42 中 `loop_source=1` 且已有 bounded length 的项，迁移时将当前 `source_offset_samples` 作为起点；这与当时 Copy/Paste 创建的 section 起点一致。非 loop 项三列保持关闭/空值，旧全源 B_LOOPSRC 仍以起点/长度空值表达。
 
 读取校验起点与长度必须同时为空或同时存在；bounded 段长度必须大于零，起点加长度不得溢出，且当前源偏移必须落在段内。运行时循环读取只在后台 worker 解码线程中重启 seekable source；短 bounded section 的缓存上限为 1 MiB，避免实时音频 callback 执行文件 I/O、解码或动态分配。回滚以原数据库备份恢复，不允许手工回退 `user_version`。Schema 41 的旧音频表与 Schema 42 的循环项分别有迁移回归；写入、重开、循环源快照及读写拒绝均由 storage/core 测试覆盖。
+
+## schema 49 — signed audio source offset
+
+`audio_items.signed_source_offset_samples` 是音频 source offset 的权威字段，使用 SQLite signed INTEGER 保存媒体帧，可表示 REAPER 非循环 item 在源起点之前的 Contents Nudge。旧 `source_offset_samples` 列继续保留为非负兼容镜像：写入时存 `max(0, signed_offset)`，读取只使用 signed 列。Schema 48 及更早的已有偏移复制到新列，默认值为 0；迁移与 `user_version` 更新在同一事务内完成。当前表重建/增量补列路径也会确保该列存在。
+
+SQLite 不给新列加引用 `loop_source` 的 CHECK，因为早期 schema 迁移会先删除再添加该字段；项目恢复/Action 校验负责拒绝带负偏移的循环项及 bounded section。Storage 回归覆盖 v48→49、正偏移保留、负偏移保存/重开，Core 与 Media 覆盖非循环负偏移、seek pre-roll 和循环约束。
+
+这是扩展式迁移，不删旧列。回滚到旧程序应恢复迁移前的完整数据库备份；schema 49 的数据库应由旧程序按未来 schema 拒绝。不得只把 `user_version` 改回 48：负偏移无法由旧非负列表达，强制降级会丢失语义。

@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 48;
+pub const CURRENT_SCHEMA_VERSION: u32 = 49;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -405,6 +405,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     media_ref TEXT NOT NULL CHECK (length(trim(media_ref)) > 0),
     start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
     source_offset_samples INTEGER NOT NULL CHECK (source_offset_samples >= 0),
+    signed_source_offset_samples INTEGER NOT NULL DEFAULT 0,
     length_samples INTEGER NOT NULL CHECK (length_samples > 0),
     volume REAL NOT NULL DEFAULT 1.0 CHECK (volume >= 0.0 AND volume <= 16.0),
     take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
@@ -414,6 +415,11 @@ CREATE TABLE IF NOT EXISTS audio_items (
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
+"#;
+
+const MIGRATION_49: &str = r#"
+ALTER TABLE audio_items ADD COLUMN signed_source_offset_samples INTEGER NOT NULL DEFAULT 0;
+UPDATE audio_items SET signed_source_offset_samples = source_offset_samples;
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -2900,6 +2906,18 @@ fn ensure_audio_item_phase_column(connection: &Connection) -> Result<(), Storage
     Ok(())
 }
 
+fn ensure_audio_item_signed_source_offset_column(
+    connection: &Connection,
+) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "signed_source_offset_samples")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN signed_source_offset_samples INTEGER NOT NULL DEFAULT 0;\
+             UPDATE audio_items SET signed_source_offset_samples = source_offset_samples;",
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_midi_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
     if !table_has_column(connection, "items", "muted")? {
         connection.execute_batch(
@@ -3153,6 +3171,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            49 => {
+                if !table_has_column(&transaction, "audio_items", "signed_source_offset_samples")? {
+                    transaction.execute_batch(MIGRATION_49)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3164,6 +3187,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     ensure_audio_item_loop_section_start_column(connection)?;
     ensure_audio_item_mute_column(connection)?;
     ensure_audio_item_phase_column(connection)?;
+    ensure_audio_item_signed_source_offset_column(connection)?;
     ensure_midi_item_mute_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
@@ -3342,16 +3366,17 @@ fn write_snapshot(
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
-             source_offset_samples, length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
+             source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
              source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
                 item.media_ref,
                 to_sql_integer(item.start_sample)?,
-                to_sql_integer(item.source_offset_samples)?,
+                item.source_offset_samples.max(0),
+                item.source_offset_samples,
                 to_sql_integer(item.length_samples)?,
                 f64::from(item.volume),
                 f64::from(item.take_volume),
@@ -3996,7 +4021,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
     }
     let mut statement = connection.prepare(
-        "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
+        "SELECT id, track_id, position, media_ref, start_sample, signed_source_offset_samples, \
          length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
          source_section_start_samples, source_section_length_samples \
          FROM audio_items ORDER BY position",
@@ -4085,7 +4110,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     track_id: from_sql_u64(track_id)?,
                     media_ref,
                     start_sample: from_sql_u64(start_sample)?,
-                    source_offset_samples: from_sql_u64(source_offset)?,
+                    source_offset_samples: source_offset,
                     length_samples: from_sql_u64(length)?,
                     muted,
                     phase_inverted,
@@ -4490,6 +4515,7 @@ mod saved_snapshot_tests {
 mod loop_source_storage_tests {
     use super::ProjectStore;
     use aaadaw_core::{DawAction, Project};
+    use rusqlite::Connection;
 
     #[test]
     fn loop_source_metadata_round_trips_with_audio_items() {
@@ -4717,6 +4743,91 @@ mod loop_source_storage_tests {
         assert!(item.is_loop_source());
         assert_eq!(item.source_section_start_samples(), Some(240));
         assert_eq!(item.source_section_length_samples(), Some(1_200));
+    }
+
+    #[test]
+    fn schema_49_signed_source_offset_migrates_and_round_trips_negative_offsets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("schema-49-signed-source-offset.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Signed source".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://signed-source".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 120,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN signed_source_offset_samples;
+                 PRAGMA user_version = 48;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 49);
+        let mut migrated = store.load().unwrap();
+        assert_eq!(migrated.audio_items()[0].source_offset_samples(), 120);
+        let migrated_columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated_columns, (120, 120));
+
+        let item = migrated.audio_items()[0].clone();
+        migrated
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id: item.id(),
+                enabled: false,
+            })
+            .unwrap();
+        migrated
+            .apply(DawAction::EditAudioItem {
+                item_id: item.id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample: item.start_sample(),
+                source_offset_samples: -7,
+                length_samples: item.length_samples(),
+            })
+            .unwrap();
+        store.save(&migrated).unwrap();
+        drop(store);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].source_offset_samples(),
+            -7
+        );
+        let negative_columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(negative_columns, (0, -7));
     }
 }
 

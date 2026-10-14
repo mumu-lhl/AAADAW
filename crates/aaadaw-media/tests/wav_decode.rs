@@ -385,6 +385,100 @@ fn non_looping_item_offset_past_source_eof_renders_silence_without_underrun() {
 }
 
 #[test]
+fn negative_non_looping_item_offset_renders_leading_silence_then_source_audio() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000))
+        .expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Pre-roll source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://preroll-source".to_owned(),
+            start_sample: 0,
+            source_offset_samples: -2,
+            length_samples: 6,
+        })
+        .expect("negative source offset should be valid for a non-looping item");
+    let item = project.audio_items()[0].clone();
+    assert!(!item.is_loop_source());
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("negative-offset item should start a worker");
+    worker
+        .join()
+        .expect("worker should provide its leading silence");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        6,
+    )
+    .expect("negative-offset stream should match project item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("negative-offset item should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[..2], [[0.0; 2]; 2]);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[2..].iter().zip([0.25_f32, 0.5, 0.75, -0.25]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
+    }
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn seeking_into_negative_offset_preroll_skips_only_elapsed_silence() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Seek pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: -2,
+            length_samples: 6,
+        })
+        .expect("negative-offset item should insert");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        11,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("seek inside leading silence should start a worker");
+    worker.join().expect("seeked source should finish");
+    let mut output = [f32::NAN; 5];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert_eq!(output[0], 0.0);
+    for (sample, expected) in output[1..].iter().zip([0.25_f32, 0.5, 0.75, -0.25]) {
+        assert!((sample - expected).abs() < 1.0e-5, "output: {output:?}");
+    }
+}
+
+#[test]
 fn non_looping_item_pads_short_source_with_silence_to_item_end() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[16_384; 4], 48_000)).expect("test WAV should be written");
@@ -1002,7 +1096,8 @@ fn delayed_stereo_reader_skips_pcm_that_falls_behind_the_playhead() {
     let blocked_at = gate
         .blocked_position()
         .expect("blocked reader should report its source position");
-    let target_source_byte = 44 + (item.source_offset_samples() + target_offset + 2) * 4;
+    let target_source_byte =
+        44 + (u64::try_from(item.source_offset_samples()).unwrap() + target_offset + 2) * 4;
     assert!(
         blocked_at < target_source_byte,
         "reader should block before target samples are read; blocked at {blocked_at}, target starts at {target_source_byte}"

@@ -19,10 +19,10 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
 - Audio / Left Trim、Left Edge、End Position、Right Trim：按原厂 250 ms 探针调整对应边界；Left Trim 按素材源采样率换算并移动源偏移。若选择中包含 MIDI、时间越界或素材源采样率不可用，则整批拒绝。
 - Duplicate：按 Nudge 量复制所选 Audio 和 MIDI 项；副本成为唯一选择，并通过一个工程事务支持 Undo。
-- Contents / Nudge：在源采样率与帧数可查时反向移动源偏移，保持 item 的时间线位置和长度。原厂 REAPER 7.82 探针确认整份 10 秒 loop source 在两个边界绕回；非循环源允许正偏移超过 EOF，也允许偏移落到源起点之前。AAADAW 现在允许正向越过 EOF，并由媒体工作线程为 item 剩余时长送入静音，因此正常 EOF 不会被计作实时流 underrun；负源偏移仍因 Core 暴露 `u64` 且 SQLite schema 对该列设有非负 CHECK 而安全拒绝，形成明确的原厂行为差异。显式 bounded source section 的原厂边界行为仍未验证。
+- Contents / Nudge：在源采样率可查时反向移动源偏移，保持 item 的时间线位置和长度。原厂 REAPER 7.82 探针确认整份 10 秒 loop source 在两个边界绕回；非循环源允许正偏移超过 EOF，也允许偏移落到源起点之前。AAADAW 现以有符号源帧保存非循环偏移：负偏移由媒体 feeder 先输出对应静音，再从媒体帧 0 解码；越过 EOF 时 feeder 将 item 尾部补静音。Seek 会跳过已过去的 pre-roll，数据库往返保留符号，loop source 与 bounded section 拒绝负偏移。有限队列回压仍在 feeder 线程执行，实时 callback 未改动。显式 bounded source section 的原厂边界行为仍未验证。
 - 这些目标的 Set/Snap 组合和其它未验证边界继续明确报告未实现，不修改工程。
 
-单元回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算、非循环负偏移安全拒绝、正偏移越过 EOF、短源 item 尾部静音且不报 underrun、有界循环段绕回、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂 Contents Nudge 探针的 state-change 计数增量为 0，Undo 历史仍需专项比较。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)和[Contents 边界记录](fixtures/item-nudge-contents-native.tsv)。REAPER 实窗边界截图见[非循环正偏移越过 EOF](fixtures/item-nudge-native-contents-nonloop-past-eof.png)和[非循环负偏移](fixtures/item-nudge-native-contents-negative-offset.png)；整份 loop source 的两侧绕回数值见 TSV。
+定向回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算、负偏移的 feeder 静音与 seek、SQLite 迁移/重开、item 属性编辑与 waveform 起点、正偏移越过 EOF、短源 item 尾部静音且不报 underrun、有界循环段绕回、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂 Contents Nudge 探针的 state-change 计数增量为 0，Undo 历史仍需专项比较。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)和[Contents 边界记录](fixtures/item-nudge-contents-native.tsv)。REAPER 实窗边界截图见[非循环正偏移越过 EOF](fixtures/item-nudge-native-contents-nonloop-past-eof.png)和[非循环负偏移](fixtures/item-nudge-native-contents-negative-offset.png)；整份 loop source 的两侧绕回数值见 TSV。
 
 ## 实窗对照
 
@@ -34,4 +34,4 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 ## 后续验收
 
-下一步为 signed source offset 补齐 Core、SQLite 持久化和媒体流读取，使 AAADAW 能表达并播放原厂允许的负偏移；随后验证显式 bounded section 的原厂 loop 行为。继续探测多种 MIDI target、Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点行为，多选锚点、跨轨顺序、播放/录制状态和 Undo 语义，并在同尺寸实窗比较各模式。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
+下一步探测显式 bounded section 的原厂 loop 行为，再推进多种 MIDI target、Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点行为，多选锚点、跨轨顺序、播放/录制状态和 Undo 语义，并对有符号 offset 属性窗做同尺寸实窗截图对照。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。

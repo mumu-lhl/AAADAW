@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；最新 P4 提交 65eb38c 增补 Contents Nudge 边界与 EOF 静音；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；P4 已提交 Contents Nudge 的原厂边界与 EOF 静音证据，并已接入 schema 49 有符号 source offset、负偏移 pre-roll/seek、持久化、属性编辑与波形显示；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents，signed source offset、MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents；schema 49 signed source offset 已跨 Core/Storage/Media/UI 接入，MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1024,4 +1024,16 @@ AAADAW Contents Nudge 现在允许正向越过源 EOF。媒体 feeder 在源数�
 
 `cargo xtest` 全工作区在临时 Xvfb :97 与 nightly Cranelift 下 1108/1108 通过；定向 media EOF 测试 2/2、App Nudge/Undo 测试 1/1、media/App Clippy `-D warnings`、fmt 和 `git diff --check` 通过。更新后的 `target/debug/aaadaw` Build ID `969fe3e9997570899c03c004f8c2941506c012e4`、SHA-256 `7410ee3a4d34bfc579f09f941df3aafef4b168ff68032c2b613de53e715809fe` 经桌面烟测显示为 1280×800 窗口，截图 hash 与已存启动图相同；完整记录见 [桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。
 
-下一步先为 signed source offset 设计并实现 Core、SQLite schema 和媒体读取的完整传播，再用原厂负偏移用例验证读回、保存、重开和播放；随后继续 bounded-section 探针、MIDI target 与 Set/Snap 行为。`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 保持进行中。
+本轮已完成下方记录的 signed source offset Core/SQLite/Media 实现及负偏移回归。之后继续探测 bounded-section、MIDI target 与 Set/Snap 行为；`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 保持进行中。
+
+### 2026-10-14 Signed source offset 全链路与新桌面二进制
+
+将非循环 Audio Item 的源偏移扩为 signed `i64`，覆盖 Core action/snapshot、导入替换、Nudge、Trim/Split、属性编辑及 waveform peak 映射。负偏移令新插入项默认关闭 loop source；试图打开循环或设置无效 bounded section 会被 Core 拒绝。Media feeder 在线程内用固定 1024 帧静音块补足源起点前的 pre-roll，并将 seek 位置正确拆分为未播放静音和源帧跳过；EOF 后仍补静音至 item 长度。音频实时 callback 没有改动。
+
+SQLite schema 升至 49，新增权威 `signed_source_offset_samples`，旧非负列保留作兼容镜像；v48 偏移原样复制，读写重开保留负值。新增字段没有跨版本 loop 引用 CHECK，以兼容旧 schema 的 loop 列删除/添加迁移顺序，负循环偏移由 Core 项目恢复和 action 校验拒绝。迁移回滚规则为恢复旧数据库备份，不手工降 `user_version`。详细结构与回滚方式见[存储变更记录](domain-and-storage-changes.md#schema-49--signed-audio-source-offset)。
+
+Linux REAPER 7.82 已有探针记录非循环源负偏移值 −0.15 秒；本轮 AAADAW 回归验证了负偏移模型/snapshot、feed 静音、pre-roll 中间 seek、SQLite v48→49 与保存重开、Item Properties 负值编辑和 waveform 在 pre-roll 后显示。Core/Media/Storage 测试 245 项、App 测试 89 项、AAADAW 桌面单测 574 项、Engine 测试（Xvfb :97、单线程）185 项全部通过。全目标 Clippy `-D warnings`、fmt 与 diff 检查通过。
+
+最新桌面构建 Build ID `e1ab6146acaad9e9ea2d808e1f3261199529c792`、SHA-256 `0cdb64ab78668b631e6cec8b5b6a97db3f69387de364ee496fcf2a65fcfaa105` 已成功在 Xvfb :90 启动并绘制 1280×800 主窗口；新截图和哈希见[运行清单](../verification/reaper-parity/desktop-runtime.md)。这是运行恢复截图，不是负偏移属性控件的专项实窗截图；该编辑路径目前有单测覆盖，窗口级像素/焦点验收仍待完成。
+
+`ITEM-NUDGE-SET-001`、P4 与 PR #282 继续 `in_progress`。后续探测 bounded source section 在 loop 关闭状态下的原厂偏移边界，再做负偏移属性窗实窗交互/截图，以及 MIDI target、Set/Snap、多选锚点与 Undo 语义；不得把本次运行烟测当作完整 UI 验收。

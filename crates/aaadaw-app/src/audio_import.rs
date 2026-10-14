@@ -125,7 +125,7 @@ enum AudioItemImportTarget {
     Replace {
         item_id: ItemId,
         start_sample: u64,
-        source_offset_samples: u64,
+        source_offset_samples: i64,
         length_samples: u64,
     },
 }

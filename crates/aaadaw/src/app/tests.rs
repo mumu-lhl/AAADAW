@@ -404,14 +404,17 @@ fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
     let revision = app.revision;
     let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
     let _ = app.update(Message::NudgeSelectedItems(1));
-    assert_eq!(app.revision, revision);
-    assert_eq!(app.project.audio_items()[0], before);
-    assert!(
-        app.item_nudge_dialog
-            .error
-            .as_deref()
-            .is_some_and(|error| { error.contains("before the start of the audio source") })
+    let nudged_before_source = &app.project.audio_items()[0];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(nudged_before_source.start_sample(), before.start_sample());
+    assert_eq!(
+        nudged_before_source.length_samples(),
+        before.length_samples()
     );
+    assert_eq!(nudged_before_source.source_offset_samples(), -11_025);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 0);
 
     app.project
         .apply(DawAction::EditAudioItem {
@@ -7269,12 +7272,12 @@ fn razor_area_split_is_track_scoped_consumes_areas_and_undoes_as_one_edit() {
     assert_eq!(audio[1].length_samples(), second_cut - first_cut);
     assert_eq!(
         audio[1].source_offset_samples(),
-        5_000 + (first_cut * 44_100 + 24_000) / 48_000
+        i64::try_from(5_000 + (first_cut * 44_100 + 24_000) / 48_000).unwrap()
     );
     assert_eq!(audio[2].start_sample(), second_cut);
     assert_eq!(
         audio[2].source_offset_samples(),
-        5_000 + (second_cut * 44_100 + 24_000) / 48_000
+        i64::try_from(5_000 + (second_cut * 44_100 + 24_000) / 48_000).unwrap()
     );
     assert_eq!(
         app.project
@@ -8485,12 +8488,18 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted.len(), 2);
     assert_eq!(pasted[0].track_id(), track_ids[0]);
     assert_eq!(pasted[1].track_id(), track_ids[1]);
-    assert_eq!(pasted[0].source_offset_samples(), 128 + source_delta);
+    assert_eq!(
+        pasted[0].source_offset_samples(),
+        i64::try_from(128 + source_delta).unwrap()
+    );
     assert_eq!(
         pasted[0].source_section_start_samples(),
         Some(clipboard.items[0].source_section_start_samples)
     );
-    assert_eq!(pasted[1].source_offset_samples(), 256 + source_delta);
+    assert_eq!(
+        pasted[1].source_offset_samples(),
+        i64::try_from(256 + source_delta).unwrap()
+    );
     assert_eq!(pasted[0].length_samples(), paste_length);
     assert!(pasted[0].is_muted());
     assert!(!pasted[1].is_muted());
@@ -8742,7 +8751,10 @@ fn trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit() {
         audio.length_samples(),
         audio_selection_end - audio_selection_start
     );
-    assert_eq!(audio.source_offset_samples(), 128 + audio_selection_start);
+    assert_eq!(
+        audio.source_offset_samples(),
+        i64::try_from(128 + audio_selection_start).unwrap()
+    );
     let midi = &app.project.midi_items()[0];
     assert_eq!(midi.start_tick(), selection_start_tick);
     assert_eq!(
@@ -9718,7 +9730,7 @@ fn audio_item_edge_trim_preserves_source_content_and_is_one_undoable_edit() {
     assert_eq!(restored_left.source_offset_samples(), 3_012);
     assert_eq!(
         restored_left.source_offset_samples()
-            + u64::try_from(
+            + i64::try_from(
                 super::scale_project_samples_to_source_frames_toward_zero(
                     i128::from(trimmed_start - restored_start),
                     44_100,
@@ -9919,7 +9931,7 @@ fn midi_item_start_trim_preserves_content_position_and_can_expand_back() {
 }
 
 #[test]
-fn audio_item_trim_cannot_extend_past_the_source_media() {
+fn audio_item_trim_can_extend_past_source_eof_and_keeps_the_requested_length() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -9947,13 +9959,22 @@ fn audio_item_trim_cannot_extend_past_the_source_media() {
         target_tick: 2_000,
         ignore_snap: true,
     });
-    assert!(!app.timeline.item_trim_preview().unwrap().valid);
+    assert!(app.timeline.item_trim_preview().unwrap().valid);
     let revision = app.revision;
     app.finish_item_trim();
 
-    assert_eq!(app.project.audio_items()[0], original);
-    assert_eq!(app.revision, revision);
-    assert!(app.status.contains("within the source media"));
+    let trimmed = &app.project.audio_items()[0];
+    assert_ne!(trimmed, &original);
+    assert_eq!(trimmed.start_sample(), original.start_sample());
+    assert_eq!(
+        trimmed.source_offset_samples(),
+        original.source_offset_samples()
+    );
+    assert_eq!(
+        trimmed.length_samples(),
+        app.project.sample_at_tick(2_000).unwrap() - start
+    );
+    assert_eq!(app.revision, revision + 1);
 }
 
 #[test]
@@ -12816,12 +12837,12 @@ fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content()
             (0, 5_000, cut_samples[0]),
             (
                 cut_samples[0],
-                5_000 + (cut_samples[0] * 44_100 + 24_000) / 48_000,
+                i64::try_from(5_000 + (cut_samples[0] * 44_100 + 24_000) / 48_000).unwrap(),
                 cut_samples[1] - cut_samples[0]
             ),
             (
                 cut_samples[1],
-                5_000 + (cut_samples[1] * 44_100 + 24_000) / 48_000,
+                i64::try_from(5_000 + (cut_samples[1] * 44_100 + 24_000) / 48_000).unwrap(),
                 audio_end - cut_samples[1]
             ),
         ]
