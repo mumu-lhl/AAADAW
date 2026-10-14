@@ -636,6 +636,8 @@ Linux REAPER 7.82 / Default 7 实窗 Source 菜单确认该模式显示 `1 media
 
 ### 2026-10-14 Action List Filter 焦点
 
+提交：`4fb4a03`。
+
 REAPER 7.82 / Default 7 的隔离 Xvfb 会话实测 Action List Filter：输入 `undo` 后按 `Ctrl+Z`，Filter 和工程保持不变；关闭列表后，同一按键在主窗口撤销临时轨道。Filter 内空格不会启动传输，Escape 关闭列表。原厂状态、探针与截图哈希见 [Action List 焦点记录](../verification/reaper-parity/input-focus.md)及其 fixture。
 
 AAADAW 新增 `action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window`，通过实际 `RuntimeKeyboardEvent` 窗口分发验证 Filter 窗口隔离全局快捷键、主窗口 Ctrl+Z 仍执行 Undo、Escape 关闭 Action List。该回归单独通过 1/1；`aaadaw` 全量 nightly+Cranelift nextest 在 `DISPLAY=:126` 下 1011/1011 通过（两个 CLAP GUI 测试需要可连接的 X11 显示）。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible 警告。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/布局、脚本编辑器和其它 Action Section 的焦点穿透仍待逐项验证。
