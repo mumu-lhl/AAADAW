@@ -854,3 +854,11 @@ Nightly + Cranelift workspace nextest passed 1064/1064 with two X11-dependent CL
 回归对四种单位使用负工程起始时间偏移做格式化/解析往返，拒绝零长度和超过 `f64` 精确整数范围的位置；App 测试验证 Position、Length、Mute 一次 Apply/Undo/Redo，并检查音符保持不变。Nightly + Cranelift workspace nextest 1065/1065 passed，排除两项依赖 X11 的 CLAP floating-editor 测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查和 parity matrix 校验通过。本轮没有 AAADAW 截图或 REAPER 新探针。
 
 MIDI Item Properties 仍缺 Start in source、Item timebase、take name/playback rate/pitch/mix、source controls、fades 和完整 526×693 原厂窗口几何；`ITEM-PROPERTIES-001` 与 `ITEM-MUTE-001` 继续 `in_progress`。
+
+### 2026-10-14 MIDI Item Properties Start in source
+
+Start in source 现在在 MIDI 属性窗口可编辑：Time/Beats/H:M:S:F 使用 Time 输入，Samples 使用样本输入。新增 `EditMidiItemPlacement` 核心动作，将 start tick、length ticks 和 source offset ticks 一次校验并写入单一 MIDI item 变更事件，避免组合 Apply 中间态溢出；事件保留音符、CC 和 pitch bend 数据。MIDI placement 改动也会使播放计划失效，在下一次播放前重建。
+
+Nightly + Cranelift workspace nextest 1066/1066 passed，排除两项需 X11 的 CLAP 浮动编辑器测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。专项 Core Undo/Redo、SQLite 往返与 MIDI 属性 UI 测试 3/3 passed；四种单位及负工程起点、非法数值测试通过。本轮无 AAADAW 截图及 REAPER 新探针。
+
+完整 MIDI 属性仍待 Item timebase、take/source controls、fade、批量/混合值以及原厂尺寸和控件布局；`ITEM-PROPERTIES-001` 与 `ITEM-MUTE-001` 保持 `in_progress`。

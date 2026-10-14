@@ -144,6 +144,16 @@ fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
         ]
         .spacing(6),
         row![
+            text("Start in source:").width(120),
+            field(ItemPropertyField::SourceOffset, 120),
+            text(if draft.unit == TimeUnit::Samples {
+                "Samples"
+            } else {
+                "Time"
+            })
+        ]
+        .spacing(6),
+        row![
             text("").width(120),
             checkbox(draft.muted)
                 .label("Mute")

@@ -135,6 +135,99 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
 }
 
 #[test]
+fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 240,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![aaadaw_core::MidiControllerData {
+                controller: 1,
+                tick: 360,
+                value: 64,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                tick: 480,
+                value: 10_000,
+            }],
+        })
+        .unwrap();
+    let original = project.midi_items()[0].clone();
+
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 960,
+            source_offset_ticks: 480,
+        })
+        .unwrap();
+    let edited = &project.midi_items()[0];
+    assert_eq!(edited.start_tick(), 1_920);
+    assert_eq!(edited.length_ticks(), 960);
+    assert_eq!(edited.source_offset_ticks(), 480);
+    assert_eq!(edited.notes(), original.notes());
+    assert_eq!(edited.controllers(), original.controllers());
+    assert_eq!(edited.pitch_bends(), original.pitch_bends());
+
+    assert!(project.undo().unwrap());
+    assert_eq!(project.midi_items()[0], original);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.midi_items()[0].start_tick(), 1_920);
+    assert_eq!(project.midi_items()[0].length_ticks(), 960);
+    assert_eq!(project.midi_items()[0].source_offset_ticks(), 480);
+
+    assert_eq!(
+        project.apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 0,
+            source_offset_ticks: 0,
+        }),
+        Err(ActionError::InvalidMidiItemLength)
+    );
+    assert_eq!(
+        project.apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1,
+            source_offset_ticks: u64::MAX,
+        }),
+        Err(ActionError::InvalidMidiItemPosition)
+    );
+}
+
+#[test]
 fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
     let mut project = Project::new();
     project

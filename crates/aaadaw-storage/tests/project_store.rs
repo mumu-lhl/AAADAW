@@ -857,7 +857,7 @@ fn midi_item_source_offset_round_trips_through_storage() {
         .unwrap();
     let item_id = project.midi_items()[0].id();
     project
-        .apply(DawAction::TrimMidiItemStart {
+        .apply(DawAction::EditMidiItemPlacement {
             item_id,
             start_tick: 1_440,
             length_ticks: 1_440,

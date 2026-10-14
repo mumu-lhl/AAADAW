@@ -176,4 +176,14 @@ The MIDI Item Properties window now edits Position and Length in the same Time, 
 
 Focused regressions round-trip all four display units, including a negative project start-time offset for Time and H:M:S:F; reject zero length and a sample position outside exact `f64` integer range; and apply position, length, and mute together while preserving MIDI notes across Undo/Redo. Nightly + Cranelift workspace nextest passed 1065/1065 with two X11-dependent tests excluded. Stable strict Clippy, fmt, and diff checks passed. No AAADAW screenshot or new native probe was captured.
 
-The MIDI window still lacks Start in source, item timebase, take name/playback rate/pitch/mix, source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
+The MIDI window still lacks item timebase, take name/playback rate/pitch/mix, other source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
+
+### MIDI Item Start in source (2026-10-14)
+
+MIDI Item Properties now edits Start in source as a time value, or samples when the shared display mode is Samples. A new `EditMidiItemPlacement` action changes source offset with timeline position and length in one validated Core event; the property window submits all changed placement fields together, optionally batched with Mute. This avoids intermediate source/length combinations that could overflow and guarantees Undo/Redo restores the complete placement atomically. Notes, controllers, pitch bends, and their source ticks remain intact.
+
+Regression coverage verifies source offset and timing in one Core Undo/Redo, rejects an overflowing source end, checks SQLite persistence, and applies position/length/source offset/mute in one app history step while preserving a note. MIDI property display-unit tests cover Start in source across Time, Beats, H:M:S:F, and Samples; in Beats/H:M:S:F its source value remains time-based, matching the existing Audio property behavior.
+
+Nightly + Cranelift workspace nextest passed 1066/1066 with two X11-dependent CLAP floating-editor tests excluded; Stable workspace all-target Clippy `-D warnings`, fmt, and diff checks passed. No new AAADAW screenshot or native probe was made.
+
+The feature still needs native behavior probing and an AAADAW window screenshot. Item timebase, take/source controls, fades, complete window geometry, and batch/mixed-value editing remain open.

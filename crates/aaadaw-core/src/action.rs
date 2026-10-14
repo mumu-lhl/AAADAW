@@ -334,6 +334,13 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Edit a MIDI item's timeline and source offsets together without changing its events.
+    EditMidiItemPlacement {
+        item_id: ItemId,
+        start_tick: u64,
+        length_ticks: u64,
+        source_offset_ticks: u64,
+    },
     /// Mute or unmute a MIDI item without changing its notes or timing.
     SetMidiItemMute {
         item_id: ItemId,

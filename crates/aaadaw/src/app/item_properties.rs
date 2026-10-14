@@ -394,22 +394,27 @@ impl App {
         let current_muted = item.is_muted();
         let current_start = item.start_tick();
         let current_length = item.length_ticks();
-        let (start_tick, length_ticks) = match draft.placement_in_project(item, &self.project) {
-            Ok(placement) => placement,
-            Err(error) => {
-                self.midi_item_properties
-                    .as_mut()
-                    .expect("open MIDI item draft")
-                    .error = Some(error);
-                return Task::none();
-            }
-        };
-        let changes_timing = (draft.changed[ItemPropertyField::Position.index()]
-            || draft.changed[ItemPropertyField::Length.index()])
-            && (start_tick != current_start || length_ticks != current_length);
+        let current_source_offset = item.source_offset_ticks();
+        let (start_tick, length_ticks, source_offset_ticks) =
+            match draft.placement_in_project(item, &self.project) {
+                Ok(placement) => placement,
+                Err(error) => {
+                    self.midi_item_properties
+                        .as_mut()
+                        .expect("open MIDI item draft")
+                        .error = Some(error);
+                    return Task::none();
+                }
+            };
+        let changes_placement = (draft.changed[ItemPropertyField::Position.index()]
+            || draft.changed[ItemPropertyField::Length.index()]
+            || draft.changed[ItemPropertyField::SourceOffset.index()])
+            && (start_tick != current_start
+                || length_ticks != current_length
+                || source_offset_ticks != current_source_offset);
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
-        if (changes_timing || changes_mute) && self.playback_active() {
+        if (changes_placement || changes_mute) && self.playback_active() {
             let error = "Stop playback before changing MIDI item properties".to_owned();
             self.status = error.clone();
             self.midi_item_properties
@@ -419,11 +424,12 @@ impl App {
             return Task::none();
         }
         let mut actions = Vec::with_capacity(2);
-        if changes_timing {
-            actions.push(aaadaw_core::DawAction::EditMidiItem {
+        if changes_placement {
+            actions.push(aaadaw_core::DawAction::EditMidiItemPlacement {
                 item_id,
                 start_tick,
                 length_ticks,
+                source_offset_ticks,
             });
         }
         if changes_mute {
@@ -446,6 +452,7 @@ impl App {
                 item.id() == item_id
                     && item.start_tick() == start_tick
                     && item.length_ticks() == length_ticks
+                    && item.source_offset_ticks() == source_offset_ticks
                     && item.is_muted() == target_muted
             }) {
                 self.midi_item_properties
@@ -1107,23 +1114,34 @@ impl MidiItemProperties {
             })
             .map_err(|error| error.to_string())
             .and_then(|(start_sample, length_samples)| {
+                project
+                    .sample_at_tick_position(item.source_offset_ticks() as f64)
+                    .map(|source_sample| (start_sample, length_samples, source_sample))
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|(start_sample, length_samples, source_sample)| {
                 let sample_rate = f64::from(project.settings().sample_rate());
                 match unit {
                     TimeUnit::Samples => Ok((
                         format!("{:.0}", start_sample),
                         format!("{:.0}", length_samples),
+                        format!("{:.0}", source_sample),
                     )),
                     TimeUnit::Time => {
                         let offset = project.settings().project_start_time_offset_seconds();
                         Ok((
                             format_project_time(offset + start_sample / sample_rate),
                             format_time(length_samples / sample_rate),
+                            format_time(source_sample / sample_rate),
                         ))
                     }
                     TimeUnit::Beats => {
                         beats::format_position(project, start_sample).and_then(|position| {
-                            beats::format_length(project, start_sample, length_samples)
-                                .map(|length| (position, length))
+                            beats::format_length(project, start_sample, length_samples).map(
+                                |length| {
+                                    (position, length, format_time(source_sample / sample_rate))
+                                },
+                            )
                         })
                     }
                     TimeUnit::Hmsf => {
@@ -1137,18 +1155,20 @@ impl MidiItemProperties {
                             .frame_rate
                             .format_timecode(length_samples / sample_rate)
                             .map_err(|error| error.to_string())?;
-                        Ok((position, length))
+                        Ok((position, length, format_time(source_sample / sample_rate)))
                     }
                 }
             });
         match formatted {
-            Ok((position, length)) => {
+            Ok((position, length, source_offset)) => {
                 draft.fields[ItemPropertyField::Position.index()] = position;
                 draft.fields[ItemPropertyField::Length.index()] = length;
+                draft.fields[ItemPropertyField::SourceOffset.index()] = source_offset;
             }
             Err(error) => {
                 draft.fields[ItemPropertyField::Position.index()] = "Unavailable".to_owned();
                 draft.fields[ItemPropertyField::Length.index()] = "Unavailable".to_owned();
+                draft.fields[ItemPropertyField::SourceOffset.index()] = "Unavailable".to_owned();
                 draft.error = Some(error);
             }
         }
@@ -1158,7 +1178,9 @@ impl MidiItemProperties {
     pub(crate) fn edit(&mut self, field: ItemPropertyField, text: String) {
         if matches!(
             field,
-            ItemPropertyField::Position | ItemPropertyField::Length
+            ItemPropertyField::Position
+                | ItemPropertyField::Length
+                | ItemPropertyField::SourceOffset
         ) {
             self.fields[field.index()] = text;
             self.changed[field.index()] = true;
@@ -1180,11 +1202,16 @@ impl MidiItemProperties {
         &self,
         item: &MidiItem,
         project: &Project,
-    ) -> Result<(u64, u64), String> {
+    ) -> Result<(u64, u64, u64), String> {
         let position_changed = self.changed[ItemPropertyField::Position.index()];
         let length_changed = self.changed[ItemPropertyField::Length.index()];
-        if !position_changed && !length_changed {
-            return Ok((item.start_tick(), item.length_ticks()));
+        let source_offset_changed = self.changed[ItemPropertyField::SourceOffset.index()];
+        if !position_changed && !length_changed && !source_offset_changed {
+            return Ok((
+                item.start_tick(),
+                item.length_ticks(),
+                item.source_offset_ticks(),
+            ));
         }
 
         let current_start_sample = project
@@ -1195,6 +1222,7 @@ impl MidiItemProperties {
             .sample_at_tick_position(item.start_tick().saturating_add(item.length_ticks()) as f64)
             .map_err(|error| error.to_string())?
             - current_start_sample;
+        let mut source_offset_ticks = item.source_offset_ticks();
         let frame_rate = project.settings().frame_rate();
 
         if position_changed {
@@ -1251,6 +1279,18 @@ impl MidiItemProperties {
                 )?,
             };
         }
+        if source_offset_changed {
+            let source_sample = if self.unit == TimeUnit::Samples {
+                parse_nonnegative_position(
+                    &self.fields[ItemPropertyField::SourceOffset.index()],
+                    "Invalid samples",
+                )?
+            } else {
+                parse_time(&self.fields[ItemPropertyField::SourceOffset.index()])?
+                    * f64::from(project.settings().sample_rate())
+            };
+            source_offset_ticks = sample_to_tick(project, source_sample)?;
+        }
         if !start_sample.is_finite()
             || start_sample < 0.0
             || !length_samples.is_finite()
@@ -1271,10 +1311,13 @@ impl MidiItemProperties {
         } else {
             item.length_ticks()
         };
-        if length_ticks == 0 || start_tick.checked_add(length_ticks).is_none() {
+        if length_ticks == 0
+            || start_tick.checked_add(length_ticks).is_none()
+            || source_offset_ticks.checked_add(length_ticks).is_none()
+        {
             return Err("Invalid MIDI item position or length".to_owned());
         }
-        Ok((start_tick, length_ticks))
+        Ok((start_tick, length_ticks, source_offset_ticks))
     }
 }
 
@@ -1410,6 +1453,15 @@ mod tests {
                 length_ticks: 1_920,
             })
             .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 3_840,
+                length_ticks: 1_920,
+                source_offset_ticks: 480,
+            })
+            .unwrap();
         project
             .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
             .unwrap();
@@ -1424,11 +1476,17 @@ mod tests {
             let mut draft = MidiItemProperties::from_item(item, &project, unit);
             let position = draft.fields[ItemPropertyField::Position.index()].clone();
             let length = draft.fields[ItemPropertyField::Length.index()].clone();
+            let source_offset = draft.fields[ItemPropertyField::SourceOffset.index()].clone();
             draft.edit(ItemPropertyField::Position, position);
             draft.edit(ItemPropertyField::Length, length);
+            draft.edit(ItemPropertyField::SourceOffset, source_offset);
             assert_eq!(
                 draft.placement_in_project(item, &project).unwrap(),
-                (item.start_tick(), item.length_ticks()),
+                (
+                    item.start_tick(),
+                    item.length_ticks(),
+                    item.source_offset_ticks()
+                ),
                 "round trip failed for {unit}"
             );
         }

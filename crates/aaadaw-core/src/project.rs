@@ -3450,6 +3450,40 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick,
+                length_ticks,
+                source_offset_ticks,
+            } => {
+                if length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(length_ticks).is_none()
+                    || source_offset_ticks.checked_add(length_ticks).is_none()
+                {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if !valid_midi_controllers(&item.controllers) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                if !valid_midi_pitch_bends(&item.pitch_bends) {
+                    return Err(ActionError::InvalidMidiPitchBend);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick,
+                    length_ticks,
+                    source_offset_ticks,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::SetMidiItemMute { item_id, muted } => {
                 let before = state
                     .midi_items
@@ -4863,6 +4897,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetTrackFxParameterAutomation { track_id, .. }
         | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
         DawAction::EditMidiItem { item_id, .. }
+        | DawAction::EditMidiItemPlacement { item_id, .. }
         | DawAction::TrimMidiItemStart { item_id, .. }
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }

@@ -731,6 +731,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
+        | DawAction::EditMidiItemPlacement { .. }
         | DawAction::SetMidiItemMute { .. }
         | DawAction::FreezeTrack { .. }
         | DawAction::UnfreezeTrack { .. } => true,

@@ -13116,6 +13116,11 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         .tick_at_sample_position(app.project.sample_at_project_time(1.75).unwrap() as f64)
         .unwrap()
         .round() as u64;
+    let expected_source_offset = app
+        .project
+        .tick_at_sample_position(app.project.sample_at_project_time(0.25).unwrap() as f64)
+        .unwrap()
+        .round() as u64;
     let revision = app.revision;
     let _ = app.update(Message::ItemPropertyFieldChanged(
         ItemPropertyField::Position,
@@ -13125,6 +13130,10 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         ItemPropertyField::Length,
         "0:00.750".into(),
     ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::SourceOffset,
+        "0:00.250".into(),
+    ));
     let _ = app.update(Message::ItemPropertyMuteChanged(true));
     let _ = app.update(Message::ApplyItemProperties(false));
     assert!(app.project.midi_items()[0].is_muted());
@@ -13133,6 +13142,10 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         app.project.midi_items()[0].length_ticks(),
         expected_end - expected_start
     );
+    assert_eq!(
+        app.project.midi_items()[0].source_offset_ticks(),
+        expected_source_offset
+    );
     assert_eq!(app.project.midi_items()[0].notes().len(), 1);
     assert_eq!(app.revision, revision + 1);
 
@@ -13140,6 +13153,7 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
     assert!(!app.project.midi_items()[0].is_muted());
     assert_eq!(app.project.midi_items()[0].start_tick(), 0);
     assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
     assert_eq!(app.project.midi_items()[0].notes().len(), 1);
     let _ = app.update(Message::Redo);
     assert!(app.project.midi_items()[0].is_muted());
@@ -13147,6 +13161,10 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
     assert_eq!(
         app.project.midi_items()[0].length_ticks(),
         expected_end - expected_start
+    );
+    assert_eq!(
+        app.project.midi_items()[0].source_offset_ticks(),
+        expected_source_offset
     );
 
     let _ = app.update(Message::ItemPropertyMuteChanged(false));
