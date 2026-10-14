@@ -14,12 +14,18 @@ Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse mo
 
 ### Item 菜单的空工程 Select all
 
-Linux REAPER 7.82 / Default 7 原厂窗口在一条空轨、没有媒体项时仍将 Item > Select all 显示为启用；AAADAW 的同状态实窗也显示启用的 `Select all`，现在位于 `Remove items` 与分隔线之后。原厂将它放在多个 AAADAW 尚未实现的命令之后，故菜单顺序仍不一致；原厂菜单中其它依赖媒体项的命令也按其自身状态禁用。原厂与 AAADAW 截图、版本、空工程状态和 SHA-256 见 [Item Select all fixture](fixtures/menu-item-select-all.tsv)。两张图尺寸、菜单顺序和余下内容不同，本次只验收命令名称、空工程可用状态与执行结果。
+Linux REAPER 7.82 / Default 7 原厂窗口在一条空轨、没有媒体项时仍将 Item > Select all 显示为启用；AAADAW 的同状态实窗也显示启用的 `Select all`，位于 `Remove items`、`Trim items to selected area` 和分隔线之后。原厂将它放在多个 AAADAW 尚未实现的命令之后，故菜单顺序仍不一致；原厂菜单中其它依赖媒体项的命令也按其自身状态禁用。原厂与 AAADAW 截图、版本、空工程状态和 SHA-256 见 [Item Select all fixture](fixtures/menu-item-select-all.tsv)。两张图尺寸、菜单顺序和余下内容不同，本次只验收命令名称、空工程可用状态与执行结果。
 
 `item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证 `Select all` 在零媒体项时可用，执行后仍无选择且不修改工程 revision；选择动作本身对空工程是安全 no-op。此切片没有补齐 REAPER Item 菜单的其它命令或子菜单，整项菜单一致性仍为 `in_progress`。
 
 ### Item 菜单的 Remove items
 
-REAPER 7.82 / Default 7 在没有所选媒体项时将 `Remove items` 放在 Item 菜单首项并禁用。AAADAW 现将已有的删除所选项动作放到菜单首项，使用原厂名称，并在空选择时禁用；`Select all` 仍启用且位于分隔线之后。选择 MIDI 项后该动作启用，执行删除作为一次可撤销工程编辑；Action List 的原有 “Delete selected items” 搜索名称保留为别名。原厂截图复用空工程 Item 菜单探针，AAADAW 截图、哈希与回归范围见 [Remove items fixture](fixtures/menu-item-remove.tsv)。截图只对比空选择状态，尺寸及菜单中其余命令仍有差异。
+REAPER 7.82 / Default 7 在没有所选媒体项时将 `Remove items` 放在 Item 菜单首项并禁用。AAADAW 现将已有的删除所选项动作放到菜单首项，使用原厂名称，并在空选择时禁用；`Trim items to selected area` 接在其后，启用；`Select all` 位于后续分隔线之后。选择 MIDI 项后 Remove items 启用，执行删除作为一次可撤销工程编辑；Action List 的原有 “Delete selected items” 搜索名称保留为别名。原厂截图复用空工程 Item 菜单探针，AAADAW 截图、哈希与回归范围见 [Remove items fixture](fixtures/menu-item-remove.tsv)。截图只对比空选择状态，尺寸及菜单中其余命令仍有差异。
 
 `item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证首项名称、顺序、禁用状态及 Select all 的启用状态；`item_menu_remove_items_deletes_selected_media_and_is_undoable` 验证所选 MIDI 项使菜单动作可用、删除和撤销。原厂全选所在位置之前的其它菜单命令仍未实现，整项菜单继续 `in_progress`。
+
+### Item 菜单的 Trim items to selected area
+
+REAPER 原厂 40508 动作将所选素材裁到时间选区与素材的交集；完全落在选区外的素材保留，恰好与选区端点相接的素材删除，没有时间选区时不修改工程。Linux REAPER 7.82 / Default 7 的 ReaScript 探针记录了内部裁切、左右部分交叠、选区外、两端贴边和无选区结果。AAADAW 将命令接到 Item 菜单，空选择时仍启用，与原厂动作可从空工程菜单执行的状态一致；裁切和端点删除在单个可撤销事务中应用，并保留音频/MIDI 源偏移及被裁后仍存活项的选择状态。
+
+原厂操作结果、原厂裁切界面截图、空工程原厂菜单截图、AAADAW Item 菜单实窗图、哈希和回归范围见 [Trim items fixture](fixtures/menu-item-trim.tsv)。截图只验证菜单项可见性与空工程可用状态，窗口尺寸、完整菜单内容及画布几何仍有差异；AAADAW 的音频/MIDI 行为由 `trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit`、`trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules` 与 `trim_items_to_selected_area_without_a_selection_is_a_noop` 验证。原厂在 Trim 与 Select all 之间还有 Copy loop of selected area 和 Enclose media items in razor edit 等命令，完整 Item 菜单仍为 `in_progress`。

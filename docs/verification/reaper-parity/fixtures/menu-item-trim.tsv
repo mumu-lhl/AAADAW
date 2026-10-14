@@ -1,0 +1,24 @@
+version	Linux REAPER 7.82/linux-x86_64; AAADAW 0.1.0
+theme	REAPER Default_7.0.ReaperThemeZip
+audio	Native Dummy Audio; AAADAW build has no audio device
+transport	stopped
+native_probe	scripts/reaper_parity/probe-item-trim.lua; REAPER action 40508
+native_results	menu-item-trim-native.tsv; sha256 f4557f6e3a1abd87ff855849f5228f063de6cd79a4763bb0c811465d482f9fd6
+case	selection_start	selection_end	item_start_before	item_end_before	items_after	item_start_after	item_end_after	selected_after	state_change_delta
+interior	3.000000000	7.000000000	0.000000000	10.000000000	1	3.000000000	7.000000000	1	1
+left_overlap	3.000000000	7.000000000	0.000000000	4.000000000	1	3.000000000	4.000000000	1	1
+right_overlap	3.000000000	7.000000000	6.000000000	10.000000000	1	6.000000000	7.000000000	1	1
+outside_before	3.000000000	7.000000000	0.000000000	2.000000000	1	0.000000000	2.000000000	1	0
+outside_after	3.000000000	7.000000000	8.000000000	10.000000000	1	8.000000000	10.000000000	1	0
+touch_start	3.000000000	7.000000000	0.000000000	3.000000000	0	-1.000000000	-1.000000000	0	1
+touch_end	3.000000000	7.000000000	7.000000000	10.000000000	0	-1.000000000	-1.000000000	0	1
+no_selection	0.000000000	0.000000000	0.000000000	10.000000000	1	0.000000000	10.000000000	1	0
+native_operation_screenshot	menu-item-trim-native.png; 1034x802; sha256 b7757c05ce15edc7f8332cbe787b91e6c078ab85a9603b58c9d3d4002daaf5ae
+native_menu_screenshot	menu-item-select-all-native.png; 1034x802; sha256 252434f823858e608c773bb83b05e9336a1129e46c4897c315b5d7954e805e22
+aaadaw_menu_screenshot	menu-item-trim-aaadaw.png; X11 :126; one empty track; no media items; 1275x800; sha256 8e4f67d395c2e730933479540ca73e4340fc4596a607dcd97c72287d2d72fb0c
+aaadaw_menu_state	Remove items disabled; Trim items to selected area enabled and highlighted; Select all enabled
+aaadaw_menu_order	Remove items, Trim items to selected area, Select all; native Copy loop of selected area and Enclose media items in razor edit commands are still missing before Select all
+comparison_scope	Menu command name, position relative to implemented entries, and empty-project enabled state only; window sizes and the remaining native menu contents differ. Operation geometry is evidenced by the native screenshot and semantic probe; AAADAW operation behavior is verified by unit tests.
+regression	crates/aaadaw/src/app/tests.rs::trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit
+regression	crates/aaadaw/src/app/tests.rs::trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules
+regression	crates/aaadaw/src/app/tests.rs::trim_items_to_selected_area_without_a_selection_is_a_noop

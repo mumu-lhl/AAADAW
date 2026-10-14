@@ -712,3 +712,13 @@ Linux REAPER 7.82 / Default 7 在一条空轨且无媒体项时仍启用 Item > 
 REAPER 7.82 / Default 7 原厂空工程菜单将 `Remove items` 放在首项并在没有选择时禁用；AAADAW 现将已有删除动作按该名称和菜单优先级显示，空选择时禁用，`Select all` 放在其后的分隔线之后。选择 MIDI 项后 `Remove items` 可用，删除是一项可撤销工程编辑；Action List 仍接受 “Delete selected items” 搜索名。原厂空工程截图复用原有 Item 菜单捕获，AAADAW 当前实窗截图及状态/哈希见 [Remove items fixture](../verification/reaper-parity/fixtures/menu-item-remove.tsv)。所附截图只比较无选择状态；选中后可用、删除和撤销由单元回归验证。
 
 `item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证空选择菜单首项和 Select all 状态；`item_menu_remove_items_deletes_selected_media_and_is_undoable` 验证 MIDI 删除/撤销。nightly + Cranelift `aaadaw` 全量 nextest 539/539 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、parity CSV 92 个唯一 ID/15 列和 fixture 哈希/路径检查通过。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：原厂在 Select all 前的 Trim/Copy/Enclose 等命令、其它 Item/Track 命令和子菜单、禁用/勾选态及完整焦点与视觉对照仍待实现和验收。
+
+### 2026-10-14 Item 菜单 Trim items to selected area
+
+实现提交：`0d328ee`。
+
+将 Item > `Trim items to selected area` 注册为菜单与 Action List 命令，放在 `Remove items` 之后、`Select all` 分隔线之前；空工程时启用。选中的音频与 MIDI 项分别按样本/时钟交集裁切，严格落在选区外的项保持不变，恰好贴住选区端点的项删除。左裁会递增音频源样本偏移或 MIDI 内容偏移；多项修改合并成一个可撤销事务，并保持仍存在项的选择状态。无时间选区、零长度选区或无所选项时不修改工程；播放/录制等工程编辑忙碌状态会阻止执行。
+
+Linux REAPER 7.82 / Default 7 的 ReaScript 40508 探针记录内部裁切、左右交叠、严格外侧保留、两端贴边删除及无选区 no-op。原厂裁切画面、原厂空工程菜单、AAADAW 空轨 Item 菜单截图、状态和 SHA-256 见 [Trim fixture](../verification/reaper-parity/fixtures/menu-item-trim.tsv)。实窗截图验证菜单名称、已实现命令顺序和空工程启用状态。原厂操作探针使用 MIDI 项；AAADAW 的音频源偏移与混合媒体事务目前由单元测试验证，尚未用 REAPER 音频源做原生逐项对比，因此不把这部分记录为已完成的原厂验收。
+
+Stable `cargo nextest run -p aaadaw` 542/542 passed；Stable all-target Clippy `-D warnings`、fmt 和 `git diff --check` 通过。本次本地构建关闭调试符号，避免大型测试链接超出工作区资源；这只影响忽略的 `target/` 产物。`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：原厂在 Trim 与 Select all 之间还有 Copy loop of selected area 和 Enclose media items in razor edit 等命令；其它 Item/Track 命令、完整视觉和焦点行为仍待实现与验收。
