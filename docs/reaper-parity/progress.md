@@ -528,6 +528,12 @@ Linux REAPER 7.82 / Default 7 的 Main 动作导出中，40697 `Remove items/tra
 
 本次应用全量 nightly+Cranelift nextest 551/551 通过、0 跳过；Stable all-target strict Clippy、fmt 与 diff 检查通过。提交后又在独立 Xvfb 对照截取两边 701×475 Action List 窗口：[REAPER](../verification/reaper-parity/fixtures/delete-by-focus-action-list-native.png)、[AAADAW](../verification/reaper-parity/fixtures/delete-by-focus-action-list-aaadaw.png)。画面确认两边主动作描述与 Delete 绑定一致，也显示 REAPER 另有尚未收录的 no-prompting 变体；这不是运行时焦点路由或像素验收。`INPUT-BIND-001` 仍 `in_progress`：原厂不同窗口的焦点优先级尚未探测；AAADAW 当前按选择类别路由，还没有把实际键盘焦点窗口纳入动作分派。Main 外 Section、完整动作目录、特殊键/Scope/MIDI/OSC、导入导出和完整 GUI 验收也仍缺。
 
+### 2026-10-14 Main action 40697：no-prompting 变体
+
+隔离 REAPER 7.82 Action List 截图还列出 `Remove items/tracks/envelope points (depending on focus) - no prompting`，虽然当前默认动作 TSV 没有独立 action ID。AAADAW 已将其作为 `edit.delete-focused-no-prompting` 加入 Main Action List，不配置默认键；它与主动作共用同一 DeleteByFocus 编辑事务。最新[REAPER 参照](../verification/reaper-parity/fixtures/delete-by-focus-action-list-native.png)与[AAADAW](../verification/reaper-parity/fixtures/delete-by-focus-no-prompt-aaadaw.png)截图中，两边均列有这两个动作，窗口客户区均为 701×475。AAADAW 删除路径当前不显示确认框，因此两个入口执行结果相同；默认 REAPER 动作是否会因对象类型/偏好弹出确认尚未实测，不能声称 no-prompting 语义已经对齐。
+
+加入该入口后应用全量 nightly+Cranelift nextest 再次为 551/551 通过、0 跳过，Stable all-target strict Clippy、fmt 与 diff 检查通过。Action List 覆盖、原厂确认规则及不同窗口的焦点优先级仍未验收；`INPUT-BIND-001` 保持 `in_progress`。
+
 ### 2026-10-13 Main Action 40182：Select all items
 
 默认动作目录给出 40182 `Item: Select all items`，快捷键导出为空。AAADAW 注册为稳定 action ID `item.select-all`；从 Action List 搜索/执行后按轨道和时间选择全部 Audio 与 MIDI items，并同步活动 item/轨道锚点，清除 automation point 选择。它不发送 Project/DSP 动作，也不改变工程修订或 Undo/Redo；无 items 时禁用。加入相邻 40421 动作后，完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。矩阵新增 `ITEM-SELECT-001` 且保持 `in_progress`：原厂完整运行时边界和实窗焦点验收未做；Main 仅注册这一小部分原厂动作，Item action 覆盖仍远未完成。

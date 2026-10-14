@@ -7549,6 +7549,20 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     );
     assert_eq!(delete_by_focus.default_binding, "Delete");
 
+    let delete_by_focus_no_prompting = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "edit.delete-focused-no-prompting")
+        .expect("REAPER's no-prompting focus-sensitive Delete action should be registered");
+    assert_eq!(
+        delete_by_focus_no_prompting.label,
+        "Remove items/tracks/envelope points (depending on focus) - no prompting"
+    );
+    assert!(delete_by_focus_no_prompting.default_binding.is_empty());
+    assert_eq!(
+        commands::find(&app, "delete by focus without prompting"),
+        Some(CommandId::DeleteByFocusNoPrompting)
+    );
+
     let trim_items = entries
         .get(1)
         .expect("Trim items should follow Remove items");
@@ -8543,7 +8557,7 @@ fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically
     ));
 
     let revision = app.revision;
-    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocusNoPrompting));
 
     assert!(app.project.midi_items().is_empty());
     assert_eq!(app.project.tracks().len(), 2);

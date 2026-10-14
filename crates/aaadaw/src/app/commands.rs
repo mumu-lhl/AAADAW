@@ -74,6 +74,7 @@ pub(crate) enum CommandId {
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
+    DeleteByFocusNoPrompting,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
     EncloseMediaItemsInRazorEdit,
@@ -191,6 +192,7 @@ enum CommandKind {
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
+    DeleteByFocusNoPrompting,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
     EncloseMediaItemsInRazorEdit,
@@ -1130,6 +1132,16 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Remove items/tracks/envelope points (depending on focus)",
         aliases: &["delete by focus", "remove focused objects"],
         shortcuts: DELETE_BY_FOCUS_SHORTCUT,
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DeleteByFocusNoPrompting,
+        menu: None,
+        category: "Edit",
+        label: "Remove items/tracks/envelope points (depending on focus) - no prompting",
+        aliases: &["delete by focus without prompting"],
+        shortcuts: &[],
         destructive: true,
         separator_before: false,
     },
@@ -2154,6 +2166,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
         CommandKind::DeleteByFocus => "edit.delete-focused",
+        CommandKind::DeleteByFocusNoPrompting => "edit.delete-focused-no-prompting",
         CommandKind::TrimItemsToSelectedArea => "item.trim-to-selection",
         CommandKind::CopyLoopOfSelectedArea => "item.copy-loop-selected-area",
         CommandKind::EncloseMediaItemsInRazorEdit => "item.enclose-media-in-razor-edit",
@@ -2344,7 +2357,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateMidiItem(item_id)
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
-        CommandId::DeleteByFocus => Message::DeleteByFocus,
+        CommandId::DeleteByFocus | CommandId::DeleteByFocusNoPrompting => Message::DeleteByFocus,
         CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
         CommandId::CopyLoopOfSelectedArea => Message::CopyLoopOfSelectedArea,
         CommandId::EncloseMediaItemsInRazorEdit => Message::EncloseMediaItemsInRazorEdit,
@@ -2656,7 +2669,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
-        CommandKind::DeleteByFocus => {
+        CommandKind::DeleteByFocus | CommandKind::DeleteByFocusNoPrompting => {
             !project_edit_busy(app)
                 && (!app.timeline.selected_items.is_empty()
                     || !app.selected_track_ids().is_empty()
@@ -2873,6 +2886,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::DeleteByFocus => CommandId::DeleteByFocus,
+        CommandKind::DeleteByFocusNoPrompting => CommandId::DeleteByFocusNoPrompting,
         CommandKind::TrimItemsToSelectedArea => CommandId::TrimItemsToSelectedArea,
         CommandKind::CopyLoopOfSelectedArea => CommandId::CopyLoopOfSelectedArea,
         CommandKind::EncloseMediaItemsInRazorEdit => CommandId::EncloseMediaItemsInRazorEdit,

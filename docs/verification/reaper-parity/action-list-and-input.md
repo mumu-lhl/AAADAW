@@ -118,9 +118,9 @@ AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-neare
 
 ## 2026-10-14 Main action 40697：依焦点移除对象
 
-Linux REAPER 7.82 / Default 7 的默认动作导出 `linux-7.82/actions.tsv` 记录 Main action 40697 `Remove items/tracks/envelope points (depending on focus)` 的默认键为 Delete；相邻的 40006 `Item: Remove items` 没有默认键。隔离 REAPER 与 AAADAW 的 701×475 Action List 窗口截图已并列保存于[参照](fixtures/delete-by-focus-action-list-native.png)和[AAADAW](fixtures/delete-by-focus-action-list-aaadaw.png)，可见 REAPER 另列出无提示变体，而 AAADAW 目前只注册有提示动作。AAADAW 现在分别注册 Action List 动作 `edit.delete-focused` 和 Item 菜单命令 `Remove items`：Delete 只绑定前者，菜单命令不再错误显示 Delete/Backspace。
+Linux REAPER 7.82 / Default 7 的默认动作导出 `linux-7.82/actions.tsv` 记录 Main action 40697 `Remove items/tracks/envelope points (depending on focus)` 的默认键为 Delete；相邻的 40006 `Item: Remove items` 没有默认键。隔离 REAPER 与 AAADAW 的 701×475 Action List 窗口截图保存在[参照](fixtures/delete-by-focus-action-list-native.png)和[当前 AAADAW](fixtures/delete-by-focus-no-prompt-aaadaw.png)。两边均显示主动作与无提示变体；默认动作 TSV 只为主动作给出 40697，因此无提示变体使用 AAADAW 稳定 ID `edit.delete-focused-no-prompting`，不绑定默认键。Item 菜单命令 `Remove items` 也不绑定快捷键，Delete 只绑定 `edit.delete-focused`，不再错误显示 Delete/Backspace。
 
-目前 AAADAW 按时间线选择分派：有选中的 Audio/MIDI items 时删除这些 items；否则删除选中的 FX/音量 automation 点；否则将已选轨道作为一组删除，先删依赖轨道以保留父子文件夹/路由约束，多轨删除只占一个 Undo 步骤。回归 `delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically` 与 `delete_by_focus_removes_selected_volume_automation_point_and_undoes` 覆盖此行为、Action List 默认绑定和 Undo。截图只验证动作目录显示与默认键；原厂目录能确认名称与快捷键，但还没有隔离运行时探针证明各焦点窗口的目标优先级；AAADAW 也尚未将键盘焦点窗口纳入分派，所以不同窗口中多类对象同时选中时的真实优先级仍是差异。Main 以外 Section、无提示变体、其余默认动作和完整 Action List/UI 验收同样未完成，`INPUT-BIND-001` 继续 `in_progress`。
+目前 AAADAW 按时间线选择分派：有选中的 Audio/MIDI items 时删除这些 items；否则删除选中的 FX/音量 automation 点；否则将已选轨道作为一组删除，先删依赖轨道以保留父子文件夹/路由约束，多轨删除只占一个 Undo 步骤。两个 Action List 入口复用这条编辑路径；AAADAW 当前没有删除确认对话框，所以两个入口在 AAADAW 中结果相同，REAPER 默认动作在不同对象和偏好下是否询问确认尚未实测。回归 `delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically` 与 `delete_by_focus_removes_selected_volume_automation_point_and_undoes` 覆盖事务、Action List 默认绑定和 Undo。截图只验证动作目录显示；还没有隔离运行时探针证明各焦点窗口的目标优先级；AAADAW 也尚未将键盘焦点窗口纳入分派，所以不同窗口中多类对象同时选中时的真实优先级仍是差异。Main 以外 Section、其余默认动作和完整 Action List/UI 验收同样未完成，`INPUT-BIND-001` 继续 `in_progress`。
 
 ## 未完成项
 

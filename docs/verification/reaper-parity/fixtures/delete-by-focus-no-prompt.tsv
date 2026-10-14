@@ -1,0 +1,16 @@
+field	value
+reference	Linux REAPER 7.82 / Default 7
+reference_main_action	Main 40697 — Remove items/tracks/envelope points (depending on focus) — Delete
+reference_no_prompt_action	Action List row: Remove items/tracks/envelope points (depending on focus) - no prompting — no default binding; no independent ID in the exported actions.tsv
+secondary_action	Main 40006 — Item: Remove items — no default binding
+display	X11 Xvfb :226, 1280x800x24, no window manager
+action_list_geometry	Both client areas 701x475
+configuration	Separate fresh REAPER profile and AAADAW XDG directories under target/reaper-parity-delete-ui
+reaper_filter	no prompting
+aaadaw_filter	delete by focus
+reaper_screenshot	delete-by-focus-action-list-native.png
+reaper_sha256	8225bc61804dc501ea14a74a308a0d724f81d90029183a305869c5c8c1d86904
+aaadaw_screenshot	delete-by-focus-no-prompt-aaadaw.png
+aaadaw_sha256	f31c3cae544d4964995e16c6cc2a227529f38a822d95b60d5adf3734f3a48d87
+aaadaw_action_id	edit.delete-focused-no-prompting
+observation	Both Action Lists show the main Delete action and its no-prompting variant. AAADAW exposes both under Edit, gives Delete only to the main action, and routes both through its current DeleteByFocus handler. This comparison does not establish native confirmation behavior, runtime focus routing, or pixel parity.
