@@ -670,3 +670,12 @@ nightly+Cranelift `aaadaw` 全量 nextest 1013/1013 passed、0 skipped；Stable 
 REAPER 7.82 / Default 7 原厂会话确认：Filter 输入 `undo` 后 Enter 交给结果列表，Home 选择首项、End 选择末项；按键只改选择，没有运行动作。AAADAW 实窗输入 `item` 后 Enter 再按 End，会选择末项并将列表滚到底部；Home 选择首项并滚回顶部。空工程保持零轨，传输停止。原厂与 AAADAW 截图、步骤及 SHA-256 见 [边界键 fixture](../verification/reaper-parity/fixtures/action-list-boundary-native.tsv) 与 [AAADAW fixture](../verification/reaper-parity/fixtures/action-list-boundary-aaadaw.tsv)。
 
 AAADAW 为结果列表增加稳定滚动 ID；Home/End 选择首/末个可见过滤结果，并将相应边界滚入视口。`action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds` 同时覆盖过滤焦点分流、Home/End、方向移动及方向键首尾钳制。nightly+Cranelift `aaadaw` nextest 537/537 passed、0 skipped；Stable `aaadaw --all-targets` Clippy `-D warnings`、fmt、diff 和截图哈希/fixture/矩阵引用检查通过。Cranelift 构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/键盘布局、脚本编辑器、插件/浮动窗口及其它 Action Section 的穿透例外尚未逐项核验。
+
+
+### 2026-10-14 Action List 长列表方向滚动
+
+提交：`7e0cf27`。
+
+Linux REAPER 7.82 / Default 7 的 `item` 搜索结果在 Enter 后连续 ArrowDown 18 次，选中行进入列表下方视口并触发滚动，传输仍停止且没有运行动作。AAADAW 的相同输入保持选中项可见；再按 ArrowUp 8 次，列表向前滚动到较早结果。原厂和 AAADAW 截图、步骤及哈希见[长列表方向键 fixtures](../verification/reaper-parity/fixtures/action-list-arrow-scroll-native.tsv)与[AAADAW fixtures](../verification/reaper-parity/fixtures/action-list-arrow-scroll-aaadaw.tsv)。
+
+AAADAW 为结果行固定高度，并按当前窗口尺寸跟踪滚动视口；方向键只在目标行将离开可视区域时滚动，过滤条件改变时回到列表顶部。已有导航回归增加首尾偏移钳制、滚到底部和反向滚动检查。nightly+Cranelift `aaadaw` nextest 537/537 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、fixture 哈希和矩阵证据链接检查通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`，其它编辑器、键盘布局、插件/浮动窗口和 Action Section 焦点例外仍未逐项验收。
