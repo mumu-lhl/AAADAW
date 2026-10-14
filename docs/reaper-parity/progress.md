@@ -651,3 +651,13 @@ REAPER 7.82 / Default 7 原厂探针确认 Filter 输入 `undo` 后第一次 Ent
 AAADAW Filter 现在将第一次 Enter 作为结果提交并移开文本焦点；无可见选择时自动选择首个匹配结果。第二次 Enter 才由 Action List 路由执行选中动作。回归 `action_list_filter_enter_focuses_results_before_running_selected_action` 通过，实窗截图显示第一步轨道仍在、第二步轨道已撤销，证据见 [AAADAW Enter fixture](../verification/reaper-parity/fixtures/action-list-enter-aaadaw.tsv)。
 
 nightly+Cranelift 定向回归 1/1；`aaadaw` 全量 nextest 在无窗口管理器的 `DISPLAY=:124` Xvfb 下 1012/1012 通过。首次用带窗口管理器的显示运行全量时，CLAP X11 fixture 没能在根窗口发布标题；同一用例在无窗口管理器的 Xvfb 单独通过，随后全量也通过。Stable all-target Clippy `-D warnings`、fmt、`git diff --check`，以及 parity CSV 92 个唯一 ID/15 列和新增证据路径检查通过。Cranelift 测试构建保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/键盘布局、脚本编辑器、插件/浮动窗口和其它 Action Section 穿透例外仍待逐项探测。
+
+### 2026-10-14 Action List 结果方向键
+
+提交：`5828129`。
+
+REAPER 7.82 / Default 7 实窗观察：Filter 聚焦时 ArrowDown 不移动结果选择；Enter 把焦点交给结果列表后，ArrowDown/ArrowUp 在可见结果中逐行选择；第一行向上、最后一行向下均停留在当前行，不循环。探针传输保持停止，按键只改列表选择，没有运行动作。各状态、截图与 SHA-256 见 [原厂方向键 fixture](../verification/reaper-parity/fixtures/action-list-arrow-native.tsv)。
+
+AAADAW 的 Action List 键盘路由现在对未被输入控件消费、无修饰键的 ↑/↓ 选择相邻可见结果，并在首尾钳制。`action_list_result_arrows_select_visible_actions_and_clamp_at_bounds` 验证 Filter 捕获按键时不改选择、提交后选择首项、上下移动及两端停留。真实界面查询 `item` 后，第一次 Enter 高亮 `Insert: MIDI item`，ArrowDown 高亮第二项 `Item: Item properties...`；两项都未执行。截图与哈希见 [AAADAW 方向键 fixture](../verification/reaper-parity/fixtures/action-list-arrow-aaadaw.tsv)。
+
+nightly+Cranelift `aaadaw` 全量 nextest 1013/1013 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、`git diff --check` 及 parity CSV 92 个唯一 ID/15 列/新增证据路径检查通过。Cranelift 测试构建继续报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`INPUT-FOCUS-001` 继续 `in_progress`：轨道名编辑器与 Action List Filter/结果列表已有首批验证；其它文本字段、AltGr/键盘布局、脚本编辑区、插件/浮动窗口及其它 Action Section 焦点例外未逐项覆盖。
