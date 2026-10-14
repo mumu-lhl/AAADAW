@@ -353,6 +353,7 @@ fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
             source_offset_samples: 2,
             source_section_start_samples: 1,
             length_samples: 10,
+            muted: false,
             source_section_length_samples: 3,
         })
         .expect("looped audio item should be inserted");
@@ -450,6 +451,7 @@ fn disabled_loop_source_plays_a_bounded_section_once_then_stops() {
             source_offset_samples: 2,
             source_section_start_samples: 1,
             length_samples: 10,
+            muted: false,
             source_section_length_samples: 3,
         })
         .expect("bounded source should be inserted");
@@ -576,6 +578,7 @@ fn looped_audio_item_rejects_a_source_section_that_runs_past_eof() {
             source_offset_samples: 3,
             source_section_start_samples: 3,
             length_samples: 8,
+            muted: false,
             source_section_length_samples: 2,
         })
         .expect("looped item metadata should be structurally valid");
@@ -617,6 +620,7 @@ fn looped_stereo_audio_item_repeats_through_the_realtime_stereo_stream() {
             source_offset_samples: 0,
             source_section_start_samples: 0,
             length_samples: 5,
+            muted: false,
             source_section_length_samples: 2,
         })
         .expect("stereo looped item should be inserted");
@@ -690,6 +694,7 @@ fn looped_cached_source_restarts_at_the_bounded_source_section() {
             source_offset_samples: 1,
             source_section_start_samples: 1,
             length_samples: 5,
+            muted: false,
             source_section_length_samples: 2,
         })
         .expect("cached loop item should be inserted");
@@ -752,6 +757,7 @@ fn large_looped_reader_rewinds_the_decoder_for_each_source_cycle() {
             source_offset_samples: 0,
             source_section_start_samples: 0,
             length_samples: loop_frames + 1,
+            muted: false,
             source_section_length_samples: loop_frames,
         })
         .expect("large looped item should be inserted");

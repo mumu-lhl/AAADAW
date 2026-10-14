@@ -212,6 +212,7 @@ struct AudioItemClipboardEntry {
     source_section_start_samples: u64,
     source_section_length_samples: u64,
     length_samples: u64,
+    muted: bool,
     track_offset: usize,
 }
 
@@ -10816,6 +10817,7 @@ impl App {
                 source_section_start_samples: source_offset_samples,
                 source_section_length_samples,
                 length_samples: span_samples,
+                muted: item.is_muted(),
                 track_offset: track_index - first_track_index,
             });
         }
@@ -10996,6 +10998,7 @@ impl App {
                     source_offset_samples: item.source_offset_samples,
                     source_section_start_samples: item.source_section_start_samples,
                     length_samples,
+                    muted: item.muted,
                     source_section_length_samples: item.source_section_length_samples,
                 })
             })

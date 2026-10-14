@@ -4351,6 +4351,7 @@ mod loop_source_storage_tests {
                 source_offset_samples: 120,
                 source_section_start_samples: 100,
                 length_samples: 4_800,
+                muted: false,
                 source_section_length_samples: 2_400,
             })
             .unwrap();
@@ -4529,6 +4530,7 @@ mod loop_source_storage_tests {
                 source_offset_samples: 240,
                 source_section_start_samples: 200,
                 length_samples: 4_800,
+                muted: false,
                 source_section_length_samples: 1_200,
             })
             .unwrap();

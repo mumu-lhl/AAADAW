@@ -3097,6 +3097,7 @@ impl Project {
                 start_sample,
                 source_offset_samples,
                 length_samples,
+                muted,
                 source_section_start_samples,
                 source_section_length_samples,
             } => {
@@ -3144,7 +3145,7 @@ impl Project {
                     start_sample,
                     source_offset_samples,
                     length_samples,
-                    muted: false,
+                    muted,
                     loop_source: true,
                     source_section_start_samples: Some(source_section_start_samples),
                     source_section_length_samples: Some(source_section_length_samples),

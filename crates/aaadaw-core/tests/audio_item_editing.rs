@@ -67,6 +67,7 @@ fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
             start_sample: 0,
             source_offset_samples: 120,
             length_samples: 4_800,
+            muted: false,
             source_section_start_samples: 100,
             source_section_length_samples: 240,
         })

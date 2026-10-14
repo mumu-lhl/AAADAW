@@ -836,3 +836,7 @@ Main action 40175 现在支持 Audio、MIDI 与混合选择的一步 Undo/Redo�
 Nightly + Cranelift workspace nextest 1063/1063 passed，排除了两项依赖 X11 的 CLAP editor 测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查通过。新增 Core Undo/snapshot/duplicate、SQLite 往返/schema44 迁移、实时/离线 MIDI plan 和混选 Action 回归。仍使用既有 REAPER 参考图，本轮没有 AAADAW 截图或原厂新探针。
 
 `ITEM-MUTE-001` 保持 `in_progress`：MIDI Item Properties 窗口尚未实现，含 MIDI 选择在播放中禁用，Audio loop copy/paste 不保留 mute；native 混选及播放语义、菜单/启用状态、完整窗口布局和截图对照待补。
+
+### 2026-10-14 Audio loop Copy/Paste mute state
+
+Audio loop clipboard entries now retain each source item’s mute bit; `InsertLoopedAudioItem` applies that bit when creating the pasted item, within the same undoable transaction. The multi-track copy test checks muted/unmuted entries, pasted state, Undo removal and Redo restoration. Nightly + Cranelift focused copy test passed; the complete workspace suite (1063/1063, with two X11-dependent tests excluded) and Stable strict Clippy had passed before this final assertion-only test extension. Native REAPER copy-mute behavior and AAADAW screenshots remain unverified; `ITEM-AUDIO-COPYLOOP-001` and `ITEM-MUTE-001` stay `in_progress`.

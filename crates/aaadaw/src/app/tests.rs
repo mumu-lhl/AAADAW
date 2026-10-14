@@ -486,6 +486,7 @@ fn item_nudge_contents_wraps_inside_a_bounded_loop_source_section() {
             source_offset_samples: 80_000,
             source_section_start_samples: 80_000,
             length_samples: 24_000,
+            muted: false,
             source_section_length_samples: 20_000,
         })
         .expect("bounded loop source should insert");
@@ -7640,6 +7641,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     let full_second_id = app.project.audio_items()[1].id();
     let partial_id = app.project.audio_items()[2].id();
     let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetAudioItemMute {
+            item_id: full_first_id,
+            muted: true,
+        })
+        .unwrap();
     app.timeline.select_items(vec![
         (full_first_id, track_ids[0]),
         (full_second_id, track_ids[1]),
@@ -7676,6 +7683,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         128 + source_delta
     );
     assert_eq!(clipboard.items[1].source_offset_samples, 256 + source_delta);
+    assert!(clipboard.items[0].muted);
+    assert!(!clipboard.items[1].muted);
     assert_eq!(clipboard.items[0].length_samples, selection_length);
     assert_eq!(
         clipboard.items[0].source_section_length_samples,
@@ -7714,6 +7723,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     );
     assert_eq!(pasted[1].source_offset_samples(), 256 + source_delta);
     assert_eq!(pasted[0].length_samples(), paste_length);
+    assert!(pasted[0].is_muted());
+    assert!(!pasted[1].is_muted());
     assert!(pasted.iter().all(|item| item.is_loop_source()));
     assert_eq!(
         pasted[0].source_section_length_samples(),
@@ -7731,6 +7742,24 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
             .all(|item| item.start_sample() != paste_start)
     );
     assert_eq!(app.audio_item_clipboard.as_ref(), Some(&clipboard));
+
+    let _ = app.update(Message::Redo);
+    let restored_paste = app
+        .project
+        .audio_items()
+        .iter()
+        .filter(|item| item.start_sample() == paste_start)
+        .collect::<Vec<_>>();
+    assert_eq!(restored_paste.len(), 2);
+    assert!(restored_paste[0].is_muted());
+    assert!(!restored_paste[1].is_muted());
+    let _ = app.update(Message::Undo);
+    assert!(
+        app.project
+            .audio_items()
+            .iter()
+            .all(|item| item.start_sample() != paste_start)
+    );
 
     app.timeline.selected_track = Some(track_ids[1]);
     app.timeline.edit_cursor_tick = 76_800;
@@ -12977,6 +13006,7 @@ fn item_properties_toggle_loop_source_preserves_section_and_undoes() {
             start_sample: 0,
             source_offset_samples: 120,
             length_samples: 4_800,
+            muted: false,
             source_section_start_samples: 100,
             source_section_length_samples: 240,
         })

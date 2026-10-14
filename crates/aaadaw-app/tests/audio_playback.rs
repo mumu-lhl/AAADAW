@@ -230,6 +230,7 @@ fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
                 source_offset_samples: 1,
                 source_section_start_samples: 1,
                 length_samples: 5,
+                muted: false,
                 source_section_length_samples: 2,
             })
             .expect("looped item should be inserted");
