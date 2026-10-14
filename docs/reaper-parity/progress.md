@@ -704,3 +704,11 @@ nightly+Cranelift 的两项 focused nextest 2/2 passed、535 skipped，覆盖 Mi
 Linux REAPER 7.82 / Default 7 在一条空轨且无媒体项时仍启用 Item > Select all。AAADAW 已将现有选择动作接入 Item 菜单并使用原厂命令名称；空工程执行保持无选择、无 revision 变化。原厂和 AAADAW 实窗截图、环境、空工程状态及 SHA-256 见 [Item Select all fixture](../verification/reaper-parity/fixtures/menu-item-select-all.tsv)。两图显示菜单条目和启用状态，不构成完整布局对照：AAADAW 当前把它放在首项，REAPER 前面还有尚未实现的命令。
 
 `item_menu_exposes_enabled_select_all_for_an_empty_project` 和原有的音频/MIDI 全选测试通过；更新旧测试对空工程禁用的断言。nightly + Cranelift `aaadaw` 全量 nextest 538/538 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、parity CSV 92 个唯一 ID/15 列及新增截图哈希检查通过。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`：其它 Item/Track 命令与子菜单、完整禁用/勾选状态、命令顺序、视觉及焦点行为仍未完成。
+
+### 2026-10-14 Item 菜单 Remove items
+
+提交：`c031790`。
+
+REAPER 7.82 / Default 7 原厂空工程菜单将 `Remove items` 放在首项并在没有选择时禁用；AAADAW 现将已有删除动作按该名称和菜单优先级显示，空选择时禁用，`Select all` 放在其后的分隔线之后。选择 MIDI 项后 `Remove items` 可用，删除是一项可撤销工程编辑；Action List 仍接受 “Delete selected items” 搜索名。原厂空工程截图复用原有 Item 菜单捕获，AAADAW 当前实窗截图及状态/哈希见 [Remove items fixture](../verification/reaper-parity/fixtures/menu-item-remove.tsv)。所附截图只比较无选择状态；选中后可用、删除和撤销由单元回归验证。
+
+`item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证空选择菜单首项和 Select all 状态；`item_menu_remove_items_deletes_selected_media_and_is_undoable` 验证 MIDI 删除/撤销。nightly + Cranelift `aaadaw` 全量 nextest 539/539 passed、0 skipped；Stable all-target Clippy `-D warnings`、fmt、diff、parity CSV 92 个唯一 ID/15 列和 fixture 哈希/路径检查通过。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：原厂在 Select all 前的 Trim/Copy/Enclose 等命令、其它 Item/Track 命令和子菜单、禁用/勾选态及完整焦点与视觉对照仍待实现和验收。
