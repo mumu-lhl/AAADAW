@@ -3,6 +3,11 @@ use iced::Task;
 use iced::keyboard::{Key, Modifiers, key::Named};
 
 pub(super) const RESULTS_SCROLL_ID: &str = "aaadaw-action-list-results";
+const RESULTS_FIRST_ROW_OFFSET: f32 = 22.0;
+pub(super) const RESULTS_ROW_HEIGHT: f32 = 20.0;
+const RESULTS_ROW_STEP: f32 = 21.0;
+// The filter, shortcut/footer controls, column spacing, and 12px container padding.
+pub(super) const RESULTS_VIEWPORT_CHROME_HEIGHT: f32 = 182.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum CaptureMode {
@@ -20,6 +25,8 @@ pub(super) struct ActionListState {
     pub(super) input_action: Option<String>,
     pub(super) feedback: String,
     pub(super) found_ids: Option<Vec<String>>,
+    pub(super) results_scroll_offset: f32,
+    pub(super) results_viewport_height: f32,
 }
 
 impl ActionListState {
@@ -36,6 +43,18 @@ impl ActionListState {
 }
 
 impl App {
+    pub(super) fn reset_action_list_results_scroll(&mut self) -> Task<Message> {
+        self.action_list.results_scroll_offset = 0.0;
+        use iced::advanced::widget::operation::scrollable::{self, RelativeOffset};
+        iced::advanced::widget::operate(scrollable::snap_to(
+            iced::widget::Id::new(RESULTS_SCROLL_ID),
+            RelativeOffset {
+                x: None,
+                y: Some(0.0),
+            },
+        ))
+    }
+
     pub(super) fn action_list_entries(&self) -> Vec<commands::CommandEntry> {
         let words = self.action_list.query.to_lowercase();
         let words = words.split_whitespace().collect::<Vec<_>>();
@@ -82,6 +101,13 @@ impl App {
         if let Some(id) = selected {
             self.action_list.select(id.clone());
             use iced::advanced::widget::operation::scrollable::{self, RelativeOffset};
+            self.action_list.results_scroll_offset = if select_last {
+                (RESULTS_FIRST_ROW_OFFSET + ids.len() as f32 * RESULTS_ROW_STEP
+                    - self.action_list.results_viewport_height)
+                    .max(0.0)
+            } else {
+                0.0
+            };
 
             return iced::advanced::widget::operate(scrollable::snap_to(
                 iced::widget::Id::new(RESULTS_SCROLL_ID),
@@ -94,10 +120,47 @@ impl App {
         Task::none()
     }
 
-    fn select_adjacent_action_list_entry(&mut self, move_down: bool) {
+    fn scroll_action_list_entry_into_view(
+        &mut self,
+        index: usize,
+        entry_count: usize,
+    ) -> Task<Message> {
+        if self.action_list.results_viewport_height <= 0.0 {
+            return Task::none();
+        }
+        let row_top = RESULTS_FIRST_ROW_OFFSET + index as f32 * RESULTS_ROW_STEP;
+        let row_bottom = row_top + RESULTS_ROW_HEIGHT;
+        let current_top = self.action_list.results_scroll_offset;
+        let viewport_bottom = current_top + self.action_list.results_viewport_height;
+        let desired_top = if row_top < current_top {
+            Some(row_top)
+        } else if row_bottom > viewport_bottom {
+            Some(row_bottom - self.action_list.results_viewport_height)
+        } else {
+            None
+        };
+        let Some(desired_top) = desired_top else {
+            return Task::none();
+        };
+        let maximum = (RESULTS_FIRST_ROW_OFFSET + entry_count as f32 * RESULTS_ROW_STEP
+            - self.action_list.results_viewport_height)
+            .max(0.0);
+        let offset = desired_top.clamp(0.0, maximum);
+        self.action_list.results_scroll_offset = offset;
+        use iced::advanced::widget::operation::scrollable::{self, AbsoluteOffset};
+        iced::advanced::widget::operate(scrollable::scroll_to(
+            iced::widget::Id::new(RESULTS_SCROLL_ID),
+            AbsoluteOffset {
+                x: None,
+                y: Some(offset),
+            },
+        ))
+    }
+
+    fn select_adjacent_action_list_entry(&mut self, move_down: bool) -> Task<Message> {
         let ids = self.visible_action_list_entry_ids();
         if ids.is_empty() {
-            return;
+            return Task::none();
         }
         let current_index = self
             .action_list
@@ -111,6 +174,7 @@ impl App {
             (None, false) => ids.len() - 1,
         };
         self.action_list.select(ids[selected_index].clone());
+        self.scroll_action_list_entry_into_view(selected_index, ids.len())
     }
 
     pub(super) fn open_action_list(&mut self) -> Task<Message> {
@@ -122,6 +186,7 @@ impl App {
         }
         self.active_menu = None;
         self.action_list.capture = None;
+        self.action_list.results_viewport_height = 475.0 - RESULTS_VIEWPORT_CHROME_HEIGHT;
         let (id, task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(701.0, 475.0),
             min_size: Some(iced::Size::new(560.0, 360.0)),
@@ -369,8 +434,10 @@ impl App {
             )
         {
             match key {
-                Key::Named(Named::ArrowUp) => self.select_adjacent_action_list_entry(false),
-                Key::Named(Named::ArrowDown) => self.select_adjacent_action_list_entry(true),
+                Key::Named(Named::ArrowUp) => return self.select_adjacent_action_list_entry(false),
+                Key::Named(Named::ArrowDown) => {
+                    return self.select_adjacent_action_list_entry(true);
+                }
                 Key::Named(Named::Home) => return self.select_action_list_boundary(false),
                 Key::Named(Named::End) => return self.select_action_list_boundary(true),
                 _ => unreachable!("only action-list result navigation keys are handled"),

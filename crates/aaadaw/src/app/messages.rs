@@ -180,6 +180,10 @@ pub(crate) enum Message {
     OpenActionMacroEditor,
     CloseActionList,
     ActionListQueryChanged(String),
+    ActionListResultsScrolled {
+        offset: f32,
+        height: f32,
+    },
     ActionListFilterSubmitted,
     ActionListSelect(String),
     ActionListSelectBinding(usize),

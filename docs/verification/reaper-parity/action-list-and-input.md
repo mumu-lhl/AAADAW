@@ -17,7 +17,7 @@
 ## 本批实现
 
 - 主窗口 `?`（US 布局 Shift+/）打开独立 701×475 Actions 窗口。已有动作与宏使用稳定 registry ID，列表支持多词搜索、Toggle 状态、选择、Run / Run-close、快捷键查找、追加与单独删除。绑定保存先完成原子磁盘写入，再发布运行配置，失败保留原绑定及其他 Settings 草稿。
-- Filter 的 Enter 将焦点交给首个可见结果；结果列表的 ↑/↓ 移动选择并在首尾停止，Home/End 选择并滚动到首项/末项，Enter 执行当前选择。Linux REAPER 7.82 / Default 7 与 AAADAW 的对照截图、键盘路由回归见[输入焦点验证](input-focus.md#action-list-结果导航)。
+- Filter 的 Enter 将焦点交给首个可见结果；结果列表的 ↑/↓ 移动选择、在首尾停止并在越出视口时滚动，Home/End 选择并滚动到首项/末项，Enter 执行当前选择。Linux REAPER 7.82 / Default 7 与 AAADAW 的对照截图、键盘路由回归见[输入焦点验证](input-focus.md#action-list-结果导航)。
 - `ShortcutInput` 贯穿捕获与执行，保留逻辑键、物理键、位置和修饰键。新增 NumPad0–9、运算符、Decimal、Comma、Equal、Enter；NumLock 关闭时按物理身份匹配，NumPad5 的逻辑 Unidentified 也不丢弃。
 - 新绑定的 `Standard7` / `NumPad7` 等可区分主键区与数字键盘；旧 `7` / `Enter` / `Home` 保留原来的任意位置逻辑匹配，冲突检查包含其实际重叠。配置仍用文本格式，无工程 schema 迁移。
 - F10 菜单启动限定未修饰按键；已配置的裸 F10 优先执行绑定，捕获先于菜单处理。Ctrl/Alt+F10 可执行；各入口保留忙碌和待处理保存确认守卫。

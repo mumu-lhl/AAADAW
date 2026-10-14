@@ -3090,6 +3090,10 @@ impl App {
                 if self.midi_editor_window_id == Some(window_id) {
                     self.midi_editor_window_size = size;
                 }
+                if self.action_list_window_id == Some(window_id) {
+                    self.action_list.results_viewport_height =
+                        (size.height - action_list::RESULTS_VIEWPORT_CHROME_HEIGHT).max(1.0);
+                }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.fx_chain_window_size = size;
                     self.resize_fx_editor_host();
@@ -3321,7 +3325,14 @@ impl App {
                 task = self.open_settings();
             }
             Message::CloseActionList => task = self.close_action_list(),
-            Message::ActionListQueryChanged(query) => self.action_list.set_query(query),
+            Message::ActionListQueryChanged(query) => {
+                self.action_list.set_query(query);
+                task = self.reset_action_list_results_scroll();
+            }
+            Message::ActionListResultsScrolled { offset, height } => {
+                self.action_list.results_scroll_offset = offset;
+                self.action_list.results_viewport_height = height;
+            }
             Message::ActionListFilterSubmitted => {
                 if self.action_list_selected_entry().is_none()
                     && let Some(id) = self

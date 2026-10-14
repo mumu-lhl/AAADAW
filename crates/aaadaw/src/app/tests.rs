@@ -4542,12 +4542,13 @@ fn action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds() 
         ..App::default()
     };
     app.action_list.set_query("item".to_owned());
+    app.action_list.results_viewport_height = 65.0;
     let visible_ids = app
         .action_list_entries()
         .into_iter()
         .filter_map(|entry| commands::stable_id(entry.id))
         .collect::<Vec<_>>();
-    assert!(visible_ids.len() >= 2);
+    assert!(visible_ids.len() > 8);
 
     let down = test_input_event(test_shortcut_input(
         Key::Named(iced::keyboard::key::Named::ArrowDown),
@@ -4580,6 +4581,7 @@ fn action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds() 
         action_list_window,
     ));
     assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+    assert!(app.action_list.results_scroll_offset > 0.0);
     let _ = app.update(Message::RuntimeKeyboardEvent(
         home,
         iced::event::Status::Ignored,
@@ -4599,7 +4601,7 @@ fn action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds() 
     ));
     assert_eq!(app.action_list.selected.as_ref(), Some(&visible_ids[0]));
     let _ = app.update(Message::RuntimeKeyboardEvent(
-        up,
+        up.clone(),
         iced::event::Status::Ignored,
         action_list_window,
     ));
@@ -4613,12 +4615,22 @@ fn action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds() 
         ));
     }
     assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+    let offset_at_end = app.action_list.results_scroll_offset;
     let _ = app.update(Message::RuntimeKeyboardEvent(
         down,
         iced::event::Status::Ignored,
         action_list_window,
     ));
     assert_eq!(app.action_list.selected.as_ref(), visible_ids.last());
+    assert_eq!(app.action_list.results_scroll_offset, offset_at_end);
+    for _ in 0..6 {
+        let _ = app.update(Message::RuntimeKeyboardEvent(
+            up.clone(),
+            iced::event::Status::Ignored,
+            action_list_window,
+        ));
+    }
+    assert!(app.action_list.results_scroll_offset < offset_at_end);
 }
 
 #[test]

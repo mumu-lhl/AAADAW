@@ -9,7 +9,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             text("Description").width(Length::Fill),
             text("State").width(Length::Fixed(48.0)),
         ]
-        .spacing(4),
+        .spacing(4)
+        .height(Length::Fixed(20.0)),
         rule::horizontal(1)
     ]
     .spacing(1);
@@ -34,6 +35,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .spacing(4),
             )
             .width(Length::Fill)
+            .height(Length::Fixed(action_list::RESULTS_ROW_HEIGHT))
             .padding([2, 0])
             .style(if selected {
                 button::primary
@@ -97,7 +99,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             scrollable(actions)
                 .id(iced::widget::Id::new(action_list::RESULTS_SCROLL_ID))
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .on_scroll(|viewport| Message::ActionListResultsScrolled {
+                    offset: viewport.absolute_offset().y,
+                    height: viewport.bounds().height,
+                }),
             text("Shortcuts for selected action").size(12),
             row![
                 scrollable(shortcuts)
