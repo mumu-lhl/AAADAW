@@ -768,3 +768,11 @@ nightly + Cranelift workspace `cargo xtest` 1025/1025 通过（CLAP GUI 测试�
 AAADAW 现将菜单/Action List 命令接入同一事务；只合并同轨、相邻、共同选中且同媒体引用的音频项，并按工程采样率和源采样率检查源帧连续性。左侧 item ID 和其余已选 MIDI 项保留，后续片段删除；两段/三段合并均一步 Undo/Redo。回归还检查不同媒体引用、gap、部分选择、MIDI 和源断续 no-op，以及 44.1 kHz 源在 48 kHz 工程的换算。原厂时间线截图从探针保存的 after-project 重新打开，确认最终只有一项；原厂/AAADAW 实窗菜单与时间线截图、探针 TSV 和 SHA-256 见 [Heal splits fixture](../verification/reaper-parity/fixtures/menu-item-heal-splits.tsv)。截图只覆盖菜单标签、无快捷键和合并结果，不代表整套 Item 菜单或窗口已对齐。
 
 Nightly + Cranelift workspace nextest 1028/1028 passed（0 skipped），包括定向 heal 回归；Parity matrix 现有 97 个唯一 ID、15 列，截图和原厂结果文件 SHA-256 已校验。`ITEM-HEAL-SPLITS-001` 仍为 `in_progress`：原厂不同媒体引用语义、自定义 fades/mix、group/frozen item 行为尚未覆盖，AAADAW 也未实现完整混音/淡化重建；Item 菜单及整体 UI 继续推进。
+
+### 2026-10-14 Item 菜单 Nudge/set items...
+
+Linux REAPER 7.82 / Default 7 的 Item 菜单在 `Select all` 后显示 `Nudge/set items...` 和 `N`；Main action 41226 的 Action List 名称是 `Item edit: Nudge/Set...`。AAADAW 将菜单和 Action List 收敛为同一条命令，实窗验证菜单入口、N 快捷键和 528×121 对话框。原厂探针确认默认 Position Nudge 将所选音频或 MIDI 项右移 1 ms，保留长度、源偏移和选择；无选择时不改变素材。原厂、AAADAW 对话框和 target 下拉截图、原厂结果及哈希见 [Nudge/Set 验收记录](../verification/reaper-parity/item-nudge.md)。
+
+AAADAW 实现 Position 与 Edit cursor 的 Nudge/Set 路径、混合媒体共享位移、绝对/相对 Set 和单步 Undo/Redo；实窗中对选中 MIDI 项点击 `Nudge right` 后，摘要和时间线共同反映 0.251 秒的位置；其余六种 item target 明确失败关闭。Nightly + Cranelift workspace nextest 1037/1037 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt、`git diff --check`、Parity CSV 15 列/98 个唯一 ID及新 fixture 的 SHA-256 检查通过。构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。
+
+`ITEM-NUDGE-SET-001` 继续 `in_progress`：left trim、left edge、end position、right trim、contents、duplicate 尚未实现；Snap、Set 控件与目标语义尚未通过原厂逐项验证；REAPER 没有新增专属 Undo 记录，而 AAADAW 使用撤销事务。Item 菜单和整套界面仍远未达到 100% 对齐，后续继续补齐这些边界与其余菜单/窗口交互。

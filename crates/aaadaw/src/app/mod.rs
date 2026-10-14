@@ -59,6 +59,7 @@ mod config_paths;
 mod desktop_layout;
 mod fader;
 mod fader_data;
+mod item_nudge;
 mod item_properties;
 mod keyboard_config;
 mod loop_time_preferences;
@@ -346,6 +347,8 @@ struct App {
     item_properties_window_id: Option<iced::window::Id>,
     item_properties_generation: u64,
     item_properties_unit: item_properties::TimeUnit,
+    item_nudge_dialog: item_nudge::Dialog,
+    item_nudge_window_id: Option<iced::window::Id>,
     marker_properties: Option<marker_properties::MarkerProperties>,
     marker_properties_window_id: Option<iced::window::Id>,
     region_properties: Option<region_properties::RegionProperties>,
@@ -1482,6 +1485,8 @@ impl App {
     fn window_title(&self, window_id: iced::window::Id) -> String {
         if self.item_properties_window_id == Some(window_id) {
             "Media Item Properties".to_owned()
+        } else if self.item_nudge_window_id == Some(window_id) {
+            "Nudge/Set Items".to_owned()
         } else if self.marker_properties_window_id == Some(window_id) {
             "Edit Marker".to_owned()
         } else if self.region_properties_window_id == Some(window_id) {
@@ -1771,6 +1776,7 @@ impl App {
             Message::RuntimeKeyboardEvent(_, _, window_id)
                 if self.main_window_id == Some(*window_id)
                     || self.item_properties_window_id == Some(*window_id)
+                    || self.item_nudge_window_id == Some(*window_id)
                     || self.marker_properties_window_id == Some(*window_id)
                     || self.region_properties_window_id == Some(*window_id)
                     || self.marker_manager_window_id == Some(*window_id)
@@ -1840,6 +1846,17 @@ impl App {
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
                     | Message::OpenItemProperties
+                    | Message::OpenItemNudge
+                    | Message::CloseItemNudge
+                    | Message::ItemNudgeModeChanged(_)
+                    | Message::ItemNudgeTargetChanged(_)
+                    | Message::ItemNudgeUnitChanged(_)
+                    | Message::ItemNudgeValueChanged(_)
+                    | Message::ItemNudgeSnapToUnitChanged(_)
+                    | Message::ItemNudgeRelativeSetChanged(_)
+                    | Message::ItemNudgeGetCursor
+                    | Message::ApplyItemNudgeSet
+                    | Message::NudgeSelectedItems(_)
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::CloseItemProperties
@@ -2379,6 +2396,19 @@ impl App {
             }
             Message::OpenRenderWindow => task = self.open_render_window(),
             Message::OpenItemProperties => task = self.open_item_properties(),
+            Message::OpenItemNudge => task = self.open_item_nudge(),
+            Message::CloseItemNudge => task = self.close_item_nudge(),
+            Message::ItemNudgeModeChanged(mode) => self.change_item_nudge_mode(mode),
+            Message::ItemNudgeTargetChanged(target) => self.change_item_nudge_target(target),
+            Message::ItemNudgeUnitChanged(unit) => self.change_item_nudge_unit(unit),
+            Message::ItemNudgeValueChanged(value) => self.change_item_nudge_value(value),
+            Message::ItemNudgeSnapToUnitChanged(enabled) => self.change_item_nudge_snap(enabled),
+            Message::ItemNudgeRelativeSetChanged(enabled) => {
+                self.change_item_nudge_relative_set(enabled)
+            }
+            Message::ItemNudgeGetCursor => self.item_nudge_get_cursor(),
+            Message::ApplyItemNudgeSet => self.apply_item_nudge_set(),
+            Message::NudgeSelectedItems(direction) => self.nudge_selected_items(direction),
             Message::ToggleItemProperties => {
                 task = if self.item_properties_window_id.is_some() {
                     self.close_item_properties()
@@ -2547,6 +2577,8 @@ impl App {
                 } else if self.item_properties_window_id == Some(window_id) {
                     self.item_properties_window_id = None;
                     self.item_properties = None;
+                } else if self.item_nudge_window_id == Some(window_id) {
+                    self.item_nudge_window_id = None;
                 } else if self.marker_properties_window_id == Some(window_id) {
                     self.marker_properties_window_id = None;
                     self.marker_properties = None;
@@ -3418,6 +3450,43 @@ impl App {
                             return Task::none();
                         }
                         return self.apply_project_settings();
+                    }
+                    return Task::none();
+                }
+                if self.item_nudge_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key,
+                            modifiers,
+                            repeat: false,
+                            ..
+                        }) = &event
+                    {
+                        let toggle = {
+                            let bindings = self
+                                .shortcut_bindings
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            commands::from_shortcut(
+                                &key.as_ref(),
+                                *modifiers,
+                                &bindings,
+                                &self.action_macros,
+                            ) == Some(CommandId::OpenItemNudgeDialog)
+                        };
+                        if toggle {
+                            return self.close_item_nudge();
+                        }
+                    }
+                    if matches!(
+                        &event,
+                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                            repeat: false,
+                            ..
+                        })
+                    ) {
+                        return self.close_item_nudge();
                     }
                     return Task::none();
                 }

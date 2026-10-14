@@ -44,6 +44,10 @@ pub(crate) enum CommandId {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    OpenItemNudgeDialog,
+    CloseItemNudgeDialog,
+    NudgeItemsLeft,
+    NudgeItemsRight,
     SelectAllItems,
     SelectAllItemsInTrack,
     SelectAllItemsInTimeSelection,
@@ -155,6 +159,10 @@ enum CommandKind {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    OpenItemNudgeDialog,
+    CloseItemNudgeDialog,
+    NudgeItemsLeft,
+    NudgeItemsRight,
     SelectAllItems,
     SelectAllItemsInTrack,
     SelectAllItemsInTimeSelection,
@@ -801,6 +809,46 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: true,
     },
     CommandDefinition {
+        kind: CommandKind::OpenItemNudgeDialog,
+        menu: Some(MainMenu::Item),
+        category: "Item editing",
+        label: "Item edit: Nudge/Set...",
+        aliases: &["nudge set items", "item nudge dialog"],
+        shortcuts: &[Shortcut::character('n', Modifiers::NONE)],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::CloseItemNudgeDialog,
+        menu: None,
+        category: "Item editing",
+        label: "Item edit: Close nudge/Set dialog",
+        aliases: &["close nudge set dialog"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::NudgeItemsLeft,
+        menu: None,
+        category: "Item editing",
+        label: "Item edit: Nudge left by last nudge dialog settings",
+        aliases: &["nudge selected items left"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::NudgeItemsRight,
+        menu: None,
+        category: "Item editing",
+        label: "Item edit: Nudge right by last nudge dialog settings",
+        aliases: &["nudge selected items right"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::ToggleItemProperties,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1441,6 +1489,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
             | CommandKind::HealSplitsInItems
+            | CommandKind::NudgeItemsLeft
+            | CommandKind::NudgeItemsRight
             | CommandKind::AddTrack
             | CommandKind::Track(TrackCommand::TogglePhase)
             | CommandKind::Track(TrackCommand::ToggleMute)
@@ -1468,6 +1518,12 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
     if menu == MainMenu::Item {
+        if let Some(entry) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::OpenItemNudgeDialog)
+        {
+            entry.label = "Nudge/set items...".to_owned();
+        }
         if let Some(index) = menu_entries
             .iter()
             .position(|entry| entry.id == CommandId::DeleteSelectedItems)
@@ -1649,6 +1705,7 @@ fn default_may_yield(kind: CommandKind) -> bool {
             | CommandKind::OpenProjectSettings
             | CommandKind::OpenItemProperties
             | CommandKind::ToggleItemProperties
+            | CommandKind::OpenItemNudgeDialog
             | CommandKind::AddTrack
             | CommandKind::ToggleMixerPanel
     )
@@ -2037,6 +2094,10 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
+        CommandKind::OpenItemNudgeDialog => "item.nudge-set",
+        CommandKind::CloseItemNudgeDialog => "item.nudge-set.close",
+        CommandKind::NudgeItemsLeft => "item.nudge-left",
+        CommandKind::NudgeItemsRight => "item.nudge-right",
         CommandKind::SelectAllItems => "item.select-all",
         CommandKind::SelectAllItemsInTrack => "item.select-all-in-track",
         CommandKind::SelectAllItemsInTimeSelection => "item.select-all-in-time-selection",
@@ -2182,6 +2243,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
+        CommandId::OpenItemNudgeDialog => Message::OpenItemNudge,
+        CommandId::CloseItemNudgeDialog => Message::CloseItemNudge,
+        CommandId::NudgeItemsLeft => Message::NudgeSelectedItems(-1),
+        CommandId::NudgeItemsRight => Message::NudgeSelectedItems(1),
         CommandId::SelectAllItems => Message::SelectAllItems,
         CommandId::SelectAllItemsInTrack => Message::SelectAllItemsInTrack,
         CommandId::SelectAllItemsInTimeSelection => Message::SelectAllItemsInTimeSelection,
@@ -2485,6 +2550,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::MoveProjectMarkerSlot(_) => !project_edit_busy(app),
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
+        CommandKind::OpenItemNudgeDialog => true,
+        CommandKind::CloseItemNudgeDialog => app.item_nudge_window_id.is_some(),
+        CommandKind::NudgeItemsLeft | CommandKind::NudgeItemsRight => !project_edit_busy(app),
         CommandKind::OpenItemProperties | CommandKind::ToggleItemProperties => app
             .timeline
             .selected_item
@@ -2702,6 +2770,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
+        CommandKind::OpenItemNudgeDialog => CommandId::OpenItemNudgeDialog,
+        CommandKind::CloseItemNudgeDialog => CommandId::CloseItemNudgeDialog,
+        CommandKind::NudgeItemsLeft => CommandId::NudgeItemsLeft,
+        CommandKind::NudgeItemsRight => CommandId::NudgeItemsRight,
         CommandKind::SelectAllItems => CommandId::SelectAllItems,
         CommandKind::SelectAllItemsInTrack => CommandId::SelectAllItemsInTrack,
         CommandKind::SelectAllItemsInTimeSelection => CommandId::SelectAllItemsInTimeSelection,

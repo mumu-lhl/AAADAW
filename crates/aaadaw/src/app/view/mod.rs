@@ -26,6 +26,7 @@ mod action_list;
 mod arrangement;
 mod fx_chain;
 mod item_inspector;
+mod item_nudge;
 mod item_properties;
 mod marker_manager;
 mod marker_properties;
@@ -87,6 +88,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         mobile_view(app, size.width, size.height)
     } else if app.item_properties_window_id == Some(window_id) {
         item_properties::view(app)
+    } else if app.item_nudge_window_id == Some(window_id) {
+        item_nudge::view(app)
     } else if app.marker_properties_window_id == Some(window_id) {
         marker_properties::view(app)
     } else if app.region_properties_window_id == Some(window_id) {

@@ -143,6 +143,225 @@ fn item_snap_test_app(audio_start_sample: u64, midi_start_tick: u64) -> App {
 }
 
 #[test]
+fn item_nudge_moves_selected_audio_and_midi_together_and_undoes_as_one_edit() {
+    let mut app = item_snap_test_app(0, 0);
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    let original_revision = app.revision;
+    let audio_source_offset = app.project.audio_items()[0].source_offset_samples();
+    let audio_length = app.project.audio_items()[0].length_samples();
+    let midi_length = app.project.midi_items()[0].length_ticks();
+    let nudge_samples = (f64::from(app.project.settings().sample_rate()) / 1_000.0).round() as u64;
+    let expected_midi_tick = app.project.tick_at_sample(nudge_samples).unwrap();
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.audio_items()[0].start_sample(), nudge_samples);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        audio_source_offset
+    );
+    assert_eq!(app.project.audio_items()[0].length_samples(), audio_length);
+    assert_eq!(app.project.midi_items()[0].start_tick(), expected_midi_tick);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), midi_length);
+    assert_eq!(app.revision, original_revision + 1);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+    assert!(app.timeline.selected_items.contains(&audio_id));
+    assert!(app.timeline.selected_items.contains(&midi_id));
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].start_sample(), nudge_samples);
+    assert_eq!(app.project.midi_items()[0].start_tick(), expected_midi_tick);
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+}
+
+#[test]
+fn item_nudge_set_applies_absolute_and_relative_positions_to_mixed_selection() {
+    let mut app = item_snap_test_app(0, 0);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:02.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let absolute_sample = (2.0 * f64::from(app.project.settings().sample_rate())) as u64;
+    assert_eq!(app.project.audio_items()[0].start_sample(), absolute_sample);
+    assert_eq!(
+        app.project.midi_items()[0].start_tick(),
+        app.project.tick_at_sample(absolute_sample).unwrap()
+    );
+
+    let _ = app.update(Message::ItemNudgeUnitChanged(
+        super::item_nudge::Unit::Samples,
+    ));
+    let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("-24000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let relative_sample = absolute_sample - 24_000;
+    assert_eq!(app.project.audio_items()[0].start_sample(), relative_sample);
+    assert_eq!(
+        app.project.midi_items()[0].start_tick(),
+        app.project.tick_at_sample(relative_sample).unwrap()
+    );
+}
+
+#[test]
+fn item_nudge_snap_aligns_the_first_item_and_preserves_selected_spacing() {
+    let mut app = item_snap_test_app(12_013, 481);
+    let first_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: first_track,
+            media_ref: "asset://item-snap-test".to_owned(),
+            start_sample: 72_026,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    let added_id = app.project.audio_items()[1].id();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (audio_id, first_track),
+        (midi_id, app.project.tracks()[1].id()),
+        (added_id, first_track),
+    ]);
+    let original_gap =
+        app.project.audio_items()[1].start_sample() - app.project.audio_items()[0].start_sample();
+
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.audio_items()[0].start_sample(), 12_048);
+    assert_eq!(app.project.audio_items()[1].start_sample(), 72_061);
+    assert_eq!(
+        app.project.audio_items()[1].start_sample() - app.project.audio_items()[0].start_sample(),
+        original_gap
+    );
+}
+
+#[test]
+fn item_nudge_set_uses_the_earliest_selected_audio_or_midi_item_as_its_anchor() {
+    let mut app = item_snap_test_app(48_000, 0);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:02.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let target_sample = 2 * u64::from(app.project.settings().sample_rate());
+    assert_eq!(
+        app.project.midi_items()[0].start_tick(),
+        app.project.tick_at_sample(target_sample).unwrap()
+    );
+    assert_eq!(
+        app.project.audio_items()[0].start_sample(),
+        target_sample + 48_000
+    );
+}
+
+#[test]
+fn item_nudge_without_selection_or_with_invalid_amount_does_not_edit_project() {
+    let mut app = item_snap_test_app(0, 0);
+    let original_revision = app.revision;
+    app.timeline.clear_selected_items();
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    assert_eq!(app.revision, original_revision);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+
+    let _ = app.update(Message::SelectAllItems);
+    let _ = app.update(Message::ItemNudgeValueChanged("-1".to_owned()));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    assert_eq!(app.revision, original_revision);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+}
+
+#[test]
+fn item_nudge_edit_cursor_target_moves_cursor_without_changing_items() {
+    let mut app = item_snap_test_app(0, 0);
+    let starting_cursor = app.timeline.edit_cursor_tick;
+    let start_sample = app.project.sample_at_tick(starting_cursor).unwrap();
+    let delta_samples = (f64::from(app.project.settings().sample_rate()) / 1_000.0).round() as u64;
+    let expected_tick = app
+        .project
+        .tick_at_sample(start_sample + delta_samples)
+        .unwrap();
+
+    let _ = app.update(Message::ItemNudgeTargetChanged(
+        super::item_nudge::Target::EditCursor,
+    ));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.timeline.edit_cursor_tick, expected_tick);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+}
+
+#[test]
+fn item_nudge_set_can_set_the_edit_cursor_to_a_project_time() {
+    let mut app = item_snap_test_app(0, 0);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(
+        super::item_nudge::Target::EditCursor,
+    ));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:01.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let target_sample = u64::from(app.project.settings().sample_rate());
+    assert_eq!(
+        app.timeline.edit_cursor_tick,
+        app.project.tick_at_sample(target_sample).unwrap()
+    );
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+}
+
+#[test]
+fn item_nudge_unimplemented_targets_fail_closed_without_editing_items() {
+    let mut app = item_snap_test_app(0, 0);
+    let _ = app.update(Message::ItemNudgeTargetChanged(
+        super::item_nudge::Target::LeftTrim,
+    ));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert!(
+        app.item_nudge_dialog
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("left trim"))
+    );
+}
+
+#[test]
+fn item_menu_and_action_list_share_the_native_nudge_set_command() {
+    let app = App::default();
+    let entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::OpenItemNudgeDialog)
+        .expect("Item menu should expose Nudge/set items");
+    assert_eq!(entry.label, "Nudge/set items...");
+    assert_eq!(entry.shortcut.as_deref(), Some("N"));
+    assert_eq!(
+        commands::find(&app, "Item edit: Nudge/Set..."),
+        Some(CommandId::OpenItemNudgeDialog)
+    );
+    assert_eq!(
+        commands::for_actions_menu(&app)
+            .into_iter()
+            .filter(|entry| entry.id == CommandId::OpenItemNudgeDialog)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn midi_item_name_draft_commits_as_one_undoable_project_action() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

@@ -71,3 +71,11 @@ AAADAW 的 Action List/Item 菜单均显示 `Heal splits in items`，菜单启�
 REAPER 原厂菜单截图、合并结果、AAADAW 实际选中两段并从 Item 菜单运行后的菜单与时间线截图、环境及 SHA-256 见 [Heal splits fixture](fixtures/menu-item-heal-splits.tsv)。截图只比较菜单文字/无快捷键、选中音频段合成单项的结果，不代表 Item 菜单其它条目或整体 UI 已对齐。
 
 REAPER 原厂探针确认 40548 对 MIDI split 不生效；目前只实现基础 audio split healing。自定义 item fades/mix 的 REAPER 分割与愈合恢复语义、grouped-item 影响和冻结项等边界仍待专项探测；`ITEM-HEAL-SPLITS-001` 与完整 Item 菜单/界面继续保持 `in_progress`。
+
+### Item 菜单的 Nudge/set items...
+
+Linux REAPER 7.82 / Default 7 的 Item 菜单在 `Select all` 后显示 `Nudge/set items...` 和 `N`；Main action 41226 的 Action List 名称为 `Item edit: Nudge/Set...`。原厂菜单截图与 Action List 探针分别见 [Item Select all 原厂图](fixtures/menu-item-select-all-native.png)和 [原厂 actions.tsv](linux-7.82/actions.tsv)。
+
+AAADAW 现在用同一个命令 ID 注册 Action List 与 Item 菜单入口，Action List 保留原厂完整名称，菜单显示短标签和 N。实际运行的 AAADAW 主窗口截图见 [Nudge 菜单 fixture](fixtures/item-nudge-aaadaw-menu.png)。对话框基础位置操作、原厂 Nudge 结果、原厂/AAADAW 实窗截图及差异见 [Nudge/Set 验收记录](item-nudge.md)。
+
+菜单标签、位置和 N 快捷键已做实窗对照；Item 菜单中缺失的命令、其它禁用状态和整体菜单布局仍未对齐。六种 item target、Set/Snap 的原厂语义与无撤销记录这一行为差异也尚未解决，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体保持 `in_progress`。
