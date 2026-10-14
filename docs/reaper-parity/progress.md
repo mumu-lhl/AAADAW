@@ -1028,6 +1028,8 @@ AAADAW Contents Nudge 现在允许正向越过源 EOF。媒体 feeder 在源数�
 
 ### 2026-10-14 Signed source offset 全链路与新桌面二进制
 
+实现提交：`0a8776e94df6a6178d4716b4b5966d071fa524ef`（矩阵 `ITEM-NUDGE-SET-001`）。
+
 将非循环 Audio Item 的源偏移扩为 signed `i64`，覆盖 Core action/snapshot、导入替换、Nudge、Trim/Split、属性编辑及 waveform peak 映射。负偏移令新插入项默认关闭 loop source；试图打开循环或设置无效 bounded section 会被 Core 拒绝。Media feeder 在线程内用固定 1024 帧静音块补足源起点前的 pre-roll，并将 seek 位置正确拆分为未播放静音和源帧跳过；EOF 后仍补静音至 item 长度。音频实时 callback 没有改动。
 
 SQLite schema 升至 49，新增权威 `signed_source_offset_samples`，旧非负列保留作兼容镜像；v48 偏移原样复制，读写重开保留负值。新增字段没有跨版本 loop 引用 CHECK，以兼容旧 schema 的 loop 列删除/添加迁移顺序，负循环偏移由 Core 项目恢复和 action 校验拒绝。迁移回滚规则为恢复旧数据库备份，不手工降 `user_version`。详细结构与回滚方式见[存储变更记录](domain-and-storage-changes.md#schema-49--signed-audio-source-offset)。
