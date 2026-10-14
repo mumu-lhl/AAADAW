@@ -135,7 +135,14 @@ pub fn encode_standard_midi(
                 .checked_add(visible_end - item.source_offset_ticks())
                 .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
             let start_tick = scale_tick(project_start_tick, project_ppq, options.ppq)?;
-            let end_tick = scale_tick(project_end_tick, project_ppq, options.ppq)?;
+            let mut end_tick = scale_tick(project_end_tick, project_ppq, options.ppq)?;
+            // Preserve a positive note duration when PPQ conversion rounds both ends to the
+            // same exported tick. A zero-length note-off would sort before its note-on below.
+            if end_tick <= start_tick {
+                end_tick = start_tick
+                    .checked_add(1)
+                    .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
+            }
             events_by_track[track_index].push(Event {
                 tick: end_tick,
                 order: 0,

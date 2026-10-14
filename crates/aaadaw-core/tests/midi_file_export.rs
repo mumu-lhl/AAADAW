@@ -232,6 +232,49 @@ fn type_zero_merges_tracks_scales_ppq_and_exports_filtered_cues() {
 }
 
 #[test]
+fn ppq_rounding_never_turns_a_note_into_a_zero_length_event() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Short notes".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                tick: 10,
+                duration: 1,
+                velocity: 80,
+            }],
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        ppq: 1,
+        ..MidiExportOptions::for_project(&project)
+    };
+
+    let bytes = encode_standard_midi(&project, options).expect("short note should encode");
+
+    assert!(
+        bytes
+            .windows(7)
+            .any(|window| { window == [0x90, 64, 80, 1, 0x80, 64, 0] })
+    );
+}
+
+#[test]
 fn embeds_smpte_offset_and_rejects_non_drop_2997() {
     let mut project = Project::new();
     project
