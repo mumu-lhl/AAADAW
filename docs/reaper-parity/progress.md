@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 文档落地 | 已完成 | [主实施计划](../plans/reaper-parity-implementation.md)；只表示计划已写入 |
 | P0 | 进行中 | [实机动作目录](../verification/reaper-parity/linux-7.82/README.md)已采集；界面/鼠标/偏好和验收预算未封闭 |
-| P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
+| P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
 | P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
@@ -633,3 +633,9 @@ Render Source 新增 `Selected media items`。Arrange 中选择的音频 item �
 Linux REAPER 7.82 / Default 7 实窗 Source 菜单确认该模式显示 `1 media item` 与 1 个输出；实际渲染为 48 kHz、PCM24、立体声、48,000 帧。常量测试源 L/R PCM24 为 `[1048576, 3145728]`，选中 item 的多个采样点与源逐整数相同。Render/完成窗口截图、SHA-256、样本点、原生探针和对照限制见 [Render Source 验证记录](../verification/reaper-parity/render-source.md)。
 
 新增 audio-only 单 item、失效 item 预检、多 item 独立 trims 和批次取消/发布回归。Stable all-target Clippy `-D warnings` 通过；nightly+Cranelift workspace nextest 全量 999/999（66 个测试二进制）通过。全量测试使用绝对 `CARGO_TARGET_DIR`，避免 CLAP fixture 子进程从 crate 工作目录解析相对路径；Cranelift 仍报告既有 iced/wgpu recursion-depth future-incompatible warning。`RENDER-SOURCE-001`、`RENDER-BOUNDS-001`、`UI-028` 和 P10 继续 `in_progress`：MIDI/take FX、item FX 与原厂音量/自动化行为未建模或未测；当前 `prefix-item_NN.wav` 命名不是完整 wildcard 规则；Region matrix、Razor source、完整原厂命名/Render UI 和 Android 多文件选择仍未完成。
+
+### 2026-10-14 Action List Filter 焦点
+
+REAPER 7.82 / Default 7 的隔离 Xvfb 会话实测 Action List Filter：输入 `undo` 后按 `Ctrl+Z`，Filter 和工程保持不变；关闭列表后，同一按键在主窗口撤销临时轨道。Filter 内空格不会启动传输，Escape 关闭列表。原厂状态、探针与截图哈希见 [Action List 焦点记录](../verification/reaper-parity/input-focus.md)及其 fixture。
+
+AAADAW 新增 `action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window`，通过实际 `RuntimeKeyboardEvent` 窗口分发验证 Filter 窗口隔离全局快捷键、主窗口 Ctrl+Z 仍执行 Undo、Escape 关闭 Action List。该回归单独通过 1/1；`aaadaw` 全量 nightly+Cranelift nextest 在 `DISPLAY=:126` 下 1011/1011 通过（两个 CLAP GUI 测试需要可连接的 X11 显示）。Cranelift 仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible 警告。`INPUT-FOCUS-001` 继续 `in_progress`：其它文本字段、AltGr/布局、脚本编辑器和其它 Action Section 的焦点穿透仍待逐项验证。

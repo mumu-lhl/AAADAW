@@ -4445,6 +4445,61 @@ fn focused_track_name_editor_routes_native_text_escape_and_undo_keys() {
 }
 
 #[test]
+fn action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window() {
+    let main_window = iced::window::Id::unique();
+    let action_list_window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window),
+        action_list_window_id: Some(action_list_window),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    app.action_list.set_query("undo".to_owned());
+
+    let space = test_input_event(test_shortcut_input(
+        Key::Character(" ".into()),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        space,
+        iced::event::Status::Captured,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.query, "undo");
+    assert_eq!(app.project.tracks().len(), 1);
+
+    let undo = test_input_event(test_shortcut_input(
+        Key::Character("z".into()),
+        Modifiers::CTRL,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        undo.clone(),
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert_eq!(app.action_list.query, "undo");
+    assert_eq!(app.project.tracks().len(), 1);
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        undo,
+        iced::event::Status::Ignored,
+        main_window,
+    ));
+    assert!(app.project.tracks().is_empty());
+
+    let escape = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Escape),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        escape,
+        iced::event::Status::Captured,
+        action_list_window,
+    ));
+    assert!(app.action_list_window_id.is_none());
+}
+
+#[test]
 fn shortcut_add_capture_preserves_existing_bindings_and_duplicate_candidates() {
     let mut app = App::default();
     let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));

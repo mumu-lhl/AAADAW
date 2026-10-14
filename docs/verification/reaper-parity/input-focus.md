@@ -14,4 +14,10 @@
 
 专项回归 `focused_track_name_editor_routes_native_text_escape_and_undo_keys` 覆盖同一分流：捕获的 Space 不生成全局快捷键，捕获的 Escape 取消轨道名称草稿且保留两种范围，忽略的 `Ctrl+Z` 撤销最近的插轨且保留时间范围。该测试通过 nightly+Cranelift nextest 1/1。
 
-这只是焦点语义的一个原厂入口。Action List/脚本编辑区、其它文本字段、AltGr 与非 US 键盘、插件窗口、浮动工具、每个 Action Section 对文本焦点的穿透例外尚未逐项验证；INPUT-FOCUS-001 继续 `in_progress`。
+## Action List Filter
+
+在同一 Linux REAPER 7.82 / Default 7 隔离会话打开 Action List（40605），点击 Filter 后输入 `undo`，列表显示 `Edit: Undo` 与 `Edit: Show undo history window`。Filter 聚焦时按 `Ctrl+Z`，查询和临时工程均不变：轨道仍为 1 条，传输保持停止，项目状态计数仍为 2。关闭 Action List、把焦点交还主窗口后再次按 `Ctrl+Z`，轨道数降为 0，状态计数升至 3。Filter 末尾输入空格不会启动播放；Filter 聚焦时 Escape 关闭 Action List。逐步状态见 [原厂 TSV](fixtures/action-list-focus-native.tsv)，按键前后截图见 [搜索](fixtures/action-list-search-before-ctrl-z-native.png)、[Ctrl+Z](fixtures/action-list-search-after-ctrl-z-native.png)、[空格](fixtures/action-list-filter-space-native.png)和 [Escape](fixtures/action-list-filter-escape-native.png)。可复现探针为 [probe-action-list-focus.lua](../../../scripts/reaper_parity/probe-action-list-focus.lua)；测试使用隔离未保存工程，Xvfb 下音频设备关闭，传输全程停止。
+
+AAADAW 的 Action List 独立窗口将键盘事件交给 `action_list_keyboard_event`，不会把 Filter 中未消费的 `Ctrl+Z` 送到主工程快捷键。回归 `action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window` 验证 Action List 窗口里的 Space 与 `Ctrl+Z` 不运行主窗口动作，而同一 `Ctrl+Z` 到达主窗口后会执行 Undo；Escape 关闭 Action List。Filter 的输入和多词搜索由现有 Action List 查询路径处理。
+
+其它文本字段、AltGr 与非 US 键盘、脚本编辑区、插件窗口、浮动工具、每个 Action Section 对文本焦点的穿透例外尚未逐项验证；INPUT-FOCUS-001 继续 `in_progress`。
