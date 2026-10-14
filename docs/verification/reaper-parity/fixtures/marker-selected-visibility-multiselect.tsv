@@ -1,0 +1,29 @@
+field	value
+native_environment	Linux REAPER 7.82 / Default 7 / isolated configuration / Xvfb :127 / audio device unavailable
+native_action	43484 / Ruler: Show/hide selected project markers / Action List only
+native_fixture_before	marker-visibility-mixed-before-native.rpp
+native_fixture_before_sha256	4e507c9465481e605a570e8b111b5693aa22b2e16faf8e3a9d0e32c1c68e8f91
+native_fixture_after	marker-visibility-mixed-after-native.rpp
+native_fixture_after_sha256	8338f3e77e976e4946703c6c19ecb2240c5ae8dbcf535f00b78c8da8fa271700
+native_before_screenshot	marker-manager-mixed-selected-native.png
+native_before_sha256	dda2785e095aa8c9a7dda701c587f11b18e4147a39b9deab228e197967bfac1a
+native_after_screenshot	marker-manager-mixed-shown-native.png
+native_after_sha256	18180b08e452793a722b73760c68b1bb2e5e32101a8119fd3248de0a15f8428f
+native_undo_screenshot	marker-manager-mixed-undo-native.png
+native_undo_sha256	c7ef54fb81a6b97735ac44c52b1ffff3281bb3fa0ae2599d2ebe3b5f2f896baa
+native_observation	With Marker 1 hidden and Marker 2 visible, selecting both and running 43484 shows both; one Ctrl+Z restores the mixed state.
+native_undo_label	Show/hide project markers/regions (confirmed by the single-marker probe in marker-visibility-selected-native.tsv)
+aaadaw_environment	Linux AAADAW / Xvfb :129 / 1400x900 / isolated XDG profile / audio unavailable
+aaadaw_binary_sha256	ae1733eef9c3f66253a3925368186b864ef0515a03d79750334712d65276bb48
+aaadaw_before_screenshot	marker-manager-mixed-selected-aaadaw.png
+aaadaw_before_sha256	fb145d79a055451f4a9c5275f57c45e3a3ec9028b0bf517dd3a2510dec6f28e0
+aaadaw_after_screenshot	marker-manager-mixed-shown-aaadaw.png
+aaadaw_after_sha256	4392dd309726fe877401aae99109ce4cf197bcfcbab971ecc50019c9e3b7a9f7
+aaadaw_undo_screenshot	marker-manager-mixed-undo-aaadaw.png
+aaadaw_undo_sha256	7a04ff282cc9e17a6477710369697155c1a84d0e449c664af14d0aa6fba79233
+aaadaw_redo_screenshot	marker-manager-mixed-redo-aaadaw.png
+aaadaw_redo_sha256	80f55801bd982bdbc0296a3eafe85e26b7fe4df223be39946ea4566b474529a7
+aaadaw_all_visible_to_hidden	marker-manager-selected-hidden-aaadaw.png / 82bbffb138aa0c038036272a84c05dac94e63d1542f470ed99345392af1a98be
+app_tests	selected_marker_visibility_action_matches_native_mixed_selection_and_undo is typechecked; direct app test execution is pending
+verification_scope	Action List discovery, selected-manager multi-toggle, mixed and all-visible directions, single Undo/Redo, and no-selection/busy command availability
+limitation	Pixel geometry/theme parity and complete Marker/Region Manager behavior remain in_progress

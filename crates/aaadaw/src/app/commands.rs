@@ -48,6 +48,7 @@ pub(crate) enum CommandId {
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
+    ToggleSelectedProjectMarkers,
     MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
@@ -174,6 +175,7 @@ enum CommandKind {
     PreviousProjectMarker,
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
+    ToggleSelectedProjectMarkers,
     MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
@@ -811,6 +813,19 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["delete marker near cursor", "delete nearby marker"],
         shortcuts: &[],
         destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleSelectedProjectMarkers,
+        menu: None,
+        category: "Ruler",
+        label: "Ruler: Show/hide selected project markers",
+        aliases: &[
+            "show/hide selected project markers",
+            "toggle selected marker visibility",
+        ],
+        shortcuts: &[],
+        destructive: false,
         separator_before: false,
     },
     CommandDefinition {
@@ -2298,6 +2313,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::PreviousProjectMarker => "navigation.previous-project-marker",
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
+        CommandKind::ToggleSelectedProjectMarkers => "ruler.toggle-selected-project-markers",
         CommandKind::MoveProjectMarkerSlot(slot) => numbered_project_marker_action_id(slot),
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
@@ -2462,6 +2478,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::PreviousProjectMarker => Message::PreviousProjectMarker,
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
+        CommandId::ToggleSelectedProjectMarkers => Message::ToggleSelectedProjectMarkers,
         CommandId::MoveProjectMarkerSlot(slot) => Message::MoveProjectMarkerSlot(slot),
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
@@ -2790,6 +2807,14 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteProjectMarkerNearCursor => {
             !project_edit_busy(app) && nearest_project_marker_to_delete(app).is_some()
         }
+        CommandKind::ToggleSelectedProjectMarkers => {
+            !project_edit_busy(app)
+                && app
+                    .project
+                    .markers()
+                    .iter()
+                    .any(|marker| app.selected_render_markers.contains(&marker.id()))
+        }
         CommandKind::MoveProjectMarkerSlot(_) => !project_edit_busy(app),
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
         CommandKind::OpenItemNudgeDialog => true,
@@ -3046,6 +3071,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::PreviousProjectMarker => CommandId::PreviousProjectMarker,
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
+        CommandKind::ToggleSelectedProjectMarkers => CommandId::ToggleSelectedProjectMarkers,
         CommandKind::MoveProjectMarkerSlot(slot) => CommandId::MoveProjectMarkerSlot(slot),
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,

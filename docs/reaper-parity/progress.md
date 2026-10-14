@@ -973,3 +973,11 @@ Linux REAPER 7.82 原厂探针确认单 Marker Visible 与整个 Marker 标尺�
 新桌面二进制此前因容器只有 GLib 运行库、缺少开发 `.pc` 元数据而不能链接。本轮在 ignored `target/` 中创建本地 pkg-config 描述和动态库链接路径，没有改系统包；随后在 Xvfb `:125` 实际运行新二进制并截取 Manager 单项显示/隐藏、标尺旗标显示/隐藏和 View 菜单截图。二进制、截图 SHA-256、运行环境及验证边界记录在 [AAADAW 可见性运行清单](../verification/reaper-parity/fixtures/marker-visibility-aaadaw.tsv)；原厂 7.82 探针在 [全部标尺状态](../verification/reaper-parity/fixtures/marker-visibility-native.tsv)、[选中 Marker 状态](../verification/reaper-parity/fixtures/marker-visibility-selected-native.tsv)及 [验证说明](../verification/reaper-parity/project-markers.md)。
 
 `cargo check -p aaadaw --no-default-features --tests`、fmt 和 diff 检查通过；Core Marker/MIDI 定向测试 12/12、schema 可见性存储测试 4/4 通过。由于当前容器剩余磁盘约 1.2 GB，本轮没有再次链接庞大的 app 测试二进制；app 可见性测试已通过类型检查，并以实窗截图验证状态变化。`PROJECT-MARKERS-001`、`FILE-MIDI-EXPORT-001`、UI-013 和 P4 继续 `in_progress`：原厂 action 43484 的多选批量切换及 Manager/Region 其余布局与功能、更多 Marker 时间基准/编辑语义和完整主题对照尚未完成。
+
+### 2026-10-14 Action 43484：批量显示/隐藏所选 Marker
+
+Linux REAPER 7.82 / Default 7 实窗中，先把一个所选 Marker 设为隐藏、另一个保持可见，再从 Action List 执行 Main action 43484：两个所选 Marker 都显示；一次 Ctrl+Z 将其恢复为原混合状态。AAADAW 现注册 `Ruler: Show/hide selected project markers`（稳定 ID `ruler.toggle-selected-project-markers`），使用 Manager 多选；只要所选集合中有隐藏 Marker 就统一显示，否则统一隐藏。未选 Marker 不变，无有效选择或工程忙碌时动作禁用，多项改动写为单一事务。
+
+新构建 AAADAW 二进制以 Xvfb 实窗操作 Manager 的 Ctrl 多选、Action List 运行、混合状态显示、单步 Undo/Redo，以及全可见集合隐藏。原厂工程与截图、AAADAW 截图、二进制/图片哈希和对照范围见 [多选 Marker 可见性 fixture](../verification/reaper-parity/fixtures/marker-selected-visibility-multiselect.tsv)。
+
+`cargo check -p aaadaw --no-default-features --tests` 与 AAADAW app/test Clippy `-D warnings`、fmt、diff 检查通过；本轮 app 测试源码已类型检查，实窗完成上述交互验证，未重新链接 app 测试套件。`PROJECT-MARKERS-001`、UI-013 与 P4 继续 `in_progress`：Manager 的 Ruler Lane、Render Matrix、Lane Manager、Options 和完整布局/主题、同位置 Marker 行为、负时间/timebase、Region 全套交互与其它项目语义仍待实现和原厂验证。

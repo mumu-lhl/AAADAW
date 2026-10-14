@@ -2647,6 +2647,7 @@ impl App {
             Message::CloseRegionProperties => task = self.close_region_properties(),
             Message::OpenMarkerManager => task = self.open_marker_manager(),
             Message::ToggleProjectMarkersOnRuler => task = self.toggle_project_markers_on_ruler(),
+            Message::ToggleSelectedProjectMarkers => self.toggle_selected_project_markers(),
             Message::CloseMarkerManager => task = self.close_marker_manager(),
             Message::MarkerManagerFilterChanged(value) => {
                 if let Some(manager) = &mut self.marker_manager {

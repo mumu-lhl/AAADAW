@@ -273,6 +273,7 @@ pub(crate) enum Message {
     CloseRegionProperties,
     OpenMarkerManager,
     ToggleProjectMarkersOnRuler,
+    ToggleSelectedProjectMarkers,
     CloseMarkerManager,
     MarkerManagerFilterChanged(String),
     MarkerManagerShowRegionsChanged(bool),

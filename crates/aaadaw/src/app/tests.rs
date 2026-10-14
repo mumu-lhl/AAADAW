@@ -786,6 +786,69 @@ fn project_marker_ruler_visibility_is_a_checked_view_action_and_undoable() {
 }
 
 #[test]
+fn selected_marker_visibility_action_matches_native_mixed_selection_and_undo() {
+    let mut app = App::default();
+    let command = CommandId::ToggleSelectedProjectMarkers;
+    assert!(!commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("ruler.toggle-selected-project-markers")
+    );
+    assert_eq!(
+        commands::find(&app, "Ruler: Show/hide selected project markers"),
+        Some(command)
+    );
+
+    for (position_ticks, name) in [(960, "Hidden"), (1_920, "Visible"), (2_880, "Other")] {
+        app.project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks,
+                name: name.to_owned(),
+            })
+            .unwrap();
+    }
+    let markers = app.project.markers();
+    let hidden = markers[0].id();
+    let selected_visible = markers[1].id();
+    let unselected = markers[2].id();
+    app.project
+        .apply(DawAction::SetProjectMarkerVisibility {
+            marker_id: hidden,
+            visible: false,
+        })
+        .unwrap();
+    app.selected_render_markers = HashSet::from([hidden, selected_visible]);
+    assert!(commands::is_enabled(&app, command));
+    assert_eq!(app.project.markers()[2].id(), unselected);
+
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(app.project.markers()[0].is_visible());
+    assert!(app.project.markers()[1].is_visible());
+    assert!(app.project.markers()[2].is_visible());
+
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.markers()[0].is_visible());
+    assert!(app.project.markers()[1].is_visible());
+    assert!(app.project.markers()[2].is_visible());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.markers()[0].is_visible());
+    assert!(app.project.markers()[1].is_visible());
+    assert!(app.project.markers()[2].is_visible());
+
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(!app.project.markers()[0].is_visible());
+    assert!(!app.project.markers()[1].is_visible());
+    assert!(app.project.markers()[2].is_visible());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.markers()[0].is_visible());
+    assert!(app.project.markers()[1].is_visible());
+
+    app.selected_render_markers.clear();
+    app.io_busy = true;
+    assert!(!commands::is_enabled(&app, command));
+}
+
+#[test]
 fn marker_manager_delete_respects_project_edit_busy_guard() {
     let mut app = App::default();
     app.project

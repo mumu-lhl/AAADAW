@@ -34,6 +34,55 @@ impl App {
         Task::none()
     }
 
+    pub(super) fn toggle_selected_project_markers(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing marker visibility".to_owned();
+            return;
+        }
+        let selected: Vec<_> = self
+            .project
+            .markers()
+            .iter()
+            .filter(|marker| self.selected_render_markers.contains(&marker.id()))
+            .collect();
+        if selected.is_empty() {
+            self.status = "Select one or more project markers first".to_owned();
+            return;
+        }
+
+        // REAPER shows the whole selected set if any selected marker is hidden;
+        // otherwise it hides the whole set.
+        let visible = selected.iter().any(|marker| !marker.is_visible());
+        let actions: Vec<_> = selected
+            .into_iter()
+            .filter(|marker| marker.is_visible() != visible)
+            .map(|marker| DawAction::SetProjectMarkerVisibility {
+                marker_id: marker.id(),
+                visible,
+            })
+            .collect();
+        if actions.is_empty() {
+            return;
+        }
+        let message = if visible {
+            "Selected project markers shown"
+        } else {
+            "Selected project markers hidden"
+        };
+        let action = if actions.len() == 1 {
+            actions
+                .into_iter()
+                .next()
+                .expect("one selected marker change")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, message);
+    }
+
     pub(super) fn open_marker_manager(&mut self) -> Task<Message> {
         if let Some(window_id) = self.marker_manager_window_id {
             return iced::window::gain_focus(window_id);
