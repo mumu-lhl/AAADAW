@@ -1009,3 +1009,9 @@ AAADAW Edit Region 窗口现在使用 REAPER 属性窗中的 Position 与 Length
 Linux AAADAW 新桌面版实窗显示 Name、ID、Position、Length（示例 `1.1.00` / `0.2.00`）。点击 `Region Manager...` 后 Manager 窗口打开，属性窗口仍存在于 X11 窗口树中。两张实窗截图、binary Build ID/SHA-256 与 fixture 项目哈希见[属性窗运行清单](../verification/reaper-parity/fixtures/region-properties-aaadaw.tsv)；未把输入模拟未完成的试验记作文本编辑成功证据。
 
 `region_manager_selects_edits_filters_and_deletes_with_undo` 覆盖 Position/Length 初值、修改后单步提交/Undo 与属性窗打开 Manager；属性测试覆盖 Manager 启动、零长度拒绝与 Cancel。完整 App 测试套件 572/572 通过，app/test strict Clippy、fmt 和 `git diff --check` 通过。Lane 数值、Region Render Matrix、Set/Reset color、其它时间格式/负时间、窗口其余控件与 Default 7 视觉仍未验收；`PROJECT-REGIONS-001` 和 P4 继续 `in_progress`。
+
+### 2026-10-14 桌面二进制 Xvfb 运行恢复与 Nudge 文档校正
+
+此前重启 AAADAW 时已没有有效 `DISPLAY`，系统也没有安装 Xvfb；旧 Xvfb/应用进程多数已退出为僵尸进程。改用隔离 REAPER 运行包中的 Xvfb 创建新显示后，最新 AAADAW 二进制 SHA-256 `59bc8bfa475f11edc45e8eff911e63b1b003148b481ffbf07838ea4d58b86e44` 正常显示 1280×800 主窗口。用 XTest 点击 Item 菜单与 `Nudge/set items...`，真实窗口树报告 528×121 Nudge/Set 窗口。新增可复现启动/首帧截图脚本 `scripts/reaper_parity/run-aaadaw-desktop-smoke.sh`，它隔离 XDG profile、自动选用系统或 REAPER 包内 Xvfb，并轮询实际非黑色帧；运行截图、交互截图及 SHA-256 见[桌面运行记录](../verification/reaper-parity/desktop-runtime.md)。
+
+复核 `ITEM-NUDGE-SET-001` 时发现 bounded source loop wrap 已有实现与 App 测试，但详细说明仍称其未实现。已更正 Nudge 主文档、Item 菜单对照和 fixture 状态；当前明确区分“AAADAW 实现/单测通过”和“REAPER 原生边界行为未复验”，该项仍 `in_progress`。启动脚本实际运行成功；bash 语法检查、截图窗口/像素检查和 `git diff --check` 通过。下一步回到原厂 Nudge 行为探测，不以本次桌面启动证明代替具体功能验收。

@@ -19,10 +19,10 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
 - Audio / Left Trim、Left Edge、End Position、Right Trim：按原厂 250 ms 探针调整对应边界；Left Trim 按素材源采样率换算并移动源偏移。若选择中包含 MIDI、时间越界或素材源采样率不可用，则整批拒绝。
 - Duplicate：按 Nudge 量复制所选 Audio 和 MIDI 项；副本成为唯一选择，并通过一个工程事务支持 Undo。
-- Contents / Nudge：在源采样率与帧数可查、移动后的完整片段仍落在源文件范围内时，反向移动源偏移，保持 item 的位置和长度；超出源边界、选择包含 MIDI 或素材元数据不可用时安全拒绝。REAPER 循环源的绕回行为尚未实现。
+- Contents / Nudge：在源采样率与帧数可查时反向移动源偏移，保持 item 的时间线位置和长度。非循环源越过文件边界时安全拒绝；循环源会在有效 source section（没有显式 section 时为整份素材）内绕回。单元回归覆盖有界 section 的向前/向后绕回。该语义尚未在本轮通过 REAPER 7.82 原生边界探针复核，因此实现存在不等于原厂等价已验收。
 - 这些目标的 Set/Snap 组合和其它未验证边界继续明确报告未实现，不修改工程。
 
-单元回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算与反向 Contents Nudge、越过源起点时安全拒绝、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂位置 Nudge 探针未观察到专属 Undo 项，Undo 历史一致性仍待专项确认。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)。循环源边界、目标专属 Snap/Set、多项顺序及新增 Contents 操作后的实窗截图尚未验证，不能据当前覆盖宣称整体完成。
+单元回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算、非循环源边界拒绝、有界循环段绕回、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂位置 Nudge 探针未观察到专属 Undo 项，Undo 历史一致性仍待专项确认。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)。REAPER 循环源边界、目标专属 Snap/Set、多项顺序及新增 Contents 操作后的实窗截图尚未验证，不能据当前覆盖宣称整体完成。
 
 ## 实窗对照
 
@@ -34,4 +34,4 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 ## 后续验收
 
-继续实现并探测 Contents 的 REAPER 循环源绕回、MIDI 对各 target 的响应、Set/Snap 组合，以及所有 Unit、Get cursor、按钮与键盘焦点行为；确认多选锚点、跨轨顺序、播放/录制状态和原厂 Undo 语义；再在同尺寸实窗比较各模式。完成以上行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
+继续用 REAPER 原生探针确认 Contents 循环源边界、多种 MIDI target 的响应、Set/Snap 组合，以及所有 Unit、Get cursor、按钮与键盘焦点行为；确认多选锚点、跨轨顺序、播放/录制状态和原厂 Undo 语义；再在同尺寸实窗比较各模式。完成以上行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。

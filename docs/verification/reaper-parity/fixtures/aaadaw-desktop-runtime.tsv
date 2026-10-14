@@ -1,0 +1,14 @@
+field	value
+date	2026-10-14
+platform	Linux x86_64; X11; Xvfb :301; root 1600x1000x24
+binary	target/debug/aaadaw; Build ID b63071e4c3a3757051a9125dcafee4baa40453e9; SHA-256 59bc8bfa475f11edc45e8eff911e63b1b003148b481ffbf07838ea4d58b86e44
+xvfb	/tmp/aaadaw-reaper-782/root/usr/bin/Xvfb; no system Xvfb executable
+profile	Fresh isolated XDG config/data/state/cache/runtime directories
+audio	Unavailable; binary built with audio-device feature disabled
+main_window	New project — AAADAW; 1280x800 at +0+0
+interaction	XTest click opened Item menu, then Nudge/set items...; X11 reported Nudge/Set Items 528x121
+screenshot	aaadaw-desktop-runtime-nudge.png; 1280x800 crop showing the actual desktop and Nudge/Set window
+screenshot_sha256	bc10e4f08dc3f21bfc5b9d3ec6233c3eb7180c5c5ff62c783438dcb516f5da7a
+smoke_script_run	bash scripts/reaper_parity/run-aaadaw-desktop-smoke.sh target/debug/aaadaw target/aaadaw-smoke-script-test.png
+smoke_script_display	Xvfb :90; fresh isolated XDG profile; WGPU_BACKEND=gl
+smoke_script_screenshot	aaadaw-desktop-runtime-startup.png; 1280x800; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
