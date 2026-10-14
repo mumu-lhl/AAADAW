@@ -722,3 +722,13 @@ REAPER 7.82 / Default 7 原厂空工程菜单将 `Remove items` 放在首项并�
 Linux REAPER 7.82 / Default 7 的 ReaScript 40508 探针记录内部裁切、左右交叠、严格外侧保留、两端贴边删除及无选区 no-op。原厂裁切画面、原厂空工程菜单、AAADAW 空轨 Item 菜单截图、状态和 SHA-256 见 [Trim fixture](../verification/reaper-parity/fixtures/menu-item-trim.tsv)。实窗截图验证菜单名称、已实现命令顺序和空工程启用状态。原厂操作探针使用 MIDI 项；AAADAW 的音频源偏移与混合媒体事务目前由单元测试验证，尚未用 REAPER 音频源做原生逐项对比，因此不把这部分记录为已完成的原厂验收。
 
 Stable `cargo nextest run -p aaadaw` 542/542 passed；Stable all-target Clippy `-D warnings`、fmt 和 `git diff --check` 通过。本次本地构建关闭调试符号，避免大型测试链接超出工作区资源；这只影响忽略的 `target/` 产物。`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：原厂在 Trim 与 Select all 之间还有 Copy loop of selected area 和 Enclose media items in razor edit 等命令；其它 Item/Track 命令、完整视觉和焦点行为仍待实现与验收。
+
+### 2026-10-14 Item 菜单 Copy loop of selected area
+
+实现提交：`f33aaa8`。
+
+新增 Item > `Copy loop of selected area of items`（Ctrl+Alt+L）和 Edit > `Paste`（Ctrl+V）。复制只记录所选音频项里完整覆盖时间选区的源片段，不修改工程状态和原选择；粘贴从编辑光标插入，保留源媒体位置、可用目标轨道间的相对顺序，并作为一步撤销。空工程中的 Copy 仍启用并安全 no-op；剪贴板为空时 Paste 禁用。
+
+Linux REAPER 7.82 / Default 7 原厂探针确认：选区 3–7 秒、源项 0–10 秒时，Copy 不改变项属性或工程 state-change count；在 12 秒粘贴生成 4 秒、`B_LOOPSRC=1` 的 WAV source section。部分覆盖选区的所选项会被排除；两项都完整覆盖时，粘贴保留各自轨道位置。AAADAW Item/Edit 菜单实窗截图、原厂探针结果、环境和 SHA-256 见 [Copy loop fixture](../verification/reaper-parity/fixtures/menu-item-copy-loop.tsv)。截图只验证菜单文字、快捷键和空剪贴板启用状态，不构成完整窗口复刻验收。
+
+Stable `cargo nextest run -p aaadaw` 543/543 passed；Stable all-target Clippy `-D warnings`、fmt、diff 检查通过。原厂 REAPER 7.82/Linux ReaScript 探针通过；AAADAW 空轨菜单截图和 CSV 93 个唯一 ID/15 列检查通过。`ITEM-AUDIO-COPYLOOP-001` 与 `SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：AAADAW 尚未持久化或渲染 `B_LOOPSRC`，因此粘贴项延长后的循环行为仍不完整；目前只支持同一工程的音频源和已有目标轨道，不复制其它 item/take mix、淡化或播放率数据，跨工程媒体剪贴板与通用 Paste 来源也未完成。Item 菜单其余命令和完整界面/焦点对照仍待实现与验收。

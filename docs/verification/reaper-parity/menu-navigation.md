@@ -24,6 +24,14 @@ REAPER 7.82 / Default 7 在没有所选媒体项时将 `Remove items` 放在 Ite
 
 `item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project` 验证首项名称、顺序、禁用状态及 Select all 的启用状态；`item_menu_remove_items_deletes_selected_media_and_is_undoable` 验证所选 MIDI 项使菜单动作可用、删除和撤销。原厂全选所在位置之前的其它菜单命令仍未实现，整项菜单继续 `in_progress`。
 
+### Item 菜单的 Copy loop of selected area
+
+Linux REAPER 7.82 / Default 7 的空轨 Item 菜单显示启用的 `Copy loop of selected area of items`，快捷键 Ctrl+Alt+L。Main action 40014 复制所选音频项中完整覆盖时间选区的源区段到媒体项剪贴板；单项 0–10 秒、选区 3–7 秒时，复制不改变工程修订、item 属性或选择。随后在 12 秒粘贴会得到 4 秒 item，启用 Loop source，底层仍指向原 WAV 的 3–7 秒 source section。两个音频项同时选中时，只复制完整覆盖整个选区的项；选区只部分伸入的项不进入该剪贴板。
+
+AAADAW 将动作注册为 Action List `Copy loop of selected area of audio items`（`item.copy-loop-selected-area`，Ctrl+Alt+L），Item 菜单显示原厂短标签。音频剪贴板记录当前工程的源引用、样本偏移、区段长度和相对轨道顺序；Edit > `Paste`（Ctrl+V）在播放光标处将这些片段作为一个可撤销编辑插入，并在源工程已有的目标轨道间保留相对顺序。空工程 Copy 仍启用且安全 no-op，空剪贴板 Paste 禁用。真实原厂 ReaScript 结果、原厂菜单截图、AAADAW Item/Edit 实窗图与哈希见 [Copy loop fixture](fixtures/menu-item-copy-loop.tsv)。
+
+`copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step` 用 48 kHz 源与 44.1 kHz 工程的样本换算验证完整选区、部分相交项排除、MIDI 排除、多轨偏移、光标粘贴、一次 Undo 及剪贴板保留。当前剪贴板仅在同一工程代次有效；目标轨道不足时不自动建轨；AudioItem 尚无 Loop source 状态，因此目前不能验证粘贴项后续延长时的循环、淡化/增益/播放率保留和跨工程媒体引用。原厂对照也尚未覆盖这些属性，本切片和 `ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。
+
 ### Item 菜单的 Trim items to selected area
 
 REAPER 原厂 40508 动作将所选素材裁到时间选区与素材的交集；完全落在选区外的素材保留，恰好与选区端点相接的素材删除，没有时间选区时不修改工程。Linux REAPER 7.82 / Default 7 的 ReaScript 探针记录了内部裁切、左右部分交叠、选区外、两端贴边和无选区结果。AAADAW 将命令接到 Item 菜单，空选择时仍启用，与原厂动作可从空工程菜单执行的状态一致；裁切和端点删除在单个可撤销事务中应用，并保留音频/MIDI 源偏移及被裁后仍存活项的选择状态。

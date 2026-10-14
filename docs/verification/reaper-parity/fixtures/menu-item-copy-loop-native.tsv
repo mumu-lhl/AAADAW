@@ -1,0 +1,37 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio	Dummy Audio if available; no recording or playback
+transport	stopped
+action	40014	Item: Copy loop of selected area of audio items
+selection	3.000000000	7.000000000
+field	before	after
+position	0.000000000	0.000000000
+length	10.000000000	10.000000000
+source_offset	0.000000000	0.000000000
+playrate	1.000000000	1.000000000
+loop_source	1.000000000	1.000000000
+items_after_copy	1
+selected_after_copy	1
+state_change_delta	0
+pasted_items	1
+pasted_source_length	4.000000000
+pasted_source_file	item-copy-loop-source.wav
+pasted_source_section	true	3.000000000	4.000000000	false
+control_copy_pasted_items	1
+pasted	1	12.000000000	4.000000000	0.000000000	1.000000000	1
+pasted	2	20.000000000	4.000000000	0.000000000	1.000000000	1
+multi_partial_selected_items	2
+multi_partial_item_spans	0.000000000-10.000000000	4.000000000-14.000000000
+multi_partial_selection	3.000000000	7.000000000
+multi_partial_items_before_copy	4
+multi_partial_items_after_copy	4
+multi_partial_state_change_delta	0
+multi_partial_pasted_items	1
+multi_full_selected_items	2
+multi_full_selection	3.000000000	7.000000000
+multi_full_items_before_copy	5
+multi_full_items_after_copy	5
+multi_full_state_change_delta	0
+multi_full_pasted_items	2
+multi_full_pasted	1	30.000000000	4.000000000	0.000000000
+multi_full_pasted	2	30.000000000	4.000000000	0.000000000
