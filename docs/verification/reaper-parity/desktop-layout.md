@@ -6,6 +6,8 @@
 
 验证：732 项 workspace 测试全部通过，Clippy warnings denied 通过。GUI 新建轨道后 TCP/MCP 同步；三个面板同时可见，View 菜单正常；空闲配置包含两个开关及比例。Transport 响应式容器已改为收缩高度。
 
+截图说明：下图是 AAADAW 产品实窗中的三个面板，不是 REAPER 原厂界面截图。REAPER 7.82 Default 主题的冷启动布局、同轨 TCP/MCP 状态和 AAADAW 实窗对照见 [Arrange + Mixer dock 验收记录](arrange-mixer-dock.md)。
+
 ![三个面板与共享轨道](screenshots/desktop-three-panes.png)
 
 仍未完成：Default 7 视觉尺寸与主题、Docker 四边位置/标签/浮动窗口、多屏/DPI 恢复、完整窗体集合、REAPER 全量输入与布局验收。本记录不证明 P2 全量通过。

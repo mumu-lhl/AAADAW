@@ -1,0 +1,16 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+configuration	fresh isolated profile; factory layout; audio system changed to built-in Dummy Audio because the host has no audio device
+display	X11 :126, 1280x1024, xfwm4
+audio	Dummy Audio; no hardware I/O
+transport	stopped for all captures
+native_default_image	arrange-mixer-native-default.png
+native_default_sha256	f7db67cf9a3897af5c4d97fc3ee59b7c5758f2ec46aacf95aa04ea2196568cb3
+native_default_window	1034x802 including window frame; fresh empty project; Arrange, Transport, Master and Mixer visible at startup
+native_track_image	arrange-mixer-native.png
+native_track_sha256	803db3e7f313b624b158d7c3976880a711c7059cb7e1ffe6fbe666a2958d3208
+native_track_state	one empty track added with Ctrl+T; same track visible in TCP and MCP; no media or recording
+aaadaw_image	arrange-mixer-aaadaw.png
+aaadaw_sha256	6510de2b0235686aa1e48b02f370f9e6ac0886e1fb2ef4350fbe378864c1391e
+aaadaw_window	1275x800 client area; desktop profile; Arrange and Mixer both visible; Audio 1 appears in both; build has no audio device
+comparison_scope	same-window pane coexistence and track identity only; window dimensions and pixel geometry differ
