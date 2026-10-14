@@ -43,6 +43,12 @@ impl App {
                 .set_mime_type("audio/wav")
                 .add_filter("WAV audio", &["wav"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportMidi => robius_file_picker::FileDialog::new()
+                .set_title("Export project MIDI")
+                .set_file_name("project.mid")
+                .set_mime_type("audio/midi")
+                .add_filter("MIDI files", &["mid", "midi"])
+                .save_data(Vec::<u8>::new(), completion),
             PathPickerTarget::ImportAudio
             | PathPickerTarget::ImportAudioToProject
             | PathPickerTarget::RelinkAudio => robius_file_picker::FileDialog::new()
@@ -78,7 +84,9 @@ impl App {
                 };
                 let result = run_blocking("aaadaw-document-stage", move || {
                     let path = match target {
-                        PathPickerTarget::SaveProject | PathPickerTarget::ExportWav => {
+                        PathPickerTarget::SaveProject
+                        | PathPickerTarget::ExportWav
+                        | PathPickerTarget::ExportMidi => {
                             crate::android_platform::prepare_saf_save(
                                 file,
                                 matches!(target, PathPickerTarget::SaveProject),
@@ -108,6 +116,15 @@ impl App {
             self.status = "A file dialog is already open".to_owned();
             return Task::none();
         }
+        let midi_export_name = self
+            .midi_export_dialog
+            .as_ref()
+            .and_then(|dialog| {
+                PathBuf::from(&dialog.destination)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "midi_export.mid".to_owned());
         self.path_picker_busy = true;
         self.active_menu = None;
         Task::perform(
@@ -126,6 +143,11 @@ impl App {
                         .set_title("Render project to WAV")
                         .set_file_name("render.wav")
                         .add_filter("WAV audio", &["wav"])
+                        .save_file(),
+                    PathPickerTarget::ExportMidi => rfd::FileDialog::new()
+                        .set_title("Export project MIDI")
+                        .set_file_name(midi_export_name)
+                        .add_filter("MIDI files", &["mid", "midi"])
                         .save_file(),
                     PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
                         rfd::FileDialog::new()
@@ -172,6 +194,12 @@ impl App {
                     super::project_io::save_project(self, Some(path))
                 }
                 PathPickerTarget::ExportWav => self.start_offline_render(path),
+                PathPickerTarget::ExportMidi => {
+                    if let Some(dialog) = &mut self.midi_export_dialog {
+                        dialog.destination = path.to_string_lossy().into_owned();
+                    }
+                    Task::none()
+                }
                 PathPickerTarget::ImportAudio => {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();
                     Task::none()

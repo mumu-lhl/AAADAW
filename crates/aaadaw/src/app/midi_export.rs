@@ -1,0 +1,135 @@
+use super::{App, Message, PathPickerTarget, run_blocking};
+use aaadaw_core::{
+    MidiExportOptions, MidiFileType, MidiMarkerType, Project, ProjectSnapshot, encode_standard_midi,
+};
+use iced::Task;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub(super) struct MidiExportDialogState {
+    pub(super) destination: String,
+    pub(super) file_type: MidiFileType,
+    pub(super) ppq: String,
+    pub(super) embed_tempo_and_time_signature: bool,
+    pub(super) embed_smpte_offset: bool,
+    pub(super) export_markers: bool,
+    pub(super) marker_type: MidiMarkerType,
+    pub(super) only_markers_starting_with_hash: bool,
+    pub(super) export_hidden_markers: bool,
+}
+
+impl MidiExportDialogState {
+    fn for_project(project: &Project) -> Self {
+        let options = MidiExportOptions::for_project(project);
+        Self {
+            destination: "midi_export.mid".to_owned(),
+            file_type: options.file_type,
+            ppq: options.ppq.to_string(),
+            embed_tempo_and_time_signature: options.embed_tempo_and_time_signature,
+            embed_smpte_offset: options.embed_smpte_offset,
+            export_markers: options.export_markers,
+            marker_type: options.marker_type,
+            only_markers_starting_with_hash: options.only_markers_starting_with_hash,
+            export_hidden_markers: options.export_hidden_markers,
+        }
+    }
+
+    fn options(&self) -> Result<MidiExportOptions, String> {
+        let ppq = self
+            .ppq
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| "PPQN must be a whole number from 1 to 32767".to_owned())?;
+        if !(1..=0x7fff).contains(&ppq) {
+            return Err("PPQN must be a whole number from 1 to 32767".to_owned());
+        }
+        Ok(MidiExportOptions {
+            file_type: self.file_type,
+            ppq,
+            embed_tempo_and_time_signature: self.embed_tempo_and_time_signature,
+            embed_smpte_offset: self.embed_smpte_offset,
+            export_markers: self.export_markers,
+            marker_type: self.marker_type,
+            only_markers_starting_with_hash: self.only_markers_starting_with_hash,
+            export_hidden_markers: self.export_hidden_markers,
+        })
+    }
+}
+
+impl App {
+    pub(super) fn open_midi_export_dialog(&mut self) -> Task<Message> {
+        if let Some(window_id) = self.midi_export_window_id {
+            return iced::window::gain_focus(window_id);
+        }
+        self.midi_export_dialog = Some(MidiExportDialogState::for_project(&self.project));
+        let (window_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(560.0, 390.0),
+            min_size: Some(iced::Size::new(520.0, 360.0)),
+            ..iced::window::Settings::default()
+        });
+        self.midi_export_window_id = Some(window_id);
+        task.discard()
+    }
+
+    pub(super) fn close_midi_export_dialog(&mut self) -> Task<Message> {
+        self.midi_export_dialog = None;
+        self.midi_export_window_id
+            .take()
+            .map_or_else(Task::none, iced::window::close)
+    }
+
+    pub(super) fn browse_midi_export_destination(&mut self) -> Task<Message> {
+        self.pick_path(PathPickerTarget::ExportMidi)
+    }
+
+    pub(super) fn confirm_midi_export(&mut self) -> Task<Message> {
+        let Some(dialog) = self.midi_export_dialog.as_ref() else {
+            return Task::none();
+        };
+        if dialog.destination.trim().is_empty() {
+            self.status = "Enter an output MIDI file path".to_owned();
+            return Task::none();
+        }
+        let options = match dialog.options() {
+            Ok(options) => options,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
+        };
+        let path = with_midi_extension(PathBuf::from(dialog.destination.trim()));
+        let output = path.clone();
+        let snapshot = self.project.snapshot();
+        self.status = format!("Exporting project MIDI to {}…", path.display());
+        let export = Task::perform(
+            run_blocking("aaadaw-midi-export", move || {
+                let result = write_project_midi(&output, snapshot, options);
+                #[cfg(target_os = "android")]
+                if result.is_ok() {
+                    crate::android_platform::sync_saf_document(&output)?;
+                }
+                result
+            }),
+            move |result| Message::ProjectMidiExported(path, result),
+        );
+        Task::batch([export, self.close_midi_export_dialog()])
+    }
+}
+
+fn with_midi_extension(mut path: PathBuf) -> PathBuf {
+    if path.extension().is_none() {
+        path.set_extension("mid");
+    }
+    path
+}
+
+fn write_project_midi(
+    path: &Path,
+    snapshot: ProjectSnapshot,
+    options: MidiExportOptions,
+) -> Result<(), String> {
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    let bytes = encode_standard_midi(&project, options)?;
+    super::config_paths::write_atomic(path, &bytes)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
+}

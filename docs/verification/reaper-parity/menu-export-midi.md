@@ -1,0 +1,9 @@
+# File > Export project MIDI...
+
+Linux REAPER 7.82 / Default 7 exposes Main action 40849 as `File: Export project MIDI...`, with no default shortcut. The native File menu and export settings were probed in an isolated REAPER profile; the configuration dialog screenshot is [menu-export-midi-native-dialog.png](fixtures/menu-export-midi-native-dialog.png), and the menu label/order appears in [menu-file-native.png](fixtures/menu-file-native.png). Probe details and the screenshot SHA-256 are recorded in [menu-export-midi-native.tsv](fixtures/menu-export-midi-native.tsv).
+
+The native defaults are SMF type 1 (multitrack), PPQN 960, with tempo/meter changes, SMPTE offset, and project markers disabled. The marker mode defaults to markers; cues, filtering to names beginning with `#`, and hidden-marker inclusion are optional. In the empty reference project, marker filtering controls were disabled because there were no markers.
+
+AAADAW now opens a dedicated export settings window from the File menu and Action List. It supports type 0 and type 1 files, PPQN conversion, optional tempo/meter and SMPTE metadata, marker or cue-point events, and the `#` name filter. Encoding runs from a project snapshot in a background task and atomically replaces the chosen destination. The core tests cover type 0/1 headers, default options, track/event data, marker filtering, PPQN scaling, tempo ramps, and metadata.
+
+The domain model does not yet represent hidden project markers, so enabling “Export hidden markers” currently cannot include any marker absent from that model. SMPTE export is limited to the project frame rates representable by the Standard MIDI File offset event. Native-generated MIDI bytes and AAADAW's live dialog screenshot have not yet been compared; those checks, hidden-marker support, and full visual/input parity remain open. `FILE-MIDI-EXPORT-001` and `SHELL-MENU-KEYBOARD-001` remain `in_progress`.

@@ -1,0 +1,16 @@
+reference	Linux REAPER 7.82 / Default 7
+main_action	40849
+action_list_name	File: Export project MIDI...
+file_menu_label	Export project MIDI...
+shortcut	none
+dialog_default_file_type	Multitrack MIDI file (type 1 MIDI file)
+dialog_default_ppqn	960
+dialog_embed_tempo_meter	unchecked
+dialog_embed_smpte_offset	unchecked
+dialog_export_markers	unchecked
+dialog_marker_mode	markers
+dialog_filter_controls	Disabled with no project markers
+screenshot	menu-export-midi-native-dialog.png
+screenshot_sha256	359310cf9f6c88fd4415ceffc3e512176c9892f30b5d35e1f903e92ed3f426d1
+probe	Isolated cfgfile profile; ReaScript Main_OnCommand(40849, 0); no project edits saved
+aaadaw_runtime_screenshot	pending: current environment lacks the GLib/GObject development files needed to link the updated desktop binary

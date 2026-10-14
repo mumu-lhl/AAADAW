@@ -33,6 +33,7 @@ mod marker_properties;
 mod media;
 mod menu;
 mod midi_editor;
+mod midi_export;
 mod mixer;
 mod plugin_picker;
 mod region_properties;
@@ -110,6 +111,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         about::view()
     } else if app.render_window_id == Some(window_id) {
         render::view(app)
+    } else if app.midi_export_window_id == Some(window_id) {
+        midi_export::view(app)
     } else if app.tempo_map_window_id == Some(window_id) {
         tempo_map::view(app)
     } else if app.fx_chain_window_id == Some(window_id) {

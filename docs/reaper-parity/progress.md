@@ -949,3 +949,9 @@ Nightly + Cranelift 三项定向 nextest 3/3、最终源码上的 AAADAW app 目
 原厂 Main action 40929 的 Action List 名称为 `File: Open render queue`，无默认快捷键，File 菜单显示 `Queued Renders`。AAADAW 增加独立动作并复用现有 Offline Jobs 面板；Open 操作幂等，不会像 View 菜单 Toggle Offline Jobs 那样关闭已打开的面板。原厂/AAADAW File 菜单截图、哈希、环境和范围见 [Render queue fixture](../verification/reaper-parity/fixtures/menu-render-queue-aaadaw.tsv)。
 
 Nightly + Cranelift 定向回归 2/2、最终源码上的 AAADAW app 目标全量 563/563 通过；Stable AAADAW Clippy `-D warnings`、fmt、diff 和矩阵结构检查通过。回归验证菜单顺序、Action List 分类/名称、无快捷键、Action List 搜索唯一命中，以及连续调用后面板仍打开。原厂 Render Queue 对话框与 AAADAW Offline Jobs 面板布局/操作还有差异，完整 File 菜单与窗口视觉继续为 `in_progress`。
+
+### 2026-10-14 File 菜单 Export project MIDI...
+
+Linux REAPER 7.82 原厂对话框探针确认 Main action 40849、无快捷键，以及 Type 1 / PPQN 960 默认值；tempo/meter、SMPTE 和 marker 导出默认关闭。AAADAW 已实现对应的导出设置窗口与 SMF 编码：Type 0/1、PPQN 转换、可选速度/拍号/SMPTE、marker/cue 和 `#` 筛选；文件写入在后台使用临时文件原子替换。原厂对话框截图、默认状态和未完成边界见 [Export MIDI 验收记录](../verification/reaper-parity/menu-export-midi.md)。核心编码回归 5/5 通过；AAADAW app/tests 目标通过 `cargo check` 与 `clippy -D warnings` 的 Rust 类型和静态检查，期间使用仅提供 pkg-config 元数据的临时 GLib/GObject `.pc` 桩。它们没有提供库或链接能力，所以桌面程序尚未链接、运行，AAADAW 实窗截图仍待补证。
+
+导出隐藏 marker 的能力受当前项目模型没有 hidden 属性限制；SMPTE 仅覆盖 SMF 可编码的帧率。AAADAW 实窗对照、原厂生成文件字节对比、hidden marker 模型和完整交互仍未完成，`FILE-MIDI-EXPORT-001` 与 `SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。

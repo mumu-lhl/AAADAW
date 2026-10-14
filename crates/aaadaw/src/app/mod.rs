@@ -67,6 +67,7 @@ mod marker_manager;
 mod marker_properties;
 mod media;
 mod messages;
+mod midi_export;
 mod offline_job_queue;
 mod project_defaults;
 mod project_io;
@@ -380,6 +381,8 @@ struct App {
     action_input_window_id: Option<iced::window::Id>,
     action_list: action_list::ActionListState,
     render_window_id: Option<iced::window::Id>,
+    midi_export_window_id: Option<iced::window::Id>,
+    midi_export_dialog: Option<midi_export::MidiExportDialogState>,
     tempo_map_window_id: Option<iced::window::Id>,
     time_map_tab: TimeMapTab,
     tempo_map_edits: Vec<TempoMapEdit>,
@@ -1523,6 +1526,8 @@ impl App {
             "About AAADAW".to_owned()
         } else if self.render_window_id == Some(window_id) {
             "Render project to WAV".to_owned()
+        } else if self.midi_export_window_id == Some(window_id) {
+            "Export project MIDI".to_owned()
         } else if self.fx_chain_window_id == Some(window_id) {
             self.fx_chain_track_id
                 .and_then(|track_id| {
@@ -1809,6 +1814,7 @@ impl App {
                     || self.action_list_window_id == Some(*window_id)
                     || self.settings_window_id == Some(*window_id)
                     || self.project_settings_window_id == Some(*window_id)
+                    || self.midi_export_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
             || matches!(
@@ -1867,6 +1873,19 @@ impl App {
                     | Message::OpenClapPluginSettings
                     | Message::OpenRenderWindow
                     | Message::OpenRenderQueue
+                    | Message::OpenMidiExportDialog
+                    | Message::CloseMidiExportDialog
+                    | Message::BrowseMidiExportDestination
+                    | Message::ConfirmMidiExport
+                    | Message::MidiExportDestinationChanged(_)
+                    | Message::MidiExportFileTypeChanged(_)
+                    | Message::MidiExportPpqChanged(_)
+                    | Message::MidiExportEmbedTempoChanged(_)
+                    | Message::MidiExportEmbedSmpteChanged(_)
+                    | Message::MidiExportMarkersChanged(_)
+                    | Message::MidiExportMarkerTypeChanged(_)
+                    | Message::MidiExportHashOnlyChanged(_)
+                    | Message::MidiExportHiddenMarkersChanged(_)
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
@@ -1989,6 +2008,7 @@ impl App {
                 &message,
                 Message::ProjectLoaded(..)
                     | Message::ProjectSaved(..)
+                    | Message::ProjectMidiExported(..)
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
                     | Message::Escape
@@ -2426,6 +2446,63 @@ impl App {
             }
             Message::OpenRenderWindow => task = self.open_render_window(),
             Message::OpenRenderQueue => self.offline_jobs_panel_open = true,
+            Message::OpenMidiExportDialog => task = self.open_midi_export_dialog(),
+            Message::CloseMidiExportDialog => task = self.close_midi_export_dialog(),
+            Message::BrowseMidiExportDestination => {
+                task = self.browse_midi_export_destination();
+            }
+            Message::ConfirmMidiExport => task = self.confirm_midi_export(),
+            Message::MidiExportDestinationChanged(value) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.destination = value;
+                }
+            }
+            Message::MidiExportFileTypeChanged(file_type) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.file_type = file_type;
+                }
+            }
+            Message::MidiExportPpqChanged(value) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.ppq = value;
+                }
+            }
+            Message::MidiExportEmbedTempoChanged(enabled) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.embed_tempo_and_time_signature = enabled;
+                }
+            }
+            Message::MidiExportEmbedSmpteChanged(enabled) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.embed_smpte_offset = enabled;
+                }
+            }
+            Message::MidiExportMarkersChanged(enabled) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.export_markers = enabled;
+                }
+            }
+            Message::MidiExportMarkerTypeChanged(marker_type) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.marker_type = marker_type;
+                }
+            }
+            Message::MidiExportHashOnlyChanged(enabled) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.only_markers_starting_with_hash = enabled;
+                }
+            }
+            Message::MidiExportHiddenMarkersChanged(enabled) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.export_hidden_markers = enabled;
+                }
+            }
+            Message::ProjectMidiExported(path, result) => {
+                self.status = match result {
+                    Ok(()) => format!("Exported project MIDI to {}", path.display()),
+                    Err(error) => format!("MIDI export failed: {error}"),
+                };
+            }
             Message::OpenItemProperties => task = self.open_item_properties(),
             Message::OpenItemNudge => task = self.open_item_nudge(),
             Message::CloseItemNudge => task = self.close_item_nudge(),
@@ -2671,6 +2748,9 @@ impl App {
                     self.about_window_id = None;
                 } else if self.render_window_id == Some(window_id) {
                     self.render_window_id = None;
+                } else if self.midi_export_window_id == Some(window_id) {
+                    self.midi_export_window_id = None;
+                    self.midi_export_dialog = None;
                 } else if self.tempo_map_window_id == Some(window_id) {
                     self.tempo_map_window_id = None;
                     self.tempo_map_edits.clear();
@@ -3814,6 +3894,9 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.midi_export_window_id.is_some() {
+                    return self.close_midi_export_dialog();
+                }
                 if self.pending_focused_track_deletion.take().is_some() {
                     return Task::none();
                 }

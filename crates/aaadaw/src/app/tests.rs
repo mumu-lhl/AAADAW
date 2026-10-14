@@ -5699,6 +5699,37 @@ fn native_open_render_queue_action_opens_the_offline_jobs_panel_idempotently() {
 }
 
 #[test]
+fn native_export_project_midi_action_opens_the_export_settings_window() {
+    let mut app = App::default();
+    let export = commands::for_menu(&app, MainMenu::File)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ExportProjectMidi)
+        .expect("File menu should expose Export project MIDI");
+    assert_eq!(export.label, "Export project MIDI...");
+    assert!(export.enabled);
+    assert_eq!(export.shortcut, None);
+
+    let action = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ExportProjectMidi)
+        .expect("Action List should expose the native MIDI export action");
+    assert_eq!(action.category, "File");
+    assert_eq!(action.label, "Export project MIDI...");
+    assert_eq!(action.shortcut, None);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::ExportProjectMidi));
+    assert!(app.midi_export_window_id.is_some());
+    assert!(app.midi_export_dialog.is_some());
+    assert!(!app.path_picker_busy);
+    assert_eq!(app.active_menu, None);
+
+    let _ = app.update(Message::Escape);
+    assert!(app.midi_export_window_id.is_none());
+    assert!(app.midi_export_dialog.is_none());
+}
+
+#[test]
 fn track_controls_and_undo_change_project_only_through_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

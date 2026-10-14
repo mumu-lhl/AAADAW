@@ -11,6 +11,7 @@ mod fades;
 mod markers;
 mod master;
 mod midi;
+mod midi_file;
 mod project;
 mod project_notes;
 mod regions;
@@ -29,6 +30,7 @@ pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };
+pub use midi_file::{MidiExportOptions, MidiFileType, MidiMarkerType, encode_standard_midi};
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
 pub use regions::{MAX_PROJECT_REGION_NUMBER, MAX_PROJECT_REGION_TICKS, ProjectRegion, RegionId};
