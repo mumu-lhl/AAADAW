@@ -6901,7 +6901,7 @@ mod tests {
     #[test]
     fn timeline_shader_receives_project_markers_for_full_height_lines() {
         let mut project = Project::new();
-        for (position_ticks, name) in [(720, "Bridge"), (2_000, "Outro")] {
+        for (position_ticks, name) in [(720, "Bridge"), (1_200, "Outro")] {
             project
                 .apply(DawAction::InsertProjectMarker {
                     position_ticks,
@@ -6927,7 +6927,7 @@ mod tests {
             mouse::Cursor::Unavailable,
             Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
         );
-        assert_eq!(primitive.marker_ticks, vec![720]);
+        assert_eq!(primitive.marker_ticks, vec![720, 1_200]);
         assert_eq!(primitive.region_spans, vec![(960, 1_920)]);
         assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_some());
 
@@ -6981,7 +6981,7 @@ mod tests {
             mouse::Cursor::Unavailable,
             Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
         );
-        assert_eq!(primitive.marker_ticks, vec![2_000]);
+        assert_eq!(primitive.marker_ticks, vec![1_200]);
 
         project
             .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })

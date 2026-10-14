@@ -4,8 +4,8 @@ use iced::Task;
 
 pub(super) const NAME_INPUT_ID: &str = "project-region-name";
 pub(super) const NUMBER_INPUT_ID: &str = "project-region-number";
-pub(super) const START_INPUT_ID: &str = "project-region-start";
-pub(super) const END_INPUT_ID: &str = "project-region-end";
+pub(super) const POSITION_INPUT_ID: &str = "project-region-position";
+pub(super) const LENGTH_INPUT_ID: &str = "project-region-length";
 
 #[derive(Debug, Clone)]
 pub(super) struct RegionProperties {
@@ -13,8 +13,8 @@ pub(super) struct RegionProperties {
     generation: u64,
     pub(super) name: String,
     pub(super) number: String,
-    pub(super) start: String,
-    pub(super) end: String,
+    pub(super) position: String,
+    pub(super) length: String,
     pub(super) error: Option<String>,
 }
 
@@ -38,18 +38,22 @@ impl App {
             generation: self.project_generation,
             name: region.name().to_owned(),
             number: region.number().to_string(),
-            start: super::item_properties::format_marker_position(
+            position: super::item_properties::format_marker_position(
                 &self.project,
                 region.start_ticks(),
             )
             .unwrap_or_else(|_| format!("{} ticks", region.start_ticks())),
-            end: super::item_properties::format_marker_position(&self.project, region.end_ticks())
-                .unwrap_or_else(|_| format!("{} ticks", region.end_ticks())),
+            length: super::item_properties::format_marker_length(
+                &self.project,
+                region.start_ticks(),
+                region.end_ticks(),
+            )
+            .unwrap_or_else(|_| format!("{} ticks", region.end_ticks() - region.start_ticks())),
             error: None,
         });
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(500.0, 212.0),
-            min_size: Some(iced::Size::new(500.0, 212.0)),
+            size: iced::Size::new(500.0, 190.0),
+            min_size: Some(iced::Size::new(500.0, 190.0)),
             ..iced::window::Settings::default()
         });
         self.region_properties_window_id = Some(window_id);
@@ -79,8 +83,8 @@ impl App {
         let region_id = draft.region_id;
         let name = draft.name.clone();
         let number_text = draft.number.clone();
-        let start_text = draft.start.clone();
-        let end_text = draft.end.clone();
+        let position_text = draft.position.clone();
+        let length_text = draft.length.clone();
         let number = match number_text.parse::<u32>() {
             Ok(number) if (1..=aaadaw_core::MAX_PROJECT_REGION_NUMBER).contains(&number) => number,
             _ => {
@@ -91,15 +95,20 @@ impl App {
             }
         };
         let start_ticks =
-            match super::item_properties::parse_marker_position(&self.project, &start_text) {
+            match super::item_properties::parse_marker_position(&self.project, &position_text) {
                 Ok(tick) => tick,
-                Err(error) => return self.region_error(format!("Invalid region start: {error}")),
+                Err(error) => {
+                    return self.region_error(format!("Invalid region position: {error}"));
+                }
             };
-        let end_ticks =
-            match super::item_properties::parse_marker_position(&self.project, &end_text) {
-                Ok(tick) => tick,
-                Err(error) => return self.region_error(format!("Invalid region end: {error}")),
-            };
+        let end_ticks = match super::item_properties::parse_marker_length_end_tick(
+            &self.project,
+            start_ticks,
+            &length_text,
+        ) {
+            Ok(tick) => tick,
+            Err(error) => return self.region_error(format!("Invalid region length: {error}")),
+        };
         if start_ticks >= end_ticks {
             return self.region_error("Region end must be after its start");
         }

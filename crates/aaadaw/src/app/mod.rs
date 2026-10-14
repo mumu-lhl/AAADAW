@@ -1929,8 +1929,8 @@ impl App {
                     | Message::CloseMarkerProperties
                     | Message::RegionNameChanged(_)
                     | Message::RegionNumberChanged(_)
-                    | Message::RegionStartChanged(_)
-                    | Message::RegionEndChanged(_)
+                    | Message::RegionPositionChanged(_)
+                    | Message::RegionLengthChanged(_)
                     | Message::ApplyRegionProperties
                     | Message::CloseRegionProperties
                     | Message::OpenMarkerManager
@@ -2631,15 +2631,15 @@ impl App {
                     draft.error = None;
                 }
             }
-            Message::RegionStartChanged(value) => {
+            Message::RegionPositionChanged(value) => {
                 if let Some(draft) = &mut self.region_properties {
-                    draft.start = value;
+                    draft.position = value;
                     draft.error = None;
                 }
             }
-            Message::RegionEndChanged(value) => {
+            Message::RegionLengthChanged(value) => {
                 if let Some(draft) = &mut self.region_properties {
-                    draft.end = value;
+                    draft.length = value;
                     draft.error = None;
                 }
             }

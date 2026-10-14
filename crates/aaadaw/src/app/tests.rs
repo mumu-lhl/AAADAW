@@ -794,9 +794,14 @@ fn selected_marker_visibility_action_matches_native_mixed_selection_and_undo() {
         commands::stable_id(command).as_deref(),
         Some("ruler.toggle-selected-project-markers")
     );
+    assert!(
+        commands::for_actions_menu(&app)
+            .iter()
+            .any(|entry| entry.id == command && !entry.enabled)
+    );
     assert_eq!(
         commands::find(&app, "Ruler: Show/hide selected project markers"),
-        Some(command)
+        None
     );
 
     for (position_ticks, name) in [(960, "Hidden"), (1_920, "Visible"), (2_880, "Other")] {
@@ -819,6 +824,10 @@ fn selected_marker_visibility_action_matches_native_mixed_selection_and_undo() {
         .unwrap();
     app.selected_render_markers = HashSet::from([hidden, selected_visible]);
     assert!(commands::is_enabled(&app, command));
+    assert_eq!(
+        commands::find(&app, "Ruler: Show/hide selected project markers"),
+        Some(command)
+    );
     assert_eq!(app.project.markers()[2].id(), unselected);
 
     let _ = app.update(Message::ExecuteCommand(command));
@@ -857,12 +866,17 @@ fn selected_region_visibility_actions_batch_selection_with_one_undo_and_redo() {
         commands::stable_id(selected_regions_command).as_deref(),
         Some("ruler.toggle-selected-project-regions")
     );
+    assert!(
+        commands::for_actions_menu(&app)
+            .iter()
+            .any(|entry| entry.id == selected_both_command && !entry.enabled)
+    );
     assert_eq!(
         commands::find(
             &app,
             "Ruler: Show/hide selected project regions and markers"
         ),
-        Some(selected_both_command)
+        None
     );
 
     for (start_ticks, end_ticks, name) in [
@@ -909,6 +923,13 @@ fn selected_region_visibility_actions_batch_selection_with_one_undo_and_redo() {
     let marker_id = app.project.markers()[0].id();
     app.selected_render_markers = HashSet::from([marker_id]);
     assert!(commands::is_enabled(&app, selected_both_command));
+    assert_eq!(
+        commands::find(
+            &app,
+            "Ruler: Show/hide selected project regions and markers"
+        ),
+        Some(selected_both_command)
+    );
     let _ = app.update(Message::ExecuteCommand(selected_both_command));
     assert!(app.project.regions()[0].is_visible());
     assert!(app.project.markers()[0].is_visible());
@@ -1046,10 +1067,12 @@ fn region_manager_selects_edits_filters_and_deletes_with_undo() {
 
     let _ = app.update(Message::MarkerManagerEditRegion(region_id));
     assert_eq!(app.region_properties.as_ref().unwrap().number, "1");
+    assert_eq!(app.region_properties.as_ref().unwrap().position, "1.1.00");
+    assert_eq!(app.region_properties.as_ref().unwrap().length, "0.2.00");
     let _ = app.update(Message::RegionNameChanged("Verse A".to_owned()));
     let _ = app.update(Message::RegionNumberChanged("4".to_owned()));
-    let _ = app.update(Message::RegionStartChanged("1.2.00".to_owned()));
-    let _ = app.update(Message::RegionEndChanged("2.1.00".to_owned()));
+    let _ = app.update(Message::RegionPositionChanged("1.2.00".to_owned()));
+    let _ = app.update(Message::RegionLengthChanged("0.3.00".to_owned()));
     let _ = app.update(Message::ApplyRegionProperties);
     let updated = app
         .project
@@ -1436,12 +1459,22 @@ fn region_properties_reject_invalid_bounds_without_mutating_and_cancel_drafts() 
     assert!(app.region_properties_window_id.is_some());
     assert!(app.region_properties.as_ref().unwrap().error.is_some());
 
+    let _ = app.update(Message::OpenMarkerManager);
+    assert!(app.marker_manager_window_id.is_some());
+    assert!(app.region_properties_window_id.is_some());
+    let _ = app.update(Message::RegionNumberChanged("1".to_owned()));
+    let _ = app.update(Message::RegionLengthChanged("0.0.00".to_owned()));
+    let _ = app.update(Message::ApplyRegionProperties);
+    assert_eq!(app.project.regions()[0].end_ticks(), 1_920);
+    assert!(app.region_properties.as_ref().unwrap().error.is_some());
+
     let revision = app.revision;
     let _ = app.update(Message::RegionNameChanged("Discarded".to_owned()));
     let _ = app.update(Message::CloseRegionProperties);
     assert_eq!(app.project.regions()[0].name(), "Intro");
     assert_eq!(app.revision, revision);
     assert!(app.region_properties_window_id.is_none());
+    assert!(app.marker_manager_window_id.is_some());
 }
 
 #[test]

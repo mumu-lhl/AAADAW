@@ -41,6 +41,28 @@ pub(super) fn format_marker_length(
     beats::format_length(project, start_sample, end_sample - start_sample)
 }
 
+pub(super) fn parse_marker_length_end_tick(
+    project: &Project,
+    start_tick: u64,
+    text: &str,
+) -> Result<u64, String> {
+    let start_sample = project
+        .sample_at_tick_position(start_tick as f64)
+        .map_err(|error| error.to_string())?;
+    let length_samples = beats::parse_length(project, text, start_sample)?;
+    let end_tick = project
+        .tick_at_sample_position(start_sample + length_samples)
+        .map_err(|error| error.to_string())?
+        .round();
+    if !end_tick.is_finite()
+        || end_tick <= start_tick as f64
+        || end_tick > aaadaw_core::MAX_PROJECT_REGION_TICKS as f64
+    {
+        return Err("Length must end after the region start within the supported range".to_owned());
+    }
+    Ok(end_tick as u64)
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TimeUnit {

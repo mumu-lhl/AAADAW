@@ -1001,3 +1001,11 @@ Linux REAPER 7.82 / Default 7 的 Region/Marker Manager 中 Ctrl-选择隐藏的
 在 Linux AAADAW 新桌面二进制中，使用同一个 Region/Marker fixture 操作 Action List 的 `ruler.toggle-project-regions-and-markers`。Region 标尺隐藏、Marker 标尺显示时执行动作，两条标尺均显示；Ctrl+Z 恢复混合状态；Ctrl+Shift+Z 再次显示两者。随后从两者可见状态执行动作，两条标尺均隐藏；Ctrl+Z 恢复两者可见，Ctrl+Shift+Z 再次隐藏。Action List、混合状态、显示、Undo、隐藏与 Redo 截图及 binary hash/Build ID 见[全局组合动作运行清单](../verification/reaper-parity/fixtures/region-visibility-global-combined-aaadaw.tsv)。该状态转换与 Linux REAPER 7.82 Main action 43489 的实窗结果一致。
 
 App 测试 `region_lane_view_actions_match_mixed_lane_undo_and_redo` 现覆盖混合 Lane 状态下组合动作的显示、Undo/Redo，也覆盖两者可见时一次动作隐藏两者。测试源码已通过 AAADAW app/test Clippy `-D warnings` 和类型检查；app 测试链接因容器磁盘空间不足未生成测试二进制，未运行。此前记录“全局组合动作尚待实窗验证”现由本次结果更新；Region Manager 字段/布局、边界手势、ID 分配、时间格式、循环/Repeat、Native 项目互操作与完整主题几何仍未验收，`PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 和 P4 保持 `in_progress`。
+
+### 2026-10-14 Region 属性窗 Position/Length 与 Manager 入口
+
+AAADAW Edit Region 窗口现在使用 REAPER 属性窗中的 Position 与 Length 字段，而不是分别编辑 Start/End。两字段使用当前 Bars.Beats（`bar.beat.hundredths`）格式，Length 按编辑后的 Position 锚定到项目 Tempo/Meter，再转换为 Core 保存的边界 ticks；无效、零长度或越界长度保留草稿且不写项目。增加 `Region Manager...` 入口；打开 Manager 后属性草稿窗仍保持存在。Core/SQLite schema 不变，实时音频 callback 无改动。
+
+Linux AAADAW 新桌面版实窗显示 Name、ID、Position、Length（示例 `1.1.00` / `0.2.00`）。点击 `Region Manager...` 后 Manager 窗口打开，属性窗口仍存在于 X11 窗口树中。两张实窗截图、binary Build ID/SHA-256 与 fixture 项目哈希见[属性窗运行清单](../verification/reaper-parity/fixtures/region-properties-aaadaw.tsv)；未把输入模拟未完成的试验记作文本编辑成功证据。
+
+`region_manager_selects_edits_filters_and_deletes_with_undo` 覆盖 Position/Length 初值、修改后单步提交/Undo 与属性窗打开 Manager；属性测试覆盖 Manager 启动、零长度拒绝与 Cancel。完整 App 测试套件 572/572 通过，app/test strict Clippy、fmt 和 `git diff --check` 通过。Lane 数值、Region Render Matrix、Set/Reset color、其它时间格式/负时间、窗口其余控件与 Default 7 视觉仍未验收；`PROJECT-REGIONS-001` 和 P4 继续 `in_progress`。
