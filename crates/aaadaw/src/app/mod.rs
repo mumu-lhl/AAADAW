@@ -1592,6 +1592,7 @@ impl App {
             && matches!(
                 &message,
                 Message::ActionListQueryChanged(_)
+                    | Message::ActionListFilterSubmitted
                     | Message::ActionListSelect(_)
                     | Message::ActionListSelectBinding(_)
                     | Message::ActionListAddBinding
@@ -1780,6 +1781,7 @@ impl App {
                     | Message::OpenActionMacroEditor
                     | Message::CloseActionList
                     | Message::ActionListQueryChanged(_)
+                    | Message::ActionListFilterSubmitted
                     | Message::ActionListSelect(_)
                     | Message::ActionListSelectBinding(_)
                     | Message::ActionInputConfirm
@@ -3320,6 +3322,19 @@ impl App {
             }
             Message::CloseActionList => task = self.close_action_list(),
             Message::ActionListQueryChanged(query) => self.action_list.set_query(query),
+            Message::ActionListFilterSubmitted => {
+                if self.action_list_selected_entry().is_none()
+                    && let Some(id) = self
+                        .action_list_entries()
+                        .first()
+                        .and_then(|entry| commands::stable_id(entry.id))
+                {
+                    self.action_list.select(id);
+                }
+                task = iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::focusable::unfocus(),
+                );
+            }
             Message::ActionListSelect(id) => self.action_list.select(id),
             Message::ActionListSelectBinding(index) => {
                 self.action_list.selected_binding = Some(index)

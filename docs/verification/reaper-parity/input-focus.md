@@ -20,4 +20,10 @@
 
 AAADAW 的 Action List 独立窗口将键盘事件交给 `action_list_keyboard_event`，不会把 Filter 中未消费的 `Ctrl+Z` 送到主工程快捷键。回归 `action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_window` 验证 Action List 窗口里的 Space 与 `Ctrl+Z` 不运行主窗口动作，而同一 `Ctrl+Z` 到达主窗口后会执行 Undo；Escape 关闭 Action List。Filter 的输入和多词搜索由现有 Action List 查询路径处理。
 
+### Action List Filter 的 Enter
+
+REAPER 7.82 / Default 7 在 Filter 输入 `undo` 后，第一次 Enter 会把选择/焦点移到 `Edit: Undo` 结果，不执行动作；第二次 Enter 才执行 Undo。原厂 ReaScript 状态探针记录第一次之后仍为 1 条轨道、状态计数 2，第二次之后为 0 条轨道、状态计数 3，播放始终停止。原厂步骤、状态与截图 SHA-256 见 [Enter 原厂 fixture](fixtures/action-list-enter-native.tsv)；[第一次 Enter 前](fixtures/action-list-filter-enter-native-before.png)和[第一次 Enter 后](fixtures/action-list-filter-enter-native-first.png)截图显示 Filter 失焦、Undo 行被选中。第二次之后的状态保存在探针 TSV；当时独立的音频硬件错误窗口遮住了 Action List，因此没有归档该步截图。
+
+AAADAW 的 Filter 现在将 Enter 作为提交：若没有可见的当前选择，则选中首个可见动作，然后移开 Filter 焦点。后续 Enter 由 Action List 的动作键盘路由执行所选动作。回归 `action_list_filter_enter_focuses_results_before_running_selected_action` 验证第一次 Enter 不改变轨道数，第二次才执行 Undo。真实 AAADAW 截图见[第一次 Enter](fixtures/action-list-filter-enter-aaadaw-first.png)和[第二次 Enter](fixtures/action-list-filter-enter-aaadaw-second.png)，对应状态与 SHA-256 见 [AAADAW fixture](fixtures/action-list-enter-aaadaw.tsv)。
+
 其它文本字段、AltGr 与非 US 键盘、脚本编辑区、插件窗口、浮动工具、每个 Action Section 对文本焦点的穿透例外尚未逐项验证；INPUT-FOCUS-001 继续 `in_progress`。

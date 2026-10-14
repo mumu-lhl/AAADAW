@@ -86,6 +86,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 text("Filter").size(12),
                 text_input("", &app.action_list.query)
                     .on_input(Message::ActionListQueryChanged)
+                    .on_submit(Message::ActionListFilterSubmitted)
                     .size(12),
                 button(text("Clear").size(12))
                     .on_press(Message::ActionListQueryChanged(String::new())),

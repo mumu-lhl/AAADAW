@@ -4500,6 +4500,39 @@ fn action_list_filter_focus_contains_global_shortcuts_and_escape_closes_the_wind
 }
 
 #[test]
+fn action_list_filter_enter_focuses_results_before_running_selected_action() {
+    let main_window = iced::window::Id::unique();
+    let action_list_window = iced::window::Id::unique();
+    let mut app = App {
+        main_window_id: Some(main_window),
+        action_list_window_id: Some(action_list_window),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    app.action_list.set_query("undo".to_owned());
+    app.action_list.select("edit.undo".to_owned());
+
+    let enter = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Enter),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        enter.clone(),
+        iced::event::Status::Captured,
+        action_list_window,
+    ));
+    let _ = app.update(Message::ActionListFilterSubmitted);
+    assert_eq!(app.project.tracks().len(), 1);
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        enter,
+        iced::event::Status::Ignored,
+        action_list_window,
+    ));
+    assert!(app.project.tracks().is_empty());
+}
+
+#[test]
 fn shortcut_add_capture_preserves_existing_bindings_and_duplicate_candidates() {
     let mut app = App::default();
     let _ = app.update(Message::AddShortcutBinding("edit.undo".to_owned()));

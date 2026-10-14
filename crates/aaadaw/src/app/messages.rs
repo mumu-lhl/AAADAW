@@ -180,6 +180,7 @@ pub(crate) enum Message {
     OpenActionMacroEditor,
     CloseActionList,
     ActionListQueryChanged(String),
+    ActionListFilterSubmitted,
     ActionListSelect(String),
     ActionListSelectBinding(usize),
     ActionListAddBinding,
