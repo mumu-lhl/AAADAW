@@ -333,6 +333,115 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
 }
 
 #[test]
+fn non_looping_item_offset_past_source_eof_renders_silence_without_underrun() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[16_384; 4], 48_000)).expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Past source end".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://past-source-end".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5,
+            length_samples: 4,
+        })
+        .expect("item offset past source EOF is a valid placement");
+    let item = project.audio_items()[0].clone();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("past-EOF item should start a worker");
+    worker.join().expect("EOF should finish the source stream");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        4,
+    )
+    .expect("item stream should match project audio item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("past-EOF item should render silence");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output, [[0.0; 2]; 4]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn non_looping_item_pads_short_source_with_silence_to_item_end() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[16_384; 4], 48_000)).expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Short source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://short-source".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 6,
+        })
+        .expect("item may extend beyond the source end");
+    let item = project.audio_items()[0].clone();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("short source item should start a worker");
+    worker.join().expect("EOF should finish the source stream");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        6,
+    )
+    .expect("item stream should match project audio item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("short source item should render through its timeline end");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(
+        output[..4]
+            .iter()
+            .all(|frame| frame[0] > 0.0 && frame[1] > 0.0)
+    );
+    assert_eq!(output[4..], [[0.0; 2]; 2]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
 fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
     let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
     let mut project = Project::with_settings(

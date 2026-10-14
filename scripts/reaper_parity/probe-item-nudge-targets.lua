@@ -1,8 +1,10 @@
 -- Run in an unsaved, stopped Linux REAPER 7.82 / Default 7 project.
 -- Choose a target and amount in the open Nudge/Set dialog, then write a unique
--- case name to AAADAW_REAPER_PROBE_DIR/item-nudge-target-command.txt. Optionally
--- append |<source-offset-seconds> to seed the probe take. The script resets the
--- item, runs Nudge right once and records the result. Target and amount are
+-- case name to AAADAW_REAPER_PROBE_DIR/item-nudge-target-command.txt. The command
+-- may be `case|source-offset-seconds|left|0` or
+-- `case|source-offset-seconds|right|1`; source offset, direction and loop-source
+-- flag default to 0, right and enabled. The script resets the item, runs the
+-- matching Nudge action once and records the result. Target and amount are
 -- intentionally driven through the real UI.
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
@@ -35,13 +37,16 @@ output:write("dialog_action\t41226\tItem edit: Nudge/Set...\n")
 output:write("nudge_right_action\t41249\tItem edit: Nudge right by last nudge dialog settings\n")
 output:flush()
 
-local function write_case(name)
+local function write_case(name, state_change_before)
   output:write(name, "_state_change_count\t", reaper.GetProjectStateChangeCount(0), "\n")
+  output:write(name, "_state_change_delta\t",
+    reaper.GetProjectStateChangeCount(0) - state_change_before, "\n")
   output:write(name, "_edit_cursor\t", string.format("%.9f", reaper.GetCursorPosition()), "\n")
   output:write(name, "_track_item_count\t", reaper.CountTrackMediaItems(track), "\n")
   for index = 0, reaper.CountTrackMediaItems(track) - 1 do
     local current = reaper.GetTrackMediaItem(track, index)
     local take = reaper.GetActiveTake(current)
+    output:write(name, "_loop_source\t", reaper.GetMediaItemInfo_Value(current, "B_LOOPSRC"), "\n")
     output:write(name, "_item\t", index,
       "\t", string.format("%.9f", reaper.GetMediaItemInfo_Value(current, "D_POSITION")),
       "\t", string.format("%.9f", reaper.GetMediaItemInfo_Value(current, "D_LENGTH")),
@@ -52,13 +57,14 @@ local function write_case(name)
   output:flush()
 end
 
-local function reset_probe_item(source_offset_seconds)
+local function reset_probe_item(source_offset_seconds, loop_source_enabled)
   for index = reaper.CountTrackMediaItems(track) - 1, 1, -1 do
     reaper.DeleteTrackMediaItem(track, reaper.GetTrackMediaItem(track, index))
   end
   item = assert(reaper.GetTrackMediaItem(track, 0), "probe item was removed")
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", 2)
   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 10)
+  reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", loop_source_enabled and 1 or 0)
   local take = reaper.GetActiveTake(item)
   if take then
     reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", source_offset_seconds or 0)
@@ -75,12 +81,21 @@ local function poll_command()
     input:close()
     os.remove(command_path)
     if command and command ~= "" then
-      local name, source_offset_seconds = command:match("^([^|]+)|([%d%.]+)$")
+      local name, source_offset_seconds, direction, loop_source =
+        command:match("^([^|]+)|([%d%.]+)|([^|]+)|([01])$")
+      if not name then
+        name, source_offset_seconds, direction = command:match("^([^|]+)|([%d%.]+)|([^|]+)$")
+      end
+      if not name then name, source_offset_seconds = command:match("^([^|]+)|([%d%.]+)$") end
       if not name then name = command end
-      reset_probe_item(tonumber(source_offset_seconds) or 0)
-      reaper.Main_OnCommand(41249, 0)
+      direction = direction == "left" and "left" or "right"
+      reset_probe_item(tonumber(source_offset_seconds) or 0, loop_source ~= "0")
+      local action = direction == "left" and 41250 or 41249
+      output:write(name, "_nudge_action\t", action, "\n")
+      local state_change_before = reaper.GetProjectStateChangeCount(0)
+      reaper.Main_OnCommand(action, 0)
       reaper.UpdateArrange()
-      write_case(name)
+      write_case(name, state_change_before)
     end
   end
   reaper.defer(poll_command)

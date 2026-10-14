@@ -879,28 +879,6 @@ impl App {
                     );
                     return;
                 };
-                let Some(source_length) = scale_sample_delta(
-                    i128::from(item.length_samples()),
-                    source_rate,
-                    project_rate,
-                )
-                .and_then(|length| u64::try_from(length).ok()) else {
-                    self.item_nudge_dialog.error =
-                        Some("Item source length is outside the supported range".to_owned());
-                    return;
-                };
-                let Some(source_end) = offset.checked_add(source_length) else {
-                    self.item_nudge_dialog.error =
-                        Some("Contents nudge is outside the supported source range".to_owned());
-                    return;
-                };
-                if source_end > frame_count {
-                    self.item_nudge_dialog.error = Some(
-                        "Contents nudge would extend beyond the audio source; looping is not enabled"
-                            .to_owned(),
-                    );
-                    return;
-                }
                 offset
             };
             if source_offset_samples != item.source_offset_samples() {

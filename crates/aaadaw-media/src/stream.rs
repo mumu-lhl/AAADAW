@@ -1085,6 +1085,13 @@ fn run_worker<P: FeedProducer>(
                                 &mut output_timeline_sample,
                             );
                         }
+                        push_remaining_item_silence(
+                            &mut producer,
+                            &mut output_samples_remaining,
+                            &cancelled,
+                            &position,
+                            &mut output_timeline_sample,
+                        );
                         return Ok(());
                     }
                     if initial_loop_pass {
@@ -1149,9 +1156,44 @@ fn run_worker<P: FeedProducer>(
                         &mut output_timeline_sample,
                     );
                 }
+                push_remaining_item_silence(
+                    &mut producer,
+                    &mut output_samples_remaining,
+                    &cancelled,
+                    &position,
+                    &mut output_timeline_sample,
+                );
                 return Ok(());
             }
         }
+    }
+}
+
+/// Fills the remainder of a finite timeline item with silence after its source ends.
+/// This runs on the feeder thread; the realtime callback only consumes already queued frames.
+fn push_remaining_item_silence<P: FeedProducer>(
+    producer: &mut P,
+    remaining: &mut Option<u64>,
+    cancelled: &AtomicBool,
+    position: &AudioStreamPosition,
+    timeline_sample: &mut u64,
+) {
+    const SILENCE_CHUNK_FRAMES: usize = 1_024;
+    let silence = [P::Frame::zero(); SILENCE_CHUNK_FRAMES];
+    while let Some(remaining_frames) = remaining.as_mut().filter(|frames| **frames > 0) {
+        if cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        let frame_count = usize::try_from((*remaining_frames).min(SILENCE_CHUNK_FRAMES as u64))
+            .expect("silence chunk length fits usize");
+        push_with_backpressure(
+            producer,
+            &silence[..frame_count],
+            cancelled,
+            position,
+            timeline_sample,
+        );
+        *remaining_frames -= frame_count as u64;
     }
 }
 

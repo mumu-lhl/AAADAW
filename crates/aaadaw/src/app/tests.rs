@@ -425,14 +425,14 @@ fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
     let before = app.project.audio_items()[0].clone();
     let revision = app.revision;
     let _ = app.update(Message::NudgeSelectedItems(-1));
-    assert_eq!(app.revision, revision);
-    assert_eq!(app.project.audio_items()[0], before);
-    assert!(
-        app.item_nudge_dialog
-            .error
-            .as_deref()
-            .is_some_and(|error| { error.contains("extend beyond the audio source") })
-    );
+    let edited = &app.project.audio_items()[0];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(edited.start_sample(), before.start_sample());
+    assert_eq!(edited.length_samples(), before.length_samples());
+    assert_eq!(edited.source_offset_samples(), 77_950);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 66_925);
     drop(app);
     let _ = std::fs::remove_file(project_path);
 }

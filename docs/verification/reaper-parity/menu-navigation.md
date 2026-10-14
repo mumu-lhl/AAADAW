@@ -98,4 +98,4 @@ Linux REAPER 7.82 / Default 7 的 Item 菜单在 `Select all` 后显示 `Nudge/s
 
 AAADAW 现在用同一个命令 ID 注册 Action List 与 Item 菜单入口，Action List 保留原厂完整名称，菜单显示短标签和 N。实际运行的 AAADAW 主窗口截图见 [Nudge 菜单 fixture](fixtures/item-nudge-aaadaw-menu.png)。对话框基础位置操作、原厂 Nudge 结果、原厂/AAADAW 实窗截图及差异见 [Nudge/Set 验收记录](item-nudge.md)。
 
-菜单标签、位置和 N 快捷键已做实窗对照；Item 菜单中缺失的命令、其它禁用状态和整体菜单布局仍未对齐。Nudge 的音频边界目标、非循环源边界约束、AAADAW 内的循环源 Contents 绕回与 Duplicate 已覆盖一部分；REAPER 循环边界、MIDI 目标、Set/Snap 组合和 Undo 行为仍需原厂验证，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体保持 `in_progress`。
+菜单标签、位置和 N 快捷键已做实窗对照；Item 菜单中缺失的命令、其它禁用状态和整体菜单布局仍未对齐。Nudge 的整份循环源边界已由 REAPER 7.82 原生探针确认；非循环正偏移越过 EOF 已在 AAADAW 实现并验证尾部静音，原厂允许的负源偏移仍因 AAADAW 当前有符号偏移模型缺失而未对齐。Duplicate 已覆盖一部分；显式 bounded section、MIDI 目标、Set/Snap 组合和 Undo 行为仍需原厂验证，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体保持 `in_progress`。
