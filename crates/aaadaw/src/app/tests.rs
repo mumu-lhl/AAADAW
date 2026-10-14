@@ -849,7 +849,7 @@ fn selected_marker_visibility_action_matches_native_mixed_selection_and_undo() {
 }
 
 #[test]
-fn selected_region_visibility_actions_batch_selection_with_one_undo() {
+fn selected_region_visibility_actions_batch_selection_with_one_undo_and_redo() {
     let mut app = App::default();
     let selected_regions_command = CommandId::ToggleSelectedProjectRegions;
     let selected_both_command = CommandId::ToggleSelectedProjectRegionsAndMarkers;
@@ -914,6 +914,9 @@ fn selected_region_visibility_actions_batch_selection_with_one_undo() {
     assert!(app.project.markers()[0].is_visible());
     let _ = app.update(Message::Undo);
     assert!(!app.project.regions()[0].is_visible());
+    assert!(app.project.markers()[0].is_visible());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.regions()[0].is_visible());
     assert!(app.project.markers()[0].is_visible());
 }
 

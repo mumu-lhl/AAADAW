@@ -20,7 +20,9 @@ undo_screenshot_sha256	e67291749bb4e3d6d0eb9cc1460cd244bdf30e2352ea941aea588151b
 redo_screenshot	region-visibility-redo-aaadaw.png
 redo_screenshot_sha256	5c47c1ffaee1e8d0b3ad2d3d09ffef054f984523a4f786fe53a96704a9d62579
 runtime_observation	Action List action ruler.toggle-selected-project-regions changed the selected Region from hidden to shown; Ctrl+Z restored hidden, and Ctrl+Shift+Z showed it again.
-menu_observation	View menu Region ruler item and checked state were captured; no AAADAW global-combined action was executed in this runtime pass.
+menu_observation	View menu Region ruler item and checked state were captured; the all-Regions-and-Markers lane action was not executed in this runtime pass.
+selected_combined_action_manifest	region-visibility-selected-combined-aaadaw.tsv
+selected_combined_action_observation	Real desktop selection of one hidden Region and one visible Marker; the selected-group Action List command showed both, Undo restored the mixed state, and Redo showed both again.
 verification	Core visibility/Undo/snapshot test and Storage schema 47-to-48 migration/round-trip tests passed; AAADAW app tests typechecked and Clippy passed. App test linking was attempted, stopped when free disk space fell below 100 MiB, and did not produce a runnable test binary. After package-level cleanup the desktop binary rebuilt with the same SHA-256/Build ID and launched again on Xvfb :134.
 comparison_scope	New desktop binary startup, Arrange Region rendering, Manager Visible state, Action List discovery, selected Region action, Undo/Redo, and View menu state.
-limitation	No pixel geometry/theme parity claim; native action 43488 mixed selection and AAADAW global-combined runtime behavior remain open; PROJECT-REGIONS-001 remains in_progress.
+limitation	No pixel geometry/theme parity claim; AAADAW all-lanes Region+Marker action and broader selection permutations remain open; PROJECT-REGIONS-001 remains in_progress.

@@ -18,7 +18,7 @@
 - Region/Marker Manager 的 Regions 默认过滤状态现在由真实 Region 数据驱动。Region 行显示 `R<number>`、名称、Start、End、Length、Visible 与光标是否位于区间内；可按名称、编号、起点或终点筛选。选中行设置 Time Selection 并将编辑光标移动至起点；Edit 窗口可草拟 Name、ID、Start、End，统一提交为一条可撤销更新；Delete 使用稳定 ID 并支持 Undo。
 - Region 属性窗复用当前 Default 7 `bar.beat.hundredths` 位置格式。无效编号/位置、反向或零长度范围会保留窗口且不改工程；Cancel、Escape 或关闭窗口丢弃草稿。其它原厂时间显示模式和负位置还未支持。
 - 原厂 `40615`/`40616` 已有对应的 “Delete region near cursor” / “Edit region near cursor” 命令。Delete 使用实测包含边界与重叠优先级，复用稳定 RegionId 的 `DawAction`，支持 Undo 且受工程忙碌保护；Edit 按当前光标目标打开 AAADAW 属性窗。这个 AAADAW 窗口仍只有 Name、ID、Start、End，缺少原厂 Lane、独立 Length、颜色操作和 Region Manager/Render Matrix 按钮，不能视为原厂对话框复刻完成。
-- Manager 的 Region `Visible` 列、View 菜单 Region 标尺开关及 Action List 的所选/全部 Region 与 Regions+Markers 动作已经接入。单个 Region 可见性和整个 Region 标尺状态分别进入撤销、快照及 SQLite；隐藏项目不会绘制或响应时间线命中。原厂 `43486` 与 AAADAW 所选 Region 动作均在实际窗口中执行，并验证单步 Undo/Redo；AAADAW 菜单、Manager、Action List、Arrange 与历史状态截图见[运行清单](fixtures/region-visibility-aaadaw.tsv)。全局组合动作 `43489` 的原厂探针观察到：若 Region 或 Marker 标尺任一隐藏则一次运行显示两者；两者均显示时一次运行隐藏两者。组合动作与混合 Region/Marker 选区行为尚未完全实测，不能据此宣称动作语义全覆盖。
+- Manager 的 Region `Visible` 列、View 菜单 Region 标尺开关及 Action List 的所选/全部 Region 与 Regions+Markers 动作已经接入。单个 Region 可见性和整个 Region 标尺状态分别进入撤销、快照及 SQLite；隐藏项目不会绘制或响应时间线命中。原厂 `43486` 与 AAADAW 所选 Region 动作均在实际窗口中执行，并验证单步 Undo/Redo；AAADAW 菜单、Manager、Action List、Arrange 与历史状态截图见[运行清单](fixtures/region-visibility-aaadaw.tsv)。原厂 `43488` 用混合选区（R1 隐藏、M1 可见）实测为统一显示所有选中项；单步 Undo 恢复混合状态，Main action `40030` Redo 再次显示所有选中项。AAADAW 同一混合选区的 Action List 执行、Undo、Redo 也已实窗验证，见[组合动作运行记录](fixtures/region-visibility-selected-combined-aaadaw.tsv)。全局组合动作 `43489` 的原厂探针观察到：若 Region 或 Marker 标尺任一隐藏则一次运行显示两者；两者均显示时一次运行隐藏两者。AAADAW 的全部 Regions+Markers 标尺动作仍待实窗验证，App 测试套件也未完成链接。
 
 ## 验证
 
@@ -29,9 +29,10 @@
 - `ruler_region_click_selects_its_range_and_start_cursor`、`ruler_region_start_edge_drag_updates_one_boundary`、`ruler_region_end_edge_drag_updates_one_boundary`、`ruler_region_body_drag_moves_range_without_changing_length`、`ruler_region_edge_drag_snaps_to_arrange_grid` 覆盖标尺手势与预览；`ruler_region_edit_preserves_identity_and_is_one_undoable_action`、`ruler_region_edit_obeys_project_busy_guard` 和 `ruler_region_edit_rejects_a_stale_drag_after_another_edit` 覆盖单动作提交、忙碌守卫和并发草稿冲突保护。
 - `timeline_shader_receives_project_markers_for_full_height_lines` 同时确认 Region 区间被交给 GPU Arrange primitive；这验证数据接线，不构成原厂像素或色彩验收。
 - `region_and_ruler_visibility_are_undoable_and_survive_snapshots` 验证领域动作、Undo/Redo 与快照；Storage 回归验证 schema 47→48 默认可见迁移及 Region/标尺状态往返。应用测试已通过类型检查和 Clippy；App 测试链接曾启动但因空间不足中止，未运行套件，因此以新构建桌面版的真实窗口交互补充验证。
+- `selected_region_visibility_actions_batch_selection_with_one_undo_and_redo` 源码回归覆盖混合 Region/Marker 集合统一显示、单步 Undo/Redo 与动作注册；测试源码已通过类型检查和 Clippy，App 测试 suite 因链接磁盘空间不足未运行。原厂 action 43488 的实际混合选区、Undo/Redo 实窗证据见[原厂记录](fixtures/region-visibility-native.tsv)。
 
 最终代码验证：`DISPLAY=:101 rtk cargo nextest run --workspace --no-fail-fast -j 1` 为 952/952 通过、0 跳过（66 个测试二进制）；workspace all-target Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt 和 `git diff --check` 通过。Region 不改变实时音频 callback 的数据结构或同步方式，项目编辑仍受现有 playback/recording busy guard 约束。
 
 ## 尚未对齐
 
-Region 的完整原厂行为仍未完成：本次验证了 40615/40616 的目标选择与 Edit Region 对话框组成，但 AAADAW 目前只映射动作语义，尚未复刻该原厂窗口及其字段/按钮。标尺点击/移动/边界拖动与 `1/4` 默认网格仅由 AAADAW 手势测试覆盖，鼠标区域、阈值、Snap 修饰键、重叠边界命中和 preview/Undo 尚未在原厂实窗对照；Region Manager 的行内编辑、列可见性/排序/拖动、颜色、Ruler Lane、管理器选区范围、边界吸附、ID 分配与重编号、负时间和所有时间格式、循环/Repeat 行为、播放中操作、Tempo/Meter 变化下的位置保持、原生工程格式导入/导出及完整 Default 7 窗口几何/视觉对照也仍未完成。原厂 action `43488` 混合选择行为、组合动作完整切换规则及 AAADAW App 测试执行仍待补证。矩阵 `PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 与 P4 保持 `in_progress`；本文件只记录实现范围和验证边界。
+Region 的完整原厂行为仍未完成：本次验证了 40615/40616 的目标选择与 Edit Region 对话框组成，但 AAADAW 目前只映射动作语义，尚未复刻该原厂窗口及其字段/按钮。标尺点击/移动/边界拖动与 `1/4` 默认网格仅由 AAADAW 手势测试覆盖，鼠标区域、阈值、Snap 修饰键、重叠边界命中和 preview/Undo 尚未在原厂实窗对照；Region Manager 的行内编辑、列可见性/排序/拖动、颜色、Ruler Lane、管理器选区范围、边界吸附、ID 分配与重编号、负时间和所有时间格式、循环/Repeat 行为、播放中操作、Tempo/Meter 变化下的位置保持、原生工程格式导入/导出及完整 Default 7 窗口几何/视觉对照也仍未完成。AAADAW 的全部 Regions+Markers 标尺动作尚未实窗验证；App 测试套件未能链接完成或运行。矩阵 `PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 与 P4 保持 `in_progress`；本文件只记录实现范围和验证边界。

@@ -4,7 +4,20 @@ native_actions	43486 Show/hide selected project regions; 43487 Show/hide all pro
 native_single_region_toggle	With a Region selected, action 43486 changed its visibility; one Ctrl+Z restored the prior state.
 native_global_regions_toggle	Action 43487 hid the Region ruler lane.
 native_global_combined_toggle	Action 43489 showed both ruler lanes when either Regions or Markers was hidden; when both lanes were visible, it hid both. The saved project after the combined hide contains RULERLANECFG 6.
-native_selected_combined_toggle	Action 43488 behavior for a mixed Region/Marker selection was not verified.
+native_selected_combined_toggle	Action 43488 with selected R1 hidden and M1 visible showed both selected rows. Ctrl+Z restored R1 hidden/M1 visible, and Main action 40030 Redo showed both again; unselected M2/M3 remained visible throughout.
+native_selected_combined_selection	Region/Marker Manager Ctrl-click selection: R1 "Visible region" and M1 "Visibility 1".
+native_selected_combined_before_screenshot	region-visibility-selected-mixed-before-native.png
+native_selected_combined_before_screenshot_sha256	d48886d3bbc32dff8b72f25e16af328a8dc2aa01189531a689e903225086a9a9
+native_selected_combined_after_screenshot	region-visibility-selected-mixed-shown-native.png
+native_selected_combined_after_screenshot_sha256	ad629e4a37b8008837b8fb39e4e92cdf6e428e2578d1a28f963ddc363e6391fc
+native_selected_combined_undo_screenshot	region-visibility-selected-mixed-undo-native.png
+native_selected_combined_undo_screenshot_sha256	3982c433a23f12e66f788a294d4a9c7fb8bfe0195b53b267da4d64d067eebc12
+native_selected_combined_redo_screenshot	region-visibility-selected-mixed-redo-native.png
+native_selected_combined_redo_screenshot_sha256	cb12e77514baa80836bb2fdcdfd07747ac1c0b8cefcb8197e914530678aa9d97
+native_selected_combined_action_list_screenshot	region-visibility-selected-combined-action-list-native.png
+native_selected_combined_action_list_screenshot_sha256	fb79700bf25ee21e361d22e2f564b52a1cce9f3af49e48371dc9384e70c92682
+native_selected_combined_after_project	region-visibility-selected-mixed-after-native.rpp
+native_selected_combined_after_project_sha256	3b5492c31e22b9ff5b31164c23c34a0ddc159e411f4efb2f0a3595be5157f8f1
 native_project_after	region-visibility-after-native.rpp
 native_project_after_sha256	fc817374aa2b4bca10472d2855d5c76dab969fd370c76b79bbf4eff220ae16db
 native_manager_screenshot	region-visibility-manager-native.png
@@ -12,4 +25,4 @@ native_manager_screenshot_sha256	cc00daed511a162969994a6f83dafd90c4c6900b1b1fbe9
 native_action_list_screenshot	region-visibility-action-list-native.png
 native_action_list_screenshot_sha256	b36f584f02159ef960e4e6b3dcaea7d4a6e30e19ebff391ca2860aa99c830901
 screenshot_scope	Manager Visible column and Main-section Action List names; screenshots are window crops from REAPER, not pixel-parity captures.
-limitation	Audio hardware was unavailable. The native mixed-selection action 43488 and combined-selection edge cases remain unverified; PROJECT-REGIONS-001 stays in_progress.
+limitation	Audio hardware was unavailable. Other multi-region/multi-marker selection permutations and full window pixel parity remain unverified; PROJECT-REGIONS-001 stays in_progress.

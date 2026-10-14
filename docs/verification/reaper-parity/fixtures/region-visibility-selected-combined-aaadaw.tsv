@@ -1,0 +1,26 @@
+field	value
+aaadaw_environment	Linux AAADAW / Xvfb :134 / 1280x900 / isolated XDG profile / audio unavailable
+aaadaw_binary_sha256	640a9c18bc852ba44dbe5034f7e8c0c16a645ed641b67b9a077b2bda54172a7a
+aaadaw_binary_build_id	f5ee05bab6682cb8975333fa5871651d411bcd48
+fixture_project	region-visibility-demo.aaadaw
+fixture_project_sha256	44b0c7e022e4766d0f0db418bce55181337be62b0f96715751d53d58e9a6c89e
+runtime_project_copy	target/region-visibility-mixed-runtime.aaadaw
+command_id	ruler.toggle-selected-project-regions-and-markers
+command_label	Ruler: Show/hide selected project regions and markers
+selection_method	In Region/Marker Manager, Ctrl-clicked R1 Hidden region and M1 Marker one; both rows remained selected.
+before_state	R1 hidden, M1 visible; unselected R2, R3 and M2 visible.
+after_state	Action made both selected rows visible; unselected R2, R3 and M2 stayed visible.
+undo_state	Ctrl+Z restored R1 hidden and M1 visible.
+redo_state	Ctrl+Shift+Z restored both selected rows to visible.
+selected_before_screenshot	region-visibility-selected-mixed-before-aaadaw.png
+selected_before_screenshot_sha256	596862f7cbe0d631340a3ba4ee5f4bbec907701979e4f8a599635333dd3ef80a
+selected_shown_screenshot	region-visibility-selected-mixed-shown-aaadaw.png
+selected_shown_screenshot_sha256	aa941f54375e337e299828d62da192fdda8773424af0f90c2428347fd088d971
+undo_screenshot	region-visibility-selected-mixed-undo-aaadaw.png
+undo_screenshot_sha256	95f8bdd4ae3fa0db2d0a4039c196aa41c3d2507bb762200a0c8e63ef87278066
+redo_screenshot	region-visibility-selected-mixed-redo-aaadaw.png
+redo_screenshot_sha256	225ad36483262fef16a3d467088bb735d3c71150bcec5f1c2d2e13a7d819fad7
+action_list_screenshot	region-visibility-selected-combined-action-list-aaadaw.png
+action_list_screenshot_sha256	355844315e68514b42cab910d41408bf53cd302270c3826299cc0359deedcabe
+verification	Real desktop action, Undo and Redo passed. App test source asserts mixed selection and Redo; strict Clippy/typecheck pass. App test harness linking was attempted and stopped due insufficient disk; it was not run.
+limitation	The all-Regions-and-Markers ruler-lane action remains untested in the AAADAW runtime. No full geometry/theme parity claim.
