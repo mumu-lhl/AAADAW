@@ -449,6 +449,7 @@ pub(crate) enum Message {
     DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
+    HealSplitsInItems,
     Undo,
     Redo,
     ActionQueryChanged(String),

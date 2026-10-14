@@ -61,3 +61,13 @@ Linux REAPER 7.82 / Default 7 的 Main action 40012 在 Action List 中显示 `I
 AAADAW 的 Item 菜单保留 `Split items at cursor` 和 S，Action List 名称现与原厂 action text 对齐。所选项路径仅选择新增右段；空选择路径遍历全部项目并用正确的源采样率切分音频、按 tick 切分 MIDI。回归验证右段选择、跨轨无选择切分、边界无操作、音频源偏移、Undo/Redo 工程状态和快捷键/Action List 名称。REAPER 与 AAADAW 的实窗结果见[原厂图](fixtures/menu-item-split-cursor-native.png)和[AAADAW 图](fixtures/menu-item-split-cursor-aaadaw.png)；环境、图片/TSV 哈希、实际 S 键输入以及截图中的 5.000s / 5.007s 光标差见[Split cursor fixture](fixtures/menu-item-split-cursor.tsv)。两张图均显示两条 MIDI 轨道的右段被选中；AAADAW 时间尺按屏幕像素定位，因此实窗输入落在 5.007s，严格功能边界由 tick 级回归覆盖。
 
 本切片尚未对音频项做 REAPER 原厂实窗截图验证，也没有实现撤销后恢复 item 选择；其它 Razor 行为、Item 菜单未实现项和整体界面复刻仍在 `in_progress`，对应验收条目为 `ITEM-SPLIT-CURSOR-001`。
+
+### Item 菜单的 Heal splits in items
+
+Linux REAPER 7.82 / Default 7 的 Main action 40548 在 Item 菜单显示 `Heal splits in items`，无默认快捷键；没有已选媒体项时菜单禁用，选择媒体项后启用。原厂探针显示该动作只合并同轨、时间相接且源偏移连续的已选音频片段；两段都要选中。只选左段或右段、无选择、MIDI 分段、时间有间隙或源偏移不连续都不改动工程。两段或连续三段全选时一次动作分别合成一个音频项，只增加一次工程状态变更；合并结果保留左侧项的起点和源偏移，并继续选中。完整边界见[原厂结果 TSV](fixtures/menu-item-heal-splits-native.tsv)。
+
+AAADAW 的 Action List/Item 菜单均显示 `Heal splits in items`，菜单启用态与原厂一致。执行只考虑同轨连续的相邻所选音频项，再按工程/源采样率验证源帧连续性；连续项被合并为一项，保留左侧 item ID 与工程模型中的媒体属性，右侧被删除，其它仍存在的选择项保持选中。不同媒体引用、时间 gap、MIDI 或单独一段都不产生工程修改。44.1 kHz 源在 48 kHz 工程中的偏移换算、两段/三段合并、单步 Undo/Redo 和菜单状态均有回归覆盖。原厂是否允许不同媒体引用的相邻音频项合并，仍需单独验证。
+
+REAPER 原厂菜单截图、合并结果、AAADAW 实际选中两段并从 Item 菜单运行后的菜单与时间线截图、环境及 SHA-256 见 [Heal splits fixture](fixtures/menu-item-heal-splits.tsv)。截图只比较菜单文字/无快捷键、选中音频段合成单项的结果，不代表 Item 菜单其它条目或整体 UI 已对齐。
+
+REAPER 原厂探针确认 40548 对 MIDI split 不生效；目前只实现基础 audio split healing。自定义 item fades/mix 的 REAPER 分割与愈合恢复语义、grouped-item 影响和冻结项等边界仍待专项探测；`ITEM-HEAL-SPLITS-001` 与完整 Item 菜单/界面继续保持 `in_progress`。

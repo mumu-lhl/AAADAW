@@ -73,6 +73,7 @@ pub(crate) enum CommandId {
     EncloseMediaItemsInRazorEdit,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
+    HealSplitsInItems,
     AddTrack,
     SelectedTrack(TrackCommand),
     Track {
@@ -183,6 +184,7 @@ enum CommandKind {
     EncloseMediaItemsInRazorEdit,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
+    HealSplitsInItems,
     AddTrack,
     Track(TrackCommand),
     #[cfg(feature = "audio-device")]
@@ -1120,6 +1122,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::HealSplitsInItems,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Heal splits in items",
+        aliases: &["heal splits", "heal item splits"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::AddTrack,
         menu: Some(MainMenu::Track),
         category: "Track",
@@ -1428,6 +1440,7 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::EncloseMediaItemsInRazorEdit
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
+            | CommandKind::HealSplitsInItems
             | CommandKind::AddTrack
             | CommandKind::Track(TrackCommand::TogglePhase)
             | CommandKind::Track(TrackCommand::ToggleMute)
@@ -2055,6 +2068,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::EncloseMediaItemsInRazorEdit => "item.enclose-media-in-razor-edit",
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
+        CommandKind::HealSplitsInItems => "item.heal-splits",
         CommandKind::AddTrack => "track.add",
         CommandKind::Track(TrackCommand::Routing) => "track.routing",
         CommandKind::Track(TrackCommand::ToggleFolder) => "track.toggle-folder",
@@ -2239,6 +2253,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::EncloseMediaItemsInRazorEdit => Message::EncloseMediaItemsInRazorEdit,
         CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
         CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
+        CommandId::HealSplitsInItems => Message::HealSplitsInItems,
         CommandId::AddTrack => Message::AddTrack,
         CommandId::SelectedTrack(command) => {
             let Some(track_id) = app.selected_track_id() else {
@@ -2572,6 +2587,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::SplitSelectedItemsAtTimeSelection => {
             !project_edit_busy(app) && app.can_split_selected_items_at_time_selection()
         }
+        CommandKind::HealSplitsInItems => {
+            !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
+        }
         CommandKind::AddTrack => !project_edit_busy(app),
         CommandKind::Track(TrackCommand::Routing) => track.is_some(),
         CommandKind::Track(TrackCommand::CycleFolderCompact) => {
@@ -2724,6 +2742,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SplitSelectedItemsAtTimeSelection => {
             CommandId::SplitSelectedItemsAtTimeSelection
         }
+        CommandKind::HealSplitsInItems => CommandId::HealSplitsInItems,
         CommandKind::AddTrack => CommandId::AddTrack,
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "audio-device")]

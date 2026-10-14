@@ -4429,6 +4429,7 @@ impl App {
             Message::DuplicateSelectedItems => self.duplicate_selected_items(),
             Message::SplitSelectedItemsAtCursor => self.split_selected_items(false),
             Message::SplitSelectedItemsAtTimeSelection => self.split_selected_items(true),
+            Message::HealSplitsInItems => self.heal_selected_audio_splits(),
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
@@ -9755,6 +9756,186 @@ impl App {
                 tx_id: self.revision,
                 actions,
             }))
+        }
+    }
+
+    fn heal_selected_audio_splits(&mut self) {
+        let media_refs = self.selected_audio_heal_media_refs();
+        if media_refs.is_empty() {
+            self.status = "No adjacent selected audio splits to heal".to_owned();
+            return;
+        }
+        let source_sample_rates = match self.audio_source_sample_rates(media_refs) {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status = format!("Heal splits failed: {error}");
+                return;
+            }
+        };
+        let (action, deleted_ids) = match self.selected_audio_heal_action(&source_sample_rates) {
+            Ok(Some(action)) => action,
+            Ok(None) => {
+                self.status = "No adjacent selected audio splits to heal".to_owned();
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Heal splits failed: {error}");
+                return;
+            }
+        };
+        let previously_selected_ids = self.timeline.selected_items.clone();
+        let previous_revision = self.revision;
+        self.apply_action(action, "Audio item splits healed");
+        if self.revision == previous_revision {
+            return;
+        }
+        let selected_ids = previously_selected_ids
+            .difference(&deleted_ids)
+            .copied()
+            .collect::<HashSet<_>>();
+        let selected = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .map(|item| (item.id(), item.track_id()))
+            .chain(self.project.midi_items().iter().filter_map(|item| {
+                selected_ids
+                    .contains(&item.id())
+                    .then_some((item.id(), item.track_id()))
+            }))
+            .collect();
+        self.timeline.select_items(selected);
+        self.audio_item_start_edits.clear();
+    }
+
+    fn selected_audio_heal_media_refs(&self) -> Vec<String> {
+        let mut media_refs = Vec::new();
+        for track in self.project.tracks() {
+            if track.is_frozen() {
+                continue;
+            }
+            let mut items = self
+                .project
+                .audio_items()
+                .iter()
+                .filter(|item| item.track_id() == track.id())
+                .collect::<Vec<_>>();
+            items.sort_unstable_by_key(|item| item.start_sample());
+            for pair in items.windows(2) {
+                let [left, right] = pair else {
+                    continue;
+                };
+                if self.timeline.selected_items.contains(&left.id())
+                    && self.timeline.selected_items.contains(&right.id())
+                    && left.media_ref() == right.media_ref()
+                    && left.start_sample().checked_add(left.length_samples())
+                        == Some(right.start_sample())
+                {
+                    media_refs.push(left.media_ref().to_owned());
+                }
+            }
+        }
+        media_refs.sort_unstable();
+        media_refs.dedup();
+        media_refs
+    }
+
+    fn selected_audio_heal_action(
+        &self,
+        source_sample_rates: &HashMap<String, u32>,
+    ) -> Result<Option<(DawAction, HashSet<ItemId>)>, String> {
+        let selected_ids = &self.timeline.selected_items;
+        let mut actions = Vec::new();
+        let mut deleted_ids = HashSet::new();
+        let project_sample_rate = self.project.settings().sample_rate();
+
+        for track in self.project.tracks() {
+            if track.is_frozen() {
+                continue;
+            }
+            let mut items = self
+                .project
+                .audio_items()
+                .iter()
+                .filter(|item| item.track_id() == track.id())
+                .collect::<Vec<_>>();
+            items.sort_unstable_by_key(|item| item.start_sample());
+            let mut index = 0;
+            while index < items.len() {
+                let first = items[index];
+                if !selected_ids.contains(&first.id()) {
+                    index += 1;
+                    continue;
+                }
+                let mut last_index = index;
+                let mut merged_length = first.length_samples();
+                while let Some(next) = items.get(last_index + 1) {
+                    if !selected_ids.contains(&next.id()) {
+                        break;
+                    }
+                    let Some(source_rate) = source_sample_rates.get(first.media_ref()).copied()
+                    else {
+                        return Err(format!(
+                            "source sample rate is unavailable for {}",
+                            first.media_ref()
+                        ));
+                    };
+                    let current = items[last_index];
+                    if current.track_id() != next.track_id()
+                        || current.media_ref() != next.media_ref()
+                        || current.start_sample().checked_add(current.length_samples())
+                            != Some(next.start_sample())
+                    {
+                        break;
+                    }
+                    let source_delta = (u128::from(current.length_samples())
+                        * u128::from(source_rate)
+                        + u128::from(project_sample_rate) / 2)
+                        / u128::from(project_sample_rate);
+                    let source_delta = u64::try_from(source_delta)
+                        .map_err(|_| "audio source offset exceeds the supported range")?;
+                    if current.source_offset_samples().checked_add(source_delta)
+                        != Some(next.source_offset_samples())
+                    {
+                        break;
+                    }
+                    let Some(length) = merged_length.checked_add(next.length_samples()) else {
+                        return Err("healed audio item exceeds the supported length".to_owned());
+                    };
+                    merged_length = length;
+                    last_index += 1;
+                }
+
+                if last_index == index {
+                    index += 1;
+                    continue;
+                }
+                actions.push(DawAction::EditAudioItem {
+                    item_id: first.id(),
+                    media_ref: first.media_ref().to_owned(),
+                    start_sample: first.start_sample(),
+                    source_offset_samples: first.source_offset_samples(),
+                    length_samples: merged_length,
+                });
+                for item in &items[index + 1..=last_index] {
+                    actions.push(DawAction::DeleteAudioItem { item_id: item.id() });
+                    deleted_ids.insert(item.id());
+                }
+                index = last_index + 1;
+            }
+        }
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((
+                DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                },
+                deleted_ids,
+            )))
         }
     }
 

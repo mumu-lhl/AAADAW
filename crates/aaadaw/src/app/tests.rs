@@ -11448,6 +11448,280 @@ fn cursor_split_without_selection_preserves_audio_source_rate_and_selects_right_
     }
 }
 
+#[test]
+fn heal_splits_only_merges_selected_contiguous_audio_sections_undoably() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-heal-splits-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let media_ref = "asset://heal-splits-test";
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    store
+        .import_audio_asset(
+            media_ref,
+            "heal-splits-test.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(44_100),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(100_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test audio source metadata should store");
+    let other_media_ref = "asset://heal-splits-other-test";
+    store
+        .import_audio_asset(
+            other_media_ref,
+            "heal-splits-other-test.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("second test asset should import");
+    store
+        .set_audio_asset_metadata(
+            other_media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(44_100),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(100_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("second test source metadata should store");
+    store.close().expect("project store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    assert!(!commands::is_enabled(&app, CommandId::HealSplitsInItems));
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5_000,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let left_id = app.project.audio_items()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 49_100,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let right_id = app.project.audio_items()[1].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let midi_left = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 1_920,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let midi_right = app.project.midi_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    let item_menu = commands::for_menu(&app, MainMenu::Item);
+    let menu_entry = item_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::HealSplitsInItems)
+        .expect("Item menu should expose Heal splits in items");
+    assert!(!menu_entry.enabled);
+    assert_eq!(menu_entry.label, "Heal splits in items");
+    assert_eq!(menu_entry.shortcut, None);
+
+    let empty_before = app.project.snapshot();
+    let empty_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), empty_before);
+    assert_eq!(app.revision, empty_revision);
+
+    app.timeline
+        .select_items(vec![(midi_left, track_id), (midi_right, track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::HealSplitsInItems));
+    let midi_before = app.project.snapshot();
+    let midi_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), midi_before);
+    assert_eq!(app.revision, midi_revision);
+
+    app.timeline.select_items(vec![(right_id, track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::HealSplitsInItems));
+    let partial_before = app.project.snapshot();
+    let partial_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), partial_before);
+    assert_eq!(app.revision, partial_revision);
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: right_id,
+            media_ref: other_media_ref.to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 49_100,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.timeline
+        .select_items(vec![(left_id, track_id), (right_id, track_id)]);
+    let different_sources_before = app.project.snapshot();
+    let different_sources_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), different_sources_before);
+    assert_eq!(app.revision, different_sources_revision);
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: right_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 49_000,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.timeline
+        .select_items(vec![(left_id, track_id), (right_id, track_id)]);
+    let discontinuous_before = app.project.snapshot();
+    let discontinuous_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), discontinuous_before);
+    assert_eq!(app.revision, discontinuous_revision);
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: right_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 48_001,
+            source_offset_samples: 49_100,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let gap_before = app.project.snapshot();
+    let gap_revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.snapshot(), gap_before);
+    assert_eq!(app.revision, gap_revision);
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: right_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 49_100,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.timeline.select_items(vec![
+        (left_id, track_id),
+        (right_id, track_id),
+        (midi_left, track_id),
+        (midi_right, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+
+    assert_eq!(app.project.audio_items().len(), 1);
+    let healed = &app.project.audio_items()[0];
+    assert_eq!(healed.id(), left_id);
+    assert_eq!(healed.start_sample(), 0);
+    assert_eq!(healed.source_offset_samples(), 5_000);
+    assert_eq!(healed.length_samples(), 96_000);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([left_id, midi_left, midi_right])
+    );
+    assert_eq!(app.revision, revision + 1);
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+
+    let _ = app.update(Message::Undo);
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: left_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5_000,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id: right_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 27_050,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 49_100,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let third_id = app.project.audio_items()[2].id();
+    app.timeline.select_items(vec![
+        (left_id, track_id),
+        (right_id, track_id),
+        (third_id, track_id),
+    ]);
+    let before_chain = app.project.snapshot();
+    let revision = app.revision;
+    let _ = app.update(Message::HealSplitsInItems);
+    assert_eq!(app.project.audio_items().len(), 1);
+    assert_eq!(app.project.audio_items()[0].id(), left_id);
+    assert_eq!(app.project.audio_items()[0].length_samples(), 96_000);
+    assert_eq!(app.timeline.selected_items, HashSet::from([left_id]));
+    assert_eq!(app.revision, revision + 1);
+    let after_chain = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_chain);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_chain);
+
+    drop(app);
+    let _ = std::fs::remove_file(&project_path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", project_path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
 fn test_shortcut_input(logical_key: Key, modifiers: Modifiers) -> shortcut::ShortcutInput {
     shortcut::ShortcutInput {
         logical_key,

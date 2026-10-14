@@ -760,3 +760,11 @@ Nightly + Cranelift workspace nextest 1027/1027 通过，隔离 Xvfb `DISPLAY=:2
 Linux REAPER 7.82 / Default 7 原厂 ReaScript 探针覆盖上述三种模式，确认区域边界、未选中素材保留、选区内部片段选择和单次 state change。原厂与 AAADAW 都实际运行 1540×1160 窗口并截取时间线及 Item 菜单：四轨 0–10 秒素材中，首轨 3–7 秒片段被选中，其余轨道保持完整；两个菜单截图都显示 Shift+S，区域被消耗且无时间选区后命令处于禁用状态。原厂 TSV、菜单/时间线截图及 SHA-256、AAADAW 实窗截图与对比边界见 [Split fixture](../verification/reaper-parity/fixtures/menu-item-split-time-or-razor.tsv)。
 
 nightly + Cranelift workspace `cargo xtest` 1025/1025 通过（CLAP GUI 测试在隔离 Xvfb `DISPLAY=:223` 下运行）；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查通过。Parity matrix 有 95 个唯一 ID、15 列，五个原厂结果/截图与 AAADAW 截图哈希均已校验。`ITEM-SPLIT-TIME-RAZOR-001` 和菜单/整体 UI 仍保持 `in_progress`：时间选区与 Razor 同时存在时 REAPER 的优先级尚未探测；Undo/Redo 目前只恢复工程素材，不恢复之前/之后的 item 选择；envelope Razor、媒体分组语义及完整 Item 菜单仍待实现。
+
+### 2026-10-14 Item 菜单 Heal splits in items
+
+新增 Main action 40548 `Heal splits in items`，无默认快捷键；无媒体项选择时 Item 菜单禁用，选择项后启用。Linux REAPER 7.82 / Default 7 原厂探针确认：动作不愈合 MIDI；音频 split 的两段都选中且时间/源位置连续时合为一个已选音频项，一次工程状态变更；只选一侧、无选择、时间有 gap 或源偏移不连续均 no-op；连续三段一次合并。原厂探针在本轮通过 `DISPLAY=:223` 重跑，结果文件与脚本一致。
+
+AAADAW 现将菜单/Action List 命令接入同一事务；只合并同轨、相邻、共同选中且同媒体引用的音频项，并按工程采样率和源采样率检查源帧连续性。左侧 item ID 和其余已选 MIDI 项保留，后续片段删除；两段/三段合并均一步 Undo/Redo。回归还检查不同媒体引用、gap、部分选择、MIDI 和源断续 no-op，以及 44.1 kHz 源在 48 kHz 工程的换算。原厂时间线截图从探针保存的 after-project 重新打开，确认最终只有一项；原厂/AAADAW 实窗菜单与时间线截图、探针 TSV 和 SHA-256 见 [Heal splits fixture](../verification/reaper-parity/fixtures/menu-item-heal-splits.tsv)。截图只覆盖菜单标签、无快捷键和合并结果，不代表整套 Item 菜单或窗口已对齐。
+
+Nightly + Cranelift workspace nextest 1028/1028 passed（0 skipped），包括定向 heal 回归；Parity matrix 现有 97 个唯一 ID、15 列，截图和原厂结果文件 SHA-256 已校验。`ITEM-HEAL-SPLITS-001` 仍为 `in_progress`：原厂不同媒体引用语义、自定义 fades/mix、group/frozen item 行为尚未覆盖，AAADAW 也未实现完整混音/淡化重建；Item 菜单及整体 UI 继续推进。
