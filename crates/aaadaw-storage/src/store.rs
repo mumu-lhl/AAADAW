@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 43;
+pub const CURRENT_SCHEMA_VERSION: u32 = 44;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -408,6 +408,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     volume REAL NOT NULL DEFAULT 1.0 CHECK (volume >= 0.0 AND volume <= 16.0),
     take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
     take_pan REAL NOT NULL DEFAULT 0.0 CHECK (take_pan >= -1.0 AND take_pan <= 1.0),
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
@@ -2795,6 +2796,15 @@ fn ensure_audio_item_loop_section_start_column(
     Ok(())
 }
 
+fn ensure_audio_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "muted")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0 CHECK(muted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageError> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -3000,6 +3010,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            44 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_mute_column(&transaction)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3009,6 +3024,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
     ensure_audio_item_loop_columns(connection)?;
     ensure_audio_item_loop_section_start_column(connection)?;
+    ensure_audio_item_mute_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
     Ok(())
@@ -3184,9 +3200,9 @@ fn write_snapshot(
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
-             source_offset_samples, length_samples, volume, take_volume, take_pan, loop_source, \
+             source_offset_samples, length_samples, volume, take_volume, take_pan, muted, loop_source, \
              source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3198,6 +3214,7 @@ fn write_snapshot(
                 f64::from(item.volume),
                 f64::from(item.take_volume),
                 f64::from(item.take_pan),
+                item.muted,
                 item.loop_source,
                 item.source_section_start_samples
                     .map(to_sql_integer)
@@ -3834,7 +3851,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
-         length_samples, volume, take_volume, take_pan, loop_source, \
+         length_samples, volume, take_volume, take_pan, muted, loop_source, \
          source_section_start_samples, source_section_length_samples \
          FROM audio_items ORDER BY position",
     )?;
@@ -3852,8 +3869,9 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, f64>(8)?,
                 row.get::<_, f64>(9)?,
                 row.get::<_, i64>(10)?,
-                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, i64>(11)?,
                 row.get::<_, Option<i64>>(12)?,
+                row.get::<_, Option<i64>>(13)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -3871,6 +3889,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 volume,
                 take_volume,
                 take_pan,
+                muted,
                 loop_source,
                 source_section_start,
                 source_section_length,
@@ -3887,6 +3906,11 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
                 }
                 let loop_source = match loop_source {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                let muted = match muted {
                     0 => false,
                     1 => true,
                     _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
@@ -3910,6 +3934,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     start_sample: from_sql_u64(start_sample)?,
                     source_offset_samples: from_sql_u64(source_offset)?,
                     length_samples: from_sql_u64(length)?,
+                    muted,
                     loop_source,
                     source_section_start_samples,
                     source_section_length_samples,
@@ -4310,6 +4335,12 @@ mod loop_source_storage_tests {
                 enabled: false,
             })
             .unwrap();
+        project
+            .apply(DawAction::SetAudioItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
 
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
@@ -4319,8 +4350,50 @@ mod loop_source_storage_tests {
         let loaded = store.load().unwrap();
         let item = &loaded.audio_items()[0];
         assert!(!item.is_loop_source());
+        assert!(item.is_muted());
         assert_eq!(item.source_section_start_samples(), Some(100));
         assert_eq!(item.source_section_length_samples(), Some(2_400));
+    }
+
+    #[test]
+    fn schema_43_audio_items_migrate_with_mute_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-43-item-mute.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://legacy-mute".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN muted;\
+                 PRAGMA user_version = 43;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        assert!(!loaded.audio_items()[0].is_muted());
     }
 
     #[test]

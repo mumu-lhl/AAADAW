@@ -1688,6 +1688,7 @@ impl Project {
                     start_sample: item.start_sample,
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
+                    muted: item.muted,
                     loop_source: item.loop_source,
                     source_section_start_samples: item.source_section_start_samples,
                     source_section_length_samples: item.source_section_length_samples,
@@ -2001,6 +2002,7 @@ impl Project {
                 start_sample: item.start_sample,
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
+                muted: item.muted,
                 loop_source: item.loop_source,
                 source_section_start_samples: item.source_section_start_samples,
                 source_section_length_samples: item.source_section_length_samples,
@@ -2855,6 +2857,7 @@ impl Project {
                     start_sample,
                     source_offset_samples: 0,
                     length_samples,
+                    muted: false,
                     loop_source: false,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
@@ -3074,6 +3077,7 @@ impl Project {
                     start_sample,
                     source_offset_samples,
                     length_samples,
+                    muted: false,
                     loop_source: true,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
@@ -3137,6 +3141,7 @@ impl Project {
                     start_sample,
                     source_offset_samples,
                     length_samples,
+                    muted: false,
                     loop_source: true,
                     source_section_start_samples: Some(source_section_start_samples),
                     source_section_length_samples: Some(source_section_length_samples),
@@ -3159,6 +3164,22 @@ impl Project {
                 let before = item.clone();
                 let after = AudioItem {
                     loop_source: enabled,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemMute { item_id, muted } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    muted,
                     ..before.clone()
                 };
                 ProjectEvent::AudioItemChanged { before, after }

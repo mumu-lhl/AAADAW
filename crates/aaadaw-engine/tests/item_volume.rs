@@ -2,7 +2,7 @@ use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, stereo_pcm_stream};
 
 #[test]
-fn live_item_volume_publication_and_history_change_pcm_without_graph_replacement() {
+fn live_item_volume_and_mute_publication_change_pcm_without_graph_replacement() {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -57,4 +57,37 @@ fn live_item_volume_publication_and_history_change_pcm_without_graph_replacement
     assert!(controller.set_volume(item_id, project.audio_items()[0].volume()));
     graph.render_into(&mut output).unwrap();
     assert_eq!(output, [[0.0625, 0.125]; 8]);
+
+    project
+        .apply(DawAction::SetAudioItemMute {
+            item_id,
+            muted: true,
+        })
+        .unwrap();
+    assert!(controller.set_muted(item_id, project.audio_items()[0].is_muted()));
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]; 8]);
+
+    assert!(project.undo().unwrap());
+    assert!(controller.set_muted(item_id, project.audio_items()[0].is_muted()));
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0625, 0.125]; 8]);
+
+    assert!(project.redo().unwrap());
+    assert!(controller.set_muted(item_id, project.audio_items()[0].is_muted()));
+    graph.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]; 8]);
+
+    let (mut producer, consumer) = stereo_pcm_stream(8).unwrap();
+    producer.set_stereo_content(true);
+    producer.push_frames(&[[0.125, 0.25]; 8]);
+    let mut rebuilt = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo(item_id, consumer)],
+        8,
+    )
+    .unwrap();
+    rebuilt.transport_mut().start();
+    rebuilt.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]; 8]);
 }

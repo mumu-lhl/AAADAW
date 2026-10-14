@@ -137,6 +137,68 @@ fn prepares_and_renders_an_embedded_audio_item() {
 }
 
 #[test]
+fn muted_audio_items_stay_silent_in_realtime_and_offline_rendering() {
+    let database_path = unique_path("aaadaw");
+    let render_path = unique_path("wav");
+    let wav = pcm_wav(&[8_192; 8], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://muted", "muted.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let mut project = project_with_audio_item("asset://muted".to_owned(), 8);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemMute {
+            item_id,
+            muted: true,
+        })
+        .expect("audio item should mute");
+
+    let prepared = prepare_audio_playback(&project, &store, 16, 8)
+        .expect("muted source should prepare for realtime playback");
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("muted source should decode");
+    }
+    graph.transport_mut().start();
+    let mut playback = [[1.0; 2]; 8];
+    let stats = graph
+        .render_into(&mut playback)
+        .expect("muted source should render in realtime");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(playback, [[0.0; 2]; 8]);
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("muted source should prepare for offline rendering");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        8,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("muted source should render offline");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(rendered, [0.0; 16]);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
 fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
     let database_path = unique_path("aaadaw");
     let playback_wav = pcm_wav(&[0, 8_192, 16_384], 48_000);

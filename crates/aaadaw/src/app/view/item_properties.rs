@@ -38,6 +38,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
+            text("").width(120),
+            checkbox(draft.muted)
+                .label("Mute")
+                .on_toggle(Message::ItemPropertyMuteChanged)
+        ]
+        .spacing(6),
+        row![
             text("Position:").width(120),
             field(ItemPropertyField::Position, 130)
         ]

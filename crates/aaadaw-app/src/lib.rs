@@ -821,6 +821,11 @@ impl RunningAudioPlayback {
         self.item_volume_controller.set_volume(item_id, volume)
     }
 
+    /// Publishes an audio item's live mute state without replacing the graph.
+    pub fn set_item_muted(&self, item_id: aaadaw_core::ItemId, muted: bool) -> bool {
+        self.item_volume_controller.set_muted(item_id, muted)
+    }
+
     /// Publishes an audio item's active take mix without replacing the graph.
     pub fn set_item_take_mix(&self, item_id: aaadaw_core::ItemId, volume: f32, pan: f32) -> bool {
         self.item_take_mix_controller.set_mix(item_id, volume, pan)
@@ -1464,6 +1469,11 @@ impl RunningJackPlayback {
     /// Publishes an audio item's live linear volume without replacing the graph.
     pub fn set_item_volume(&self, item_id: aaadaw_core::ItemId, volume: f32) -> bool {
         self.item_volume_controller.set_volume(item_id, volume)
+    }
+
+    /// Publishes an audio item's live mute state without replacing the graph.
+    pub fn set_item_muted(&self, item_id: aaadaw_core::ItemId, muted: bool) -> bool {
+        self.item_volume_controller.set_muted(item_id, muted)
     }
 
     /// Publishes an audio item's active take mix without replacing the graph.

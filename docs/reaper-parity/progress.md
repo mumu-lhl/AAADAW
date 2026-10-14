@@ -820,3 +820,11 @@ Nightly + Cranelift 的 Core/Storage/Media/App/desktop nextest 为 869/869 passe
 bounded source section 的起点和长度现在独立于循环开关保存：关掉循环后 worker 从当前源偏移播放到 section 尾部，然后结束，不会重启 decoder 或重复；SQLite 与 snapshot 接受该有效状态，Contents Nudge 仅对实际循环的区段做绕回。旧 schema 的迁移默认值保持关闭，避免改变已有工程。
 
 回归覆盖 Core action 默认值和开关 Undo/Redo、bounded metadata 的 snapshot/storage 往返、关闭后单次媒体播放、属性窗 Apply/Undo/Redo。Nightly + Cranelift 五包 workspace nextest 872/872 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查及 parity matrix（98 个唯一 ID、15 列）通过。本轮使用的是已有 REAPER 原厂截图作为控件/默认值参照，没有新录制 AAADAW 实窗截图或重跑原厂探针；属性窗口的其余字段、尺寸/布局和像素对齐仍不完整，`ITEM-PROPERTIES-001`、`ITEM-AUDIO-COPYLOOP-001` 继续 `in_progress`。
+
+### 2026-10-14 Media Item mute
+
+参照 catalog 中 Main action 40175 为 `Item properties: Toggle mute`；现有 REAPER Media Item Properties 截图显示 `Mute` 默认未勾选。AAADAW 为 Audio Item 增加可持久化 mute 状态、schema 44 迁移、属性窗草稿/Apply、Undo/Redo 与 Action List command。实时播放控制以一个原子值共同发布 item gain/mute，渲染 callback 在 mute 时将增益置零；实时与 offline PCM 均验证为静音。
+
+Nightly + Cranelift workspace nextest 1057/1057 passed，排除了两项需要 X11 的 CLAP 浮动插件窗口测试（当前环境 `X11 connect failed`）；Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。使用的是已有 REAPER 参考图，本轮未新增 AAADAW 截图，也未重新运行原厂静音行为探针。
+
+`ITEM-MUTE-001` 与 `ITEM-PROPERTIES-001` 保持 `in_progress`：当前仅 Audio mute；MIDI/mixed-selection、复制粘贴 mute 状态、原厂菜单与启用边界、属性窗完整布局及 AAADAW 截图对照尚未完成。

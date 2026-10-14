@@ -708,6 +708,7 @@ fn action_updates_item_mix(action: &DawAction) -> bool {
     match action {
         DawAction::SetAudioItemFades { .. }
         | DawAction::SetAudioItemVolume { .. }
+        | DawAction::SetAudioItemMute { .. }
         | DawAction::SetAudioItemTakeMix { .. } => true,
         DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_updates_item_mix),
         _ => false,
@@ -2430,6 +2431,12 @@ impl App {
                     draft.set_loop_source(enabled);
                 }
             }
+            Message::ItemPropertyMuteChanged(muted) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.set_muted(muted);
+                }
+            }
+            Message::ToggleSelectedAudioItemsMute => self.toggle_selected_audio_items_mute(),
             Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
             Message::MarkerNameChanged(value) => {
                 if let Some(draft) = &mut self.marker_properties {
@@ -7361,6 +7368,7 @@ impl App {
                     for item in self.project.audio_items() {
                         self.sync_item_fades_to_playback(item.id());
                         self.sync_item_volume_to_playback(item.id());
+                        self.sync_item_mute_to_playback(item.id());
                         self.sync_item_take_mix_to_playback(item.id());
                     }
                 }
@@ -7455,11 +7463,27 @@ impl App {
         let _ = item_id;
     }
 
+    fn sync_item_mute_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_muted(item_id, item.is_muted());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
     fn sync_all_track_mix_to_playback(&self) {
         self.sync_master_mix_to_playback();
         for item in self.project.audio_items() {
             self.sync_item_fades_to_playback(item.id());
             self.sync_item_volume_to_playback(item.id());
+            self.sync_item_mute_to_playback(item.id());
             self.sync_item_take_mix_to_playback(item.id());
         }
         for track in self.project.tracks() {

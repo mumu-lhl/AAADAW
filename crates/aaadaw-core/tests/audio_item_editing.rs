@@ -95,6 +95,46 @@ fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
 }
 
 #[test]
+fn audio_item_mute_is_undoable_and_keeps_item_gain_unchanged() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://mute".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .expect("audio item should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemVolume {
+            item_id,
+            volume: 0.5,
+        })
+        .expect("item volume should be set");
+
+    project
+        .apply(DawAction::SetAudioItemMute {
+            item_id,
+            muted: true,
+        })
+        .expect("item mute should be set");
+    assert!(project.audio_items()[0].is_muted());
+    assert_eq!(project.audio_items()[0].volume(), 0.5);
+    let restored = Project::from_snapshot(project.snapshot()).expect("muted snapshot should load");
+    assert!(restored.audio_items()[0].is_muted());
+    assert_eq!(restored.audio_items()[0].volume(), 0.5);
+
+    assert!(project.undo().expect("mute should undo"));
+    assert!(!project.audio_items()[0].is_muted());
+    assert_eq!(project.audio_items()[0].volume(), 0.5);
+    assert!(project.redo().expect("mute should redo"));
+    assert!(project.audio_items()[0].is_muted());
+    assert_eq!(project.audio_items()[0].volume(), 0.5);
+}
+
+#[test]
 fn audio_and_midi_items_share_unique_ids_and_survive_snapshot_restore() {
     let (mut project, track_id) = project_with_track();
     project

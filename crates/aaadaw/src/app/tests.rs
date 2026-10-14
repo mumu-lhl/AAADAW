@@ -12998,6 +12998,79 @@ fn item_properties_toggle_loop_source_preserves_section_and_undoes() {
 }
 
 #[test]
+fn item_properties_mute_applies_with_undo_and_preserves_gain() {
+    use super::item_properties::{ItemProperties, TimeUnit};
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://item-properties-mute".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    let item = app.project.audio_items()[0].clone();
+    let mut draft = ItemProperties::from_item(&item, 48_000, TimeUnit::Samples);
+    draft.set_muted(true);
+    app.item_properties = Some(draft);
+
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert!(app.project.audio_items()[0].is_muted());
+    assert_eq!(app.project.audio_items()[0].volume(), 1.0);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.audio_items()[0].is_muted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.audio_items()[0].is_muted());
+}
+
+#[test]
+fn item_toggle_mute_action_matches_action_list_and_is_undoable() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://item-action-mute".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ToggleMuteSelectedAudioItems
+    ));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ToggleMuteSelectedAudioItems,
+    ));
+    assert!(app.project.audio_items()[0].is_muted());
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.audio_items()[0].is_muted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.audio_items()[0].is_muted());
+}
+
+#[test]
 fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
     use super::item_properties::{ItemProperties, ItemPropertyField};
     let mut app = App::default();

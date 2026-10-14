@@ -272,6 +272,11 @@ pub enum DawAction {
         item_id: ItemId,
         enabled: bool,
     },
+    /// Mute or unmute an audio item without changing its stored gain.
+    SetAudioItemMute {
+        item_id: ItemId,
+        muted: bool,
+    },
     /// Set both manual Item fades as one undoable edit.
     SetAudioItemFades {
         item_id: ItemId,

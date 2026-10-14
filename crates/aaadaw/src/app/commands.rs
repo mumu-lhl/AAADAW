@@ -44,6 +44,7 @@ pub(crate) enum CommandId {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    ToggleMuteSelectedAudioItems,
     OpenItemNudgeDialog,
     CloseItemNudgeDialog,
     NudgeItemsLeft,
@@ -159,6 +160,7 @@ enum CommandKind {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
+    ToggleMuteSelectedAudioItems,
     OpenItemNudgeDialog,
     CloseItemNudgeDialog,
     NudgeItemsLeft,
@@ -1068,6 +1070,20 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Duplicate selected items",
         aliases: &["duplicate item", "duplicate selected item"],
         shortcuts: DUPLICATE_ITEM_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleMuteSelectedAudioItems,
+        menu: Some(MainMenu::Item),
+        category: "Item properties",
+        label: "Toggle mute",
+        aliases: &[
+            "mute selected items",
+            "unmute selected items",
+            "item properties: toggle mute",
+        ],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -2094,6 +2110,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
+        CommandKind::ToggleMuteSelectedAudioItems => "item.toggle-mute",
         CommandKind::OpenItemNudgeDialog => "item.nudge-set",
         CommandKind::CloseItemNudgeDialog => "item.nudge-set.close",
         CommandKind::NudgeItemsLeft => "item.nudge-left",
@@ -2243,6 +2260,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
+        CommandId::ToggleMuteSelectedAudioItems => Message::ToggleSelectedAudioItemsMute,
         CommandId::OpenItemNudgeDialog => Message::OpenItemNudge,
         CommandId::CloseItemNudgeDialog => Message::CloseItemNudge,
         CommandId::NudgeItemsLeft => Message::NudgeSelectedItems(-1),
@@ -2572,6 +2590,17 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                             .any(|item| item.id() == *item_id)
                 })
         }
+        CommandKind::ToggleMuteSelectedAudioItems => {
+            !app.io_busy
+                && !app.playback_busy()
+                && !app.timeline.selected_items.is_empty()
+                && app.timeline.selected_items.iter().all(|item_id| {
+                    app.project
+                        .audio_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+                })
+        }
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
                 && !app.project.tracks().is_empty()
@@ -2770,6 +2799,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
+        CommandKind::ToggleMuteSelectedAudioItems => CommandId::ToggleMuteSelectedAudioItems,
         CommandKind::OpenItemNudgeDialog => CommandId::OpenItemNudgeDialog,
         CommandKind::CloseItemNudgeDialog => CommandId::CloseItemNudgeDialog,
         CommandKind::NudgeItemsLeft => CommandId::NudgeItemsLeft,

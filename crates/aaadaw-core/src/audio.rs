@@ -17,6 +17,7 @@ pub struct AudioItem {
     pub(crate) start_sample: u64,
     pub(crate) source_offset_samples: u64,
     pub(crate) length_samples: u64,
+    pub(crate) muted: bool,
     pub(crate) loop_source: bool,
     pub(crate) source_section_start_samples: Option<u64>,
     pub(crate) source_section_length_samples: Option<u64>,
@@ -55,6 +56,11 @@ impl AudioItem {
     /// Returns the item's duration in project samples.
     pub fn length_samples(&self) -> u64 {
         self.length_samples
+    }
+
+    /// Returns whether this audio item is muted.
+    pub fn is_muted(&self) -> bool {
+        self.muted
     }
 
     /// Returns whether the item's source repeats when playback reaches its end.
