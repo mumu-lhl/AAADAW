@@ -732,3 +732,13 @@ Stable `cargo nextest run -p aaadaw` 542/542 passed；Stable all-target Clippy `
 Linux REAPER 7.82 / Default 7 原厂探针确认：选区 3–7 秒、源项 0–10 秒时，Copy 不改变项属性或工程 state-change count；在 12 秒粘贴生成 4 秒、`B_LOOPSRC=1` 的 WAV source section。部分覆盖选区的所选项会被排除；两项都完整覆盖时，粘贴保留各自轨道位置。AAADAW Item/Edit 菜单实窗截图、原厂探针结果、环境和 SHA-256 见 [Copy loop fixture](../verification/reaper-parity/fixtures/menu-item-copy-loop.tsv)。截图只验证菜单文字、快捷键和空剪贴板启用状态，不构成完整窗口复刻验收。
 
 Stable `cargo nextest run -p aaadaw` 543/543 passed；Stable all-target Clippy `-D warnings`、fmt、diff 检查通过。原厂 REAPER 7.82/Linux ReaScript 探针通过；AAADAW 空轨菜单截图和 CSV 93 个唯一 ID/15 列检查通过。`ITEM-AUDIO-COPYLOOP-001` 与 `SHELL-MENU-KEYBOARD-001` 继续 `in_progress`：AAADAW 尚未持久化或渲染 `B_LOOPSRC`，因此粘贴项延长后的循环行为仍不完整；目前只支持同一工程的音频源和已有目标轨道，不复制其它 item/take mix、淡化或播放率数据，跨工程媒体剪贴板与通用 Paste 来源也未完成。Item 菜单其余命令和完整界面/焦点对照仍待实现与验收。
+
+### 2026-10-14 Item 菜单 Enclose media items in razor edit
+
+实现提交：`1f36222`。
+
+新增 Item > `Enclose media items in razor edit` 与 Action List `Razor edit: Enclose media items, including space between items`。所选音频和 MIDI 素材共同决定全局起止边界；每条含选中素材的轨道都获得一段包含素材间空隙的 media razor area，其它轨道的旧区域被清除；无选择时清除全部区域。动作会取消素材选择，区域修改作为一步撤销。样本时钟区域已加入工程快照及 SQLite schema 41，并绘制为轨道内半透明时间线覆盖。
+
+Linux REAPER 7.82 / Default 7 的 action 42409 探针确认四个音频/MIDI 选择项在两条轨道创建 2–12 秒区域、清空选择且只产生一个状态变更；再次执行会替换旧区域，无选择执行清空全部区域，Undo/Redo 清除和恢复区域。原厂与 AAADAW 同为 1540×960 的三轨时间线截图使用相同的 Audio/MIDI 时间位置和 2–12 秒区域，显示两轨覆盖、间隙及第三轨无区域；原厂窗口在虚拟显示中没有打开音频设备，传输保持停止。菜单截图、结果 TSV、环境和哈希见 [Enclose razor fixture](../verification/reaper-parity/fixtures/menu-item-enclose-razor.tsv)。
+
+Stable `cargo nextest run -p aaadaw-core -p aaadaw-storage -p aaadaw` 730/730 passed、0 skipped；Stable 跨三包 all-target Clippy `-D warnings`、`cargo fmt --check`、`git diff --check` 通过。Parity matrix 有 94 个唯一 ID、15 列，fixture 路径和截图/结果哈希均已验证。`ITEM-RAZOR-ENCLOSE-001` 与 `SHELL-MENU-KEYBOARD-001` 保持 `in_progress`：AAADAW 暂未实现 envelope razor area 及其它 Razor edit 命令；Undo 目前不恢复执行前的 item 选择，而原厂脚本探针的选择撤销结果受构造历史影响，仍待明确核验。其余 Item/Track 菜单和完整界面一致性继续推进。

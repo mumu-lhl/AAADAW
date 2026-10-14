@@ -32,8 +32,16 @@ AAADAW 将动作注册为 Action List `Copy loop of selected area of audio items
 
 `copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step` 用 48 kHz 源与 44.1 kHz 工程的样本换算验证完整选区、部分相交项排除、MIDI 排除、多轨偏移、光标粘贴、一次 Undo 及剪贴板保留。当前剪贴板仅在同一工程代次有效；目标轨道不足时不自动建轨；AudioItem 尚无 Loop source 状态，因此目前不能验证粘贴项后续延长时的循环、淡化/增益/播放率保留和跨工程媒体引用。原厂对照也尚未覆盖这些属性，本切片和 `ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。
 
+### Item 菜单的 Enclose media items in razor edit
+
+Linux REAPER 7.82 / Default 7 的 Main action 42409 会把选中的音频与 MIDI 素材包在轨道级 media razor area 中。原厂探针选择了 A 轨的 2–4 秒、6–7 秒音频项和 10–12 秒 MIDI 项，以及 B 轨的 4–6 秒音频项；动作在 A、B 两轨都写入 2–12 秒区域，包含素材之间的空隙，并取消四个素材项的选择。C 轨不受影响。对单个 14–16 秒的未选中素材再次执行，会替换此前的区域；没有所选素材时则清除全部区域。该次执行只产生一个工程状态变更，Undo/Redo 清除和恢复区域。原厂探针结果及撤销边界见 [Enclose 原厂 TSV](fixtures/menu-item-enclose-razor-native.tsv)。
+
+AAADAW 将完整命令注册为 Action List 的 Razor edit 命令，在 Item 菜单显示 `Enclose media items in razor edit`，位于 Copy loop 之后、Select all 分隔线之前。执行时取所有所选音频与 MIDI 项的全局起止范围，在每条含所选项的轨道写入同一 media area，并清除其它轨道的旧区域；无选择时清空所有轨道区域。区域以样本时钟保存在工程 schema 41，参与 Undo/Redo，并在时间线上按轨道显示半透明覆盖。App 回归覆盖多轨混合媒体、跨项空隙、清除旧区域、Undo/Redo 和零选择清除；核心及存储回归覆盖快照往返、非法区域原子拒绝和迁移。原厂和 AAADAW 的轨道画面见[原厂区域截图](fixtures/menu-item-enclose-razor-native.png)及[AAADAW 区域截图](fixtures/menu-item-enclose-razor-aaadaw.png)；Item 菜单图、环境、精确哈希与比较范围见[Enclose fixture](fixtures/menu-item-enclose-razor.tsv)。两张画面使用相同轨道数、素材时间与 2–12 秒区域，验证区域覆盖和空隙，不表示整体界面像素一致。
+
+本切片只实现基础 media razor area 的创建、持久化与显示；尚无 envelope razor area 或其它 Razor edit 操作。AAADAW Undo 会恢复区域，但目前不会恢复执行前的 item 选择状态；原厂探针由 ReaScript 构造工程，其 Undo 后选择结果受构造历史影响，尚不能用于确认此项差异。`ITEM-RAZOR-ENCLOSE-001` 和完整 Item 菜单/界面仍保持 `in_progress`。
+
 ### Item 菜单的 Trim items to selected area
 
 REAPER 原厂 40508 动作将所选素材裁到时间选区与素材的交集；完全落在选区外的素材保留，恰好与选区端点相接的素材删除，没有时间选区时不修改工程。Linux REAPER 7.82 / Default 7 的 ReaScript 探针记录了内部裁切、左右部分交叠、选区外、两端贴边和无选区结果。AAADAW 将命令接到 Item 菜单，空选择时仍启用，与原厂动作可从空工程菜单执行的状态一致；裁切和端点删除在单个可撤销事务中应用，并保留音频/MIDI 源偏移及被裁后仍存活项的选择状态。
 
-原厂操作结果、原厂裁切界面截图、空工程原厂菜单截图、AAADAW Item 菜单实窗图、哈希和回归范围见 [Trim items fixture](fixtures/menu-item-trim.tsv)。截图只验证菜单项可见性与空工程可用状态，窗口尺寸、完整菜单内容及画布几何仍有差异；AAADAW 的音频/MIDI 行为由 `trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit`、`trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules` 与 `trim_items_to_selected_area_without_a_selection_is_a_noop` 验证。原厂在 Trim 与 Select all 之间还有 Copy loop of selected area 和 Enclose media items in razor edit 等命令，完整 Item 菜单仍为 `in_progress`。
+原厂操作结果、原厂裁切界面截图、空工程原厂菜单截图、AAADAW Item 菜单实窗图、哈希和回归范围见 [Trim items fixture](fixtures/menu-item-trim.tsv)。截图只验证菜单项可见性与空工程可用状态，窗口尺寸、完整菜单内容及画布几何仍有差异；AAADAW 的音频/MIDI 行为由 `trim_items_to_selected_area_clips_audio_and_midi_in_one_undoable_edit`、`trim_items_to_selected_area_matches_native_overlap_and_endpoint_rules` 与 `trim_items_to_selected_area_without_a_selection_is_a_noop` 验证。Item 菜单现在还按原厂顺序包含 Copy loop 与 Enclose media 命令；其它尚未实现的菜单项和完整界面对照仍为 `in_progress`。
