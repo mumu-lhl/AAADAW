@@ -1,7 +1,9 @@
 use super::{App, Message, commands};
 use crate::project_time;
 use aaadaw_core::{DawAction, ItemId};
+use aaadaw_storage::ProjectStore;
 use iced::Task;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Mode {
@@ -274,8 +276,14 @@ impl App {
                         }
                     }
                     Target::Contents => {
-                        self.item_nudge_dialog.error =
-                            Some("The 'contents' nudge target is not implemented yet".to_owned());
+                        if self.item_nudge_dialog.snap_to_unit {
+                            self.item_nudge_dialog.error = Some(
+                                "Snap to unit is not supported for the contents target yet"
+                                    .to_owned(),
+                            );
+                        } else {
+                            self.nudge_selected_audio_contents(signed_delta);
+                        }
                     }
                     Target::EditCursor => unreachable!("edit cursor target handled above"),
                 }
@@ -767,6 +775,162 @@ impl App {
             .collect::<Vec<_>>();
         self.timeline.select_items(selected);
         self.item_nudge_dialog.error = None;
+    }
+
+    fn nudge_selected_audio_contents(&mut self, delta_samples: i128) {
+        let selected_ids = &self.timeline.selected_items;
+        if self
+            .project
+            .midi_items()
+            .iter()
+            .any(|item| selected_ids.contains(&item.id()))
+        {
+            self.item_nudge_dialog.error = Some(
+                "The contents target is currently supported for selected audio items only"
+                    .to_owned(),
+            );
+            return;
+        }
+        let items = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected audio items".to_owned());
+            return;
+        }
+        let media_refs = items
+            .iter()
+            .map(|item| item.media_ref().to_owned())
+            .collect::<Vec<_>>();
+        let source_limits = match self.audio_source_limits(media_refs) {
+            Ok(limits) => limits,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+
+        let project_rate = self.project.settings().sample_rate();
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let Some((source_rate, frame_count)) = source_limits.get(item.media_ref()).copied()
+            else {
+                self.item_nudge_dialog.error = Some(format!(
+                    "Source length is unavailable for {}",
+                    item.media_ref()
+                ));
+                return;
+            };
+            let Some(source_delta) = scale_sample_delta(-delta_samples, source_rate, project_rate)
+            else {
+                self.item_nudge_dialog.error =
+                    Some("Contents nudge is outside the supported range".to_owned());
+                return;
+            };
+            let Some(source_offset_samples) =
+                shifted_sample(item.source_offset_samples(), source_delta)
+            else {
+                self.item_nudge_dialog.error = Some(
+                    "Contents nudge would move before the start of the audio source".to_owned(),
+                );
+                return;
+            };
+            let Some(source_length) =
+                scale_sample_delta(i128::from(item.length_samples()), source_rate, project_rate)
+                    .and_then(|length| u64::try_from(length).ok())
+            else {
+                self.item_nudge_dialog.error =
+                    Some("Item source length is outside the supported range".to_owned());
+                return;
+            };
+            let Some(source_end) = source_offset_samples.checked_add(source_length) else {
+                self.item_nudge_dialog.error =
+                    Some("Contents nudge is outside the supported source range".to_owned());
+                return;
+            };
+            if source_end > frame_count {
+                self.item_nudge_dialog.error = Some(
+                    "Contents nudge would extend beyond the audio source; looping is not enabled"
+                        .to_owned(),
+                );
+                return;
+            }
+            if source_offset_samples != item.source_offset_samples() {
+                actions.push(DawAction::EditAudioItem {
+                    item_id: item.id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample: item.start_sample(),
+                    source_offset_samples,
+                    length_samples: item.length_samples(),
+                });
+            }
+        }
+        if actions.is_empty() {
+            self.item_nudge_dialog.error =
+                Some("Nudge did not change the selected item contents".to_owned());
+            return;
+        }
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected audio item contents moved",
+        );
+        self.item_nudge_dialog.error = None;
+    }
+
+    fn audio_source_limits(
+        &self,
+        media_refs: impl IntoIterator<Item = String>,
+    ) -> Result<HashMap<String, (u32, u64)>, String> {
+        let mut media_refs = media_refs.into_iter().collect::<Vec<_>>();
+        media_refs.sort_unstable();
+        media_refs.dedup();
+        if media_refs.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let path = self
+            .media_store_path()
+            .filter(|path| path.is_file())
+            .ok_or_else(|| "audio media store is unavailable".to_owned())?;
+        let store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
+        let mut limits = HashMap::with_capacity(media_refs.len());
+        let mut metadata_result = Ok(());
+        for media_ref in media_refs {
+            match store.audio_asset_metadata(&media_ref) {
+                Ok(Some(metadata)) => {
+                    let Some(sample_rate) = metadata.sample_rate.filter(|rate| *rate > 0) else {
+                        metadata_result =
+                            Err(format!("source sample rate is unavailable for {media_ref}"));
+                        break;
+                    };
+                    let Some(frame_count) = metadata.frame_count.filter(|frames| *frames > 0)
+                    else {
+                        metadata_result =
+                            Err(format!("source frame count is unavailable for {media_ref}"));
+                        break;
+                    };
+                    limits.insert(media_ref, (sample_rate, frame_count));
+                }
+                Ok(None) => {
+                    metadata_result =
+                        Err(format!("source metadata is unavailable for {media_ref}"));
+                    break;
+                }
+                Err(error) => {
+                    metadata_result = Err(error.to_string());
+                    break;
+                }
+            }
+        }
+        let close_result = store.close().map_err(|error| error.to_string());
+        metadata_result?;
+        close_result?;
+        Ok(limits)
     }
 
     fn move_edit_cursor_by_samples(&mut self, delta_samples: i128) {

@@ -13,6 +13,6 @@ aaadaw_menu	item-nudge-aaadaw-menu.png; actual Item menu screenshot; 1280x800 cr
 aaadaw_targets_top	item-nudge-aaadaw-targets-top.png; actual dropdown showing position, left trim, left edge, end position; sha256 b5f181eb2bc8d070b110d55406990db251a290efd21520053fea847d340cb916
 aaadaw_targets_bottom	item-nudge-aaadaw-targets-bottom.png; actual scrolled dropdown showing right trim, contents, duplicate, edit cursor; sha256 35f6bb0df37824c8df2a0db73378accb09d8f826dec5a6f5139b3ea0dfa97d8a
 native_scope	Action 41226 opens the dialog; action 41249 nudges right by dialog settings; selected Audio and MIDI position move 1ms; target results at 250ms are recorded in item-nudge-targets-native.tsv
-aaadaw_scope	Position and edit-cursor Nudge/Set paths; Audio Left Trim/Left Edge/End Position/Right Trim Nudge; Audio and MIDI Duplicate Nudge; Contents and unverified Set/Snap combinations fail closed
-regression	crates/aaadaw/src/app/tests.rs item_nudge_*; focused nextest 11/11 passed with Cranelift
-status	ITEM-NUDGE-SET-001 remains in_progress; Contents, target-specific Set/Snap and Undo parity are not verified
+aaadaw_scope	Position and edit-cursor Nudge/Set; Audio Left Trim/Left Edge/End Position/Right Trim Nudge; Audio/MIDI Duplicate; bounded, metadata-checked Audio Contents Nudge; source-loop wrap and unverified Set/Snap combinations fail closed
+regression	crates/aaadaw/src/app/tests.rs item_nudge_*; focused nextest 11/11 passed with bounded Contents expansion and Cranelift
+status	ITEM-NUDGE-SET-001 remains in_progress; source-loop wrap, target-specific Set/Snap and Undo parity are not verified

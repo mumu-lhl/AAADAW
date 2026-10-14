@@ -295,7 +295,7 @@ fn item_nudge_audio_boundary_targets_match_their_distinct_edge_semantics() {
 }
 
 #[test]
-fn item_nudge_left_trim_converts_project_time_to_source_frames() {
+fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
     use super::item_nudge::Target;
 
     let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
@@ -358,11 +358,75 @@ fn item_nudge_left_trim_converts_project_time_to_source_frames() {
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items()[0].start_sample(), 48_000);
     assert_eq!(app.project.audio_items()[0].source_offset_samples(), 20_000);
+
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let revision = app.revision;
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    let contents_right = &app.project.audio_items()[0];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(contents_right.start_sample(), 48_000);
+    assert_eq!(contents_right.length_samples(), 24_000);
+    assert_eq!(contents_right.source_offset_samples(), 8_975);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 20_000);
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    let contents_left = &app.project.audio_items()[0];
+    assert_eq!(contents_left.start_sample(), 48_000);
+    assert_eq!(contents_left.length_samples(), 24_000);
+    assert_eq!(contents_left.source_offset_samples(), 31_025);
+    let _ = app.update(Message::Undo);
+
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::LeftTrim));
     let _ = app.update(Message::NudgeSelectedItems(-1));
     let left_trimmed = &app.project.audio_items()[0];
     assert_eq!(left_trimmed.start_sample(), 36_000);
     assert_eq!(left_trimmed.length_samples(), 36_000);
     assert_eq!(left_trimmed.source_offset_samples(), 8_975);
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 36_000,
+            source_offset_samples: 0,
+            length_samples: 36_000,
+        })
+        .unwrap();
+    let before = app.project.audio_items()[0].clone();
+    let revision = app.revision;
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.audio_items()[0], before);
+    assert!(
+        app.item_nudge_dialog
+            .error
+            .as_deref()
+            .is_some_and(|error| { error.contains("before the start of the audio source") })
+    );
+
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: 36_000,
+            source_offset_samples: 66_925,
+            length_samples: 36_000,
+        })
+        .unwrap();
+    let before = app.project.audio_items()[0].clone();
+    let revision = app.revision;
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.audio_items()[0], before);
+    assert!(
+        app.item_nudge_dialog
+            .error
+            .as_deref()
+            .is_some_and(|error| { error.contains("extend beyond the audio source") })
+    );
     drop(app);
     let _ = std::fs::remove_file(project_path);
 }
