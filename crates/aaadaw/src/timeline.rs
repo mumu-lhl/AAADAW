@@ -796,6 +796,7 @@ pub(crate) struct TimelineState {
     pub(crate) viewport_height: f32,
     pub(crate) selected_track: Option<TrackId>,
     pub(crate) selected_tracks: HashSet<TrackId>,
+    pub(crate) delete_focus: DeleteFocusTarget,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
     pub(crate) hovered_item: Option<ItemId>,
@@ -840,6 +841,14 @@ pub(crate) struct TimelineState {
     folder_compact: HashMap<TrackId, u8>,
     folder_parents: HashMap<TrackId, Option<TrackId>>,
     folder_tracks: HashSet<TrackId>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeleteFocusTarget {
+    #[default]
+    Arrange,
+    TrackPanel,
+    Automation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -996,6 +1005,7 @@ impl Default for TimelineState {
             viewport_height: 480.0,
             selected_track: None,
             selected_tracks: HashSet::new(),
+            delete_focus: DeleteFocusTarget::Arrange,
             selected_item: None,
             selected_items: HashSet::new(),
             hovered_item: None,
@@ -1633,6 +1643,7 @@ impl TimelineState {
                 additive,
                 range,
             } => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
                 self.select_item(item_id, additive, range, false);
@@ -1642,6 +1653,7 @@ impl TimelineState {
             }
             TimelineEvent::SelectHoveredItem(mode) => {
                 if let Some(item_id) = self.hovered_item {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
                     self.selected_volume_automation_point = None;
                     self.selected_fx_automation_point = None;
                     let (additive, preserve_existing_for_drag) = match mode {
@@ -1658,7 +1670,10 @@ impl TimelineState {
                 top,
                 bottom,
                 additive,
-            } => self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive),
+            } => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
+                self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive);
+            }
             TimelineEvent::OpenFadeMenu {
                 item_id,
                 edge,
@@ -1681,6 +1696,7 @@ impl TimelineState {
             TimelineEvent::SetFadeCurvePreset { .. } => {}
             TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
                 if self.cache.item_indices.contains_key(&item_id) {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
                     if !self.selected_items.contains(&item_id) {
                         self.select_item(Some(item_id), false, false, false);
                     }
@@ -1698,6 +1714,7 @@ impl TimelineState {
                 x,
                 y,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.context_automation_point =
                     Some(AutomationPointContext::Volume { track_id, index });
                 self.context_automation_position = Some((x, y));
@@ -1710,6 +1727,7 @@ impl TimelineState {
                 x,
                 y,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.context_automation_point = Some(AutomationPointContext::Fx {
                     track_id,
                     chain_index,
@@ -1802,6 +1820,7 @@ impl TimelineState {
                 parameter_id,
                 index,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point =
                     Some((track_id, chain_index, parameter_id, index));
@@ -1813,6 +1832,7 @@ impl TimelineState {
                 self.cache.generation = self.cache.generation.wrapping_add(1);
             }
             TimelineEvent::SelectVolumeAutomationPoint { track_id, index } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.selected_fx_automation_point = None;
                 self.selected_volume_automation_point = Some((track_id, index));
                 self.cache.generation = self.cache.generation.wrapping_add(1);
@@ -1828,6 +1848,7 @@ impl TimelineState {
             | TimelineEvent::InsertVolumeAutomationAt { .. }
             | TimelineEvent::DeleteVolumeAutomationPoint { .. } => {}
             TimelineEvent::SelectEmpty(tick) => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
                 self.edit_cursor_tick = tick;
@@ -2014,19 +2035,27 @@ impl TimelineState {
             TimelineEvent::EndItemTrim | TimelineEvent::CancelItemTrim => {
                 self.item_trim_preview = None;
             }
-            TimelineEvent::SelectTrack(track_id) => self.select_track_only(track_id),
+            TimelineEvent::SelectTrack(track_id) => {
+                self.delete_focus = DeleteFocusTarget::TrackPanel;
+                self.select_track_only(track_id);
+            }
             TimelineEvent::SelectTrackWithModifiers {
                 track_id,
                 modifiers,
-            } => self.select_track_with_modifiers(track_id, modifiers),
+            } => {
+                self.delete_focus = DeleteFocusTarget::TrackPanel;
+                self.select_track_with_modifiers(track_id, modifiers);
+            }
             TimelineEvent::OpenTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
+                    self.delete_focus = DeleteFocusTarget::TrackPanel;
                     self.select_track_only(track_id);
                     self.context_track = Some(track_id);
                 }
             }
             TimelineEvent::ToggleTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
+                    self.delete_focus = DeleteFocusTarget::TrackPanel;
                     if self.context_track == Some(track_id) {
                         self.context_track = None;
                     } else {
@@ -2128,6 +2157,7 @@ impl TimelineState {
         range: bool,
         preserve_existing_for_drag: bool,
     ) {
+        self.delete_focus = DeleteFocusTarget::Arrange;
         let Some(item_id) = item_id else {
             self.clear_selected_items();
             return;

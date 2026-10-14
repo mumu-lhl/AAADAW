@@ -1,7 +1,7 @@
 use super::action_macros::ActionMacro;
 use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
-use crate::timeline::{HoveredItemSelectionMode, TimelineEvent};
+use crate::timeline::{DeleteFocusTarget, HoveredItemSelectionMode, TimelineEvent};
 use aaadaw_core::TrackId;
 use iced::Task;
 use iced::keyboard::key::Named;
@@ -2357,7 +2357,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateMidiItem(item_id)
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
-        CommandId::DeleteByFocus | CommandId::DeleteByFocusNoPrompting => Message::DeleteByFocus,
+        CommandId::DeleteByFocus => Message::DeleteByFocus,
+        CommandId::DeleteByFocusNoPrompting => Message::DeleteByFocusNoPrompting,
         CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
         CommandId::CopyLoopOfSelectedArea => Message::CopyLoopOfSelectedArea,
         CommandId::EncloseMediaItemsInRazorEdit => Message::EncloseMediaItemsInRazorEdit,
@@ -2670,13 +2671,18 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
         CommandKind::DeleteByFocus | CommandKind::DeleteByFocusNoPrompting => {
-            !project_edit_busy(app)
-                && (!app.timeline.selected_items.is_empty()
-                    || !app.selected_track_ids().is_empty()
-                    || app
+            if project_edit_busy(app) {
+                false
+            } else {
+                match app.timeline.delete_focus {
+                    DeleteFocusTarget::Arrange => !app.timeline.selected_items.is_empty(),
+                    DeleteFocusTarget::TrackPanel => !app.selected_track_ids().is_empty(),
+                    DeleteFocusTarget::Automation => app
                         .timeline
                         .selected_automation_point_delete_event()
-                        .is_some())
+                        .is_some(),
+                }
+            }
         }
         CommandKind::TrimItemsToSelectedArea => !project_edit_busy(app),
         CommandKind::SelectAllItems => true,

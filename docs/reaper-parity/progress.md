@@ -883,6 +883,12 @@ App 测试覆盖全部五字段一次 Apply/Undo/Redo、空名称导致批量字
 
 MIDI Properties 仍缺 item timebase、take playback rate/pitch/mix、剩余 source controls、fades、批量/混合值和完整窗口几何；不关闭 `ITEM-PROPERTIES-001` 或 `ITEM-MUTE-001`。
 
+### 2026-10-14 Delete by focus：轨道确认与 no-prompting
+
+REAPER 7.82 原生探针在 TCP 点击后同时选中轨道与 MIDI item，再按 Delete，显示 `Delete 1 selected track?`；取消没有项目变化。将焦点保持在 TCP 并运行 Action List 的 `- no prompting` 变体会直接删除轨道及其 MIDI item，原厂状态变化计数只增加一次。AAADAW 现维护 Arrange、TrackPanel、Automation 三类最近目标区；普通 Delete 在 TrackPanel 弹确认框，Escape/Cancel/遮罩取消无修改，确认经现有依赖顺序删除事务执行；no-prompting 使用同一事务但不弹框。Arrange item 和 Automation point 根据各自目标区删除。焦点状态目前限定为主 Arrange/Mixer 内最后一次目标区交互，不等同全部 REAPER 子窗口和控件的真实键盘焦点。
+
+实窗截图验证了 AAADAW 确认框和无提示删除后的空轨道状态；原厂对应截图及计数证据见 [Delete by focus runtime evidence](../verification/reaper-parity/fixtures/delete-by-focus-runtime-native.tsv)。AAADAW nightly + Cranelift 应用 551/551 测试通过；Stable workspace all-target Clippy `-D warnings` 和 fmt/diff 检查通过。未做完整焦点窗口或像素验收，`INPUT-BIND-001` 仍为 `in_progress`。
+
 
 ### 2026-10-14 Audio Item Invert phase
 

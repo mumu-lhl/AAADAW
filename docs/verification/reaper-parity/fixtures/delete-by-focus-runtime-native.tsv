@@ -1,0 +1,19 @@
+field	value
+reference	Linux REAPER 7.82 / Default 7 / fresh profile
+display	Xvfb :227, 1280x800x24
+test_project	One selected track and one selected MIDI item; no media playback
+native_focus_action	Click TCP track-name area, press Delete
+native_confirmation	Text: Delete 1 selected track?; selected track and MIDI item remain; Cancel leaves state unchanged
+native_confirmation_screenshot	delete-track-confirmation-native.png
+native_confirmation_sha256	19decd6af6329c56802f50fe202f3f5e4113a744aa5e7b385c6a399e28cae4ee
+native_no_prompt_action	Keep TCP as target, run Action List row ending in - no prompting
+native_no_prompt_result	Track and MIDI item counts change 1/1 to 0/0; native project state-change count increases once
+native_no_prompt_screenshot	delete-track-no-prompt-native.png
+native_no_prompt_sha256	7f2b3e2cdbbfd58b5c74dd57f17c75556eed399bcf65f0c8f9c24568a1f8f415
+aaadaw_test	Linux AAADAW 1280x800 main window; select one TCP track and run Delete / no-prompting action
+aaadaw_confirmation_screenshot	delete-track-confirmation-aaadaw.png
+aaadaw_confirmation_sha256	750e653cee637ea7c5cd6e2d52279bc32cf2c9d3590109a1f264745d9a53872f
+aaadaw_no_prompt_screenshot	delete-track-no-prompt-aaadaw.png
+aaadaw_no_prompt_sha256	d590b2a415747d71121b5a7569d6e92e3ba27d41ff0656add4ac6c283c0c4038
+aaadaw_behavior	Arrange item selection, TrackPanel selection and Automation point selection choose their own delete targets; standard track deletion prompts, no-prompting deletes directly
+limit	Main-window last-interaction target model only; all native child-window/widget focus precedence and pixel parity remain unverified

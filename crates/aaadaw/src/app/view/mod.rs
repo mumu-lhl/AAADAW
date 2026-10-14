@@ -328,6 +328,46 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
+    if let Some(track_ids) = &app.pending_focused_track_deletion {
+        let count = track_ids.len();
+        let noun = if count == 1 { "track" } else { "tracks" };
+        let dialog = container(
+            column![
+                text(format!("Delete {count} selected {noun}?")).size(18),
+                row![
+                    button(text("Delete"))
+                        .style(button::danger)
+                        .on_press(Message::ConfirmFocusedTrackDeletion),
+                    button(text("Cancel"))
+                        .style(button::secondary)
+                        .on_press(Message::CancelFocusedTrackDeletion),
+                ]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP),
+        )
+        .width(Length::Fixed(360.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelFocusedTrackDeletion);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     layered
 }
 

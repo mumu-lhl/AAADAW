@@ -327,6 +327,7 @@ struct App {
     unsaved_session_snapshot_busy: bool,
     unsaved_session_snapshot_revision: u64,
     pending_project_transition: Option<PendingProjectTransition>,
+    pending_focused_track_deletion: Option<Vec<TrackId>>,
     project_lock: Option<ProjectSessionLock>,
     track_name_edits: HashMap<TrackId, String>,
     midi_item_name_edits: HashMap<ItemId, String>,
@@ -1634,6 +1635,19 @@ impl App {
                     | Message::ActionListFindShortcut
                     | Message::ActionListRun(_)
                     | Message::OpenActionMacroEditor
+            )
+        {
+            return Task::none();
+        }
+        if self.pending_focused_track_deletion.is_some()
+            && !matches!(
+                &message,
+                Message::ConfirmFocusedTrackDeletion
+                    | Message::CancelFocusedTrackDeletion
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
             )
         {
             return Task::none();
@@ -3465,6 +3479,27 @@ impl App {
                     self.keyboard_modifiers = *modifiers;
                     self.timeline.modifiers = *modifiers;
                 }
+                if self.pending_focused_track_deletion.is_some() {
+                    if self.main_window_id == Some(window_id)
+                        && status == iced::event::Status::Ignored
+                        && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(key),
+                            repeat: false,
+                            ..
+                        }) = &event
+                    {
+                        match key {
+                            iced::keyboard::key::Named::Enter => {
+                                return self.update(Message::ConfirmFocusedTrackDeletion);
+                            }
+                            iced::keyboard::key::Named::Escape => {
+                                return self.update(Message::CancelFocusedTrackDeletion);
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Task::none();
+                }
                 if self.project_settings_window_id == Some(window_id) {
                     if status == iced::event::Status::Ignored
                         && matches!(
@@ -3777,6 +3812,9 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.pending_focused_track_deletion.take().is_some() {
+                    return Task::none();
+                }
                 if self.timeline.context_fade.take().is_some() {
                     return Task::none();
                 }
@@ -4332,7 +4370,12 @@ impl App {
                 self.apply_edit(action, "MIDI item quantized to 1/16");
             }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
-            Message::DeleteByFocus => task = self.delete_by_focus(),
+            Message::DeleteByFocus => task = self.delete_by_focus(false),
+            Message::DeleteByFocusNoPrompting => task = self.delete_by_focus(true),
+            Message::ConfirmFocusedTrackDeletion => self.confirm_focused_track_deletion(),
+            Message::CancelFocusedTrackDeletion => {
+                self.pending_focused_track_deletion = None;
+            }
             Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
             Message::TrackNameChanged(track_id, name) => {
                 self.track_name_edits.insert(track_id, name);
@@ -8443,16 +8486,33 @@ impl App {
         self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
     }
 
-    fn delete_by_focus(&mut self) -> Task<Message> {
-        if !self.timeline.selected_items.is_empty() {
-            self.delete_selected_items();
-            return Task::none();
+    fn delete_by_focus(&mut self, no_prompting: bool) -> Task<Message> {
+        match self.timeline.delete_focus {
+            timeline::DeleteFocusTarget::Arrange => self.delete_selected_items(),
+            timeline::DeleteFocusTarget::Automation => {
+                if let Some(event) = self.timeline.selected_automation_point_delete_event() {
+                    return self.update(Message::Timeline(event));
+                }
+            }
+            timeline::DeleteFocusTarget::TrackPanel => {
+                let selected_track_ids = self.selected_track_ids();
+                if selected_track_ids.is_empty() {
+                    return Task::none();
+                }
+                if no_prompting {
+                    self.delete_selected_tracks(selected_track_ids);
+                } else {
+                    self.pending_focused_track_deletion = Some(selected_track_ids);
+                }
+            }
         }
-        if let Some(event) = self.timeline.selected_automation_point_delete_event() {
-            return self.update(Message::Timeline(event));
-        }
-        self.delete_selected_tracks(self.selected_track_ids());
         Task::none()
+    }
+
+    fn confirm_focused_track_deletion(&mut self) {
+        if let Some(track_ids) = self.pending_focused_track_deletion.take() {
+            self.delete_selected_tracks(track_ids);
+        }
     }
 
     fn delete_selected_tracks(&mut self, track_ids: Vec<TrackId>) {

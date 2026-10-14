@@ -7539,6 +7539,10 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert_eq!(remove_items.shortcut, None);
     assert!(!remove_items.enabled);
 
+    let track_id = app.project.tracks()[0].id();
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrack(track_id),
+    ));
     let delete_by_focus = commands::shortcut_entries(&app)
         .into_iter()
         .find(|entry| entry.id == "edit.delete-focused")
@@ -8515,6 +8519,23 @@ fn track_delete_is_undoable() {
 #[test]
 fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically() {
     let mut app = App::default();
+    let main_window_id = iced::window::Id::unique();
+    app.main_window_id = Some(main_window_id);
+    let focused_key_event = |key, physical_key| {
+        Message::RuntimeKeyboardEvent(
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(key),
+                modified_key: iced::keyboard::Key::Named(key),
+                physical_key: iced::keyboard::key::Physical::Code(physical_key),
+                location: iced::keyboard::Location::Standard,
+                modifiers: Modifiers::NONE,
+                text: None,
+                repeat: false,
+            }),
+            iced::event::Status::Ignored,
+            main_window_id,
+        )
+    };
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddTrack);
     let parent = app.project.tracks()[0].id();
@@ -8565,8 +8586,13 @@ fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].id(), item_id);
 
-    app.timeline.selected_items.clear();
-    app.timeline.selected_item = None;
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectItem {
+            item_id: Some(item_id),
+            additive: false,
+            range: false,
+        },
+    ));
     let _ = app.update(Message::Timeline(
         super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
             track_id: parent,
@@ -8582,6 +8608,26 @@ fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically
     let revision = app.revision;
     let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
 
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 1);
+    assert_eq!(app.revision, revision);
+    assert_eq!(
+        app.pending_focused_track_deletion.as_deref(),
+        Some(&[parent, child][..])
+    );
+    let _ = app.update(focused_key_event(
+        iced::keyboard::key::Named::Escape,
+        iced::keyboard::key::Code::Escape,
+    ));
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.revision, revision);
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
+    assert!(app.pending_focused_track_deletion.is_some());
+    let _ = app.update(focused_key_event(
+        iced::keyboard::key::Named::Enter,
+        iced::keyboard::key::Code::Enter,
+    ));
     assert!(app.project.tracks().is_empty());
     assert_eq!(app.revision, revision + 1);
     let _ = app.update(Message::Undo);
@@ -8590,6 +8636,26 @@ fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically
     assert_eq!(app.project.tracks()[1].id(), child);
     assert_eq!(app.project.tracks()[1].parent_track(), Some(parent));
     assert_eq!(app.project.midi_items()[0].id(), item_id);
+
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: parent,
+            modifiers: Modifiers::NONE,
+        },
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: child,
+            modifiers: Modifiers::CTRL,
+        },
+    ));
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocusNoPrompting));
+    assert!(app.pending_focused_track_deletion.is_none());
+    assert!(app.project.tracks().is_empty());
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks().len(), 2);
 }
 
 #[test]

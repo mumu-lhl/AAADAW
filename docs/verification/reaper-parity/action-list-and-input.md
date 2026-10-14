@@ -120,7 +120,11 @@ AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-neare
 
 Linux REAPER 7.82 / Default 7 的默认动作导出 `linux-7.82/actions.tsv` 记录 Main action 40697 `Remove items/tracks/envelope points (depending on focus)` 的默认键为 Delete；相邻的 40006 `Item: Remove items` 没有默认键。隔离 REAPER 与 AAADAW 的 701×475 Action List 窗口截图保存在[参照](fixtures/delete-by-focus-action-list-native.png)和[当前 AAADAW](fixtures/delete-by-focus-no-prompt-aaadaw.png)。两边均显示主动作与无提示变体；默认动作 TSV 只为主动作给出 40697，因此无提示变体使用 AAADAW 稳定 ID `edit.delete-focused-no-prompting`，不绑定默认键。Item 菜单命令 `Remove items` 也不绑定快捷键，Delete 只绑定 `edit.delete-focused`，不再错误显示 Delete/Backspace。
 
-目前 AAADAW 按时间线选择分派：有选中的 Audio/MIDI items 时删除这些 items；否则删除选中的 FX/音量 automation 点；否则将已选轨道作为一组删除，先删依赖轨道以保留父子文件夹/路由约束，多轨删除只占一个 Undo 步骤。两个 Action List 入口复用这条编辑路径；AAADAW 当前没有删除确认对话框，所以两个入口在 AAADAW 中结果相同，REAPER 默认动作在不同对象和偏好下是否询问确认尚未实测。回归 `delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically` 与 `delete_by_focus_removes_selected_volume_automation_point_and_undoes` 覆盖事务、Action List 默认绑定和 Undo。截图只验证动作目录显示；还没有隔离运行时探针证明各焦点窗口的目标优先级；AAADAW 也尚未将键盘焦点窗口纳入分派，所以不同窗口中多类对象同时选中时的真实优先级仍是差异。Main 以外 Section、其余默认动作和完整 Action List/UI 验收同样未完成，`INPUT-BIND-001` 继续 `in_progress`。
+AAADAW 现按最近一次目标区交互路由 Delete：Arrange 的 item/空白区选择指向 items，TCP/MCP 轨道选择指向 tracks，automation 点选择指向 automation point。轨道面板获得目标后，普通 Delete 显示 `Delete N selected track(s)?` 确认框；Cancel、Escape 或点遮罩不改工程，确认后依赖轨道先删，整组只占一步 Undo。`edit.delete-focused-no-prompting` 则直接执行同一轨道事务。两种入口都只作用于当前目标区，不再按“有 item 就优先”跨区猜焦点。
+
+隔离 REAPER 探针选中一条轨道和一个 MIDI item 后，点击 TCP 并按 Delete，原厂弹出 `Delete 1 selected track?`；取消时项目没有变化。保持 TCP 目标再从 Action List Run 无提示变体，轨道与 MIDI item 被直接移除，探针状态从 1/1 变成 0/0，原厂项目状态只新增一次。见 [原厂确认框](fixtures/delete-track-confirmation-native.png)、[原厂无提示执行后](fixtures/delete-track-no-prompt-native.png) 和 [运行时 TSV](fixtures/delete-by-focus-runtime-native.tsv)。AAADAW 的 [确认框](fixtures/delete-track-confirmation-aaadaw.png) 和[无提示执行后](fixtures/delete-track-no-prompt-aaadaw.png) 截图也由 Linux 主窗口实窗采集；应用回归覆盖 Arrange/TrackPanel 目标切换、混合 item/track 选择、取消/确认、无提示删除、原子 Undo/Redo 和 automation point 删除。
+
+当前焦点模型是 AAADAW 主 Arrangement/Mixer 内最后一次 item、track 或 automation 目标选择，不等价于所有 REAPER 子窗口、插件控件、文本编辑框的真实键盘焦点；其他窗口与 TCP/MCP 非选择控件的焦点优先级仍待探测。Action List 完整默认目录、Main 外 Section、特殊键/Scope/MIDI/OSC、导入导出与全量窗口视觉对齐仍未完成，`INPUT-BIND-001` 继续 `in_progress`。
 
 ## 未完成项
 
