@@ -2429,6 +2429,8 @@ impl App {
             Message::ItemPropertyFieldChanged(field, text) => {
                 if let Some(draft) = &mut self.item_properties {
                     draft.edit(field, text);
+                } else if let Some(draft) = &mut self.midi_item_properties {
+                    draft.edit(field, text);
                 }
             }
             Message::ItemPropertyLoopSourceChanged(enabled) => {

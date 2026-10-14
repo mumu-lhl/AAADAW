@@ -112,7 +112,37 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
+    let field = |id: ItemPropertyField, width| {
+        text_input("", &draft.fields[id.index()])
+            .on_input(move |value| Message::ItemPropertyFieldChanged(id, value))
+            .on_submit(Message::ApplyItemProperties(true))
+            .width(width)
+    };
     let content = column![
+        row![
+            text("Display:").width(120),
+            pick_list(
+                [
+                    TimeUnit::Time,
+                    TimeUnit::Beats,
+                    TimeUnit::Hmsf,
+                    TimeUnit::Samples
+                ],
+                Some(draft.unit),
+                Message::ItemPropertiesUnitChanged
+            )
+        ]
+        .spacing(6),
+        row![
+            text("Position:").width(120),
+            field(ItemPropertyField::Position, 130)
+        ]
+        .spacing(6),
+        row![
+            text("Length:").width(120),
+            field(ItemPropertyField::Length, 130)
+        ]
+        .spacing(6),
         row![
             text("").width(120),
             checkbox(draft.muted)

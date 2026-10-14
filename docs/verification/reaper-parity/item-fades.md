@@ -169,3 +169,11 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 The existing Linux REAPER 7.82 / Default 7 Media Item Properties reference at `images/reaper-item-properties-volume.png` shows `Loop source` enabled by default; the existing native Copy loop fixture records `B_LOOPSRC=1` after insertion. AAADAW now defaults new audio items to enabled and exposes an undoable `Loop source` checkbox in this dialog. The underlying bounded source-section start and length survive turning looping off; playback then runs the section once and stops at its end. Core, storage, media and app regressions cover the flag, retained section, Apply, Undo and Redo.
 
 This is a control/state slice only. No new AAADAW screenshot or native probe was captured for this change. The rest of the Media Item Properties fields, native window geometry and visual comparison remain open; see `docs/reaper-parity/progress.md` and the `ITEM-PROPERTIES-001` parity row.
+
+### MIDI Item Position and Length (2026-10-14)
+
+The MIDI Item Properties window now edits Position and Length in the same Time, Beats, H:M:S:F, and Samples modes as the existing Audio properties window. Apply converts project-clock values to ticks using the active tempo map and applies the timing and Mute changes together as one undoable transaction; invalid, zero-length, and out-of-range input stays in the draft. `EditMidiItem` preserves notes, controllers, pitch bends, and source offset while changing the visible timeline placement and length.
+
+Focused regressions round-trip all four display units, including a negative project start-time offset for Time and H:M:S:F; reject zero length and a sample position outside exact `f64` integer range; and apply position, length, and mute together while preserving MIDI notes across Undo/Redo. Nightly + Cranelift workspace nextest passed 1065/1065 with two X11-dependent tests excluded. Stable strict Clippy, fmt, and diff checks passed. No AAADAW screenshot or new native probe was captured.
+
+The MIDI window still lacks Start in source, item timebase, take name/playback rate/pitch/mix, source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.

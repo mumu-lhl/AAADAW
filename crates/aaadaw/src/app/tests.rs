@@ -13063,7 +13063,12 @@ fn item_properties_mute_applies_with_undo_and_preserves_gain() {
 
 #[test]
 fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
-    let mut app = App::default();
+    use super::item_properties::{ItemPropertyField, TimeUnit};
+
+    let mut app = App {
+        item_properties_unit: TimeUnit::Time,
+        ..App::default()
+    };
     app.project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -13101,18 +13106,48 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
     assert!(app.midi_item_properties.is_some());
     assert!(app.item_properties_window_id.is_some());
 
+    let expected_start = app
+        .project
+        .tick_at_sample_position(app.project.sample_at_project_time(1.0).unwrap() as f64)
+        .unwrap()
+        .round() as u64;
+    let expected_end = app
+        .project
+        .tick_at_sample_position(app.project.sample_at_project_time(1.75).unwrap() as f64)
+        .unwrap()
+        .round() as u64;
     let revision = app.revision;
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::Position,
+        "0:01.000".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::Length,
+        "0:00.750".into(),
+    ));
     let _ = app.update(Message::ItemPropertyMuteChanged(true));
     let _ = app.update(Message::ApplyItemProperties(false));
     assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].start_tick(), expected_start);
+    assert_eq!(
+        app.project.midi_items()[0].length_ticks(),
+        expected_end - expected_start
+    );
     assert_eq!(app.project.midi_items()[0].notes().len(), 1);
     assert_eq!(app.revision, revision + 1);
 
     let _ = app.update(Message::Undo);
     assert!(!app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 960);
     assert_eq!(app.project.midi_items()[0].notes().len(), 1);
     let _ = app.update(Message::Redo);
     assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.project.midi_items()[0].start_tick(), expected_start);
+    assert_eq!(
+        app.project.midi_items()[0].length_ticks(),
+        expected_end - expected_start
+    );
 
     let _ = app.update(Message::ItemPropertyMuteChanged(false));
     let _ = app.update(Message::CloseItemProperties);

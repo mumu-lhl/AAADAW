@@ -846,3 +846,11 @@ Audio loop clipboard entries now retain each source item’s mute bit; `InsertLo
 F2 / `Item properties: Toggle mute` now opens the properties window for a selected MIDI item. Its Mute checkbox uses a draft; Apply writes one undoable project action, Cancel closes without applying pending edits, and Undo/Redo changes mute without altering MIDI notes. The checkbox message is accepted through the secondary-window event route. This is a mute-only MIDI properties view; the remaining source, timing, take, and fade fields and REAPER window geometry are still absent.
 
 Nightly + Cranelift workspace nextest passed 1064/1064 with two X11-dependent CLAP floating-editor tests excluded; the focused MIDI and Audio item-properties/F2 tests passed 3/3. Stable workspace all-target Clippy `-D warnings`, fmt, and diff checks passed. No AAADAW screenshot or new native REAPER probe was made. `ITEM-MUTE-001` and `ITEM-PROPERTIES-001` remain `in_progress`.
+
+### 2026-10-14 MIDI Item Properties Position and Length
+
+在前一段 MIDI mute-only 属性窗基础上，增加 Position、Length 和 Time/Beats/H:M:S:F/Samples 单位选择。解析使用当前工程起始时间、帧率、速度图和拍号；编辑通过 `EditMidiItem` 保留 MIDI 内容及 source offset。Position/Length 与 Mute 同时修改时汇总为单一 BatchTransaction；非法、零长、溢出输入不创建项目动作，Cancel 丢弃草稿。
+
+回归对四种单位使用负工程起始时间偏移做格式化/解析往返，拒绝零长度和超过 `f64` 精确整数范围的位置；App 测试验证 Position、Length、Mute 一次 Apply/Undo/Redo，并检查音符保持不变。Nightly + Cranelift workspace nextest 1065/1065 passed，排除两项依赖 X11 的 CLAP floating-editor 测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查和 parity matrix 校验通过。本轮没有 AAADAW 截图或 REAPER 新探针。
+
+MIDI Item Properties 仍缺 Start in source、Item timebase、take name/playback rate/pitch/mix、source controls、fades 和完整 526×693 原厂窗口几何；`ITEM-PROPERTIES-001` 与 `ITEM-MUTE-001` 继续 `in_progress`。

@@ -4,7 +4,7 @@ use crate::project_time::{
     format_project_time, format_project_timecode, parse_project_time, parse_project_timecode,
 };
 use aaadaw_core::{
-    AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId, Project,
+    AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId, MidiItem, Project,
 };
 use iced::Task;
 use serde::{Deserialize, Serialize};
@@ -105,26 +105,60 @@ impl App {
         if self.item_properties_generation != self.project_generation {
             return;
         }
-        let Some(draft) = &mut self.item_properties else {
-            return;
-        };
-        let Some(item) = self
-            .project
-            .audio_items()
-            .iter()
-            .find(|item| item.id() == draft.item_id)
+        let Some(item_id) = self
+            .item_properties
+            .as_ref()
+            .map(|draft| draft.item_id)
+            .or_else(|| {
+                self.midi_item_properties
+                    .as_ref()
+                    .map(|draft| draft.item_id)
+            })
         else {
             return;
         };
-        if draft.unit != unit {
-            *draft = ItemProperties::from_project_item(item, &self.project, unit);
+        if self
+            .item_properties
+            .as_ref()
+            .is_some_and(|draft| draft.unit != unit)
+        {
+            let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            else {
+                return;
+            };
+            self.item_properties =
+                Some(ItemProperties::from_project_item(item, &self.project, unit));
+        } else if self
+            .midi_item_properties
+            .as_ref()
+            .is_some_and(|draft| draft.unit != unit)
+        {
+            let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            else {
+                return;
+            };
+            self.midi_item_properties =
+                Some(MidiItemProperties::from_item(item, &self.project, unit));
         }
         self.item_properties_unit = unit;
         let result = super::config_paths::config_file_path("item-properties.json")
             .ok_or_else(|| "No application configuration directory".to_owned())
             .and_then(|path| save_unit_path(&path, unit));
         if let Err(error) = result {
-            draft.error = Some(format!("Display unit could not be saved: {error}"));
+            let message = format!("Display unit could not be saved: {error}");
+            if let Some(draft) = &mut self.item_properties {
+                draft.error = Some(message);
+            } else if let Some(draft) = &mut self.midi_item_properties {
+                draft.error = Some(message);
+            }
         }
     }
 
@@ -154,7 +188,11 @@ impl App {
             .find(|item| item.id() == item_id)
         {
             self.item_properties = None;
-            self.midi_item_properties = Some(MidiItemProperties::from_item(item));
+            self.midi_item_properties = Some(MidiItemProperties::from_item(
+                item,
+                &self.project,
+                self.item_properties_unit,
+            ));
         } else {
             return Task::none();
         }
@@ -354,9 +392,25 @@ impl App {
         };
         let item_id = item.id();
         let current_muted = item.is_muted();
-        let changes_mute = draft.mute_changed && draft.muted != current_muted;
-        if changes_mute && self.playback_active() {
-            let error = "Stop playback before changing MIDI item mute".to_owned();
+        let current_start = item.start_tick();
+        let current_length = item.length_ticks();
+        let (start_tick, length_ticks) = match draft.placement_in_project(item, &self.project) {
+            Ok(placement) => placement,
+            Err(error) => {
+                self.midi_item_properties
+                    .as_mut()
+                    .expect("open MIDI item draft")
+                    .error = Some(error);
+                return Task::none();
+            }
+        };
+        let changes_timing = (draft.changed[ItemPropertyField::Position.index()]
+            || draft.changed[ItemPropertyField::Length.index()])
+            && (start_tick != current_start || length_ticks != current_length);
+        let target_muted = draft.muted;
+        let changes_mute = draft.mute_changed && target_muted != current_muted;
+        if (changes_timing || changes_mute) && self.playback_active() {
+            let error = "Stop playback before changing MIDI item properties".to_owned();
             self.status = error.clone();
             self.midi_item_properties
                 .as_mut()
@@ -364,24 +418,36 @@ impl App {
                 .error = Some(error);
             return Task::none();
         }
+        let mut actions = Vec::with_capacity(2);
+        if changes_timing {
+            actions.push(aaadaw_core::DawAction::EditMidiItem {
+                item_id,
+                start_tick,
+                length_ticks,
+            });
+        }
         if changes_mute {
-            self.apply_action(
-                aaadaw_core::DawAction::SetMidiItemMute {
-                    item_id,
-                    muted: self
-                        .midi_item_properties
-                        .as_ref()
-                        .expect("open MIDI item draft")
-                        .muted,
-                },
-                "MIDI item properties applied",
-            );
-            if !self
-                .project
-                .midi_items()
-                .iter()
-                .any(|item| item.id() == item_id && item.is_muted() != current_muted)
-            {
+            actions.push(aaadaw_core::DawAction::SetMidiItemMute {
+                item_id,
+                muted: target_muted,
+            });
+        }
+        if !actions.is_empty() {
+            let action = if actions.len() == 1 {
+                actions.pop().expect("one MIDI property action")
+            } else {
+                aaadaw_core::DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                }
+            };
+            self.apply_action(action, "MIDI item properties applied");
+            if !self.project.midi_items().iter().any(|item| {
+                item.id() == item_id
+                    && item.start_tick() == start_tick
+                    && item.length_ticks() == length_ticks
+                    && item.is_muted() == target_muted
+            }) {
                 self.midi_item_properties
                     .as_mut()
                     .expect("open MIDI item draft")
@@ -398,7 +464,11 @@ impl App {
                 .iter()
                 .find(|item| item.id() == item_id)
                 .expect("MIDI item is still present");
-            self.midi_item_properties = Some(MidiItemProperties::from_item(item));
+            self.midi_item_properties = Some(MidiItemProperties::from_item(
+                item,
+                &self.project,
+                self.item_properties_unit,
+            ));
             Task::none()
         }
     }
@@ -1005,18 +1075,94 @@ fn parse_curve(text: &str) -> Result<f64, String> {
 #[derive(Debug, Clone)]
 pub(crate) struct MidiItemProperties {
     pub(crate) item_id: ItemId,
+    pub(crate) fields: [String; 11],
+    changed: [bool; 11],
+    pub(crate) unit: TimeUnit,
+    frame_rate: aaadaw_core::FrameRate,
     pub(crate) muted: bool,
     pub(crate) error: Option<String>,
     mute_changed: bool,
 }
 
 impl MidiItemProperties {
-    fn from_item(item: &aaadaw_core::MidiItem) -> Self {
-        Self {
+    fn from_item(item: &MidiItem, project: &Project, unit: TimeUnit) -> Self {
+        let mut draft = Self {
             item_id: item.id(),
+            fields: std::array::from_fn(|_| String::new()),
+            changed: [false; 11],
+            unit,
+            frame_rate: project.settings().frame_rate(),
             muted: item.is_muted(),
             error: None,
             mute_changed: false,
+        };
+        let start_tick = item.start_tick() as f64;
+        let end_tick = item.start_tick().saturating_add(item.length_ticks()) as f64;
+        let formatted = project
+            .sample_at_tick_position(start_tick)
+            .and_then(|start_sample| {
+                project
+                    .sample_at_tick_position(end_tick)
+                    .map(|end_sample| (start_sample, end_sample - start_sample))
+            })
+            .map_err(|error| error.to_string())
+            .and_then(|(start_sample, length_samples)| {
+                let sample_rate = f64::from(project.settings().sample_rate());
+                match unit {
+                    TimeUnit::Samples => Ok((
+                        format!("{:.0}", start_sample),
+                        format!("{:.0}", length_samples),
+                    )),
+                    TimeUnit::Time => {
+                        let offset = project.settings().project_start_time_offset_seconds();
+                        Ok((
+                            format_project_time(offset + start_sample / sample_rate),
+                            format_time(length_samples / sample_rate),
+                        ))
+                    }
+                    TimeUnit::Beats => {
+                        beats::format_position(project, start_sample).and_then(|position| {
+                            beats::format_length(project, start_sample, length_samples)
+                                .map(|length| (position, length))
+                        })
+                    }
+                    TimeUnit::Hmsf => {
+                        let offset = project.settings().project_start_time_offset_seconds();
+                        let position = format_project_timecode(
+                            draft.frame_rate,
+                            offset + start_sample / sample_rate,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        let length = draft
+                            .frame_rate
+                            .format_timecode(length_samples / sample_rate)
+                            .map_err(|error| error.to_string())?;
+                        Ok((position, length))
+                    }
+                }
+            });
+        match formatted {
+            Ok((position, length)) => {
+                draft.fields[ItemPropertyField::Position.index()] = position;
+                draft.fields[ItemPropertyField::Length.index()] = length;
+            }
+            Err(error) => {
+                draft.fields[ItemPropertyField::Position.index()] = "Unavailable".to_owned();
+                draft.fields[ItemPropertyField::Length.index()] = "Unavailable".to_owned();
+                draft.error = Some(error);
+            }
+        }
+        draft
+    }
+
+    pub(crate) fn edit(&mut self, field: ItemPropertyField, text: String) {
+        if matches!(
+            field,
+            ItemPropertyField::Position | ItemPropertyField::Length
+        ) {
+            self.fields[field.index()] = text;
+            self.changed[field.index()] = true;
+            self.error = None;
         }
     }
 
@@ -1027,8 +1173,128 @@ impl MidiItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.mute_changed
+        self.mute_changed || self.changed.iter().any(|changed| *changed)
     }
+
+    fn placement_in_project(
+        &self,
+        item: &MidiItem,
+        project: &Project,
+    ) -> Result<(u64, u64), String> {
+        let position_changed = self.changed[ItemPropertyField::Position.index()];
+        let length_changed = self.changed[ItemPropertyField::Length.index()];
+        if !position_changed && !length_changed {
+            return Ok((item.start_tick(), item.length_ticks()));
+        }
+
+        let current_start_sample = project
+            .sample_at_tick_position(item.start_tick() as f64)
+            .map_err(|error| error.to_string())?;
+        let mut start_sample = current_start_sample;
+        let mut length_samples = project
+            .sample_at_tick_position(item.start_tick().saturating_add(item.length_ticks()) as f64)
+            .map_err(|error| error.to_string())?
+            - current_start_sample;
+        let frame_rate = project.settings().frame_rate();
+
+        if position_changed {
+            start_sample = match self.unit {
+                TimeUnit::Time => {
+                    let seconds =
+                        parse_project_time(&self.fields[ItemPropertyField::Position.index()])
+                            .map_err(str::to_owned)?;
+                    project
+                        .sample_at_project_time(seconds)
+                        .map_err(|error| error.to_string())? as f64
+                }
+                TimeUnit::Beats => beats::parse_position(
+                    project,
+                    &self.fields[ItemPropertyField::Position.index()],
+                )?,
+                TimeUnit::Hmsf => {
+                    let seconds = parse_project_timecode(
+                        frame_rate,
+                        &self.fields[ItemPropertyField::Position.index()],
+                    )
+                    .map_err(|error| error.to_string())?;
+                    project
+                        .sample_at_project_time(seconds)
+                        .map_err(|error| error.to_string())? as f64
+                }
+                TimeUnit::Samples => parse_nonnegative_position(
+                    &self.fields[ItemPropertyField::Position.index()],
+                    "Invalid samples",
+                )?,
+            };
+        }
+        if length_changed {
+            length_samples = match self.unit {
+                TimeUnit::Time => {
+                    parse_project_time(&self.fields[ItemPropertyField::Length.index()])
+                        .map_err(str::to_owned)?
+                        * f64::from(project.settings().sample_rate())
+                }
+                TimeUnit::Beats => beats::parse_length(
+                    project,
+                    &self.fields[ItemPropertyField::Length.index()],
+                    start_sample,
+                )?,
+                TimeUnit::Hmsf => {
+                    frame_rate
+                        .parse_timecode(&self.fields[ItemPropertyField::Length.index()])
+                        .map_err(|error| error.to_string())?
+                        * f64::from(project.settings().sample_rate())
+                }
+                TimeUnit::Samples => parse_nonnegative_position(
+                    &self.fields[ItemPropertyField::Length.index()],
+                    "Invalid samples",
+                )?,
+            };
+        }
+        if !start_sample.is_finite()
+            || start_sample < 0.0
+            || !length_samples.is_finite()
+            || length_samples <= 0.0
+        {
+            return Err("MIDI item position and length must be nonnegative and nonzero".to_owned());
+        }
+        let start_tick = if position_changed {
+            sample_to_tick(project, start_sample)?
+        } else {
+            item.start_tick()
+        };
+        let length_ticks = if length_changed {
+            let end_tick = sample_to_tick(project, start_sample + length_samples)?;
+            end_tick
+                .checked_sub(start_tick)
+                .ok_or_else(|| "MIDI item length must be at least one project tick".to_owned())?
+        } else {
+            item.length_ticks()
+        };
+        if length_ticks == 0 || start_tick.checked_add(length_ticks).is_none() {
+            return Err("Invalid MIDI item position or length".to_owned());
+        }
+        Ok((start_tick, length_ticks))
+    }
+}
+
+fn parse_nonnegative_position(text: &str, message: &str) -> Result<f64, String> {
+    let value = text.trim().parse::<f64>().map_err(|_| message.to_owned())?;
+    if value.is_finite() && value >= 0.0 && value <= ((1_u64 << 53) - 1) as f64 {
+        Ok(value)
+    } else {
+        Err(message.to_owned())
+    }
+}
+
+fn sample_to_tick(project: &Project, sample: f64) -> Result<u64, String> {
+    let tick = project
+        .tick_at_sample_position(sample)
+        .map_err(|error| error.to_string())?;
+    if !tick.is_finite() || tick < 0.0 || tick > ((1_u64 << 53) - 1) as f64 {
+        return Err("MIDI item position or length is outside the supported range".to_owned());
+    }
+    Ok(tick.round() as u64)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1126,6 +1392,54 @@ mod tests {
             frames.placement_in_project(item, &project).unwrap().start,
             96_000
         );
+    }
+
+    #[test]
+    fn midi_position_and_length_round_trip_in_each_item_properties_unit() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 3_840,
+                length_ticks: 1_920,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .unwrap();
+        let item = &project.midi_items()[0];
+
+        for unit in [
+            TimeUnit::Time,
+            TimeUnit::Beats,
+            TimeUnit::Hmsf,
+            TimeUnit::Samples,
+        ] {
+            let mut draft = MidiItemProperties::from_item(item, &project, unit);
+            let position = draft.fields[ItemPropertyField::Position.index()].clone();
+            let length = draft.fields[ItemPropertyField::Length.index()].clone();
+            draft.edit(ItemPropertyField::Position, position);
+            draft.edit(ItemPropertyField::Length, length);
+            assert_eq!(
+                draft.placement_in_project(item, &project).unwrap(),
+                (item.start_tick(), item.length_ticks()),
+                "round trip failed for {unit}"
+            );
+        }
+
+        let mut zero_length = MidiItemProperties::from_item(item, &project, TimeUnit::Samples);
+        zero_length.edit(ItemPropertyField::Length, "0".to_owned());
+        assert!(zero_length.placement_in_project(item, &project).is_err());
+
+        let mut overflowing = MidiItemProperties::from_item(item, &project, TimeUnit::Samples);
+        overflowing.edit(ItemPropertyField::Position, "9007199254740992".to_owned());
+        assert!(overflowing.placement_in_project(item, &project).is_err());
     }
 
     #[test]
