@@ -3856,6 +3856,9 @@ impl App {
             Message::NewProject => {
                 task = self.begin_project_transition(PendingProjectTransition::NewProject)
             }
+            Message::CloseProject => {
+                task = self.begin_project_transition(PendingProjectTransition::CloseProject)
+            }
             Message::Timeline(timeline::TimelineEvent::SetFadeCurvePreset {
                 item_id,
                 edge,
@@ -5742,7 +5745,9 @@ impl App {
         #[cfg(feature = "audio-device")]
         if matches!(
             transition,
-            PendingProjectTransition::NewProject | PendingProjectTransition::OpenProject
+            PendingProjectTransition::NewProject
+                | PendingProjectTransition::CloseProject
+                | PendingProjectTransition::OpenProject
         ) && self.playback.is_some()
         {
             self.status = format!(
@@ -5775,6 +5780,12 @@ impl App {
                 self.new_project();
                 Task::none()
             }
+            Some(PendingProjectTransition::CloseProject) => {
+                self.pending_project_transition = None;
+                self.new_project();
+                self.status = "Project closed".to_owned();
+                Task::none()
+            }
             Some(PendingProjectTransition::OpenProject) => {
                 self.pick_path(PathPickerTarget::OpenProject)
             }
@@ -5791,6 +5802,12 @@ impl App {
             Some(PendingProjectTransition::NewProject) => {
                 self.pending_project_transition = None;
                 self.new_project();
+                Task::none()
+            }
+            Some(PendingProjectTransition::CloseProject) => {
+                self.pending_project_transition = None;
+                self.new_project();
+                self.status = "Project closed".to_owned();
                 Task::none()
             }
             Some(PendingProjectTransition::OpenProject) => {

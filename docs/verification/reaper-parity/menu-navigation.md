@@ -6,9 +6,13 @@
 
 ## AAADAW 当前实现与差异
 
-主窗口按原厂已验证的 `Alt+F/E/V/I/O/A/H` 打开 File/Edit/View/Insert/Options/Actions/Help 菜单；快捷键只在 Iced 将按键标为未消费时触发。同一访问键会重新打开对应菜单，不会意外将它关掉。F10 不再打开菜单。主菜单栏和左右导航现有原厂九项顺序。REAPER 原厂 File 末项为 `Quit`，Action List 名称 `File: Quit REAPER`，快捷键 Ctrl+Q（Action 40004）。AAADAW 现将 Quit 放在 File 菜单末项；ArrowUp 从首项循环到 Quit，Ctrl+Q 发起主窗口关闭并沿用 Save / Don't Save / Cancel 未保存工程保护。AAADAW 边界和实际退出确认截图、步骤、状态及哈希见[菜单 Quit fixture](fixtures/menu-keyboard-boundary-aaadaw.tsv)。File 其余原厂命令尚未齐全，因此菜单整体顺序仍不一致。Options 包含 Preferences...（Ctrl+P）和“Loop points linked to time selection”开关；后者显示当前状态勾选，执行后通过现有全局偏好保存路径持久化，不修改工程修订。Help 有“Action list and shortcuts...”入口和单实例 About AAADAW 窗口，`Ctrl+F1` 打开 About。
+主窗口按原厂已验证的 `Alt+F/E/V/I/O/A/H` 打开 File/Edit/View/Insert/Options/Actions/Help 菜单；快捷键只在 Iced 将按键标为未消费时触发。同一访问键会重新打开对应菜单，不会意外将它关掉。F10 不再打开菜单。主菜单栏和左右导航现有原厂九项顺序。REAPER 原厂 File 菜单的 `Close project` 使用 Ctrl+F4，Main Action List 40860 名称为 `Close current project tab`；AAADAW File 菜单现提供 `Close project`，Ctrl+F4 通过未保存工程 Save / Don't Save / Cancel 保护后关闭当前工程并回到空工程。原厂 File 菜单参考与 AAADAW 菜单、确认框截图/哈希见[Close project fixture](fixtures/menu-close-project-aaadaw.tsv)。AAADAW 目前只有单工程模型，不实现 REAPER 的多标签工程和 Close all projects。
+
+REAPER 原厂 File 末项为 `Quit`，Action List 名称 `File: Quit REAPER`，快捷键 Ctrl+Q（Action 40004）。AAADAW 现将 Quit 放在 File 菜单末项；ArrowUp 从首项循环到 Quit，Ctrl+Q 发起主窗口关闭并沿用 Save / Don't Save / Cancel 未保存工程保护。AAADAW 边界和实际退出确认截图、步骤、状态及哈希见[菜单 Quit fixture](fixtures/menu-keyboard-boundary-aaadaw.tsv)。File 其余原厂命令尚未齐全，因此菜单整体顺序仍不一致。Options 包含 Preferences...（Ctrl+P）和“Loop points linked to time selection”开关；后者显示当前状态勾选，执行后通过现有全局偏好保存路径持久化，不修改工程修订。Help 有“Action list and shortcuts...”入口和单实例 About AAADAW 窗口，`Ctrl+F1` 打开 About。
 
 回归 `quit_matches_native_file_menu_and_uses_dirty_close_confirmation` 验证 Quit 为 File 菜单末项、短标签为 Quit、分隔线及默认 Ctrl+Q，并覆盖关闭确认取消和放弃继续。`options_menu_exposes_preferences_and_updates_the_loop_link_checkmark` 验证菜单命令、快捷键绑定可用、勾选态切换、全局偏好排队保存和工程 revision 不变；`help_menu_opens_the_action_list_and_a_single_about_window` 验证帮助入口、About 复用同一窗口、关闭清理和 Ctrl+F1；菜单键盘回归覆盖 Alt+O/Alt+H、九项左右顺序和启用命令首尾循环。nightly+Cranelift 定向 nextest 本次 Quit 测试 1/1 通过。
+
+`close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 覆盖 File 菜单标签/快捷键、Action List 名称、修改后取消，以及 Don't Save 后关闭工程并清空当前轨道、路径和修订号。`successful_save_before_close_project_clears_the_open_project` 覆盖 Save 成功后继续关闭。实窗 Ctrl+F4 确认对未保存工程弹出保护框，步骤和哈希见上方 fixture。
 
 Help 仍未复刻原厂 Documentation 子菜单、Keyboard bindings and mouse modifiers、HTML 格式 Action List、ReaScript 文档、EULA、购买/更新检查和 changelog；About 信息窗口也尚未做原厂逐像素对照。Options 其余大量设置、Track/Item 菜单内容、所有禁用/勾选状态和文本焦点行为也未验收。该条目仍为 `in_progress`。
 

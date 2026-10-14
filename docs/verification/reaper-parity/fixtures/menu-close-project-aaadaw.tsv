@@ -1,0 +1,15 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_menu_label	Close project
+native_action	40860 / Close current project tab / Ctrl+F4
+native_reference_screenshot	menu-file-native.png
+aaadaw_environment	Linux AAADAW / Xvfb :229 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_action	Open File; Close project appears after Save project as and before Render project to WAV; shortcut Ctrl+F4
+aaadaw_menu_screenshot	menu-file-close-project-aaadaw.png
+aaadaw_menu_screenshot_sha256	834ee83cdd56524756851868965f65e62f492b5015e4c27416c0234e70759da8
+aaadaw_close_action	Add one track; press Ctrl+F4
+aaadaw_confirmation	Save changes before continuing? The current project has unsaved changes. Closing the current project will leave an empty project workspace.
+aaadaw_confirmation_screenshot	menu-close-project-confirmation-aaadaw.png
+aaadaw_confirmation_screenshot_sha256	450b2d8968ad31a06eb6e7182b3510c1ea87e329c8721f1d796cd1e5458dc4c4
+test	crates/aaadaw/src/app/tests.rs::close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed
+limit	AAADAW currently supports one open project; REAPER multi-tab and Close all projects behavior are not implemented

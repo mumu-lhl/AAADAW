@@ -17,6 +17,7 @@ pub(crate) enum CommandId {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    CloseProject,
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
@@ -136,6 +137,7 @@ enum CommandKind {
     OpenProject,
     SaveProject,
     SaveProjectAs,
+    CloseProject,
     ExportWav,
     CancelOfflineRender,
     OpenSettings,
@@ -231,6 +233,7 @@ const ADD_TRACK_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::CO
 const OPEN_SHORTCUT: &[Shortcut] = &[Shortcut::character('o', Modifiers::COMMAND)];
 const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::COMMAND)];
 const QUIT_SHORTCUT: &[Shortcut] = &[Shortcut::character('q', Modifiers::CTRL)];
+const CLOSE_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F4, Modifiers::CTRL)];
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
@@ -334,6 +337,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::CloseProject,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Close current project tab",
+        aliases: &["close project", "close current project"],
+        shortcuts: CLOSE_PROJECT_SHORTCUT,
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::ExportWav,
@@ -1650,6 +1663,13 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
     {
         quit.label = "Quit".to_owned();
     }
+    if menu == MainMenu::File
+        && let Some(close_project) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::CloseProject)
+    {
+        close_project.label = "Close project".to_owned();
+    }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
             .into_iter()
@@ -1760,7 +1780,9 @@ fn default_may_yield(kind: CommandKind) -> bool {
     }
     matches!(
         kind,
-        CommandKind::OpenActionList
+        CommandKind::Quit
+            | CommandKind::CloseProject
+            | CommandKind::OpenActionList
             | CommandKind::OpenAbout
             | CommandKind::OpenProjectSettings
             | CommandKind::OpenItemProperties
@@ -2107,6 +2129,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenProject => "file.open-project",
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
+        CommandKind::CloseProject => "file.close-project",
         CommandKind::ExportWav => "audio.export-wav",
         CommandKind::CancelOfflineRender => "audio.cancel-render",
         CommandKind::OpenSettings => "file.settings",
@@ -2248,6 +2271,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
     }
     let message = match command {
         CommandId::NewProject => Message::NewProject,
+        CommandId::CloseProject => Message::CloseProject,
         CommandId::Quit => {
             return app.main_window_id.map_or_else(Task::none, |window_id| {
                 app.update(Message::WindowCloseRequested(window_id))
@@ -2484,7 +2508,10 @@ fn entries(app: &App) -> Vec<ResolvedEntry> {
                 CommandKind::Track(command) => CommandId::SelectedTrack(command),
                 kind => command_id(kind),
             };
-            let entry = entry_for(app, definition, command_id, selected_track);
+            let mut entry = entry_for(app, definition, command_id, selected_track);
+            if definition.kind == CommandKind::CloseProject {
+                entry.category = "";
+            }
             ResolvedEntry {
                 command: entry,
                 section: definition.menu,
@@ -2560,7 +2587,9 @@ fn entry_for(
 
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
-        CommandKind::NewProject | CommandKind::OpenProject => !project_edit_busy(app),
+        CommandKind::NewProject | CommandKind::OpenProject | CommandKind::CloseProject => {
+            !project_edit_busy(app)
+        }
         CommandKind::Quit => true,
         CommandKind::SaveProject => !project_file_busy(app),
         CommandKind::OpenSettings
@@ -2855,6 +2884,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenProject => CommandId::OpenProject,
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
+        CommandKind::CloseProject => CommandId::CloseProject,
         CommandKind::ExportWav => CommandId::ExportWav,
         CommandKind::CancelOfflineRender => CommandId::CancelOfflineRender,
         CommandKind::OpenSettings => CommandId::OpenSettings,

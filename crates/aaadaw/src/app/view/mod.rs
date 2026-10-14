@@ -279,6 +279,9 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
             super::PendingProjectTransition::NewProject => {
                 "Creating a new project will replace the current project."
             }
+            super::PendingProjectTransition::CloseProject => {
+                "Closing the current project will leave an empty project workspace."
+            }
             super::PendingProjectTransition::OpenProject => {
                 "Opening another project will replace the current project."
             }

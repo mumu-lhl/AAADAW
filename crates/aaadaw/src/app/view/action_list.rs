@@ -21,15 +21,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         let selected = app.action_list.selected.as_ref() == Some(&id);
         let state =
             commands::toggle_state(app, entry.id).map_or("", |on| if on { "on" } else { "off" });
+        let label = if entry.category.is_empty() {
+            entry.label.clone()
+        } else {
+            format!("{}: {}", entry.category, entry.label)
+        };
         actions = actions.push(
             button(
                 row![
                     text(entry.shortcut.unwrap_or_default())
                         .size(12)
                         .width(Length::Fixed(140.0)),
-                    text(format!("{}: {}", entry.category, entry.label))
-                        .size(12)
-                        .width(Length::Fill),
+                    text(label).size(12).width(Length::Fill),
                     text(state).size(12).width(Length::Fixed(48.0)),
                 ]
                 .spacing(4),

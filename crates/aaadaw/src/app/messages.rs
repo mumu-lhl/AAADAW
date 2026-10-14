@@ -119,6 +119,7 @@ pub(crate) enum PathPickerTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingProjectTransition {
     NewProject,
+    CloseProject,
     OpenProject,
     CloseMainWindow(iced::window::Id),
 }
@@ -171,6 +172,7 @@ pub(crate) enum Message {
     CancelFocusedTrackDeletion,
     DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,
+    CloseProject,
     ShowMainWorkspace(MainWorkspace),
     MobileNavigateBack,
     ToggleMediaBrowserPanel,

@@ -913,3 +913,9 @@ Nightly + Cranelift AAADAW 测试 551/551 passed；Stable workspace all-target C
 REAPER 7.82 File 末项是 Quit，Action List 显示 `File: Quit REAPER` / Ctrl+Q（40004）。AAADAW 现在把该动作注册为可配置快捷键和 File 菜单末项；执行经统一主窗口关闭请求，因此未保存工程提供 Save、Don't Save、Cancel，取消或出现提示时不会丢失工程。File 菜单 ArrowUp 边界现在选中 Quit，实窗截图确认了菜单选择与 Ctrl+Q 触发的未保存工程确认框，证据及 SHA-256 见 [AAADAW 菜单边界 fixture](../verification/reaper-parity/fixtures/menu-keyboard-boundary-aaadaw.tsv)。
 
 Nightly + Cranelift 定向回归 `quit_matches_native_file_menu_and_uses_dirty_close_confirmation` 1/1 passed，覆盖末项/标签/分隔线/Ctrl+Q 默认值及取消/放弃流程。File 菜单的其它原厂条目和完整键盘焦点行为尚未复刻；`SHELL-MENU-KEYBOARD-001` 继续 `in_progress`。
+
+### 2026-10-14 File 菜单 Close project 与 Ctrl+F4
+
+REAPER File 菜单的 `Close project` 对应 Main Action 40860 `Close current project tab` / Ctrl+F4。AAADAW 现在注册该可配置动作；对已修改工程使用统一 Save / Don't Save / Cancel 转换，确认关闭后清空当前工程、路径、选择及修订状态并创建空工程工作区。实窗菜单顺序、Ctrl+F4 未保存确认截图和 SHA-256 见 [Close project fixture](../verification/reaper-parity/fixtures/menu-close-project-aaadaw.tsv)。
+
+Nightly + Cranelift 定向回归 `close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed` 与 `successful_save_before_close_project_clears_the_open_project` 2/2 passed，覆盖菜单、Ctrl+F4 默认绑定、Action List 原厂动作名、取消保留、Save 后关闭及 Don't Save 关闭。此行为只支持单工程；REAPER 多标签及 Close all projects 仍未实现，`SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。

@@ -2698,6 +2698,71 @@ fn new_project_is_in_file_menu_and_prompts_before_discarding_dirty_work() {
 }
 
 #[test]
+fn close_project_matches_native_menu_and_preserves_unsaved_work_until_confirmed() {
+    let mut app = App::default();
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let close_project = file_menu
+        .iter()
+        .find(|entry| entry.id == CommandId::CloseProject)
+        .expect("File menu should expose Close project");
+    assert_eq!(close_project.label, "Close project");
+    assert!(close_project.enabled);
+    assert!(close_project.separator_before);
+    let action = commands::matching_actions_menu(&app, "close current project tab")
+        .into_iter()
+        .find(|entry| entry.id == CommandId::CloseProject)
+        .expect("Action List should expose the native close-action name");
+    assert_eq!(action.category, "");
+    assert_eq!(action.label, "Close current project tab");
+    let close_binding = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "file.close-project")
+        .expect("Close project should have a configurable shortcut entry");
+    assert_eq!(close_binding.default_binding, "Ctrl+F4");
+    let bindings = app
+        .shortcut_bindings
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(iced::keyboard::key::Named::F4),
+            Modifiers::CTRL,
+            &bindings,
+            &app.action_macros,
+        ),
+        Some(CommandId::CloseProject)
+    );
+    drop(bindings);
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project_path = Some(std::path::PathBuf::from("current.aaadaw"));
+    app.project_path_query = "current.aaadaw".to_owned();
+    let _ = app.update(Message::ExecuteCommand(CommandId::CloseProject));
+    assert_eq!(app.project.tracks()[0].id(), track_id);
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::CloseProject)
+    );
+    let _ = app.update(Message::CancelProjectTransition);
+    assert!(app.is_dirty());
+    assert_eq!(
+        app.project_path.as_deref(),
+        Some(std::path::Path::new("current.aaadaw"))
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::CloseProject));
+    let _ = app.update(Message::DiscardProjectChanges);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project_path.is_none());
+    assert!(app.project_path_query.is_empty());
+    assert_eq!(app.revision, 0);
+    assert_eq!(app.saved_revision, 0);
+    assert_eq!(app.pending_project_transition, None);
+    assert_eq!(app.status, "Project closed");
+}
+
+#[test]
 fn quit_matches_native_file_menu_and_uses_dirty_close_confirmation() {
     let window_id = iced::window::Id::unique();
     let mut app = App {
@@ -2843,6 +2908,32 @@ fn successful_save_continues_the_pending_transition() {
     assert_eq!(app.saved_revision, 1);
     assert!(!app.is_dirty());
     assert_eq!(app.pending_project_transition, None);
+}
+
+#[test]
+fn successful_save_before_close_project_clears_the_open_project() {
+    let mut app = App {
+        pending_project_transition: Some(super::PendingProjectTransition::CloseProject),
+        io_busy: true,
+        revision: 1,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ProjectSaved(
+        std::path::PathBuf::from("saved.aaadaw"),
+        1,
+        Ok(()),
+        None,
+        SharedProjectSessionLock::new(None),
+    ));
+
+    assert!(!app.is_dirty());
+    assert_eq!(app.pending_project_transition, None);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project_path.is_none());
+    assert_eq!(app.revision, 0);
+    assert_eq!(app.saved_revision, 0);
+    assert_eq!(app.status, "Project closed");
 }
 
 #[test]
