@@ -776,3 +776,13 @@ Linux REAPER 7.82 / Default 7 的 Item 菜单在 `Select all` 后显示 `Nudge/s
 AAADAW 实现 Position 与 Edit cursor 的 Nudge/Set 路径、混合媒体共享位移、绝对/相对 Set 和单步 Undo/Redo；实窗中对选中 MIDI 项点击 `Nudge right` 后，摘要和时间线共同反映 0.251 秒的位置；其余六种 item target 明确失败关闭。Nightly + Cranelift workspace nextest 1037/1037 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt、`git diff --check`、Parity CSV 15 列/98 个唯一 ID及新 fixture 的 SHA-256 检查通过。构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth future-incompatible warning。
 
 `ITEM-NUDGE-SET-001` 继续 `in_progress`：已按 REAPER 原厂探针实现 Audio 的 left trim、left edge、end position、right trim，以及 Audio/MIDI duplicate；Contents、这些目标的 MIDI 响应、Set/Snap 组合与原厂 Undo 语义仍待验证。Item 菜单和整套界面仍远未达到 100% 对齐，后续继续补齐这些边界与其余菜单/窗口交互。
+
+### 2026-10-14 REAPER Nudge target coverage
+
+实现提交：`e745e09`。
+
+以 REAPER 7.82 / Default 7 的实际 target 探针为依据，加入 Audio Left Trim、Left Edge、End Position、Right Trim 的 Nudge 语义，以及 Audio/MIDI Duplicate；副本单步 Undo/Redo 并成为当前选择。Left Trim 根据素材源采样率换算源偏移，组合操作在一个事务内校验。原厂八种 target 的实测状态见 [native target TSV](../verification/reaper-parity/fixtures/item-nudge-targets-native.tsv)，哈希记录在同目录 `item-nudge.tsv`。
+
+Nightly + Cranelift Nudge focused nextest 11/11 passed；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 检查通过。Parity matrix 保持 98 个唯一 ID / 15 列，native target TSV 哈希与矩阵路径校验通过。本轮环境没有 Xvfb/虚拟显示服务，因此没有为新增 target 操作制作新的 AAADAW 实窗截图；此前的对话框与 Position Nudge 实窗截图仍在 Nudge 验收记录中。Cranelift 构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` future-incompatible warning。
+
+`ITEM-NUDGE-SET-001` 保持 `in_progress`：Contents、各 target 对 MIDI 的原厂响应、目标专属 Set/Snap、Undo 历史及新 target 的 AAADAW 截图仍待补齐；Item 菜单和完整界面对齐继续推进。
