@@ -786,3 +786,13 @@ AAADAW 实现 Position 与 Edit cursor 的 Nudge/Set 路径、混合媒体共享
 Nightly + Cranelift Nudge focused nextest 11/11 passed；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 检查通过。Parity matrix 保持 98 个唯一 ID / 15 列，native target TSV 哈希与矩阵路径校验通过。本轮环境没有 Xvfb/虚拟显示服务，因此没有为新增 target 操作制作新的 AAADAW 实窗截图；此前的对话框与 Position Nudge 实窗截图仍在 Nudge 验收记录中。Cranelift 构建仍报告既有 iced/wgpu `TimelinePipeline: MaybeSync` future-incompatible warning。
 
 `ITEM-NUDGE-SET-001` 保持 `in_progress`：Contents、各 target 对 MIDI 的原厂响应、目标专属 Set/Snap、Undo 历史及新 target 的 AAADAW 截图仍待补齐；Item 菜单和完整界面对齐继续推进。
+
+### 2026-10-14 Item Nudge Contents 边界内移动
+
+实现提交：`1f7aaa9`。
+
+Contents / Nudge 现在只在媒体元数据可用且移动后的整个 source section 仍位于文件帧范围内执行；按源采样率反向改源偏移，保留 item 的 timeline 位置和长度，跨越源起点/终点或混选 MIDI 时整批拒绝。原厂 REAPER target 探针在 250 ms 下观测到 source offset 5.00 s 移至 4.75 s；其循环源绕回仍不能由 AAADAW 当前模型表示，不把边界行为标为完整等价。
+
+Nightly + Cranelift Nudge focused nextest 11/11 passed，覆盖 44.1 kHz source 与 48 kHz project 的双向换算、两个 source 边界的安全拒绝及 Undo；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、fmt、diff 检查通过。Parity matrix 保持 98 个唯一 ID / 15 列，原厂 target fixture 哈希与矩阵引用校验通过。当前容器没有虚拟显示服务，本轮未新增 AAADAW 实窗截图。
+
+`ITEM-NUDGE-SET-001` 仍为 `in_progress`：REAPER 的循环源属性及 Contents 绕回、MIDI 对各 target 的响应、target-specific Set/Snap、Undo 历史和新增操作的 AAADAW 实窗验证继续待办。
