@@ -10044,6 +10044,130 @@ fn select_all_items_action_selects_audio_and_midi_without_editing_the_project() 
 }
 
 #[test]
+fn item_selection_undo_and_redo_stay_in_order_with_project_edits() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: tracks[0],
+            media_ref: "asset://selection-history-audio".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: tracks[1],
+            start_tick: 960,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.select_items(vec![(audio_id, tracks[0])]);
+
+    let project_history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::SelectAllItems);
+    assert_eq!(app.project.history_cursor(), project_history_cursor);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([audio_id, midi_id])
+    );
+
+    let _ = app.update(Message::AddTrack);
+    assert_eq!(app.project.tracks().len(), 3);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([audio_id, midi_id])
+    );
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.timeline.selected_items, HashSet::from([audio_id]));
+    assert_eq!(app.timeline.selected_item, Some(audio_id));
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([audio_id, midi_id])
+    );
+    assert_eq!(app.project.tracks().len(), 2);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks().len(), 3);
+}
+
+#[test]
+fn no_op_item_selection_does_not_discard_redo_history() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://selection-redo-audio".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+
+    let _ = app.update(Message::SelectAllItems);
+    let _ = app.update(Message::Undo);
+    assert!(app.can_redo_action());
+
+    let _ = app.update(Message::UnselectAllItems);
+    assert!(app.can_redo_action());
+
+    let _ = app.update(Message::Redo);
+    let item_id = app.project.audio_items()[0].id();
+    assert_eq!(app.timeline.selected_items, HashSet::from([item_id]));
+
+    let mut project_redo = App::default();
+    let _ = project_redo.update(Message::AddTrack);
+    let _ = project_redo.update(Message::AddTrack);
+    let _ = project_redo.update(Message::Undo);
+    assert!(project_redo.project.can_redo());
+    let _ = project_redo.update(Message::UnselectAllItems);
+    assert!(project_redo.project.can_redo());
+    let _ = project_redo.update(Message::Redo);
+    assert_eq!(project_redo.project.tracks().len(), 2);
+}
+
+#[test]
+fn changed_item_selection_discards_project_redo_history() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://selection-branch-audio".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.can_redo());
+
+    let _ = app.update(Message::SelectAllItems);
+
+    assert!(!app.project.can_redo());
+    assert!(!app.can_redo_action());
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.timeline.selected_items.len(), 1);
+}
+
+#[test]
 fn invert_item_selection_action_selects_the_complement_of_audio_and_midi_items() {
     assert!(!commands::is_enabled(
         &App::default(),
@@ -10818,7 +10942,7 @@ fn item_snap_exact_grid_empty_selection_and_busy_states_do_not_edit() {
 }
 
 #[test]
-fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
+fn select_all_items_in_track_action_selects_all_selected_tracks() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddTrack);
@@ -10857,6 +10981,7 @@ fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
     let other_track_audio = app.project.audio_items()[1].id();
     let first_track_midi = app.project.midi_items()[0].id();
     app.timeline.selected_track = Some(tracks[0]);
+    app.timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
     app.timeline.selected_items.insert(other_track_audio);
 
     let command = CommandId::SelectAllItemsInTrack;
@@ -10884,9 +11009,9 @@ fn select_all_items_in_track_action_keeps_other_tracks_unselected() {
 
     assert_eq!(
         app.timeline.selected_items,
-        HashSet::from([first_audio, first_track_midi])
+        HashSet::from([first_audio, first_track_midi, other_track_audio])
     );
-    assert_eq!(app.timeline.selected_item, Some(first_track_midi));
+    assert_eq!(app.timeline.selected_item, Some(other_track_audio));
 }
 
 #[test]

@@ -88,6 +88,17 @@ pub(crate) use messages::{
     PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
+#[derive(Clone)]
+enum AppHistoryEntry {
+    Project,
+    ItemSelection {
+        label: &'static str,
+        before: Box<timeline::ItemSelectionState>,
+        after: Box<timeline::ItemSelectionState>,
+        project_history_cursor: usize,
+    },
+}
+
 pub(crate) fn run() -> iced::Result {
     let application = iced::daemon(App::new, App::update, view::view_for_window)
         .title(App::window_title)
@@ -503,6 +514,8 @@ struct App {
     relink_source_path_query: String,
     revision: u64,
     saved_revision: u64,
+    app_undo_history: Vec<AppHistoryEntry>,
+    app_redo_history: Vec<AppHistoryEntry>,
     project_generation: u64,
     io_busy: bool,
     audio_file_path_query: String,
@@ -2213,8 +2226,12 @@ impl App {
                 return Task::none();
             }
             let unsupported_playback_history_edit = match &message {
-                Message::Undo => !self.project.can_undo_track_mix(),
-                Message::Redo => !self.project.can_redo_track_mix(),
+                Message::Undo => {
+                    !self.item_selection_is_next_undo() && !self.project.can_undo_track_mix()
+                }
+                Message::Redo => {
+                    !self.item_selection_is_next_redo() && !self.project.can_redo_track_mix()
+                }
                 _ => false,
             };
             if self.playback_active()
@@ -4182,6 +4199,20 @@ impl App {
             Message::Timeline(timeline::TimelineEvent::EditProjectMarker { marker_id }) => {
                 task = self.open_marker_properties(marker_id);
             }
+            Message::Timeline(timeline::TimelineEvent::SelectHoveredItem(mode)) => {
+                let label = match mode {
+                    timeline::HoveredItemSelectionMode::Replace => "Select item under mouse cursor",
+                    timeline::HoveredItemSelectionMode::Add => {
+                        "Select item under mouse cursor (leaving other items selected)"
+                    }
+                    timeline::HoveredItemSelectionMode::Toggle => {
+                        "Toggle selection of item under mouse cursor"
+                    }
+                };
+                self.with_item_selection_history(label, |app| {
+                    app.handle_timeline_view_event(timeline::TimelineEvent::SelectHoveredItem(mode))
+                });
+            }
             Message::Timeline(event) => self.handle_timeline_view_event(event),
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
@@ -4651,19 +4682,44 @@ impl App {
             Message::CopyLoopOfSelectedArea => self.copy_loop_of_selected_area(),
             Message::EncloseMediaItemsInRazorEdit => self.enclose_media_items_in_razor_edit(),
             Message::PasteItems => self.paste_audio_items(),
-            Message::SelectAllItems => self.select_all_items(),
-            Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
-            Message::SelectAllItemsInTimeSelection => self.select_all_items_in_time_selection(),
-            Message::SelectAllItemsOnSelectedTracksInTimeSelection => {
-                self.select_all_items_on_selected_tracks_in_time_selection()
+            Message::SelectAllItems => {
+                self.with_item_selection_history("Select all items", Self::select_all_items)
             }
-            Message::UnselectAllItems => self.timeline.clear_selected_items(),
-            Message::InvertItemSelection => self.invert_item_selection(),
-            Message::SelectNextAdjacentItem => self.select_adjacent_non_overlapping_item(true),
-            Message::SelectPreviousAdjacentItem => self.select_adjacent_non_overlapping_item(false),
-            Message::SelectItemOnAdjacentTrack(next_track) => {
-                self.select_item_on_adjacent_track(next_track)
-            }
+            Message::SelectAllItemsInTrack => self.with_item_selection_history(
+                "Select all items in selected tracks",
+                Self::select_all_items_in_track,
+            ),
+            Message::SelectAllItemsInTimeSelection => self.with_item_selection_history(
+                "Select items in time selection",
+                Self::select_all_items_in_time_selection,
+            ),
+            Message::SelectAllItemsOnSelectedTracksInTimeSelection => self
+                .with_item_selection_history(
+                    "Select items in time selection",
+                    Self::select_all_items_on_selected_tracks_in_time_selection,
+                ),
+            Message::UnselectAllItems => self
+                .with_item_selection_history("Unselect all items", |app| {
+                    app.timeline.clear_selected_items()
+                }),
+            Message::InvertItemSelection => self
+                .with_item_selection_history("Invert item selection", Self::invert_item_selection),
+            Message::SelectNextAdjacentItem => self
+                .with_item_selection_history("Select next adjacent item", |app| {
+                    app.select_adjacent_non_overlapping_item(true)
+                }),
+            Message::SelectPreviousAdjacentItem => self
+                .with_item_selection_history("Select previous adjacent item", |app| {
+                    app.select_adjacent_non_overlapping_item(false)
+                }),
+            Message::SelectItemOnAdjacentTrack(next_track) => self.with_item_selection_history(
+                if next_track {
+                    "Select item on next track"
+                } else {
+                    "Select item on previous track"
+                },
+                |app| app.select_item_on_adjacent_track(next_track),
+            ),
             Message::MoveEditCursorToNearestItemEdge(forward) => {
                 if let Some(tick) = self.nearest_item_edge(forward) {
                     self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
@@ -5014,6 +5070,7 @@ impl App {
                     Some(Ok((project, arrangement_view_state, project_lock))) => {
                         self.pending_project_transition = None;
                         self.project_lock = Some(project_lock);
+                        self.clear_app_history();
                         self.routing_track_id = None;
                         self.routing_send_drafts.clear();
                         self.project = project;
@@ -5216,6 +5273,7 @@ impl App {
                             directory,
                             lock: Some(lock),
                         });
+                        self.clear_app_history();
                         self.routing_track_id = None;
                         self.routing_send_drafts.clear();
                         self.project = project;
@@ -5771,6 +5829,7 @@ impl App {
                 Ok(project) => (project, None),
                 Err(error) => (Project::new(), Some(error)),
             };
+        self.clear_app_history();
         self.project = new_project;
         self.refresh_tempo_map_edits();
         self.refresh_meter_map_edits();
@@ -7497,6 +7556,7 @@ impl App {
     fn apply_action(&mut self, action: DawAction, success: &str) {
         self.cancel_item_fades();
         let master_mix_before = self.project.master_mix();
+        let project_history_cursor_before = self.project.history_cursor();
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
         let publish_item_mix = action_updates_item_mix(&action);
@@ -7516,6 +7576,10 @@ impl App {
         };
         self.status = match self.project.apply(action) {
             Ok(()) => {
+                if self.project.history_cursor() > project_history_cursor_before {
+                    self.app_undo_history.push(AppHistoryEntry::Project);
+                    self.app_redo_history.clear();
+                }
                 #[cfg(feature = "audio-device")]
                 if self.project.settings().sample_rate() != sample_rate_before {
                     let sample_rate_after = self.project.settings().sample_rate();
@@ -8834,7 +8898,109 @@ impl App {
         self.apply_edit(action, "Audio item moved to exact sample position");
     }
 
+    fn can_undo_action(&self) -> bool {
+        self.item_selection_is_next_undo() || self.project.can_undo()
+    }
+
+    fn can_redo_action(&self) -> bool {
+        self.item_selection_is_next_redo() || self.project.can_redo()
+    }
+
+    fn item_selection_is_next_undo(&self) -> bool {
+        matches!(
+            self.app_undo_history.last(),
+            Some(AppHistoryEntry::ItemSelection {
+                project_history_cursor,
+                ..
+            }) if *project_history_cursor == self.project.history_cursor()
+        )
+    }
+
+    fn item_selection_is_next_redo(&self) -> bool {
+        matches!(
+            self.app_redo_history.last(),
+            Some(AppHistoryEntry::ItemSelection {
+                project_history_cursor,
+                ..
+            }) if *project_history_cursor == self.project.history_cursor()
+        )
+    }
+
+    fn clear_app_history(&mut self) {
+        self.app_undo_history.clear();
+        self.app_redo_history.clear();
+    }
+
+    fn with_item_selection_history(&mut self, label: &'static str, action: impl FnOnce(&mut Self)) {
+        let before = self.timeline.item_selection_state();
+        action(self);
+        let after = self.timeline.item_selection_state();
+        if before == after {
+            return;
+        }
+
+        self.project.discard_redo_history();
+        self.app_redo_history.clear();
+        self.app_undo_history.push(AppHistoryEntry::ItemSelection {
+            label,
+            before: Box::new(before),
+            after: Box::new(after),
+            project_history_cursor: self.project.history_cursor(),
+        });
+    }
+
+    fn undo_item_selection_if_next(&mut self) -> bool {
+        if !self.item_selection_is_next_undo() {
+            return false;
+        }
+        let Some(AppHistoryEntry::ItemSelection {
+            label,
+            before,
+            after,
+            project_history_cursor,
+        }) = self.app_undo_history.pop()
+        else {
+            return false;
+        };
+        self.timeline.restore_item_selection_state(&before);
+        self.app_redo_history.push(AppHistoryEntry::ItemSelection {
+            label,
+            before,
+            after,
+            project_history_cursor,
+        });
+        self.status = format!("Undid {label}");
+        true
+    }
+
+    fn redo_item_selection_if_next(&mut self) -> bool {
+        if !self.item_selection_is_next_redo() {
+            return false;
+        }
+        let Some(AppHistoryEntry::ItemSelection {
+            label,
+            before,
+            after,
+            project_history_cursor,
+        }) = self.app_redo_history.pop()
+        else {
+            return false;
+        };
+        self.timeline.restore_item_selection_state(&after);
+        self.app_undo_history.push(AppHistoryEntry::ItemSelection {
+            label,
+            before,
+            after,
+            project_history_cursor,
+        });
+        self.status = format!("Redid {label}");
+        true
+    }
+
     fn undo(&mut self) {
+        if self.undo_item_selection_if_next() {
+            return;
+        }
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -8866,6 +9032,10 @@ impl App {
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.undo() {
             Ok(true) => {
+                if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                    self.app_undo_history.pop();
+                }
+                self.app_redo_history.push(AppHistoryEntry::Project);
                 #[cfg(feature = "audio-device")]
                 if self.project.settings().sample_rate() != sample_rate_before {
                     let sample_rate_after = self.project.settings().sample_rate();
@@ -8905,6 +9075,9 @@ impl App {
     }
 
     fn redo(&mut self) {
+        if self.redo_item_selection_if_next() {
+            return;
+        }
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -8936,6 +9109,10 @@ impl App {
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.redo() {
             Ok(true) => {
+                if matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project)) {
+                    self.app_redo_history.pop();
+                }
+                self.app_undo_history.push(AppHistoryEntry::Project);
                 #[cfg(feature = "audio-device")]
                 if self.project.settings().sample_rate() != sample_rate_before {
                     let sample_rate_after = self.project.settings().sample_rate();
@@ -10679,10 +10856,7 @@ impl App {
     }
 
     fn select_all_items_in_track(&mut self) {
-        let selected = self
-            .selected_track_id()
-            .map(|track_id| self.items_for_tracks([track_id]))
-            .unwrap_or_default();
+        let selected = self.items_for_tracks(self.selected_track_ids());
         self.timeline.select_items(selected);
     }
 

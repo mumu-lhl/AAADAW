@@ -843,6 +843,16 @@ pub(crate) struct TimelineState {
     folder_tracks: HashSet<TrackId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ItemSelectionState {
+    selected_item: Option<ItemId>,
+    selected_items: HashSet<ItemId>,
+    selected_track: Option<TrackId>,
+    selection_anchor: Option<ItemId>,
+    selected_volume_automation_point: Option<(TrackId, usize)>,
+    selected_fx_automation_point: Option<(TrackId, usize, u32, usize)>,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeleteFocusTarget {
     #[default]
@@ -1054,6 +1064,26 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
+    pub(crate) fn item_selection_state(&self) -> ItemSelectionState {
+        ItemSelectionState {
+            selected_item: self.selected_item,
+            selected_items: self.selected_items.clone(),
+            selected_track: self.selected_track,
+            selection_anchor: self.selection_anchor,
+            selected_volume_automation_point: self.selected_volume_automation_point,
+            selected_fx_automation_point: self.selected_fx_automation_point,
+        }
+    }
+
+    pub(crate) fn restore_item_selection_state(&mut self, state: &ItemSelectionState) {
+        self.selected_item = state.selected_item;
+        self.selected_items.clone_from(&state.selected_items);
+        self.selected_track = state.selected_track;
+        self.selection_anchor = state.selection_anchor;
+        self.selected_volume_automation_point = state.selected_volume_automation_point;
+        self.selected_fx_automation_point = state.selected_fx_automation_point;
+    }
+
     pub(crate) fn clear_selected_items(&mut self) {
         self.selected_items.clear();
         self.selected_item = None;

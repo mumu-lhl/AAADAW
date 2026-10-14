@@ -1458,6 +1458,17 @@ impl Project {
         self.history_cursor < self.history.len()
     }
 
+    /// Returns the current position in the project's undo history.
+    pub fn history_cursor(&self) -> usize {
+        self.history_cursor
+    }
+
+    /// Discards redoable project actions when an application-level undoable
+    /// view action establishes a new history branch.
+    pub fn discard_redo_history(&mut self) {
+        self.history.truncate(self.history_cursor);
+    }
+
     /// Returns whether the next undo changes only live mix controls or volume automation.
     pub fn can_undo_track_mix(&self) -> bool {
         matches!(

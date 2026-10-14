@@ -1,0 +1,19 @@
+key	value
+captured_at_utc	2026-10-14
+platform	Linux x86_64; Xvfb :135; X11
+screen_size	1280x1024
+project_fixture	A disposable copy of target/reaper782/item-split-cursor-demo.aaadaw; 2 tracks; 2 MIDI items; SHA-256 6973827a4f000976555744884a13a2c5dcd4f365ec5e9accedbc58451f72cb69
+binary	/workspace/AAADAW/target/debug/aaadaw
+binary_sha256	c292440177907f3837381b88166f91687aaf3847ed48e6114ef257ee80ba8f01
+binary_build_id	eea7d0cf7384ae36f9472fb0c67010c7a180ff0c
+action_list_window	Searches Select all items; Action List shows Main action Item: Select all items; 701x475
+select_all_window	Run from Action List; both MIDI item outlines and selected-item Inspector are visible in the 1280x1024 Arrange window
+undo_window	Ctrl+Z; status text Undid Select all items; both items return to unselected state
+redo_window	Ctrl+Y; status text Redid Select all items; both MIDI item outlines return
+native_reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip; Xvfb :127; 1024x768 Arrange window after action 40182
+native_results_sha256	74daa6f75afd8a44cde64a7081c3119220021c74e1c9c5295b4a74d5d92e5748
+native_screenshot_sha256	01b05c9f6da7737db3eb11ce02484425db25667bdacc560b19b2e47918a509e4
+screenshot	item-selection-action-list-aaadaw.png	701x475	SHA-256 a9f6b185966552c6e2b5f0d82f820649c878d7a066dc6a55270cd39d6d86a18a
+screenshot	item-selection-all-aaadaw.png	1280x1024	SHA-256 4c70f8238c7fc9afb924269a478663922c6051178ed2009275abd0a9e936ab36
+screenshot	item-selection-undo-aaadaw.png	1280x1024	SHA-256 f94d5418c5a47a40f0691689f0e1fba86ed57beb3ccc9f1b2448f81e0bb70326
+screenshot	item-selection-redo-aaadaw.png	1280x1024	SHA-256 6d464950a113ad3a5a5baef3b6e5348ca657da78ed5e1d8051e4f508e355d7b1

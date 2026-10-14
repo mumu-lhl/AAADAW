@@ -40,27 +40,27 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 ## 2026-10-13 Main action 40182：Select all items
 
-默认动作导出确认 Main Section 的 40182 名为 `Item: Select all items`，快捷键字段为空。AAADAW 将其注册为 `item.select-all`，可从 Action List 搜索并运行。它按轨道和时间顺序选中工程中的 Audio 与 MIDI items、更新活动项锚点，并清除 automation point 选择；不更改 item 数据、工程修订或 Undo/Redo 历史。零 items 时动作禁用。跨轨选区顺序、原厂运行时启用条件和实窗界面尚未通过新的 REAPER 会话单独核验，`ITEM-SELECT-001` 继续 `in_progress`。
+默认动作导出确认 Main Section 的 40182 名为 `Item: Select all items`，快捷键字段为空。AAADAW 将其注册为 `item.select-all`，可从 Action List 搜索并运行。REAPER 7.82 原生探针在 3 轨、13 个混合 Audio/MIDI items 上选中全部 items；工程状态计数增加 1，Undo 标签变为 `Select all items`。AAADAW 同样选中混合 item 并把选择动作放进应用级 Undo/Redo 历史，但不增加内容修订。原厂窗口和逐项结果见[REAPER Arrange 截图](fixtures/item-selection-all-native.png)及[探针记录](fixtures/item-selection-actions-native.tsv)。新的 AAADAW 实窗验证用 Action List 搜索运行 40182；1280×1024 截图可见两条轨道上的两个 MIDI items 都被选中，Ctrl+Z 状态显示 `Undid Select all items`，Ctrl+Y 显示 `Redid Select all items`。Action List、选中、撤销、重做窗口图和二进制哈希见[AAADAW 验证记录](fixtures/item-selection-aaadaw.tsv)，截图分别为[Action List](fixtures/item-selection-action-list-aaadaw.png)、[选择结果](fixtures/item-selection-all-aaadaw.png)、[撤销](fixtures/item-selection-undo-aaadaw.png)和[重做](fixtures/item-selection-redo-aaadaw.png)。原厂内容保存/脏标记、automation point 交互及零 items 的启用状态尚未探测，`ITEM-SELECT-001` 继续 `in_progress`。
 
-回归 `select_all_items_action_selects_audio_and_midi_without_editing_the_project` 覆盖跨轨 Audio/MIDI 选择、稳定 action ID、Action List 搜索和 Run，以及工程/Undo 状态不变。加入相邻 40421 动作后，完整 `aaadaw` nightly+Cranelift nextest 为 504/504 通过、0 跳过；Stable strict Clippy、fmt 与 diff 检查通过。
+回归 `select_all_items_action_selects_audio_and_midi_without_editing_the_project` 覆盖跨轨 Audio/MIDI 选择和 Action List Run；`item_selection_undo_and_redo_stay_in_order_with_project_edits` 覆盖选择与内容编辑的撤销顺序。无变化动作和新 Undo 分支另有回归。原厂选择事件会增加状态计数，AAADAW 的选择历史暂时只保存在应用层；保存/脏标记语义仍需对齐。
 
 ## 2026-10-13 Main action 40421：Select all items in track
 
-同一原厂 Main Section 导出中还列有 40421 `Item: Select all items in track`，快捷键字段为空。AAADAW 将其注册为 `item.select-all-in-track`，Action List Run 当前针对活动所选轨道选中其中所有 Audio 与 MIDI items，并替换此前跨轨选择；不修改工程或 Undo/Redo。REAPER 运行时的“active track”与多轨选择边界尚未核实，功能矩阵保持 `in_progress`。
+同一原厂 Main Section 导出中还列有 40421 `Item: Select all items in track`，快捷键字段为空。隔离 REAPER 7.82 实测：只选中轨道 A 时仅选择 A 上的 items；同时选 A+B 时无论轨道选择顺序如何，都选择 A 与 B 上的 items，工程状态计数增加 1，Undo 标签为 `Select all items in selected tracks`。AAADAW 已调整为按所有选中轨道（含活动选中轨道）选择，并把动作纳入应用级撤销历史。探针记录见[TSV](fixtures/item-selection-actions-native.tsv)。Item 菜单启用边界、focus 与保存语义尚待验证，矩阵继续 `in_progress`。
 
-回归 `select_all_items_in_track_action_keeps_other_tracks_unselected` 覆盖跨轨工程、Audio/MIDI 混合、Action List 搜索/Run、空默认键和其它轨道取消选择。动作选择专项 nextest 2/2 通过；后续全量测试与静态检查记录于进度文档。
+回归 `select_all_items_in_track_action_selects_all_selected_tracks` 覆盖多轨选择与 Audio/MIDI 混合；撤销顺序和 redo 分支由相邻测试覆盖。
 
 ## 2026-10-13 Main actions 40717/40718：时间选区内选择 items
 
-默认动作导出中的 Main Section 列有 40717 `Item: Select all items in current time selection` 和 40718 `Item: Select all items on selected tracks in current time selection`，均无默认快捷键。AAADAW 分别注册为 `item.select-all-in-time-selection` 与 `item.select-all-on-selected-tracks-in-time-selection`，可搜索并通过 Action List Run 执行。两者按 item 区间与时间选区的半开区间相交来筛选 Audio/MIDI items；第二项范围由多选轨道和活动轨道组成。结果按轨道及时间排列，替换原 item 选择并清除 automation point 选择；不修改工程修订或 Undo/Redo 历史。没有时间选区或范围内没有 item 时禁用。
+默认动作导出中的 Main Section 列有 40717 `Item: Select all items in current time selection` 和 40718 `Item: Select all items on selected tracks in current time selection`，均无默认快捷键。AAADAW 分别注册为 `item.select-all-in-time-selection` 与 `item.select-all-on-selected-tracks-in-time-selection`，可搜索并通过 Action List Run 执行。原厂实测在时间选区 `[1,3]` 时，40717 选中从 1 开始、区间内部及跨过 3 的 Audio/MIDI items；结束于 1 或开始于 3 的 items 被排除，符合半开区间相交。40718 在此基础上只选中多选轨道 A 与 C 的 items。两项都增加一次工程状态计数并建立 Undo 标签 `Select items in time selection`。AAADAW 当前匹配选择集合及范围，并加入应用级撤销历史；持久化和 automation point 行为仍未探测。完整记录见[原厂 TSV](fixtures/item-selection-actions-native.tsv)。
 
-`select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi` 与 `select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_track_scope` 覆盖 Action List 搜索/Run、Audio/MIDI 混合、范围边界、轨道过滤、多轨范围和工程历史不变。Item 结束于时间选区起点或开始于选区终点时均排除，是目前采用的半开区间解释；REAPER 原厂对此边界及多选轨道运行时的实窗结果尚无独立探针，`ITEM-SELECT-003/004` 保持 `in_progress`。
+`select_all_items_in_time_selection_action_selects_overlapping_audio_and_midi` 与 `select_all_items_on_selected_tracks_in_time_selection_action_respects_multi_track_scope` 覆盖 Action List 搜索/Run、Audio/MIDI 混合、边界和轨道过滤。原厂时间选区端点、多轨范围现已有实测；运行时启用条件、保存/脏标记、automation point 与实际 AAADAW 窗口仍未验收，`ITEM-SELECT-003/004` 保持 `in_progress`。
 
 ## 2026-10-13 Main action 40289：Unselect all items
 
-默认动作目录确认 Main Section 有 40289 `Item: Unselect (clear selection of) all items`，无默认快捷键。AAADAW 将其注册为 `item.unselect-all`；Action List Run 清除选中的 item 集合、活动 item 和 item 选择锚点，但保留轨道选择、时间选区及 automation point 选择，也不修改工程或 Undo/Redo 历史。没有选中 item 时动作禁用。
+默认动作目录确认 Main Section 有 40289 `Item: Unselect (clear selection of) all items`，无默认快捷键。原厂探针确认它清空全部 item 选择，同时保留轨道 C 选择、时间选区 `[1,3]` 和编辑光标 4.0；状态计数增加 1，Undo 标签为 `Unselect all items`，撤销后恢复原来的 13 个 item 选择。再次对空选择运行时状态计数增加 0，Undo 标签保持不变。对已有 redo 分支执行一次确实改变选择的 40289 会清除 redo 分支；无变化动作不清除它。AAADAW 的 `item.unselect-all` 已加入应用级撤销历史并按快照恢复 item/活动项/锚点，且 no-op 不建历史。
 
-`unselect_all_items_action_clears_item_selection_and_preserves_other_view_state` 覆盖 Action List 搜索/Run、Audio/MIDI item 选择清除、轨道/时间范围保留、无默认快捷键和工程历史不变；`clearing_item_selection_preserves_track_time_and_automation_selection` 单独验证 timeline 选择状态边界。原厂运行时的启用条件及对 automation point 选择的交互尚未探测，`ITEM-SELECT-005` 保持 `in_progress`。
+`unselect_all_items_action_clears_item_selection_and_preserves_other_view_state` 覆盖 Action List Run 和时间线状态边界；`no_op_item_selection_does_not_discard_redo_history` 与 `changed_item_selection_discards_project_redo_history` 覆盖 redo 语义。原厂 automation point、命令禁用状态、内容保存/脏标记仍未探测；AAADAW 的 automation point 交互尚无实窗对比，`ITEM-SELECT-005` 保持 `in_progress`。
 
 ## 2026-10-13 Main action 40528：Select item under mouse cursor
 

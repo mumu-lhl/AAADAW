@@ -2725,21 +2725,26 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::OpenRenderQueue => true,
         CommandKind::CancelOfflineRender => app.offline_render_busy,
         CommandKind::Undo => {
-            (app.project.can_undo()
+            let item_selection_next = app.item_selection_is_next_undo();
+            (app.can_undo_action()
                 || app.track_mix_commit_at.is_some()
                 || app.master_mix_commit_at.is_some())
                 && history_command_enabled(
                     app,
-                    app.project.can_undo_track_mix()
+                    item_selection_next
+                        || app.project.can_undo_track_mix()
                         || app.track_mix_commit_at.is_some()
                         || app.master_mix_commit_at.is_some(),
                 )
         }
         CommandKind::Redo => {
-            app.project.can_redo()
+            app.can_redo_action()
                 && app.track_mix_commit_at.is_none()
                 && app.master_mix_commit_at.is_none()
-                && history_command_enabled(app, app.project.can_redo_track_mix())
+                && history_command_enabled(
+                    app,
+                    app.item_selection_is_next_redo() || app.project.can_redo_track_mix(),
+                )
         }
         CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
         CommandKind::CopyLoopOfSelectedArea => true,
@@ -2862,17 +2867,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::TrimItemsToSelectedArea => !project_edit_busy(app),
         CommandKind::SelectAllItems => true,
-        CommandKind::SelectAllItemsInTrack => app.selected_track_id().is_some_and(|track_id| {
-            app.project
-                .audio_items()
-                .iter()
-                .any(|item| item.track_id() == track_id)
-                || app
-                    .project
-                    .midi_items()
-                    .iter()
-                    .any(|item| item.track_id() == track_id)
-        }),
+        CommandKind::SelectAllItemsInTrack => {
+            !app.items_for_tracks(app.selected_track_ids()).is_empty()
+        }
         CommandKind::SelectAllItemsInTimeSelection => {
             app.timeline.time_selection.is_some_and(|selection| {
                 let track_ids = app.project.tracks().iter().map(|track| track.id());
