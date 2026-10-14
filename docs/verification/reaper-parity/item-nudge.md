@@ -8,6 +8,8 @@
 
 原厂操作探针用 action 41249 `Item edit: Nudge right by last nudge dialog settings` 验证默认位置 Nudge：选中的 10 秒音频项从 0 移至 1 ms、长度和源偏移不变；选中的 5 秒 MIDI 项也从 0 移至 1 ms、长度不变；没有选中项时素材保持不变。三种情况都保留已有选择。REAPER 的 state-change 计数增量为 0，Undo 栈仍显示 `Insert media items`，没有独立的 Nudge 撤销记录。完整实测值见 [原厂 TSV](fixtures/item-nudge-native.tsv)。
 
+原厂 MIDI Contents Nudge 探针另用一个五秒循环 MIDI item 和两条 MIDI note 验证 250 ms 操作。Target 为 `contents` 时，action 41249 将 `D_STARTOFFS` 从 0 绕至 4.75 秒；action 41250 从 4.75 秒移至 0，再从 0 移至 0.25 秒。item 仍在 2 秒、长度仍为 5 秒，note 的原始 PPQ 范围不变，state-change 计数增量为 0。Snap 开/关在这些 250 ms 案例中的结果相同。详见 [MIDI Contents Nudge 验证记录](item-nudge-midi-contents.md)。
+
 ## AAADAW 当前覆盖
 
 AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudge/set items...` 现在共用一个动作 ID；菜单默认快捷键显示 `N`。Nudge/Set 子窗口为 528×121，Mode、Target、数值和 Unit 按原厂顺序排列，两个 target 菜单截图合起来显示完整八项。
@@ -19,7 +21,8 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
 - Audio / Left Trim、Left Edge、End Position、Right Trim：按原厂 250 ms 探针调整对应边界；Left Trim 按素材源采样率换算并移动源偏移。若选择中包含 MIDI、时间越界或素材源采样率不可用，则整批拒绝。
 - Duplicate：按 Nudge 量复制所选 Audio 和 MIDI 项；副本成为唯一选择，并通过一个工程事务支持 Undo。
-- Contents / Nudge：在源采样率可查时反向移动源偏移，保持 item 的时间线位置和长度。原厂 REAPER 7.82 探针确认整份 10 秒 loop source 在两个边界绕回；非循环源允许正偏移超过 EOF，也允许偏移落到源起点之前。AAADAW 现以有符号源帧保存非循环偏移：负偏移由媒体 feeder 先输出对应静音，再从媒体帧 0 解码；越过 EOF 时 feeder 将 item 尾部补静音。Seek 会跳过已过去的 pre-roll，数据库往返保留符号，loop source 与 bounded section 拒绝负偏移。有限队列回压仍在 feeder 线程执行，实时 callback 未改动。显式 bounded source section 的原厂边界行为仍未验证。
+- Contents / Nudge：在源采样率可查时反向移动源偏移，保持 item 的时间线位置和长度。原厂 REAPER 7.82 探针确认整份 10 秒 loop source 在两个边界绕回；非循环源允许正偏移超过 EOF，也允许偏移落到源起点之前。AAADAW 现以有符号源帧保存非循环偏移：负偏移由媒体 feeder 先输出对应静音，再从媒体帧 0 解码；越过 EOF 时 feeder 将 item 尾部补静音。Seek 会跳过已过去的 pre-roll，数据库往返保留符号；loop source 仍拒绝负偏移。REAPER 对关闭 loop 的 bounded section 同样允许负 `D_STARTOFFS`，且该偏移以 section 起点为零点；AAADAW 现保存 section 内 signed 偏移，先输出 pre-roll 静音，再单次播放 bounded section。原厂实测和未验证边界见 [bounded section 验证记录](item-nudge-bounded-section.md)。有限队列回压仍在 feeder 线程执行，实时 callback 未改动。
+- MIDI / Contents Nudge 目前 fail closed。REAPER 7.82 会对 MIDI take 的 `D_STARTOFFS` 做循环偏移，事件 PPQ 与 item 时间线边界保持不变；AAADAW 尚未建模 MIDI source 的 loop 长度/取内容窗口，因此不能只改现有 `source_offset_ticks` 并宣称等价。新增原厂 MIDI probe 记录了 250 ms 与 Snap 开关结果，完整循环、tempo map 和 Undo 语义仍需落实。
 - 这些目标的 Set/Snap 组合和其它未验证边界继续明确报告未实现，不修改工程。
 
 定向回归覆盖混合 Audio/MIDI 位置移动、音频目标边界语义、44.1 kHz 源偏移换算、负偏移的 feeder 静音与 seek、SQLite 迁移/重开、item 属性编辑与 waveform 起点、正偏移越过 EOF、短源 item 尾部静音且不报 underrun、有界循环段绕回、混合副本选择、Undo/Redo、Set、首项 Snap 锚点与间距、编辑光标路径和不支持目标。实窗中对选中 MIDI 项先执行默认 1 ms Nudge，再设为 250 ms 并点击 `Nudge right`；摘要由 0.001 秒更新为 0.251 秒，编排项也可见地右移，见[操作后截图](fixtures/item-nudge-aaadaw-after-250ms.png)。AAADAW 按统一事务记录 item Nudge；原厂 Contents Nudge 探针的 state-change 计数增量为 0，Undo 历史仍需专项比较。原厂目标实测值见[目标探针 TSV](fixtures/item-nudge-targets-native.tsv)和[Contents 边界记录](fixtures/item-nudge-contents-native.tsv)。REAPER 实窗边界截图见[非循环正偏移越过 EOF](fixtures/item-nudge-native-contents-nonloop-past-eof.png)和[非循环负偏移](fixtures/item-nudge-native-contents-negative-offset.png)；整份 loop source 的两侧绕回数值见 TSV。
@@ -34,4 +37,4 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 ## 后续验收
 
-下一步探测显式 bounded section 的原厂 loop 行为，再推进多种 MIDI target、Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点行为，多选锚点、跨轨顺序、播放/录制状态和 Undo 语义，并对有符号 offset 属性窗做同尺寸实窗截图对照。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
+下一步建立可表达 loop 长度与 source 内容窗口的 MIDI item 模型，再接通 MIDI Contents Nudge 的时间线、编辑器、导出、播放、保存与 Undo；同时继续推进 Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点行为、多选锚点、跨轨顺序、播放/录制状态和 Undo 语义。负 offset 属性窗同尺寸实窗截图对照，以及 bounded-section pre-roll 逐采样比较也仍需完成。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。

@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents；schema 49 signed source offset 已跨 Core/Storage/Media/UI 接入，MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Contents；schema 50 signed section-relative source offset 已跨 Core/Storage/Media/UI 接入，MIDI 响应和 Set/Snap 等仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1049,3 +1049,9 @@ AAADAW 现在将这两个坐标分开贯穿 Core 校验、Media feeder、循环�
 Core audio-item editing 9/9、Media WAV feeder 21/21、Storage bounded-section migration/round-trip 2/2、AAADAW Contents Nudge 13/13、循环复制、signed pre-roll waveform 测试各 1/1 通过；最终源码上的 Core/Media/Storage/AAADAW all-target Clippy `-D warnings` 通过。Stable 桌面二进制重新构建后在隔离 Xvfb `:90` 启动，真实主窗口为 1280×800；构建 ID、二进制哈希和与启动 fixture 像素相同的截图哈希已写入[运行清单](../verification/reaper-parity/desktop-runtime.md)。
 
 REAPER 负偏移的逐采样音频比较尚未验证；Nudge 的其他 Target/Snap、MIDI、多选锚点、选择恢复、Undo 完整语义和对话框视觉/滚动对齐仍开放。`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 继续 `in_progress`。
+
+### 2026-10-14 REAPER MIDI Contents Nudge 原厂探测
+
+Linux REAPER 7.82 / Default 7 原厂实窗探针使用五秒循环 MIDI item、两条带 PPQ 标记的音符和 250 ms Nudge。Contents 目标下，41249 将 `D_STARTOFFS` 从 0 秒绕至 4.75 秒；41250 从 4.75 秒回到 0，再从 0 推进到 0.25 秒。六种 Snap 开/关状态的对应样例结果相同。整个过程中 item 位置 2 秒、长度 5 秒、loop flag 和选择保持不变，原始 MIDI note PPQ 范围不变，project state-change 计数增量为 0。实测值、截图和脚本见[MIDI Contents Nudge 记录](../verification/reaper-parity/item-nudge-midi-contents.md)。
+
+AAADAW 当前对 MIDI Contents Nudge fail closed。现有 MIDI `source_offset_ticks` 不保存可用于环绕的源循环长度，因此只改偏移会在 timeline、MIDI editor、playback 或 MIDI export 中丢失循环片段。Undo_CanUndo2 标签在本轮 probe 中不稳定，音频设备模态窗口也阻挡了独立 Ctrl+Z 验证，故 Undo 语义仍未判定。下一步先扩展 MIDI source loop 数据模型，再把 loop 长度贯穿保存、编辑显示、播放、导出、剪切/复制和 Undo，并以这些原厂值建立回归；`ITEM-NUDGE-SET-001` 继续 `in_progress`。
