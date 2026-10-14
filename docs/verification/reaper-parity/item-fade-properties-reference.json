@@ -200,6 +200,6 @@
     "When both end lengths change, fade-out wins overlap regardless of typing order.",
     "Only editing fade-in length lets fade-in win and reduces fade-out.",
     "Lengths in this note are seconds. API/state model may preserve oversized requests; the observed Properties Apply path normalizes edited lengths.",
-    "Original REAPER window captures are retained in the verification images directory; take-gain render and pan-law waveform comparisons remain unverified."
+    "Original REAPER window captures are retained in the verification images directory; native take-gain and pan-law waveform results are recorded in selected-item-take-mix-native.tsv."
   ]
 }

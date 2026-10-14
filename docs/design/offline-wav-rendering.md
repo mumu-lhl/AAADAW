@@ -19,12 +19,14 @@ track automation aligned to the project clock. Other media items and MIDI parts 
 the render snapshot, preventing them from leaking into the file. Output bounds are the selected
 item's start and end, with no additional tail. The saved project and playback graph are unchanged.
 
-The Linux REAPER 7.82 probe confirmed that selected-item output includes item gain and track-fader
-gain: with both set to 0.5, a source at `[0.125, 0.375]` rendered as `[0.03125, 0.09375]`. Native
-Item Properties inspection separately confirmed that its Volume/pan row edits the active take; the
-take-volume render coefficient and native pan law still need waveform comparison.
-Master-fader behavior and native item/take FX, automation, folder, and send behavior still need
-direct comparison; the parity record tracks those gaps separately.
+The Linux REAPER 7.82 probes confirmed that selected-item output includes item gain, track-fader
+gain, and active-take mix. With item and track gain at 0.5, a source at `[0.125, 0.375]` rendered
+as `[0.03125, 0.09375]`. A separate four-item probe with take volume at 0.5 rendered center,
+25%R, hard-left, and hard-right values matching the engine's linear stereo-balance law sample for
+sample; the [native record](../verification/reaper-parity/selected-item-take-mix-native.tsv) has
+all PCM24 values and hashes. Native Item Properties inspection confirms that Volume/pan edits the
+active take. Master-fader behavior and native item/take FX, automation, folder, and send behavior
+still need direct comparison; the parity record tracks those gaps separately.
 
 Each finite floating-point output sample is clamped to [-1, 1], multiplied by 2^23, rounded to the
 nearest integer, then saturated to the signed 24-bit range and written little-endian. The renderer

@@ -48,7 +48,7 @@ schema 25 新增 `audio_item_fades` 表；旧 Item 没有行时恢复零长度�
 回归覆盖真实双声道 PCM、七种曲线、非零 Item 起点及 source offset、跨 13 帧 callback、淡出区域 seek、小数/超长长度、Undo/Redo、完整复制、Snapshot、批处理失败原子性、schema 24 默认迁移、只读重开字节不变与非法长度拒绝。默认已有无分配 callback 回归也通过；本切片没有对 GUI 淡化手柄作未执行的验收。
 
 
-补充原厂 UI 观察：选中单个音频 Item、F2 打开 Media Item Properties，客户端 526×693。该窗口同时包含 Fade in/out 时间、两组 Curve 字段和曲线按钮；超长淡出仍显示 0:02.000，而 Item Length 显示 0:01.000，与保存请求长度的 API 行为一致。Volume/pan 位于 Take properties：media-item `D_VOL=0.5` 时原窗显示 take `0.00dB`/`center`；输入 `-6.02dB` 并重新打开后字段保留该 take 值。原始窗口截图和字段事实记录见 [`item-properties-take-mix-native.tsv`](item-properties-take-mix-native.tsv)。这项实测说明 take 音量与 media-item `D_VOL` 是不同参数；原厂 take 音量渲染增益及 pan DSP 仍待波形核对。AAADAW 已将该行映射到独立 take mix，并使用无锁/无分配的原子参数对；显示和模型测试不代表完整窗口、批量编辑或 DSP 等价。
+补充原厂 UI 观察：选中单个音频 Item、F2 打开 Media Item Properties，客户端 526×693。该窗口同时包含 Fade in/out 时间、两组 Curve 字段和曲线按钮；超长淡出仍显示 0:02.000，而 Item Length 显示 0:01.000，与保存请求长度的 API 行为一致。Volume/pan 位于 Take properties：media-item `D_VOL=0.5` 时原窗显示 take `0.00dB`/`center`；输入 `-6.02dB` 并重新打开后字段保留该 take 值。原始窗口截图和字段事实记录见 [`item-properties-take-mix-native.tsv`](item-properties-take-mix-native.tsv)。这项实测说明 take 音量与 media-item `D_VOL` 是不同参数。随后 REAPER selected-item 原厂渲染核实 take 音量 0.5 与 center、25%R、左右硬声像的 PCM24 系数和 AAADAW 一致，详见[原厂输出记录](selected-item-take-mix-native.tsv)。AAADAW 已将该行映射到独立 take mix，并使用无锁/无分配的原子参数对；Take Volume/pan DSP 子集已验证，完整窗口及批量编辑仍未完成。
 
 ## 实时发布切片
 
