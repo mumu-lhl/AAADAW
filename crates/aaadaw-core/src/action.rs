@@ -333,6 +333,11 @@ pub enum DawAction {
         start_tick: u64,
         length_ticks: u64,
     },
+    /// Mute or unmute a MIDI item without changing its notes or timing.
+    SetMidiItemMute {
+        item_id: ItemId,
+        muted: bool,
+    },
     /// Trim the visible start of a MIDI item without moving its stored events.
     TrimMidiItemStart {
         item_id: ItemId,

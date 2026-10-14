@@ -663,6 +663,38 @@ fn project_store_round_trips_track_fx_parameter_automation() {
 }
 
 #[test]
+fn project_store_round_trips_muted_midi_item_state() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Muted MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiItemMute {
+            item_id: project.midi_items()[0].id(),
+            muted: true,
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap().load().unwrap();
+    assert!(reopened.midi_items()[0].is_muted());
+    remove_database(&path);
+}
+
+#[test]
 fn project_store_round_trips_frozen_track_and_its_render_item() {
     let path = project_path();
     let mut project = Project::new();

@@ -104,6 +104,7 @@ pub struct MidiItem {
     pub(crate) start_tick: u64,
     pub(crate) source_offset_ticks: u64,
     pub(crate) length_ticks: u64,
+    pub(crate) muted: bool,
     pub(crate) notes: Arc<Vec<MidiNote>>,
     pub(crate) controllers: Arc<Vec<MidiControllerData>>,
     pub(crate) pitch_bends: Arc<Vec<MidiPitchBendData>>,
@@ -145,6 +146,11 @@ impl MidiItem {
     /// Returns the item's duration in project ticks.
     pub fn length_ticks(&self) -> u64 {
         self.length_ticks
+    }
+
+    /// Returns whether this MIDI item is muted.
+    pub fn is_muted(&self) -> bool {
+        self.muted
     }
 
     /// Returns the item's notes in insertion order.

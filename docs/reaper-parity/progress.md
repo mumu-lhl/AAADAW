@@ -828,3 +828,11 @@ bounded source section 的起点和长度现在独立于循环开关保存：关
 Nightly + Cranelift workspace nextest 1057/1057 passed，排除了两项需要 X11 的 CLAP 浮动插件窗口测试（当前环境 `X11 connect failed`）；Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。使用的是已有 REAPER 参考图，本轮未新增 AAADAW 截图，也未重新运行原厂静音行为探针。
 
 `ITEM-MUTE-001` 与 `ITEM-PROPERTIES-001` 保持 `in_progress`：当前仅 Audio mute；MIDI/mixed-selection、复制粘贴 mute 状态、原厂菜单与启用边界、属性窗完整布局及 AAADAW 截图对照尚未完成。
+
+### 2026-10-14 MIDI Item mute extension
+
+Main action 40175 现在支持 Audio、MIDI 与混合选择的一步 Undo/Redo。MIDI item mute 进入核心模型、Snapshot 与 schema45；schema44 工程迁移为未静音。重复 MIDI item 保留 mute 状态。实时/离线 MIDI 事件计划都过滤静音 item；播放中含 MIDI 的 mute 命令禁用，并把播放图标脏，在下次启动前按新状态重建。Audio mute 继续走同一个 realtime volume/mute atomic。
+
+Nightly + Cranelift workspace nextest 1063/1063 passed，排除了两项依赖 X11 的 CLAP editor 测试；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查通过。新增 Core Undo/snapshot/duplicate、SQLite 往返/schema44 迁移、实时/离线 MIDI plan 和混选 Action 回归。仍使用既有 REAPER 参考图，本轮没有 AAADAW 截图或原厂新探针。
+
+`ITEM-MUTE-001` 保持 `in_progress`：MIDI Item Properties 窗口尚未实现，含 MIDI 选择在播放中禁用，Audio loop copy/paste 不保留 mute；native 混选及播放语义、菜单/启用状态、完整窗口布局和截图对照待补。

@@ -44,7 +44,7 @@ pub(crate) enum CommandId {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
-    ToggleMuteSelectedAudioItems,
+    ToggleMuteSelectedItems,
     OpenItemNudgeDialog,
     CloseItemNudgeDialog,
     NudgeItemsLeft,
@@ -160,7 +160,7 @@ enum CommandKind {
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
-    ToggleMuteSelectedAudioItems,
+    ToggleMuteSelectedItems,
     OpenItemNudgeDialog,
     CloseItemNudgeDialog,
     NudgeItemsLeft,
@@ -1074,7 +1074,7 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
-        kind: CommandKind::ToggleMuteSelectedAudioItems,
+        kind: CommandKind::ToggleMuteSelectedItems,
         menu: Some(MainMenu::Item),
         category: "Item properties",
         label: "Toggle mute",
@@ -2110,7 +2110,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
-        CommandKind::ToggleMuteSelectedAudioItems => "item.toggle-mute",
+        CommandKind::ToggleMuteSelectedItems => "item.toggle-mute",
         CommandKind::OpenItemNudgeDialog => "item.nudge-set",
         CommandKind::CloseItemNudgeDialog => "item.nudge-set.close",
         CommandKind::NudgeItemsLeft => "item.nudge-left",
@@ -2260,7 +2260,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
-        CommandId::ToggleMuteSelectedAudioItems => Message::ToggleSelectedAudioItemsMute,
+        CommandId::ToggleMuteSelectedItems => Message::ToggleSelectedItemsMute,
         CommandId::OpenItemNudgeDialog => Message::OpenItemNudge,
         CommandId::CloseItemNudgeDialog => Message::CloseItemNudge,
         CommandId::NudgeItemsLeft => Message::NudgeSelectedItems(-1),
@@ -2590,7 +2590,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                             .any(|item| item.id() == *item_id)
                 })
         }
-        CommandKind::ToggleMuteSelectedAudioItems => {
+        CommandKind::ToggleMuteSelectedItems => {
             !app.io_busy
                 && !app.playback_busy()
                 && !app.timeline.selected_items.is_empty()
@@ -2599,7 +2599,18 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .audio_items()
                         .iter()
                         .any(|item| item.id() == *item_id)
+                        || app
+                            .project
+                            .midi_items()
+                            .iter()
+                            .any(|item| item.id() == *item_id)
                 })
+                && (!app.timeline.selected_items.iter().any(|item_id| {
+                    app.project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+                }) || !app.playback_active())
         }
         CommandKind::ImportAudio => {
             !project_edit_busy(app)
@@ -2799,7 +2810,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
-        CommandKind::ToggleMuteSelectedAudioItems => CommandId::ToggleMuteSelectedAudioItems,
+        CommandKind::ToggleMuteSelectedItems => CommandId::ToggleMuteSelectedItems,
         CommandKind::OpenItemNudgeDialog => CommandId::OpenItemNudgeDialog,
         CommandKind::CloseItemNudgeDialog => CommandId::CloseItemNudgeDialog,
         CommandKind::NudgeItemsLeft => CommandId::NudgeItemsLeft,

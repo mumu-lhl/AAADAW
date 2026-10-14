@@ -320,7 +320,7 @@ impl App {
         }
     }
 
-    pub(super) fn toggle_selected_audio_items_mute(&mut self) {
+    pub(super) fn toggle_selected_items_mute(&mut self) {
         let selected = &self.timeline.selected_items;
         if selected.is_empty()
             || selected.iter().any(|item_id| {
@@ -329,20 +329,57 @@ impl App {
                     .audio_items()
                     .iter()
                     .any(|item| item.id() == *item_id)
+                    && !self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
             })
+            || (self.playback_active()
+                && selected.iter().any(|item_id| {
+                    self.project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+                }))
         {
-            self.status = "Select audio items only to toggle item mute".to_owned();
+            self.status = "Select idle media items to toggle item mute".to_owned();
             return;
         }
-        let actions = self
+        let mut actions = self
             .project
             .audio_items()
             .iter()
             .filter(|item| selected.contains(&item.id()))
-            .map(|item| aaadaw_core::DawAction::SetAudioItemMute {
-                item_id: item.id(),
-                muted: !item.is_muted(),
+            .map(|item| {
+                (
+                    item.id(),
+                    aaadaw_core::DawAction::SetAudioItemMute {
+                        item_id: item.id(),
+                        muted: !item.is_muted(),
+                    },
+                )
             })
+            .chain(
+                self.project
+                    .midi_items()
+                    .iter()
+                    .filter(|item| selected.contains(&item.id()))
+                    .map(|item| {
+                        (
+                            item.id(),
+                            aaadaw_core::DawAction::SetMidiItemMute {
+                                item_id: item.id(),
+                                muted: !item.is_muted(),
+                            },
+                        )
+                    }),
+            )
+            .collect::<Vec<_>>();
+        actions.sort_unstable_by_key(|(item_id, _)| item_id.value());
+        let actions = actions
+            .into_iter()
+            .map(|(_, action)| action)
             .collect::<Vec<_>>();
         let action = if actions.len() == 1 {
             actions.into_iter().next().expect("one selected item")

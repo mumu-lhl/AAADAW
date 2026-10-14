@@ -13055,19 +13055,61 @@ fn item_toggle_mute_action_matches_action_list_and_is_undoable() {
     app.timeline.select_items(vec![(item_id, track_id)]);
     assert!(commands::is_enabled(
         &app,
-        CommandId::ToggleMuteSelectedAudioItems
+        CommandId::ToggleMuteSelectedItems
     ));
 
     let revision = app.revision;
-    let _ = app.update(Message::ExecuteCommand(
-        CommandId::ToggleMuteSelectedAudioItems,
-    ));
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleMuteSelectedItems));
     assert!(app.project.audio_items()[0].is_muted());
     assert_eq!(app.revision, revision + 1);
     let _ = app.update(Message::Undo);
     assert!(!app.project.audio_items()[0].is_muted());
     let _ = app.update(Message::Redo);
     assert!(app.project.audio_items()[0].is_muted());
+}
+
+#[test]
+fn item_toggle_mute_action_handles_mixed_audio_and_midi_selection_in_one_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://mixed-item-mute".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
+
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ToggleMuteSelectedItems
+    ));
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleMuteSelectedItems));
+    assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.midi_items()[0].is_muted());
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.audio_items()[0].is_muted());
+    assert!(!app.project.midi_items()[0].is_muted());
+    let _ = app.update(Message::Redo);
+    assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.midi_items()[0].is_muted());
 }
 
 #[test]

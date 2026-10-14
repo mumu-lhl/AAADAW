@@ -1210,6 +1210,7 @@ fn duplicate_midi_item_to_track(
         start_tick,
         source_offset_ticks: original.source_offset_ticks,
         length_ticks: item_end - start_tick,
+        muted: original.muted,
         notes: Arc::new(notes),
         controllers: Arc::clone(&original.controllers),
         pitch_bends: Arc::clone(&original.pitch_bends),
@@ -1705,6 +1706,7 @@ impl Project {
                     start_tick: item.start_tick,
                     source_offset_ticks: item.source_offset_ticks,
                     length_ticks: item.length_ticks,
+                    muted: item.muted,
                     notes: item
                         .notes
                         .iter()
@@ -2059,6 +2061,7 @@ impl Project {
                 start_tick: item.start_tick,
                 source_offset_ticks: item.source_offset_ticks,
                 length_ticks: item.length_ticks,
+                muted: item.muted,
                 notes: Arc::new(notes),
                 controllers: Arc::new(controllers),
                 pitch_bends: Arc::new(pitch_bends),
@@ -3389,6 +3392,7 @@ impl Project {
                     start_tick,
                     source_offset_ticks: 0,
                     length_ticks,
+                    muted: false,
                     notes: Arc::new(Vec::new()),
                     controllers: Arc::new(Vec::new()),
                     pitch_bends: Arc::new(Vec::new()),
@@ -3441,6 +3445,19 @@ impl Project {
                 let after = MidiItem {
                     start_tick,
                     length_ticks,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemMute { item_id, muted } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                let after = MidiItem {
+                    muted,
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -3608,6 +3625,7 @@ impl Project {
                             0
                         },
                         length_ticks: segment_end - segment_start,
+                        muted: original.muted,
                         notes: Arc::new(notes),
                         controllers: Arc::new(controllers_for_segment(
                             &original.controllers,

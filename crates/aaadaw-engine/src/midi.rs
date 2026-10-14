@@ -294,9 +294,10 @@ impl std::error::Error for MidiScheduleError {
 }
 
 impl MidiEventPlan {
-    /// Compiles note-on/off events from a project. Muted tracks and tracks
-    /// excluded by the project's solo state are omitted. Call this off the
-    /// audio callback; the returned plan can be queried without allocation.
+    /// Compiles note-on/off events from a project. Muted items are always
+    /// omitted; muted tracks and tracks excluded by solo are omitted for live
+    /// playback. Call this off the audio callback; the returned plan can be
+    /// queried without allocation.
     pub fn compile(project: &Project) -> Result<Self, MidiScheduleError> {
         Self::compile_with_audibility(project, true)
     }
@@ -365,6 +366,9 @@ impl MidiEventPlan {
             }
         }
         for item in project.midi_items() {
+            if item.is_muted() {
+                continue;
+            }
             let track = tracks
                 .iter()
                 .find(|track| track.id() == item.track_id())
@@ -925,5 +929,50 @@ mod input_tests {
         let bend = messages[1].scheduled_event(track_id).unwrap();
         assert_eq!(bend.kind, MidiEventKind::PitchBend);
         assert_eq!(bend.pitch_bend, Some(8192));
+    }
+}
+
+#[cfg(test)]
+mod item_mute_tests {
+    use super::MidiEventPlan;
+    use aaadaw_core::{DawAction, MidiNoteData, Project};
+
+    #[test]
+    fn offline_midi_plan_omits_muted_items() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Muted MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
+
+        let plan = MidiEventPlan::compile_for_render(&project).unwrap();
+        assert!(plan.is_empty());
     }
 }

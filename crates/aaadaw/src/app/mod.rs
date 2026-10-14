@@ -729,6 +729,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
+        | DawAction::SetMidiItemMute { .. }
         | DawAction::FreezeTrack { .. }
         | DawAction::UnfreezeTrack { .. } => true,
         DawAction::BatchTransaction { actions, .. } => {
@@ -2436,7 +2437,7 @@ impl App {
                     draft.set_muted(muted);
                 }
             }
-            Message::ToggleSelectedAudioItemsMute => self.toggle_selected_audio_items_mute(),
+            Message::ToggleSelectedItemsMute => self.toggle_selected_items_mute(),
             Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
             Message::MarkerNameChanged(value) => {
                 if let Some(draft) = &mut self.marker_properties {

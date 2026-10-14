@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 44;
+pub const CURRENT_SCHEMA_VERSION: u32 = 45;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -163,6 +163,7 @@ CREATE TABLE items (
     position INTEGER NOT NULL CHECK (position >= 0),
     start_tick INTEGER NOT NULL CHECK (start_tick >= 0),
     length_ticks INTEGER NOT NULL CHECK (length_ticks > 0),
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     UNIQUE (track_id, position)
 );
 
@@ -2805,6 +2806,15 @@ fn ensure_audio_item_mute_column(connection: &Connection) -> Result<(), StorageE
     Ok(())
 }
 
+fn ensure_midi_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "items", "muted")? {
+        connection.execute_batch(
+            "ALTER TABLE items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0 CHECK(muted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageError> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -3015,6 +3025,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     ensure_audio_item_mute_column(&transaction)?;
                 }
             }
+            45 => {
+                if table_exists(&transaction, "items")? {
+                    ensure_midi_item_mute_column(&transaction)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3025,6 +3040,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     ensure_audio_item_loop_columns(connection)?;
     ensure_audio_item_loop_section_start_column(connection)?;
     ensure_audio_item_mute_column(connection)?;
+    ensure_midi_item_mute_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
     Ok(())
@@ -3238,8 +3254,8 @@ fn write_snapshot(
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3247,7 +3263,8 @@ fn write_snapshot(
                 to_sql_integer(item.start_tick)?,
                 to_sql_integer(item.length_ticks)?,
                 item.name,
-                to_sql_integer(item.source_offset_ticks)?
+                to_sql_integer(item.source_offset_ticks)?,
+                item.muted
             ],
         )?;
         for (position, note) in item.notes.iter().enumerate() {
@@ -4042,7 +4059,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks \
+        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -4055,11 +4072,19 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut items = Vec::with_capacity(item_rows.len());
-    for (id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) in item_rows {
+    for (id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, muted) in
+        item_rows
+    {
+        let muted = match muted {
+            0 => false,
+            1 => true,
+            _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        };
         let id = from_sql_u64(id)?;
         let _ = from_sql_u64(position)?;
         let notes = notes_by_item.remove(&id).unwrap_or_default();
@@ -4072,6 +4097,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             start_tick: from_sql_u64(start_tick)?,
             source_offset_ticks: from_sql_u64(source_offset_ticks)?,
             length_ticks: from_sql_u64(length_ticks)?,
+            muted,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
             controllers: controllers.into_iter().map(|(_, event)| event).collect(),
             pitch_bends: pitch_bends.into_iter().map(|(_, event)| event).collect(),
@@ -4394,6 +4420,49 @@ mod loop_source_storage_tests {
         );
         let loaded = store.load().unwrap();
         assert!(!loaded.audio_items()[0].is_muted());
+    }
+
+    #[test]
+    fn midi_item_mute_round_trips_and_schema_44_defaults_to_unmuted() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-item-mute.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch("ALTER TABLE items DROP COLUMN muted; PRAGMA user_version = 44;")
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(!loaded.midi_items()[0].is_muted());
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
     }
 
     #[test]

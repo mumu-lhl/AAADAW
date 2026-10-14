@@ -181,6 +181,7 @@ pub struct MidiItemSnapshot {
     pub start_tick: u64,
     pub source_offset_ticks: u64,
     pub length_ticks: u64,
+    pub muted: bool,
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,
     pub pitch_bends: Vec<MidiPitchBendData>,

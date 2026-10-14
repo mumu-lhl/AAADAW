@@ -694,6 +694,55 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
 }
 
 #[test]
+fn event_plan_omits_muted_midi_items_without_changing_other_items() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    let mut item_ids = Vec::new();
+    for pitch in [48, 60] {
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should insert");
+        let item_id = project.midi_items().last().unwrap().id();
+        item_ids.push(item_id);
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                }],
+            })
+            .expect("MIDI note should insert");
+    }
+    project
+        .apply(DawAction::SetMidiItemMute {
+            item_id: item_ids[0],
+            muted: true,
+        })
+        .expect("first MIDI item should mute");
+
+    let plan = MidiEventPlan::compile(&project).expect("muted project should compile");
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 24_000, &mut events).unwrap(), 2);
+    assert!(events[..2].iter().flatten().all(|event| event.pitch == 60));
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 1);
+    assert_eq!(active[0].unwrap().pitch, 60);
+}
+
+#[test]
 fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()
